@@ -30,36 +30,20 @@
   const ACTION_SYMBOL = 'editor.action.quickOutline';
   const ACTION_REFERENCES = 'editor.action.referenceSearch.trigger';
 
-  // Panel hosts per location (index.html ids), so focus lands in the host that
-  // now shows Search rather than any stale copy in the other side's host.
-  const SEARCH_INPUT_IN_HOST = {
-    primary: '#ideRailPanel [data-ide-search-input]',
-    secondary: '#ideSecondarySidebarPanel [data-ide-search-input]',
-  };
-
-  // Open the project Search panel (Find in Files), then focus the search input.
-  // The controller-wired showPanel routes to whichever side hosts Search (the
-  // Move View model: rail, or the secondary sidebar - opening it when closed)
-  // and renders synchronously. Without it, activate the Search activity-bar
-  // button (the rail's own switch + persist + render); that button is absent
-  // when Search lives in the secondary sidebar, so this degrades to focusing an
-  // already-mounted input or a no-op. Shared by the keydown handler
+  // Open the project Search view (Find in Files), then focus its input. The
+  // controller-wired showPanel reveals Search wherever it lives (the workbench,
+  // row 40 W3) and renders synchronously; Search is a single instance, so its
+  // input is the only one in the document. Without showPanel this degrades to
+  // focusing an already-mounted input. Shared by the keydown handler
   // (windowRef.document) and the palette item (doc).
   function openSearchPanel(doc, showPanel) {
     if (!doc || typeof doc.querySelector !== 'function') {
       return;
     }
-    let location = '';
     if (typeof showPanel === 'function') {
-      location = showPanel('search');
-    } else {
-      const railButton = doc.querySelector('[data-ide-rail-panel="search"]');
-      if (railButton && typeof railButton.click === 'function') {
-        railButton.click();
-      }
+      showPanel('search');
     }
-    const input = (SEARCH_INPUT_IN_HOST[location] && doc.querySelector(SEARCH_INPUT_IN_HOST[location]))
-      || doc.querySelector('[data-ide-search-input]');
+    const input = doc.querySelector('[data-ide-search-input]');
     if (input && typeof input.focus === 'function') {
       input.focus();
     }
@@ -81,17 +65,36 @@
     const workspaceSymbolPicker = typeof options.workspaceSymbolPicker === 'function'
       ? options.workspaceSymbolPicker
       : () => {};
-    // Optional location-aware panel router (controller); absent -> rail-button path.
+    // Optional panel router (controller): reveals a view wherever it lives.
     const showPanel = typeof options.showPanel === 'function' ? options.showPanel : null;
+    // Workbench layout actions (row 40 W3): each row shows only when wired.
+    const layoutActions = options.layoutActions || {};
+    function layoutPaletteItems() {
+      return [
+        ['togglePrimarySide', 'ide:toggle-primary-side', () => jt('ide.commands.togglePrimarySide', 'Toggle Files Side'), () => jt('ide.commands.togglePrimarySideDescription', 'Show or hide the side that holds Files'), 'Ctrl+B'],
+        ['togglePanel', 'ide:toggle-panel', () => jt('ide.commands.togglePanel', 'Toggle Panel'), () => jt('ide.commands.togglePanelDescription', 'Show or hide the panel that holds Terminal'), 'Ctrl+`'],
+        // Offered only while the terminal header's + is (a getter: under four terminals).
+        ['newTerminal', 'ide:new-terminal', () => jt('ide.terminal.new', 'New Terminal'), () => jt('ide.commands.newTerminalDescription', 'Open and start another terminal beside the current one'), 'Ctrl+Shift+`'],
+        ['toggleChat', 'ide:toggle-chat', () => jt('ide.commands.toggleChat', 'Toggle Chat'), () => jt('ide.commands.toggleChatDescription', 'Show or hide the Workspace chat'),'Ctrl+\\'],
+        ['moveView', 'ide:move-view', () => jt('ide.commands.moveView', 'Move View to…'), () => jt('ide.commands.moveViewDescription', 'Move the panel you were last in to another place'), null],
+        ['resetLayout', 'ide:reset-layout', () => jt('ide.commands.resetLayout', 'Reset Layout'), () => jt('ide.commands.resetLayoutDescription', 'Put every Workspace panel back where it started'), null],
+        ['splitRight', 'ide:split-editor-right', () => jt('ide.commands.splitRight', 'Split Editor Right'), () => jt('ide.commands.splitRightDescription', 'Move the current file into a new editor group on the right'), null],
+        ['splitDown', 'ide:split-editor-down', () => jt('ide.commands.splitDown', 'Split Editor Down'), () => jt('ide.commands.splitDownDescription', 'Move the current file into a new editor group below'), null],
+        ['focusNextGroup', 'ide:focus-next-editor-group', () => jt('ide.commands.focusNextGroup', 'Focus Next Editor Group'), () => jt('ide.commands.focusNextGroupDescription', 'Move focus to the next editor group'), null],
+      ].filter(([action]) => typeof layoutActions[action] === 'function').map(([action, id, label, description, hint]) => ({
+        id,
+        group: 'Workspace',
+        label: label(),
+        description: description(),
+        hint,
+        run: () => layoutActions[action](),
+      }));
+    }
     const openFileMap = typeof options.openFileMap === 'function' ? options.openFileMap : () => {};
     const revealInMap = typeof options.revealInMap === 'function' ? options.revealInMap : () => {};
     const showBlastRadius = typeof options.showBlastRadius === 'function' ? options.showBlastRadius : () => {};
-    // Evaluated per palette open (getCommandItems builds the list fresh), so
-    // late feature-flag hydration is honored without a re-bind.
-    const isFileMapEnabled = typeof options.isFileMapEnabled === 'function' ? options.isFileMapEnabled : () => true;
     const openPreviewSurface = typeof options.openPreviewSurface === 'function' ? options.openPreviewSurface : () => {};
     const previewActiveFile = typeof options.previewActiveFile === 'function' ? options.previewActiveFile : () => {};
-    const isPreviewSurfaceEnabled = typeof options.isPreviewSurfaceEnabled === 'function' ? options.isPreviewSurfaceEnabled : () => false;
     const toggleExplodedView = typeof options.toggleExplodedView === 'function' ? options.toggleExplodedView : () => {};
     const toggleBookmark = typeof options.toggleBookmark === 'function' ? options.toggleBookmark : () => {};
     const nextBookmark = typeof options.nextBookmark === 'function' ? options.nextBookmark : () => {};
@@ -172,43 +175,47 @@
           hint: 'Ctrl+Shift+F',
           run: () => openSearchPanel(doc, showPanel),
         },
-        ...(isFileMapEnabled() ? [{
+        ...layoutPaletteItems(),
+        {
           id: 'ide:open-file-map',
           group: 'Workspace',
           label: jt('ide.commands.openFileMap', 'Open File Map'),
           description: jt('ide.commands.openFileMapDescription', 'Open the workspace file map (dependency graph)'),
           hint: null,
           run: guarded('openFileMap', openFileMap),
-        }, {
+        },
+        {
           id: 'ide:reveal-in-map',
           group: 'Workspace',
           label: jt('ide.commands.revealActiveFileInMap', 'Reveal Active File in Map'),
           description: jt('ide.commands.revealActiveFileInMapDescription', 'Frame and focus the active file on the workspace file map'),
           hint: null,
           run: guarded('revealInMap', revealInMap),
-        }, {
+        },
+        {
           id: 'ide:show-blast-radius',
           group: 'Workspace',
           label: jt('ide.commands.showBlastRadius', 'Show Blast Radius of Active File'),
           description: jt('ide.commands.showBlastRadiusDescription', 'Light every file that depends on the active file (transitive importers)'),
           hint: null,
           run: guarded('showBlastRadius', showBlastRadius),
-        }] : []),
-        ...(isPreviewSurfaceEnabled() ? [{
+        },
+        {
           id: 'ide:open-preview',
           group: 'Workspace',
           label: jt('ide.commands.openPreview', 'Open Preview'),
           description: jt('ide.commands.openPreviewDescription', 'Open the workspace Preview stage surface'),
           hint: null,
           run: guarded('openPreviewSurface', openPreviewSurface),
-        }, {
+        },
+        {
           id: 'ide:preview-active-file',
           group: 'Workspace',
           label: jt('ide.commands.previewActiveFile', 'Preview Active File'),
           description: jt('ide.commands.previewActiveFileDescription', 'Preview the active file in the Preview stage surface'),
           hint: null,
           run: guarded('previewActiveFile', previewActiveFile),
-        }] : []),
+        },
         {
           id: 'ide:toggle-exploded-view',
           group: 'Workspace',
@@ -341,12 +348,15 @@
     const nextBookmark = typeof options.nextBookmark === 'function' ? options.nextBookmark : () => {};
     const prevBookmark = typeof options.prevBookmark === 'function' ? options.prevBookmark : () => {};
     const listBookmarks = typeof options.listBookmarks === 'function' ? options.listBookmarks : () => {};
+    const newTerminal = typeof options.newTerminal === 'function' ? options.newTerminal : () => {};
     const ideCommands = options.ideCommands || null;
     const keyboardUtils = options.keyboardUtils || {};
     const windowRef = options.windowRef || (typeof window !== 'undefined' ? window : {});
     const mruSwitcher = options.mruSwitcher || null;
     const getStageSurface = typeof options.getStageSurface === 'function' ? options.getStageSurface : () => 'editor';
     const exitStageSurface = typeof options.exitStageSurface === 'function' ? options.exitStageSurface : () => {};
+    // Secondary editor groups (row 40 W5): save, close and tab cycling act on the group the key came from.
+    const editorGroups = options.editorGroups || null;
 
     return function handleViewKeydown(event) {
       if (state.ui.activeView !== 'ide') {
@@ -354,21 +364,25 @@
       }
       const ctrl = event.ctrlKey || event.metaKey;
       const key = String(event.key).toLowerCase();
+      const group = editorGroups?.groupOfTarget?.(event.target) || '';
       if (ctrl && key === 's' && !event.shiftKey && !event.altKey) {
         event.preventDefault();
         // Pane-owned saves run in the bubble phase after in-pane editors commit.
         if (event.target?.closest?.('[data-ide-save-shortcut="pane"]')) return;
-        saveActiveFile();
+        if (group) editorGroups.saveActive(group);
+        else saveActiveFile();
         return;
       }
       if (ctrl && key === 'f4' && !event.shiftKey && !event.altKey) {
         event.preventDefault();
-        tabsController?.closeActiveTab();
+        if (group) editorGroups.closeActive(group);
+        else tabsController?.closeActiveTab();
         return;
       }
       if (ctrl && (key === 'pageup' || key === 'pagedown') && !event.shiftKey && !event.altKey) {
         event.preventDefault();
-        tabsController?.cycleTab(key === 'pageup' ? -1 : 1);
+        if (group) editorGroups.cycle(group, key === 'pageup' ? -1 : 1);
+        else tabsController?.cycleTab(key === 'pageup' ? -1 : 1);
         return;
       }
       if (ctrl && key === 'p' && !event.shiftKey && !event.altKey) {
@@ -410,12 +424,25 @@
         bottomPanel?.toggle();
         return;
       }
+      // Ctrl+Shift+` opens a new terminal (VS Code's chord); Shift makes the key
+      // '~' on US layouts, so match the physical Backquote too.
+      if (ctrl && event.shiftKey && !event.altKey && (event.code === 'Backquote' || key === '~' || key === '`')) {
+        event.preventDefault();
+        newTerminal();
+        return;
+      }
       // Ctrl+\ toggles the Workspace Chat Dock (ide_chat_dock; the live getter
       // keeps the binding inert flag-off). Disjoint from
       // Ctrl+` by design — the dock and the bottom panel are fully independent.
       if (ctrl && key === '\\' && !event.shiftKey && !event.altKey && isChatDockEnabled()) {
         event.preventDefault();
         chatDock?.toggle();
+        return;
+      }
+      // Ctrl+Shift+G switches the dock between Chat and Changes (row 34 S5).
+      if (ctrl && event.shiftKey && key === 'g' && !event.altKey && isChatDockEnabled() && chatDock?.toggleChangesTab) {
+        event.preventDefault();
+        chatDock.toggleChangesTab();
         return;
       }
       // Ctrl+Tab (forward) / Ctrl+Shift+Tab (backward) opens the most-recently-used

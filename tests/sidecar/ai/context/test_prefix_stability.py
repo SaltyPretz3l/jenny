@@ -123,6 +123,37 @@ def test_tool_list_change_breaks_at_the_top() -> None:
     assert observation.reusable_chars == 0
 
 
+def test_tool_list_removal_and_restoration_break_at_the_top() -> None:
+    meter = ps.PrefixStabilityMeter()
+    _observe(meter)
+
+    removed = _observe(meter, tool_schemas=[])
+
+    assert removed.divergence == ps.DIVERGENCE_BREAK
+    assert removed.first_changed == "tools"
+    assert removed.tools_changed is True
+    assert removed.changed_system_sections == ()
+    assert removed.reusable_chars == 0
+
+    empty_layout = ps.request_layout(system_prompt=_system(), tool_schemas=[], messages=_history(2))
+    assert empty_layout[0] == ps.Segment(label="tools", digest=ps._digest(ps._canonical([])), chars=0)
+    unchanged = _observe(meter, tool_schemas=None)
+    expected_chars = sum(len(section.content) for section in _system().sections) + sum(
+        len(str(message["content"])) for message in _history(2)
+    )
+    assert unchanged.divergence == ps.DIVERGENCE_IDENTICAL
+    assert unchanged.segment_count == unchanged.common_segments == 7
+    assert unchanged.reusable_chars == unchanged.total_chars == removed.total_chars == expected_chars
+
+    restored = _observe(meter)
+
+    assert restored.divergence == ps.DIVERGENCE_BREAK
+    assert restored.first_changed == "tools"
+    assert restored.tools_changed is True
+    assert restored.changed_system_sections == ()
+    assert restored.reusable_chars == 0
+
+
 def test_rewritten_history_row_is_located_by_index_and_role() -> None:
     meter = ps.PrefixStabilityMeter()
     _observe(meter)

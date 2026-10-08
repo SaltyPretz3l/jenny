@@ -82,6 +82,9 @@
   const _calendarChatBlock = typeof globalThis !== 'undefined' && globalThis.rendererCalendarChatBlock
     ? globalThis.rendererCalendarChatBlock
     : typeof require === 'function' ? require('./renderer-calendar-chat-block') : null;
+  // Resolved per render: index.html loads the notes entry after this module.
+  const _projectNotesEntry = () => (typeof globalThis !== 'undefined' && globalThis.rendererProjectNotesEntry)
+    || (typeof require === 'function' ? require('../features/renderer-project-notes-entry') : null);
   const _monitorToolUtils = typeof globalThis !== 'undefined' && globalThis.rendererMonitorToolUtils
     ? globalThis.rendererMonitorToolUtils
     : typeof require === 'function'
@@ -676,7 +679,7 @@
         : null;
       const hasSingularDiff = Boolean(metadata && metadata.diff);
       const hasPluralDiffs = Boolean(metadata && Array.isArray(metadata.diffs) && metadata.diffs.length);
-      if (!metadata || (!hasSingularDiff && !hasPluralDiffs)) return null;
+      if (!metadata || (!hasSingularDiff && !hasPluralDiffs && !metadata.suggested_change)) return null;
       return {
         toolCallId: payload.tool_call_id || projectedToolRow.tool_call_id || '',
         toolName: payload.tool_name || '',
@@ -700,6 +703,12 @@
       if (!turnId) return null;
       const toolCallForLedger = canonical || buildToolCallShapeFromRow(projectedToolRow);
       if (!toolCallForLedger) return null;
+      // Propose mode (row 35): a recorded suggestion opens the suggested changes, not a diff of written files.
+      if (normalizeId(toolCallForLedger.toolName) === 'propose_change') {
+        const recorded = toolCallForLedger.resultIsError !== true && toolCallForLedger.resultMetadata
+          && toolCallForLedger.resultMetadata.suggested_change;
+        return recorded ? { scope: 'suggested', turnId, toolCallId: normalizeId(toolCallForLedger.toolCallId) } : null;
+      }
       if (typeof _jennyChangeLedger.normalizeJennyChangesFromToolCall === 'function') {
         const pluralResult = _jennyChangeLedger.normalizeJennyChangesFromToolCall(toolCallForLedger, { turnId });
         const changes = Array.isArray(pluralResult && pluralResult.changes) ? pluralResult.changes : [];
@@ -881,11 +890,13 @@
           escapeHtml,
           hasLiveJournalEntry: globalThis.rendererCalendarChatBindings?.hasLiveJournalEntry,
         }) : '';
+      const notesMarkup = viewModel.metadata?.result_kind === 'project_notes'
+        ? _projectNotesEntry()?.buildProjectNotesResultBlockMarkup?.(viewModel.metadata, { escapeHtml }) || '' : '';
       if (!viewModel.detailsMaterialized) {
         return renderToolDisclosureShell(
           viewModel,
           `${renderToolHeader(viewModel)}${renderDeferredToolDetails(viewModel)}`,
-          calendarMarkup + artifactCards + pendingFigure
+          calendarMarkup + notesMarkup + artifactCards + pendingFigure
         );
       }
       // Mermaid's asynchronous preview requires its specialized shell; ordinary detail bodies use renderer-tool-detail-body.
@@ -901,7 +912,7 @@
       return renderToolDisclosureShell(
         viewModel,
         `${renderToolHeader(viewModel)}${renderToolDetails(viewModel)}`,
-        calendarMarkup + artifactCards + pendingFigure
+        calendarMarkup + notesMarkup + artifactCards + pendingFigure
       );
     }
 

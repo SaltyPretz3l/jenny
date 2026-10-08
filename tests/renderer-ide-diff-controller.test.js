@@ -6,6 +6,7 @@ const { JSDOM } = require('jsdom');
 
 const { createIdeDiffController } = require('../renderer/features/renderer-ide-diff-controller');
 const { createIdeUiState } = require('../renderer/features/renderer-ide-state');
+const { buildJennyChangeLedgerFromTurnViewModels } = require('../renderer/chat/renderer-jenny-change-ledger');
 const { createHarness, buildChangeTurn, settle } = require('./helpers/renderer-ide-harness');
 
 function confirmButton(harness, action) {
@@ -70,19 +71,32 @@ function deferred() {
   return { promise, resolve };
 }
 
-async function activateChangesPanel(harness) {
+async function activateIde(harness) {
   await harness.controller.activateIde();
   await settle();
-  // The 'changes' panel homes to the secondary sidebar by default under the
-  // CONFIG_VERSION 28 "Move View" model (DEFAULT_PANEL_LOCATIONS.changes =
-  // 'secondary'). Pin it to the primary rail for these tests so it mounts into
-  // #ideRailPanel -- the host every assertion below queries.
-  harness.state.ui.ide.panelLocations = {
-    ...harness.state.ui.ide.panelLocations,
-    changes: 'primary',
-  };
-  harness.state.ui.ide.railPanel = 'changes';
-  harness.controller.renderIde();
+}
+
+// Jenny's Changes left the IDE rail in row 34 S5; a ledger change now opens
+// through the controller's openLedgerChangeById seam (transcript diff rows and
+// the chat dock's Changes tab), which routes to diffController.openChangeDiff.
+async function openLedgerChange(harness, index = 0) {
+  const ledger = buildJennyChangeLedgerFromTurnViewModels(harness.turnViewModels, {
+    sessionId: String(harness.state.currentSessionId || ''),
+    workspaceId: String(harness.state.workspaceRoot?.rootId || ''),
+  });
+  const change = ledger.changes[index];
+  assert.ok(change?.changeId, 'the fixture yields a ledger change');
+  await harness.controller.openLedgerChangeById(change.changeId);
+  await settle();
+  return change;
+}
+
+// Whole-file revert's UI path: the change diff tab's toolbar Revert action.
+async function clickToolbarRevert(harness) {
+  await openLedgerChange(harness);
+  const revertEl = harness.getDom().ideDiffToolbar.querySelector('[data-ide-diff-revert]');
+  assert.ok(revertEl && !revertEl.disabled, 'the change diff toolbar offers Revert');
+  revertEl.click();
   await settle();
 }
 
@@ -178,10 +192,10 @@ test('hunk-toggle refusal uses a distinct no-bridge dedupe key', async () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* Whole-file revert from the changes-panel rows                        */
+/* Whole-file revert (diff-tab toolbar + revertChange)                  */
 /* ------------------------------------------------------------------ */
 
-test('row revert restores the pre-change snapshot after confirmation', async (t) => {
+test('whole-file revert restores the pre-change snapshot after confirmation', async (t) => {
   const harness = createHarness({
     bridgeOptions: {
       files: { 'src/app.js': 'a\nB\nc\n' },
@@ -192,12 +206,8 @@ test('row revert restores the pre-change snapshot after confirmation', async (t)
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-
-  const revertEl = harness.getDom().ideRailPanel.querySelector('[data-ide-changes-revert]');
-  assert.ok(revertEl, 'a diffable row carries a Revert affordance');
-  revertEl.click();
-  await settle();
+  await activateIde(harness);
+  await clickToolbarRevert(harness);
 
   // Confirm-gated: the file is untouched until the user approves.
   assert.equal(harness.bridge.calls.writeFile.length, 0, 'no write before confirmation');
@@ -212,7 +222,7 @@ test('row revert restores the pre-change snapshot after confirmation', async (t)
   assert.equal(harness.bridge.state.files['src/app.js'], 'a\nb\nc\n');
 });
 
-test('row revert cancel leaves the file untouched', async (t) => {
+test('whole-file revert cancel leaves the file untouched', async (t) => {
   const harness = createHarness({
     bridgeOptions: {
       files: { 'src/app.js': 'a\nB\nc\n' },
@@ -223,10 +233,8 @@ test('row revert cancel leaves the file untouched', async (t) => {
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-revert]').click();
-  await settle();
+  await activateIde(harness);
+  await clickToolbarRevert(harness);
   confirmButton(harness, 'cancel').click();
   await settle();
 
@@ -234,22 +242,30 @@ test('row revert cancel leaves the file untouched', async (t) => {
   assert.equal(harness.bridge.state.files['src/app.js'], 'a\nB\nc\n');
 });
 
-test('row revert surfaces a toast (no prompt, no write) when the snapshot was evicted', async (t) => {
-  const harness = createHarness({
-    bridgeOptions: { files: { 'src/app.js': 'a\nB\nc\n' } }, // no matching snapshot
-    turnViewModels: [
-      buildChangeTurn({ path: 'src/app.js', beforeHash: 'sha256:gone', additions: 1, deletions: 1 }),
-    ],
+test('revertChange surfaces a toast (no prompt, no write) when the snapshot was evicted', async () => {
+  // The diff toolbar disables Revert on a placeholder diff (covered below), so
+  // drive the shared revertChange seam directly with an evicted snapshot.
+  const [writes, toasts, confirms] = [[], [], []];
+  const controller = createIdeDiffController({
+    getIde: () => ({ activeTabPath: '' }), getDom: () => ({}), getFileOperations: () => null,
+    editorHost: { isDirty: () => false }, getWorkspaceId: () => 'root_fake',
+    getWorkspaceFsApi: () => ({
+      readPreChange: async () => ({ found: false, reason: 'missing' }),
+      readFile: async () => ({ content: 'a\nB\nc\n', mtimeMs: 1 }),
+      writeFile: async (payload) => { writes.push(payload); return { mtimeMs: 2 }; },
+    }),
+    confirmDialog: { confirm: async (opts) => { confirms.push(opts); return true; } },
+    callbacks: { appendClientLog: () => {}, showShellErrorToast: (message, meta) => toasts.push({ message, meta }) },
   });
-  t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
 
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-revert]').click();
-  await settle();
+  const result = await controller.revertChange({
+    changeId: 'change-gone', path: 'src/app.js', beforeHash: 'sha256:gone', status: 'modified', workspaceId: 'root_fake',
+  });
 
-  assert.equal(confirmButton(harness, 'confirm'), null, 'no confirm dialog when there is nothing to restore');
-  assert.equal(harness.bridge.calls.writeFile.length, 0);
-  assert.ok(harness.toasts.some((toast) => /no longer available/i.test(toast.message)), 'an explanatory toast is shown');
+  assert.equal(result, false);
+  assert.deepEqual(confirms, [], 'no confirm dialog when there is nothing to restore');
+  assert.deepEqual(writes, [], 'nothing is written');
+  assert.ok(toasts.some((toast) => /no longer available/i.test(toast.message)), 'an explanatory toast is shown');
 });
 
 /* ------------------------------------------------------------------ */
@@ -267,13 +283,12 @@ test('the toolbar is hidden for a regular file tab and shown for a Jenny-change 
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
+  await activateIde(harness);
   await harness.controller.openFile('src/app.js');
   await settle();
   assert.ok(diffToolbar(harness).classList.contains('hidden'), 'hidden on a normal file tab');
 
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-open]').click();
-  await settle();
+  await openLedgerChange(harness);
   assert.equal(diffToolbar(harness).classList.contains('hidden'), false, 'shown on the change diff tab');
   assert.ok(diffToolbar(harness).querySelector('[data-ide-diff-revert]'), 'revert action present');
   assert.ok(diffToolbar(harness).querySelector('[data-ide-diff-hunk-toggle]'), 'per-hunk controls present for a full diff');
@@ -290,9 +305,8 @@ test('toolbar revert restores the snapshot and collapses the diff', async (t) =>
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-open]').click();
-  await settle();
+  await activateIde(harness);
+  await openLedgerChange(harness);
 
   diffToolbar(harness).querySelector('[data-ide-diff-revert]').click();
   await settle();
@@ -324,9 +338,8 @@ test('per-hunk reject restores just that hunk; restore re-applies Jenny’s vers
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-open]').click();
-  await settle();
+  await activateIde(harness);
+  await openLedgerChange(harness);
 
   const toggles = diffToolbar(harness).querySelectorAll('[data-ide-diff-hunk-toggle]');
   assert.equal(toggles.length, 2, 'one toggle per hunk');
@@ -360,9 +373,8 @@ test('rejecting every hunk reproduces the pre-change original', async (t) => {
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-open]').click();
-  await settle();
+  await activateIde(harness);
+  await openLedgerChange(harness);
 
   for (const toggle of [...diffToolbar(harness).querySelectorAll('[data-ide-diff-hunk-toggle]')]) {
     toggle.click();
@@ -392,9 +404,8 @@ test('a summary-only change shows revert but no per-hunk controls', async (t) =>
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-open]').click();
-  await settle();
+  await activateIde(harness);
+  await openLedgerChange(harness);
 
   const toolbar = diffToolbar(harness);
   assert.equal(toolbar.classList.contains('hidden'), false, 'toolbar still shown');
@@ -418,9 +429,8 @@ test('revert preserves CRLF line endings (snapshot is LF, disk is CRLF)', async 
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-revert]').click();
-  await settle();
+  await activateIde(harness);
+  await clickToolbarRevert(harness);
   confirmButton(harness, 'confirm').click();
   await settle();
 
@@ -441,9 +451,8 @@ test('per-hunk reject preserves a file with no trailing newline', async (t) => {
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-open]').click();
-  await settle();
+  await activateIde(harness);
+  await openLedgerChange(harness);
 
   diffToolbar(harness).querySelector('[data-ide-diff-hunk-toggle]').click();
   await settle();
@@ -461,9 +470,8 @@ test('per-hunk reject preserves CRLF endings', async (t) => {
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-open]').click();
-  await settle();
+  await activateIde(harness);
+  await openLedgerChange(harness);
 
   diffToolbar(harness).querySelector('[data-ide-diff-hunk-toggle]').click();
   await settle();
@@ -482,9 +490,8 @@ test('reverting a created-file change deletes it through the guarded path, never
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-revert]').click();
-  await settle();
+  await activateIde(harness);
+  await clickToolbarRevert(harness);
   confirmButton(harness, 'confirm').click();
   await settle();
 
@@ -510,9 +517,8 @@ test('a partial-review change withholds per-hunk with partial-specific copy', as
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-open]').click();
-  await settle();
+  await activateIde(harness);
+  await openLedgerChange(harness);
 
   const toolbar = diffToolbar(harness);
   assert.equal(toolbar.querySelector('[data-ide-diff-hunk-toggle]'), null, 'no per-hunk for a partial diff');
@@ -534,9 +540,8 @@ test('revert aborts (no clobber) when the file changes on disk during the confir
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-revert]').click();
-  await settle();
+  await activateIde(harness);
+  await clickToolbarRevert(harness);
 
   // Simulate an external edit landing while the confirm dialog is open.
   harness.bridge.state.files['src/app.js'] = 'externally edited\n';
@@ -753,9 +758,8 @@ test('rapid double-click on a hunk toggle applies exactly one decision (re-entra
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-open]').click();
-  await settle();
+  await activateIde(harness);
+  await openLedgerChange(harness);
 
   // Two synchronous clicks: the second fires while the first write is in flight
   // and is dropped, so the net effect is a single reject (not a reject+restore).
@@ -779,7 +783,7 @@ test('per-hunk toggle refuses to clobber an open buffer with unsaved edits', asy
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
+  await activateIde(harness);
   // Open the file and make it dirty, then open the change diff and try a toggle.
   await harness.controller.openFile('src/app.js');
   await settle();
@@ -787,8 +791,7 @@ test('per-hunk toggle refuses to clobber an open buffer with unsaved edits', asy
   textarea.value = 'my own unsaved edits';
   textarea.dispatchEvent(new harness.dom.window.Event('input', { bubbles: true }));
   await settle();
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-open]').click();
-  await settle();
+  await openLedgerChange(harness);
 
   diffToolbar(harness).querySelector('[data-ide-diff-hunk-toggle]').click();
   await settle();
@@ -811,9 +814,8 @@ test('a diverged base (disk no longer matches Jenny’s version) withholds per-h
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-open]').click();
-  await settle();
+  await activateIde(harness);
+  await openLedgerChange(harness);
 
   const toolbar = diffToolbar(harness);
   assert.equal(toolbar.querySelector('[data-ide-diff-hunk-toggle]'), null, 'no per-hunk on a diverged base');
@@ -836,9 +838,8 @@ test('a placeholder (evicted snapshot) change disables revert and per-hunk', asy
     ],
   });
   t.after(() => harness.dispose());
-  await activateChangesPanel(harness);
-  harness.getDom().ideRailPanel.querySelector('[data-ide-changes-open]').click();
-  await settle();
+  await activateIde(harness);
+  await openLedgerChange(harness);
 
   const toolbar = diffToolbar(harness);
   assert.equal(toolbar.querySelector('[data-ide-diff-hunk-toggle]'), null, 'no per-hunk on a placeholder diff');

@@ -222,6 +222,30 @@
   }
 }
 
+/* Split view, row 34 S5 (v2 §6): when the panes can't each keep about 40rem
+   beside the side panel, the code review opens over the pane of the chat that
+   owns it (renderer-artifact-review-rail.js stamps data-side-panel-pane), so
+   the other chat stays usable. Same grid cell as that pane, stacked above its
+   composer. */
+.chat-view[data-pane-count="2"][data-side-panel-pane] > .artifact-review-panel {
+  grid-row: 1 / -1;
+  justify-self: stretch;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  border-inline-start: 0;
+  box-shadow: var(--shadow-float);
+  z-index: calc(var(--z-raised) + 1);
+}
+
+.chat-view[data-pane-count="2"][data-side-panel-pane="0"] > .artifact-review-panel {
+  grid-column: 1;
+}
+
+.chat-view[data-pane-count="2"][data-side-panel-pane="1"] > .artifact-review-panel {
+  grid-column: 3;
+}
+
 @media (max-width: 1180px) {
   .chat-view[data-pane-count="2"] {
     grid-template-columns: minmax(0, 1fr) auto;

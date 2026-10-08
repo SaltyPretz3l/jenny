@@ -48,7 +48,7 @@
     // child (renderer-turn-row-list-utils.js rowListSegmentSink).
     function buildTurnRowList() {
       // Resolve the anchor the SAME way patchVisibleStreamingArticle does:
-      // read it off the live article first. Under turn_activity_envelope a
+      // read it off the live article first. Under the turn-activity envelope a
       // whole turn renders at one anchor message, and the dispatcher inside
       // buildMessageArticleMarkup decides that anchor with
       // deriveTurnArticleAnchorMessageId -- a different function from

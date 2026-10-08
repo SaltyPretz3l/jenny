@@ -26,8 +26,9 @@ const EVENT_STATUS_EXPLANATIONS = Object.freeze({
   selector_timeout: 'the selector probe timed out',
   selector_not_editable: 'the element is not a text input',
   selector_focus_failed: 'the element could not be focused',
+  selector_not_focusable: 'the element cannot take focus',
 });
-const SUCCESSFUL_EVENT_STATUSES = new Set(['clicked', 'typed']);
+const SUCCESSFUL_EVENT_STATUSES = new Set(['clicked', 'typed', 'hovered', 'focused', 'pressed']);
 
 // Tool-owned read-only scripts. Caller selectors are embedded only through
 // JSON.stringify, so they are string data and never script text.
@@ -83,7 +84,8 @@ function eventOutcomeLine(eventResults) {
   const parts = eventResults.map((entry, index) => {
     const explanation = EVENT_STATUS_EXPLANATIONS[entry.status];
     const status = entry.status || 'no_result';
-    return `${index + 1}. ${entry.action} ${JSON.stringify(entry.selector)} → ${status}${explanation ? ` (${explanation})` : ''}`;
+    const target = [entry.key, entry.selector ? JSON.stringify(entry.selector) : ''].filter(Boolean).join(' ');
+    return `${index + 1}. ${entry.action}${target ? ` ${target}` : ''} → ${status}${explanation ? ` (${explanation})` : ''}`;
   });
   return `Events: ${parts.join('; ')}.`;
 }

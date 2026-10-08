@@ -1,0 +1,447 @@
+/* styles/changes-view.css — the Changes view (row 34 S5; design v5, v3 §3, v6).
+   One component in two hosts: the IDE chat dock's Changes tab and the chat
+   side panel's code_review mode. Calm by default: no side bars, one soft
+   container level at most; hierarchy from type, spacing and alignment. */
+
+.changes-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  color: var(--text-primary);
+}
+
+.changes-view-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-block-end: var(--space-3);
+}
+
+.changes-view-head {
+  padding: var(--space-8) var(--space-8) var(--space-3);
+}
+
+.changes-view-title {
+  margin: 0;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+
+.changes-view-subtitle {
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+.changes-view-empty {
+  margin: var(--space-3) var(--space-8);
+  font-size: var(--font-size-footnote);
+  color: var(--text-muted);
+}
+
+.changes-view-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.changes-view-link:hover {
+  color: var(--text-primary);
+}
+
+.changes-view-link:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-xs);
+}
+
+/* ── History ── */
+
+.changes-history-turn {
+  padding-block: var(--space-5) var(--space-4);
+}
+
+.changes-history-turn + .changes-history-turn {
+  border-top: 1px solid var(--line);
+}
+
+/* In a narrow panel the actions wrap under the title instead of crushing it to a letter. */
+.changes-history-turn-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  min-height: 28px;
+  padding: 0 var(--space-8) var(--space-2);
+}
+
+.changes-history-title {
+  flex: 1 1 12ch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-footnote);
+  font-weight: 500;
+}
+
+.changes-history-time {
+  flex: none;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.changes-history-spacer {
+  flex: 1 1 auto;
+}
+
+.changes-history-turn-head .btn {
+  flex: none;
+  align-self: center;
+}
+
+.changes-history-files,
+.changes-history-notices {
+  margin: 0;
+  padding: 0 var(--space-4);
+  list-style: none;
+}
+
+.changes-history-file {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: 3px var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.changes-history-file:hover {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.changes-history-file[aria-selected="true"] {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.changes-history-file:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.changes-history-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changes-history-note {
+  flex: none;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+.changes-history-note--warn {
+  color: var(--tl-status-warn);
+}
+
+.changes-history-notice {
+  padding: 3px var(--space-4);
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+/* An undone turn stays in History, dimmed, with Redo. */
+.changes-history-turn--undone .changes-history-title,
+.changes-history-turn--undone .changes-history-path {
+  color: var(--text-muted);
+}
+
+/* ── Status-dot rows (suggested changes) ── */
+
+.changes-rows {
+  margin: 0;
+  padding: 0 var(--space-4);
+  list-style: none;
+}
+
+.changes-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 24px;
+  column-gap: var(--space-5);
+  align-items: start;
+  padding: 9px var(--space-4);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.changes-row[aria-selected="true"],
+.changes-row[data-changes-row-state="current"] {
+  background: var(--bg-surface-2);
+}
+
+.changes-row:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.changes-row-dot {
+  justify-self: center;
+  width: var(--tl-dot-size);
+  height: var(--tl-dot-size);
+  margin-top: 7px;
+  border-radius: 50%;
+  background: var(--text-decorative);
+}
+
+.changes-row-title {
+  font-size: var(--font-size-footnote);
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.changes-row-second {
+  grid-column: 2;
+  margin-top: 1px;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+.changes-row-second--active {
+  color: var(--tl-status-active);
+  animation: shimmer-text var(--motion-duration-sheen) var(--motion-ease-standard) infinite;
+}
+
+.changes-row-second--warn {
+  color: var(--tl-status-warn);
+}
+
+.changes-row-explain {
+  grid-row: 1 / 3;
+  grid-column: 3;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+  visibility: hidden;
+  cursor: pointer;
+}
+
+.changes-row:hover .changes-row-explain,
+.changes-row:focus-within .changes-row-explain,
+.changes-row[aria-selected="true"] .changes-row-explain {
+  visibility: visible;
+}
+
+.changes-row[data-changes-row-state="current"] .changes-row-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.changes-row[data-changes-row-state="working"] .changes-row-dot {
+  background: var(--tl-status-active);
+  animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
+}
+
+.changes-row[data-changes-row-state="done"] .changes-row-dot {
+  background: var(--tl-status-ok);
+  opacity: 0.7;
+}
+
+.changes-row[data-changes-row-state="done"] .changes-row-title {
+  color: var(--text-muted);
+}
+
+.changes-row[data-changes-row-state="rejected"] .changes-row-dot {
+  opacity: 0.5;
+}
+
+.changes-row[data-changes-row-state="rejected"] .changes-row-title {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+/* ── Footer and popover ── */
+
+.changes-view-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: none;
+  min-height: 40px;
+  padding: var(--space-5) var(--space-8);
+  border-top: 1px solid var(--line);
+  font-size: var(--font-size-footnote);
+  color: var(--text-muted);
+}
+
+.changes-view-foot .turn-activity-row {
+  padding-inline: 0;
+}
+
+.changes-view-foot-text {
+  flex: 1 1 auto;
+  color: var(--text-secondary);
+}
+
+.changes-popover {
+  margin: var(--space-1) var(--space-4) var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  max-width: 320px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-2);
+  box-shadow: var(--shadow-float);
+  font-size: var(--font-size-caption);
+  color: var(--text-secondary);
+}
+
+/* ── Side panel detail page ── */
+
+.changes-detail-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-8) var(--space-8) var(--space-2);
+}
+
+.changes-detail-position {
+  font-size: var(--font-size-footnote);
+  color: var(--text-primary);
+}
+
+.changes-detail-caption {
+  padding: 0 var(--space-8) var(--space-4);
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.changes-detail-diff {
+  margin: 0 var(--space-4);
+}
+
+/* ── Undo / Redo sheet (inside the shared step-modal; design v3 §3, v6) ── */
+
+.changes-undo {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.changes-undo-group {
+  min-width: 0;
+}
+
+.changes-undo-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 var(--space-3);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.changes-undo-dot {
+  flex: 0 0 auto;
+  width: var(--tl-dot-size);
+  height: var(--tl-dot-size);
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.changes-undo-dot--back {
+  background: var(--accent);
+}
+
+.changes-undo-dot--call {
+  background: var(--tl-status-warn);
+}
+
+.changes-undo-rows {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.changes-undo-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-2);
+  font-size: var(--font-size-footnote);
+}
+
+.changes-undo-row--warn {
+  background: color-mix(in srgb, var(--tl-status-warn) 8%, var(--bg-surface-2));
+}
+
+.changes-undo-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.changes-undo-ctrl {
+  display: flex;
+  align-items: center;
+  font-size: var(--font-size-caption);
+  color: var(--text-secondary);
+}
+
+.changes-undo-ctrl .inv-toggle {
+  flex-direction: row-reverse;
+  gap: var(--space-3);
+}
+
+.changes-undo-note {
+  grid-column: 1 / -1;
+  font-size: var(--font-size-caption);
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.changes-undo-preview {
+  grid-column: 1 / -1;
+  max-height: 240px;
+  margin-top: var(--space-3);
+  overflow: auto;
+}
+
+.changes-undo-preview[hidden] {
+  display: none;
+}
+
+.changes-undo-outside {
+  margin: 0;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .changes-row[data-changes-row-state="working"] .changes-row-dot,
+  .changes-row-second--active {
+    animation: none;
+  }
+}

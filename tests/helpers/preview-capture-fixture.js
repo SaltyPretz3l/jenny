@@ -61,6 +61,8 @@ async function capture(root, options = {}) {
       _runSessionOperation: async (_id, _opts, operation) => operation(session, null),
       _currentUrl: () => 'file:///fixture.html',
       _withTimeout: BrowserSessionService.prototype._withTimeout,
+      _executePageScript: BrowserSessionService.prototype._executePageScript,
+      _waitForFreshFrame: BrowserSessionService.prototype._waitForFreshFrame,
       _setTimeout: setTimeout,
       _clearTimeout: clearTimeout,
     }),

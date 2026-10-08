@@ -182,12 +182,9 @@ test('pretext full renders add predicted-height metadata and clear temporary min
   assert.equal(assistantArticle.style.minHeight, '');
 });
 
-// Segmented contract (tests/renderer-turn-compat.test.js "completed segmented
-// turns render source-owned articles"): the tool call renders as a tool_call
-// row inside its own tool_use article, and that projected tool shell carries the
-// same pretext predicted-height metadata as the assistant article. Un-skipped
-// 2026-09-25 against the settled contract (the coalesced tool_step shape is gone).
-test('pretext full renders keep predicted-height metadata on projected tool shells', async (t) => {
+// The turn envelope owns height prediction; coalesced tool rows retain their
+// source identities and hidden message anchors inside that presentation.
+test('pretext full renders keep predicted-height metadata on the turn containing tool rows', async (t) => {
   const { window, shell } = await loadRendererTestApp(t, {
     shell: {
       features: {
@@ -253,13 +250,13 @@ test('pretext full renders keep predicted-height metadata on projected tool shel
   await waitForUi(window, 60);
 
   const turnArticle = timeline.querySelector('article[data-message-id="assistant_tool_pretext"]');
-  const toolArticle = timeline.querySelector('article[data-message-id="tool_use_tool_pretext"]');
+  const toolAnchor = timeline.querySelector('.thread-compat-anchor[data-message-id="tool_use_tool_pretext"]');
   assert.ok(turnArticle, 'the assistant text keeps its own article');
-  assert.ok(toolArticle, 'the tool call renders on its source-owned tool_use article');
+  assert.ok(toolAnchor, 'the coalesced tool message keeps its source anchor');
+  assert.equal(timeline.querySelector('article[data-message-id="tool_use_tool_pretext"]'), null);
   assert.match(String(turnArticle.getAttribute('data-predicted-height') || ''), /^\d+$/);
-  assert.match(String(toolArticle.getAttribute('data-predicted-height') || ''), /^\d+$/);
-  assert.ok(toolArticle.querySelector('.turn-row-list[data-turn-row-list="true"]'));
-  assert.ok(toolArticle.querySelector('[data-row-kind="tool_call"][data-tool-call-id="call_tool_pretext"]'));
+  assert.ok(turnArticle.querySelector('.turn-row-list[data-turn-row-list="true"]'));
+  assert.ok(turnArticle.querySelector('[data-row-kind="tool_call"][data-tool-call-id="call_tool_pretext"][data-source-message-id="tool_use_tool_pretext"]'));
 });
 
 test('pretext stream patches keep predicted-height metadata on the streaming assistant article', async (t) => {

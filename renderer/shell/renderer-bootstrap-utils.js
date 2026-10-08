@@ -46,7 +46,7 @@
   function renderDiagnosticsControls(documentRef) {
     const put = (id, markup) => { const host = documentRef.getElementById(id); if (host && !host.firstElementChild) host.innerHTML = markup; };
     if (typeof inventorySelectField === 'function') {
-      put('diagnosticsRunControl', inventorySelectField({ id: 'diagnosticsRunSelect', label: jt('shell.bootstrap.diagnostics.evidenceWindow', 'Evidence window'), ariaLabel: jt('shell.bootstrap.diagnostics.run', 'Diagnostic run'), options: [{ value: '', label: jt('shell.bootstrap.diagnostics.currentRun', 'Current run') }] }));
+      put('diagnosticsRunControl', inventorySelectField({ id: 'diagnosticsRunSelect', label: jt('shell.bootstrap.diagnostics.evidenceWindow', 'Evidence window'), ariaLabel: jt('shell.bootstrap.diagnostics.run', 'Diagnostic run'), options: [{ value: '', label: jt('shell.bootstrap.diagnostics.thisLaunch', 'This app launch') }] }));
       put('diagnosticsLevelControl', inventorySelectField({ id: 'logLevelFilter', label: jt('shell.bootstrap.diagnostics.severity', 'Severity'), options: ['all', 'error', 'warn', 'info', 'debug'].map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) })) }));
       put('diagnosticsSourceControl', inventorySelectField({ id: 'logSourceFilter', label: jt('shell.bootstrap.diagnostics.source', 'Source'), options: ['all', 'electron', 'renderer', 'sidecar'].map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) })) }));
     }
@@ -238,7 +238,10 @@
         // controls remain usable before the real payload lands — do not
         // tighten it. availabilityResolved is display-only: it tells status
         // chips (renderer-status-chip-utils.js) whether availability below
-        // reflects a real backend answer yet, without touching gating.
+        // reflects a real backend answer yet, without touching gating. The
+        // Model library section defers its first source load and the
+        // workspace-root nudge its chip until it flips, so neither runs on
+        // the seed.
         // Flipped true in applyFeatureStatePayload (renderer-shell-state-
         // runtime-utils.js) once a real payload has been merged in.
         availabilityResolved: false,
@@ -259,7 +262,6 @@
           skills_system: true,
           shell_security: true,
           git_tracking: true,
-          settings_search: true,
         },
         featureOverrides: {},
         availability: {
@@ -462,9 +464,7 @@
 
     // Generate the Settings nav rail from the section registry before resolving DOM ids.
     if (settingsNavUtils && typeof settingsNavUtils.renderSettingsNav === 'function') {
-      settingsNavUtils.renderSettingsNav(document, {
-        searchEnabled: state.features.featureFlags.settings_search !== false,
-      });
+      settingsNavUtils.renderSettingsNav(document);
     }
     renderDiagnosticsControls(document);
     const dom = createRendererDomRegistry(document);
@@ -599,22 +599,9 @@
         ideExplodedHost: 'ideExplodedHost',
         idePreviewHost: 'idePreviewHost',
         ideViewModeBar: 'ideViewModeBar',
-        ideRail: 'ideRail',
-        ideRailResizer: 'ideRailResizer',
-        ideActivityBar: 'ideActivityBar',
-        ideRailPanel: 'ideRailPanel',
-        ideBottomResizer: 'ideBottomResizer',
-        ideBottomPanel: 'ideBottomPanel',
-        ideBottomTabs: 'ideBottomTabs',
-        ideBottomPanelContent: 'ideBottomPanelContent',
-        ideBottomTerminalHost: 'ideBottomTerminalHost',
-        ideBottomHandle: 'ideBottomHandle',
-        ideSecondarySidebar: 'ideSecondarySidebar',
-        ideSecondarySidebarResizer: 'ideSecondarySidebarResizer',
-        ideSecondarySidebarHeader: 'ideSecondarySidebarHeader',
-        ideSecondarySidebarPanel: 'ideSecondarySidebarPanel',
+        ideWorkbench: 'ideWorkbench',
+        ideStageSwitch: 'ideStageSwitch',
         ideChatDock: 'ideChatDock',
-        ideChatDockResizer: 'ideChatDockResizer',
         ideChatDockHeader: 'ideChatDockHeader',
         ideChatDockBody: 'ideChatDockBody',
       },
@@ -733,7 +720,7 @@
     interactivePanelUtils: ['rendererInteractivePanelUtils', null],
     personalityEditorUtils: ['rendererPersonalityUtils', null],
     toastControllerUtils: ['rendererToastUtils', null],
-    settingsRendererUtils: ['rendererSettingsUtils', null],
+    settingsRendererUtils: ['rendererSettingsChrome', null],
     sidebarControllerUtils: ['rendererSidebarUtils', null],
     lifecycleUtils: ['rendererLifecycleUtils', null],
     memoryManagerUtils: ['rendererMemoryUtils', null],

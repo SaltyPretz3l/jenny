@@ -236,11 +236,14 @@ test('a late offline refresh cannot overwrite a newer acknowledged settings upda
 });
 
 test('model badge keeps the tag, shortens paths and exposes the full id; idle status lines stay hidden', async (t) => {
-  const { loadRendererApp } = require('./helpers/renderer-shell-harness');
+  const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
   for (const model of ['organization/path/model:tag', 'model:tag']) {
     const app = await loadRendererApp({ shell: { status: { async get() { return { model, model_loaded: true }; } } } });
     t.after(() => app.dispose());
     const doc = app.window.document;
+    // The Settings page paints on activation (renderAll no longer paints it on the chat view).
+    doc.querySelector('[data-tab-id="settings"]').click();
+    await waitForUi(app.window, 20);
     assert.equal(doc.getElementById('modelBadge').textContent, 'model:tag');
     assert.equal(doc.getElementById('modelBadge').title, model);
     for (const id of ['contextStatus', 'editorStatus', 'homeStatus']) {

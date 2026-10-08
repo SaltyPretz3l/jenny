@@ -294,12 +294,17 @@ describe('killProcessTree + waitForProcessExit', () => {
       windowsHide: true,
     });
     let grandchildPid = 0;
+    let grandchildGone = false;
+    // A pid proven gone may already belong to a sibling test's process: only a
+    // parent whose exit is unobserved, or an unconfirmed grandchild, is killed.
     t.after(async () => {
-      await procUtils.killProcessTree(parent.pid, {
-        force: true,
-        processGroup: process.platform !== 'win32',
-      }).catch(() => {});
-      if (grandchildPid) {
+      if (parent.exitCode === null && parent.signalCode === null) {
+        await procUtils.killProcessTree(parent.pid, {
+          force: true,
+          processGroup: process.platform !== 'win32',
+        }).catch(() => {});
+      }
+      if (grandchildPid && !grandchildGone) {
         await procUtils.killProcessTree(grandchildPid, { force: true }).catch(() => {});
       }
     });
@@ -324,8 +329,8 @@ describe('killProcessTree + waitForProcessExit', () => {
       timeoutMs: 5000,
     });
     assert.equal(outcome.terminated, true, 'tree owner confirms the group leader exited');
-    assert.equal(await procUtils.waitForProcessExit(grandchildPid, 5000), true,
-      'the descendant is dead before termination is reported');
+    grandchildGone = await procUtils.waitForProcessExit(grandchildPid, 5000);
+    assert.equal(grandchildGone, true, 'the descendant is dead before termination is reported');
   });
 
   test('wide-016: a hung Windows taskkill helper is bounded by the termination deadline', async () => {

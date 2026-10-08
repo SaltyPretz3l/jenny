@@ -195,11 +195,11 @@ class ShellConfigService extends EventEmitter {
     const result = readWithRetry(this.store, {});
     const isObject = Boolean(result.value) && typeof result.value === 'object'
       && !Array.isArray(result.value);
-    if (!result.corrupted && (result.missing || isObject)) {
+    if (!result.corrupted && !result.unreadable && (result.missing || isObject)) {
       this._freshInstall = !Object.keys(result.value).length;
       return result.value;
     }
-    const outcome = result.corrupted && result.errorCode
+    const outcome = result.unreadable
       ? { preserved: false, reason: 'unreadable' }
       : preserveCorruptFile(this.store.filePath, { logger: this._logger });
     this._damagedConfigStillInPlace = !outcome.preserved && outcome.reason !== 'missing';
@@ -838,6 +838,16 @@ class ShellConfigService extends EventEmitter {
     const current = this.getLocalEngines().openaiCompatible.acceleration;
     if (JSON.stringify(localEngines.openaiCompatible.acceleration) === JSON.stringify(current)) return this.getState();
     return this._writeState({ ...this.state, localEngines }, 'local_engine_acceleration_updated');
+  }
+
+  // Semantic catalog embedding model choice (row 41). The normalizer drops a
+  // path that is not a local absolute .gguf, so the result is the source of truth.
+  updateEmbeddingSettings(patch) {
+    const current = this.getLocalEngines().embedding;
+    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+    const localEngines = normalizeLocalEngines({ ...this.state.localEngines, embedding: { ...current, ...source } });
+    if (JSON.stringify(localEngines.embedding) === JSON.stringify(current)) return current;
+    return this._writeState({ ...this.state, localEngines }, 'embedding_settings_updated').localEngines.embedding;
   }
 
   updateManagedLlamaServer(patch) {

@@ -72,7 +72,6 @@ test('model-backed documents release duplicate buffers while preserving their fu
     getDom: fixture.getDom,
     monacoUtils: { ...require('../renderer/features/renderer-monaco-editor-utils'), ensureMonacoEditorApi: async () => fake.api, normalizeEditorLanguage: () => 'javascript' },
     imageHostUtils: {},
-    previewHostUtils: {},
   });
   const content = 'const first = 1;\nconst second = 2;\n';
 
@@ -93,7 +92,6 @@ test('saving a model-backed edit writes the current model text', async () => {
     getDom: fixture.getDom,
     monacoUtils: { ...require('../renderer/features/renderer-monaco-editor-utils'), ensureMonacoEditorApi: async () => fake.api, normalizeEditorLanguage: () => 'javascript' },
     imageHostUtils: {},
-    previewHostUtils: {},
     onSaveRequest: () => {
       const path = host.getActivePath();
       const savedContent = host.getValue(path);
@@ -119,7 +117,6 @@ test('model-backed dirty tracking clears after the edited version is saved', asy
     getDom: fixture.getDom,
     monacoUtils: { ...require('../renderer/features/renderer-monaco-editor-utils'), ensureMonacoEditorApi: async () => fake.api, normalizeEditorLanguage: () => 'javascript' },
     imageHostUtils: {},
-    previewHostUtils: {},
     onDirtyChange: (path, dirty) => dirtyChanges.push({ path, dirty }),
   });
   await host.openDocument({ path: 'dirty.js', content: 'clean' });
@@ -146,7 +143,6 @@ test('textarea fallback retains its buffer and returns it as the document value'
     getDom: fixture.getDom,
     monacoUtils: { ...require('../renderer/features/renderer-monaco-editor-utils'), ensureMonacoEditorApi: async () => null },
     imageHostUtils: {},
-    previewHostUtils: {},
   });
 
   const doc = await host.openDocument({ path: 'fallback.txt', content: 'fallback text' });
@@ -164,7 +160,6 @@ test('disposing during a delayed Monaco load prevents editor creation and docume
     getDom: fixture.getDom,
     monacoUtils: { ...require('../renderer/features/renderer-monaco-editor-utils'), ensureMonacoEditorApi: () => loader.promise, normalizeEditorLanguage: () => 'javascript' },
     imageHostUtils: {},
-    previewHostUtils: {},
   });
 
   const opening = host.openDocument({ path: 'late.js', content: 'late' });
@@ -195,7 +190,6 @@ test('fallback input listeners are removed on dispose before a host is recreated
     getDom: fixture.getDom,
     monacoUtils: { ...require('../renderer/features/renderer-monaco-editor-utils'), ensureMonacoEditorApi: async () => null },
     imageHostUtils: {},
-    previewHostUtils: {},
   };
 
   const first = createIdeEditorHost(options);
@@ -227,7 +221,6 @@ test('runAction observes a returned thenable rejection while preserving its sync
     getDom: fixture.getDom,
     monacoUtils: { ...require('../renderer/features/renderer-monaco-editor-utils'), ensureMonacoEditorApi: async () => fake.api, normalizeEditorLanguage: () => 'javascript' },
     imageHostUtils: {},
-    previewHostUtils: {},
   });
   await host.openDocument({ path: 'action.js', content: '' });
 
@@ -235,5 +228,36 @@ test('runAction observes a returned thenable rejection while preserving its sync
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(thenCalls, 1, 'the returned thenable is observed and its rejection is contained');
+  host.dispose();
+});
+
+test('a disk refresh of the active document is not reported as a user edit', async () => {
+  const fake = fakeMonaco();
+  const fixture = makeDom();
+  const dirtyEvents = [];
+  const modelEvents = [];
+  const host = createIdeEditorHost({
+    getDom: fixture.getDom,
+    monacoUtils: { ...require('../renderer/features/renderer-monaco-editor-utils'), ensureMonacoEditorApi: async () => fake.api, normalizeEditorLanguage: () => 'javascript' },
+    imageHostUtils: {},
+    onDirtyChange: (path, dirty) => dirtyEvents.push([path, dirty]),
+    onModelChange: (path) => modelEvents.push(path),
+  });
+  await host.openDocument({ path: 'live.js', content: 'const a = 1;\n' });
+  host.activateDocument('live.js');
+  const dirtyBefore = dirtyEvents.length;
+  const modelBefore = modelEvents.length;
+
+  // Refreshing from disk runs model.setValue, which fires the content listener synchronously.
+  await host.openDocument({ path: 'live.js', content: 'const a = 2;\n' });
+
+  assert.equal(host.getValue('live.js'), 'const a = 2;\n');
+  assert.equal(modelEvents.length, modelBefore, 'the refresh must not reach onModelChange');
+  assert.deepEqual(dirtyEvents.slice(dirtyBefore).filter(([, dirty]) => dirty === true), []);
+  assert.equal(host.isDirty?.('live.js') ?? false, false);
+
+  // A real edit after the refresh still reports.
+  fake.model.setValue('const a = 3;\n');
+  assert.equal(modelEvents.length, modelBefore + 1);
   host.dispose();
 });

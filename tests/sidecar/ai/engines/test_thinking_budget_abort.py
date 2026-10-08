@@ -452,7 +452,7 @@ def test_vllm_tool_stream_repetition_with_abort_off_yields_one_status(
 def test_vllm_plain_stream_never_yields_the_status_kind(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """chat_streaming renders unknown kinds as visible text; stream() must not."""
+    """A plain-text consumer renders unknown kinds as visible text; stream() must not."""
     monkeypatch.setenv("JENNY_ENABLE_THINKING_BUDGET_ABORT", "0")
     engine, _response = _patch_vllm_stream(monkeypatch, _repetition_only_lines())
 

@@ -134,8 +134,8 @@
   // 0). Left in place, a discarded assistant_text row at group index 0 matches
   // the canonical post-reset row in reconcile's first pass — the canonical text
   // merges into the truncated row and the live post-reset row survives as a
-  // stale duplicate (the double paint). The row itself stays visible with its
-  // payload.truncated "restarted" marker; only its identity changes.
+  // stale duplicate (the double paint). The row stays in the live turn (painted
+  // as the reset's "Draft discarded" fold or hidden); only its identity changes.
   //
   // `ordinal` (1-based, per turn) makes each tombstone distinct: the group index
   // becomes -ordinal — a value the projector never mints, so it can never match
@@ -226,6 +226,60 @@
   //   * restate next_assistant_segment_index as the number of SURVIVING
   //     assistant_text rows — the same number the hydrated projector will count
   //     when it renumbers the persisted segments from 0.
+  //
+  // A LIVE reset that erased visible text also folds it: the LAST in-scope row
+  // is the anchor (payload.discard_anchor + the capped erased text and reason),
+  // every other row of this reset is payload.discard_hidden, so the renderer
+  // paints one "Draft discarded" fold per reset. Replayed resets stamp nothing.
+  // Under scope 'all' across a tool boundary the fold lands at the last erased
+  // row, after the tool card the erased commentary introduced (accepted).
+  const DISCARD_TEXT_CAP = 4000;
+
+  function capDiscardText(text) {
+    if (text.length <= DISCARD_TEXT_CAP) return { text, trimmed: false };
+    // Never split a surrogate pair at the cut.
+    const lastCode = text.charCodeAt(DISCARD_TEXT_CAP - 1);
+    const end = lastCode >= 0xD800 && lastCode <= 0xDBFF ? DISCARD_TEXT_CAP - 1 : DISCARD_TEXT_CAP;
+    return { text: text.slice(0, end), trimmed: true };
+  }
+
+  function readDiscardedRowText(row) {
+    const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
+    if (normalizeId(row.kind) === 'assistant_text') {
+      return typeof payload.text === 'string' ? payload.text : '';
+    }
+    const entries = Array.isArray(payload.entries) ? payload.entries : [];
+    return entries
+      .map((entry) => (entry && typeof entry === 'object'
+        ? String(entry.text != null ? entry.text : (entry.content != null ? entry.content : ''))
+        : String(entry == null ? '' : entry)))
+      .filter((text) => text.trim())
+      .join('\n\n');
+  }
+
+  function stampDiscardFold(scopedRows, reason) {
+    const textParts = [];
+    const reasoningParts = [];
+    scopedRows.forEach((row) => {
+      const text = readDiscardedRowText(row);
+      if (!text.trim()) return;
+      (normalizeId(row.kind) === 'assistant_text' ? textParts : reasoningParts).push(text);
+    });
+    if (!textParts.length && !reasoningParts.length) return '';
+    const text = capDiscardText(textParts.join('\n\n'));
+    const reasoning = capDiscardText(reasoningParts.join('\n\n'));
+    const anchor = scopedRows[scopedRows.length - 1];
+    scopedRows.forEach((row) => {
+      if (row !== anchor) row.payload.discard_hidden = true;
+    });
+    anchor.payload.discard_anchor = true;
+    anchor.payload.discard_reason = reason || 'unknown';
+    anchor.payload.discard_text = text.text;
+    anchor.payload.discard_reasoning_text = reasoning.text;
+    if (text.trimmed || reasoning.trimmed) anchor.payload.discard_text_trimmed = true;
+    return anchor.row_id;
+  }
+
   function applyStreamResetToTurnRows(turn, options) {
     const settings = options && typeof options === 'object' ? options : {};
     const scope = STREAM_RESET_DISCARD_SCOPES.has(normalizeId(settings.scope))
@@ -233,6 +287,7 @@
       : 'all';
     const activeAssistantMessageId = normalizeId(settings.activeAssistantMessageId);
     const deterministicRowId = settings.deterministicRowId === true;
+    const scopedRows = [];
     const rows = turn && Array.isArray(turn.rows) ? turn.rows : [];
     const assistantRowIndexes = (turn && turn.assistant_row_index_by_message_id) || null;
     const reasoningRowIndexes = (turn && turn.reasoning_row_index_by_phase_id) || null;
@@ -264,6 +319,7 @@
         counts: turn.deterministic_row_id_counts_by_base,
       });
       discardedRowCount += 1;
+      if (row.payload && typeof row.payload === 'object') scopedRows.push(row);
       // Drop the lookups so a post-reset delta cannot append into a truncated
       // row (main may reuse the pre-reset message id, or a resumed phase_id).
       if (assistantRowIndexes && assistantRowIndexes[row.primary_message_id] === index) {
@@ -279,7 +335,10 @@
     if (turn) {
       turn.next_assistant_segment_index = survivingTextRowCount;
     }
-    return { scope, discardedRowCount, survivingTextRowCount };
+    const anchorRowId = settings.live === true
+      ? stampDiscardFold(scopedRows, normalizeId(settings.reason))
+      : '';
+    return { scope, discardedRowCount, survivingTextRowCount, ...(anchorRowId ? { anchorRowId } : {}) };
   }
 
   function buildRowIdentityKey(row, options) {

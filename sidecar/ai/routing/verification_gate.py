@@ -1,9 +1,10 @@
 """Turn-finalization verification gate for the tool loop.
 
 Default-off (flag ``verification_gate``): when a run has mutated the workspace
-with typed file tools or an adapter-confirmed shell edit and is about to finish, run whichever Test
-Runner configuration the user designated as the gate, and hand a failing verdict
-back so the model can fix it instead of claiming success.
+with typed file tools or an evidence-confirmed scripted edit and is about to
+finish, run whichever Test Runner configuration the user designated as the gate,
+and hand a failing verdict back so the model can fix it instead of claiming
+success.
 
 **The gate can never prevent a turn from completing.** Every failure mode --
 no bridge, no designated gate, the user's own run holding the single-run lock, a
@@ -19,8 +20,9 @@ gate grants itself at most ``GATE_MAX_RETRIES`` extra iterations via
 left one spare. Exhausting that cap is not a terminal state -- the turn proceeds
 to a normal final response that honestly reports the gate did not pass.
 
-Naming note: the gate deliberately reuses ``auto_checkpoint``'s mutation
-vocabulary rather than inventing a second mutation tracker.
+Naming note: the gate deliberately reuses the undo set's mutation vocabulary
+(``TYPED_MUTATION_TOOLS`` / ``SCRIPTED_MUTATION_TOOLS``) rather than inventing a
+second mutation tracker.
 """
 
 from __future__ import annotations
@@ -31,9 +33,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from sidecar.ai.host_policy import host_policy_is_enforced
-from sidecar.ai.routing.auto_checkpoint import REPO_MUTATING_TOOL_NAMES
 from sidecar.ai.routing.iteration_limits import (
     effective_tools_execution_timeout_seconds,
+)
+from sidecar.ai.routing.mutation_change_set_lifecycle import (
+    SCRIPTED_MUTATION_TOOLS,
+    TYPED_MUTATION_TOOLS,
 )
 from sidecar.ai.tools.distill import FILTER_SNIFF_CHARS, select_filter
 from sidecar.ai.tools.distill.filters.base import omission_placeholder
@@ -53,10 +58,10 @@ GATE_TOOL_NAME = "verify"
 # one-line change, but every increment is an increment of worst-case turn latency.
 GATE_MAX_RETRIES = 1
 
-# Deliberately NARROWER than REPO_MUTATING_TOOL_NAMES: ``run_command`` is
-# excluded from name-only matching because ``git status`` is not a mutation.
-# Shell adapters can separately supply explicit ``workspace_changed`` evidence.
-GATE_TRIGGER_TOOL_NAMES = frozenset(REPO_MUTATING_TOOL_NAMES - {"run_command"})
+# Name-only triggers: a successful typed file tool is a mutation. Scripted tools
+# (``SCRIPTED_MUTATION_TOOLS``) are never matched by name -- ``git status`` is not
+# a mutation -- and count only on explicit ``workspace_changed`` evidence.
+GATE_TRIGGER_TOOL_NAMES = TYPED_MUTATION_TOOLS
 
 # Verdict statuses the gate tool can report back.
 _STATUS_PASSED = "passed"
@@ -89,18 +94,18 @@ NO_GATE_ACTION = GateDecision()
 
 
 def workspace_was_mutated(outcomes: Iterable[Any]) -> bool:
-    """True after a successful typed mutation or an adapter-confirmed shell edit."""
+    """True after a successful typed mutation or an evidence-confirmed scripted edit."""
     return any(_outcome_mutated(outcome) for outcome in outcomes)
 
 
 def _outcome_mutated(outcome: Any) -> bool:
     name = str(getattr(outcome, "tool_name", "") or "")
     metadata = getattr(outcome, "metadata", None)
-    # A command can modify files before returning a failing exit code. Only
-    # explicit environment evidence activates shell verification; merely running
-    # a read-only shell command does not launch a test suite.
-    if name == "run_command" and isinstance(metadata, dict):
-        return metadata.get("workspace_changed") is True
+    # A command or script can modify files before failing. Only explicit
+    # environment evidence activates verification; merely running a read-only
+    # command or script does not launch a test suite.
+    if name in SCRIPTED_MUTATION_TOOLS:
+        return isinstance(metadata, dict) and metadata.get("workspace_changed") is True
     return bool(getattr(outcome, "success", False) and name in GATE_TRIGGER_TOOL_NAMES)
 
 

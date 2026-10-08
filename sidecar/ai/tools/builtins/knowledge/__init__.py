@@ -1,9 +1,9 @@
-"""Deterministic, vector-free knowledge tools over user-registered folders.
+"""Read-only knowledge tools over user-registered folders.
 
-Three read-only tools behind ``tools_knowledge_enabled`` (default-off):
-``knowledge_search`` (grep-worker reuse), ``knowledge_view`` (rich-file
-adapter reuse), ``knowledge_exec`` (bounded ls/tree/find). No
-index, no embeddings — respects the ``no_vector_db`` decision.
+Three tools behind ``tools_knowledge_enabled``: ``knowledge_search`` (grep-worker
+reuse, plus optional search by meaning over the read-only semantic catalog,
+row 41), ``knowledge_view`` (rich-file adapter reuse), ``knowledge_exec``
+(bounded ls/tree/find). Without a catalog everything is live filesystem reads.
 """
 
 from sidecar.ai.tools.builtins.knowledge.exec_ops import knowledge_exec_tool

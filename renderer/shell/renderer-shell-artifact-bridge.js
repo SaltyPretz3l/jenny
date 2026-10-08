@@ -53,14 +53,7 @@
       getArtifactsDom = noopArr,
     } = lazyDom;
     const {
-      escapeHtml = function fallbackEscapeHtml(value) {
-        return String(value || '')
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#39;');
-      },
+      escapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml,
       getActiveSession = noopNull,
       getSessionMonogram = noop,
       setActiveView = noop,
@@ -105,6 +98,9 @@
     let filePreviewBound = false;
     let taskRailController = null;
     let subagentRailController = null;
+    // Project Notes (renderer-project-notes-entry.js is always loaded; the rail loads lazily).
+    let projectNotesRailController = null;
+    let projectNotesEntry = null;
     // Artifact Panel V2: per-entry validation for the per-session width map —
     // non-empty string key, finite positive number, clamped to the static
     // 320..560 range; malformed entries dropped; oversized maps trimmed to the
@@ -464,6 +460,7 @@
             renderFilePreviewSurface: (surface) => filePreviewController?.renderRailContent?.(surface),
             renderTasksSurface: (surface) => taskRailController?.renderRailContent?.(surface),
             renderSubagentsSurface: (surface) => subagentRailController?.renderSubagentsSurface?.(surface) === true,
+            renderNotesSurface: (surface) => ensureProjectNotesRail()?.renderRailContent?.(surface) === true,
             resetFilePreview: () => filePreviewController?.reset?.(),
             panelV2: panelV2Controller,
             sidePanel,
@@ -478,6 +475,7 @@
         ensureCodeReviewRail();
         ensureFilePreviewController();
         ensureTaskRailController();
+        ensureProjectNotesEntry();
         ensureSubagentRail();
         if (panelV2Controller) {
           panelV2Controller.bind();
@@ -511,47 +509,65 @@
       return artifactSurfaceController;
     }
 
+    // One Changes undo controller for both hosts (row 34 S5): the IDE chat
+    // dock and the side panel. Created once its lazily loaded script is ready.
+    let changesUndoController = null;
+    function getChangesUndoController() {
+      const factory = globalRef.rendererChangesUndo?.createChangesUndo;
+      if (changesUndoController || typeof factory !== 'function') return changesUndoController;
+      const renderDiffHunks = codeReviewRailDeps.renderDiffHunks;
+      changesUndoController = factory({
+        getSessionId: () => String(state.currentSessionId || ''),
+        showToast: (...args) => showToastMessage(...args),
+        requestRender: () => renderAll(),
+        renderDiffBody: typeof renderDiffHunks === 'function'
+          ? (change) => renderDiffHunks(change.hunks, escapeHtml, { path: change.path })
+          : null,
+        escapeHtml,
+        appendClientLog: (...args) => appendClientLog(...args),
+      });
+      registerCleanup(() => changesUndoController?.dispose?.());
+      return changesUndoController;
+    }
+
     function ensureCodeReviewRail() {
       if (codeReviewRailController || !artifactSurfaceController) {
         return codeReviewRailController;
       }
-      const renderFactory = codeReviewRailDeps.codeReviewRenderFactory;
       const railFactory = codeReviewRailDeps.codeReviewRailFactory;
       const buildLedger = codeReviewRailDeps.buildJennyChangeLedgerFromTurnViewModels;
-      const buildSessionModel = codeReviewRailDeps.buildSessionDiffReviewModel;
-      const resolveScope = codeReviewRailDeps.resolveReviewScope;
-      if (
-        typeof renderFactory !== 'function'
-        || typeof railFactory !== 'function'
-        || typeof buildSessionModel !== 'function'
-        || typeof resolveScope !== 'function'
-      ) {
+      const renderDiffHunks = codeReviewRailDeps.renderDiffHunks;
+      if (typeof railFactory !== 'function') {
         return null;
       }
+      // In split view the review belongs to the chat that owns the side panel.
+      const getSessionId = () => String(sidePanel.getSessionId() || '');
       try {
-        const codeReviewRenderer = renderFactory({
-          escapeHtml,
-          renderDiffHunks: codeReviewRailDeps.renderDiffHunks,
-        });
         codeReviewRailController = railFactory({
           state,
           // Same undefined-eager-dep root cause as ensurePanelV2: pass the
           // getElementById-resolved container so the rail's bind() attaches its
-          // click/keydown listeners instead of early-returning on a null dep.
+          // keydown listener instead of early-returning on a null dep.
           dom: { artifactReviewPanel: resolveArtifactReviewPanelEl() },
-          codeReviewRenderer,
+          loadChangesView: codeReviewRailDeps.loadChangesView,
           buildJennyChangeLedgerFromTurnViewModels: typeof buildLedger === 'function' ? buildLedger : null,
-          buildSessionDiffReviewModel: buildSessionModel,
-          resolveReviewScope: resolveScope,
-          getTurnViewModelsForActiveSession: codeReviewRailDeps.getTurnViewModelsForActiveSession || noopArr,
-          getActiveSessionId: () => String((typeof getActiveSession === 'function' ? getActiveSession()?.id : '') || ''),
+          renderDiffBody: typeof renderDiffHunks === 'function'
+            ? (change) => (change && Array.isArray(change.hunks) && change.hunks.length
+              ? renderDiffHunks(change.hunks, escapeHtml, { path: change.path })
+              : '')
+            : null,
+          getTurnViewModelsForActiveSession: () => codeReviewRailDeps.getTurnViewModelsForActiveSession?.(getSessionId()) || [],
+          getActiveSessionId: getSessionId,
           getWorkspaceId: codeReviewRailDeps.getWorkspaceId || (() => 'default'),
+          getSessionMessages: () => codeReviewRailDeps.getSessionMessages?.(getSessionId()) || [],
+          openInWorkspace: codeReviewRailDeps.openChangeInWorkspace || null,
+          getUndoController: getChangesUndoController,
           setArtifactRailMode: (mode) => artifactSurfaceController?.setArtifactRailMode?.(mode),
           renderArtifactReviewPanel: () => artifactSurfaceController?.renderArtifactReviewPanel?.(),
           syncArtifactReviewLayout: () => artifactSurfaceController?.syncArtifactReviewLayout?.(),
-          jumpToArtifactSource: (...args) => artifactSurfaceController?.jumpToArtifactSource?.(...args),
           appendClientLog: (...args) => appendClientLog(...args),
           showComposerActionError: codeReviewRailDeps.showComposerActionError || noop,
+          escapeHtml,
         });
         if (codeReviewRailController && !codeReviewRailBound) {
           codeReviewRailController.bind?.();
@@ -643,6 +659,8 @@
           renderArtifactReviewPanel: () => ensureArtifactSurface()?.renderArtifactReviewPanel?.(),
           toggleArtifactReview: () => ensureArtifactSurface()?.toggleArtifactReview?.(),
           activateWorkspaceSession: (sessionId) => callbacks.activateWorkspaceSession?.(sessionId),
+          // The rail's project scope menu reuses the shared (lazy) project switcher.
+          getProjectSwitcher: () => callbacks.getProjectSwitcher?.(),
           setActiveView: (...args) => setActiveView(...args),
           // The composer's own input listener resizes the textarea.
           syncComposerInputHeight: () => chatInput?.dispatchEvent?.(new windowRef.Event('input', { bubbles: true })),
@@ -692,6 +710,78 @@
       return subagentRailController;
     }
 
+    // The always-loaded Notes entry (toggle, chat rows). Built once the module is
+    // present; an absent module stays null and the next ensure retries.
+    function ensureProjectNotesEntry() {
+      if (projectNotesEntry) return projectNotesEntry;
+      if (typeof windowRef?.rendererProjectNotesEntry?.createProjectNotesEntry !== 'function') return null;
+      try {
+        const documentRef = windowRef?.document;
+        projectNotesEntry = windowRef.rendererProjectNotesEntry.createProjectNotesEntry({
+          state,
+          windowRef,
+          escapeHtml,
+          dom: {
+            utilityCluster: documentRef?.getElementById?.('chatTimelineUtilityCluster') || null,
+            artifactReviewPanel: resolveArtifactReviewPanelEl(),
+          },
+          appendClientLog: (...args) => appendClientLog(...args),
+          showToastMessage: (...args) => showToastMessage(...args),
+          // The rail loads lazily: asking for the host builds it once its modules are present.
+          getHost: () => { ensureProjectNotesRail(); return windowRef.rendererProjectNotesHost || null; },
+        }) || null;
+        projectNotesEntry?.bind?.();
+        const built = projectNotesEntry;
+        registerCleanup(() => built?.dispose?.());
+      } catch (error) {
+        projectNotesEntry = null;
+        appendClientLog('ERROR', 'project_notes.entry_init_failed', { message: error?.message || String(error) });
+        return null;
+      }
+      return projectNotesEntry;
+    }
+
+    // The Project Notes rail (renderer-project-notes-rail.js): resolved at CALL
+    // time because the modules load on first open. Publishes the host the entry drives.
+    function ensureProjectNotesRail() {
+      if (projectNotesRailController) return projectNotesRailController;
+      if (typeof windowRef?.rendererProjectNotesRail?.createProjectNotesRail !== 'function') return null;
+      try {
+        const controller = windowRef.rendererProjectNotesRail.createProjectNotesRail({
+          state,
+          windowRef,
+          dom: { artifactReviewPanel: resolveArtifactReviewPanelEl() },
+          escapeHtml,
+          openArtifactRail: (mode) => ensureArtifactSurface()?.openArtifactRail?.(mode),
+          renderArtifactReviewPanel: () => ensureArtifactSurface()?.renderArtifactReviewPanel?.(),
+          toggleArtifactReview: () => ensureArtifactSurface()?.toggleArtifactReview?.(),
+          getProjectSwitcher: () => callbacks.getProjectSwitcher?.(),
+          getEntry: () => projectNotesEntry,
+          appendClientLog: (...args) => appendClientLog(...args),
+          showToastMessage: (...args) => showToastMessage(...args),
+        });
+        controller.bind?.();
+        const host = {
+          open: () => controller.open() === true,
+          toggle: () => { controller.toggle(); return true; },
+          isOpen: () => controller.isOpen() === true,
+          refresh: () => controller.refresh(),
+          markSeen: (...args) => projectNotesEntry?.markSeen?.(...args),
+        };
+        windowRef.rendererProjectNotesHost = host;
+        registerCleanup(() => {
+          controller.dispose?.();
+          if (windowRef.rendererProjectNotesHost === host) delete windowRef.rendererProjectNotesHost;
+        });
+        projectNotesRailController = controller;
+      } catch (error) {
+        projectNotesRailController = null;
+        appendClientLog('ERROR', 'project_notes.rail_init_failed', { message: error?.message || String(error) });
+        return null;
+      }
+      return projectNotesRailController;
+    }
+
     async function openFilePreviewTarget(payload) {
       ensureArtifactSurface();
       const controller = ensureFilePreviewController();
@@ -702,6 +792,7 @@
     }
 
     function openCodeReviewTarget(payload) {
+      if (codeReviewRailDeps.revealInDock?.(payload) === true) return true;
       sidePanel.claim();
       ensureArtifactSurface();
       const rail = ensureCodeReviewRail();
@@ -750,6 +841,7 @@
 
     function renderArtifactReviewPanelSafe() {
       ensureTaskRailController();
+      ensureProjectNotesEntry()?.checkSession?.(); // a chat switch re-aims the Notes accent dot
       ensureSubagentRail();
       if (!artifactSurfaceController) {
         if (!isArtifactReviewVisible() && !shouldConsiderArtifactAutoOpen()) {
@@ -826,6 +918,7 @@
       selectArtifact,
       sidePanel,
       collapseSidePanel,
+      getChangesUndoController,
     };
   }
 

@@ -49,7 +49,7 @@ function createAdapterHarness(t, { registerTeardown = true } = {}) {
     activeStreams: new Map(),
     configService: { getState: () => ({}) },
     currentEngineType: 'mock',
-    featureFlags: { vision_unified_turn: true },
+    featureFlags: {},
     projectAuthority,
     sessionExecutionAuthority,
     sessionStore,

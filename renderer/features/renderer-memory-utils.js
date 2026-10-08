@@ -41,14 +41,7 @@
     const { TOAST_SOURCE = {} } = deps?.constants || {};
     const callbacks = deps?.callbacks || {};
     const {
-      escapeHtml = function fallbackEscapeHtml(value) {
-        return String(value || '')
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#39;');
-      },
+      escapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml,
       appendClientLog = noop,
       showToastMessage = noop,
       showShellErrorToast = noop,

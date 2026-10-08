@@ -47,6 +47,11 @@ function streamEventDto(event) {
   for (const key of ['content', 'aggregate', 'text', 'summary', 'status', 'reason']) {
     if (typeof event[key] === 'string') dto[key] = event[key].slice(0, LIVE_CHAR_LIMIT);
   }
+  if (event.type === 'stream_reset') {
+    if (['all', 'live_slice', 'none'].includes(event.discard_scope)) dto.discard_scope = event.discard_scope;
+    if (typeof event.preserve_prior_segments === 'boolean') dto.preserve_prior_segments = event.preserve_prior_segments;
+    if (validId(event.next_assistant_message_id)) dto.next_assistant_message_id = event.next_assistant_message_id;
+  }
   if (Array.isArray(event.reasoning?.entriesDelta)) {
     dto.reasoning = event.reasoning.entriesDelta.slice(-128).map(wireReasoning).filter(Boolean);
   }

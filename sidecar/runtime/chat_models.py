@@ -48,6 +48,11 @@ class ChatRequestContext:
     session_start_date: str | None = None
     current_date: str | None = None
     plan_mode: bool = False
+    # Plan Plus Propose mode: read-only, and propose_change records suggestions
+    # Electron owns. ``suggested_changes_context`` carries the session's live
+    # suggestions ({id, path, kind, old_string}) for the overlap rule.
+    propose_mode: bool = False
+    suggested_changes_context: tuple[dict[str, str], ...] = ()
     # Request-local safety boundary. Plan Mode is the user-facing preference;
     # sub-agents are also read-only without pretending to be in Plan Mode.
     read_only: bool = False

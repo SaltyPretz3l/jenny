@@ -8,6 +8,9 @@
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const { createTrustedSenderAuthorizer, unauthorizedIpcResult } = require('../services/main/ipc-sender-authorization');
 
 const { installDefaultSessionWiring } = require('../services/main/default-session-wiring');
 
@@ -48,4 +51,43 @@ test('installs guard, display-media handler, and artifact protocol on the given 
   assert.equal(typeof displayMediaSourceHandler.resolvePick, 'function');
   assert.equal(typeof displayMediaSourceHandler.dispose, 'function');
   displayMediaSourceHandler.dispose();
+});
+
+test('session wiring forwards authorization to artifact staging before storage', (t) => {
+  const protocolModule = require('../services/artifact-frame-protocol');
+  const instance = protocolModule.createArtifactFrameProtocol();
+  t.after(() => instance.dispose());
+  t.mock.method(protocolModule, 'createArtifactFrameProtocol', () => instance);
+  const wiringPath = require.resolve('../services/main/default-session-wiring');
+  const cachedWiring = require.cache[wiringPath];
+  delete require.cache[wiringPath];
+  t.after(() => { require.cache[wiringPath] = cachedWiring; });
+  const wiring = require('../services/main/default-session-wiring');
+  const handlers = new Map();
+  const url = pathToFileURL(path.resolve(__dirname, '..', 'index.html')).href;
+  const mainFrame = { url };
+  const webContents = { id: 7, mainFrame, getURL: () => url };
+  const mainWindow = { webContents };
+  const { displayMediaSourceHandler } = wiring.installDefaultSessionWiring({
+    session: makeFakeSession(),
+    desktopCapturer: { getSources: async () => [] },
+    ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+    sendBridgeEvent: () => {},
+    log: () => {},
+    authorization: {
+      authorize: createTrustedSenderAuthorizer({ getMainWindow: () => mainWindow }),
+      unauthorizedResult: unauthorizedIpcResult,
+    },
+  });
+  t.after(() => displayMediaSourceHandler.dispose());
+  const handler = handlers.get('artifact-frame:stage');
+  for (const event of [
+    { sender: { id: 8 }, senderFrame: { url } },
+    { sender: webContents, senderFrame: { url } },
+  ]) {
+    assert.deepEqual(handler(event, '<p>blocked</p>'), unauthorizedIpcResult());
+  }
+  assert.equal(instance.entryCount(), 0);
+  assert.equal(handler({ sender: webContents, senderFrame: mainFrame }, '<p>allowed</p>').ok, true);
+  assert.equal(instance.entryCount(), 1);
 });

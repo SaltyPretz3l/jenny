@@ -18,6 +18,7 @@ const previewTestTool = require('./builtin/preview-test-tool');
 const verifyTool = require('./builtin/verify-tool');
 const homeTool = require('./builtin/home-tool');
 const taskBoardTool = require('./builtin/task-board-tool');
+const projectNotesTool = require('./builtin/project-notes-tool');
 const exitPlanModeTool = require('./builtin/exit-plan-mode-tool');
 const askUserTool = require('./builtin/ask-user-tool');
 
@@ -42,6 +43,7 @@ function withManifestSchema(toolDefinition) {
     sourceKind: typeof manifestEntry.source_kind === 'string' ? manifestEntry.source_kind : '',
     workspaceRequired: manifestEntry.availability?.workspace_required !== false,
     planModeOnly: manifestEntry.availability?.plan_mode_only === true,
+    proposeModeOnly: manifestEntry.availability?.propose_mode_only === true,
     actions: manifestEntry.actions ? cloneJson(manifestEntry.actions) : undefined,
   };
 }
@@ -79,6 +81,9 @@ function createDefaultRegistry(options = {}) {
   }
   if (options.toolsTaskBoardEnabled === true) {
     registry.registerTool(withManifestSchema(taskBoardTool));
+  }
+  if (options.toolsProjectNotesEnabled === true) {
+    registry.registerTool(withManifestSchema(projectNotesTool));
   }
   return registry;
 }

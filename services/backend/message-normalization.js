@@ -12,6 +12,7 @@ const {
 } = require('../artifact-metadata-utils');
 const { normalizeString, normalizeId } = require('../shared/normalize');
 const { normalizePluginOperationMetadata } = require('./session-type');
+const { normalizeDiscardedDrafts } = require('./chat-stream-discarded-drafts');
 const { normalizeSubagentMetadata } = require('./subagent-report-metadata');
 
 const VALID_MESSAGE_ROLES = new Set(['user', 'assistant', 'system', 'tool']);
@@ -329,6 +330,25 @@ function normalizeToolCallMetadata(value) {
   };
 }
 
+function normalizeTrustedAttachmentRefs(value) {
+  if (!Array.isArray(value)) return [];
+  const refs = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const ref = Object.fromEntries(
+      ['id', 'source_id', 'kind', 'mime_type', 'asset_path']
+        .map((key) => [key, typeof entry[key] === 'string' ? normalizeString(entry[key]) : ''])
+    );
+    if (Object.values(ref).some((field) => !field) || !['image', 'pdf_page', 'chart'].includes(ref.kind)) continue;
+    const numberKeys = ['byte_length', 'width', 'height', ...(entry.page_number !== undefined ? ['page_number'] : [])];
+    if (numberKeys.some((key) => !Number.isFinite(entry[key]) || entry[key] < 0)) continue;
+    for (const key of numberKeys) ref[key] = entry[key];
+    refs.push(ref);
+    if (refs.length >= 32) break;
+  }
+  return refs;
+}
+
 function normalizeToolResultMetadata(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
@@ -344,6 +364,7 @@ function normalizeToolResultMetadata(value) {
       ? { ...value.metadata }
       : {};
   const subagentMetadata = normalizeSubagentMetadata(metadata);
+  const trustedAttachmentRefs = normalizeTrustedAttachmentRefs(value.trusted_attachment_refs);
   delete metadata.subagent_report;
   delete metadata.subagent_batch_report;
   if (subagentMetadata) Object.assign(metadata, subagentMetadata);
@@ -362,6 +383,7 @@ function normalizeToolResultMetadata(value) {
     duration_ms: Math.max(0, Number(value.duration_ms) || 0),
     parent_stream_id: normalizeId(value.parent_stream_id),
     generated_artifacts: normalizeGeneratedArtifactMetadataList(value.generated_artifacts),
+    ...(trustedAttachmentRefs.length ? { trusted_attachment_refs: trustedAttachmentRefs } : {}),
     metadata,
     ...(Object.keys(externalPayloads).length ? { external_payloads: externalPayloads } : {}),
   };
@@ -728,8 +750,10 @@ function normalizeMessageFields(input, fallbackModel = '') {
     messageReactions: _legacyMessageReactions,
     context_compactions: _contextCompactions,
     context_compacted: _contextCompacted,
+    discarded_drafts: _discardedDrafts,
     ...sourceFields
   } = input;
+  const discardedDrafts = normalizeDiscardedDrafts(input.discarded_drafts);
   const toolCall = normalizeToolCallMetadata(input.tool_call);
   const toolResult = normalizeToolResultMetadata(input.tool_result);
   const proactiveSuggestion = normalizeProactiveSuggestionMetadata(input.proactive_suggestion);
@@ -770,6 +794,7 @@ function normalizeMessageFields(input, fallbackModel = '') {
     ...(hasContextCompacted
       ? { context_compacted: normalizeContextCompaction(input.context_compacted) }
       : {}),
+    ...(discardedDrafts ? { discarded_drafts: discardedDrafts } : {}),
     reasoning: normalizeReasoningPayload(input.reasoning, phases),
     attachments: normalizeAttachmentMetadataList(input.attachments),
     interactive_batch: normalizePendingQuestionBatch(input.interactive_batch),

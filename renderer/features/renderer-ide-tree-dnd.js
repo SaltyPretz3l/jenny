@@ -44,12 +44,11 @@
   function createIdeTreeDnd(deps) {
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const getMountEl = typeof deps?.getMountEl === 'function'
-      ? deps.getMountEl : () => getDom().ideRailPanel || null;
+      ? deps.getMountEl : () => null;
     const isActivePanel = typeof deps?.isActivePanel === 'function'
       ? deps.isActivePanel : () => true;
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
     const getRootEpoch = typeof deps?.getRootEpoch === 'function' ? deps.getRootEpoch : () => 0;
-    const isQolEnabled = typeof deps?.isQolEnabled === 'function' ? deps.isQolEnabled : () => false;
     const moveEntry = typeof deps?.moveEntry === 'function' ? deps.moveEntry : async () => {};
     const getApi = typeof deps?.getApi === 'function' ? deps.getApi : () => null;
     const getMutationContext = typeof deps?.getMutationContext === 'function'
@@ -68,7 +67,6 @@
     const selection = deps?.selection || {};
     const parentDirOf = typeof deps?.parentDirOf === 'function' ? deps.parentDirOf : () => '';
     const nameOf = typeof deps?.nameOf === 'function' ? deps.nameOf : (path) => String(path || '');
-    const legacyOnly = deps?.legacyOnly === true;
     let boundHosts = [];
     let draggedPaths = [];
     let draggedKinds = new Map();
@@ -209,14 +207,10 @@
 
     function handleDragStart(event) {
       if (!eventBelongs(event)) return;
-      const qolEnabled = isQolEnabled();
-      if ((legacyOnly && qolEnabled) || (!legacyOnly && !qolEnabled)) return;
       const row = event.target?.closest?.('[data-ide-tree-path]');
       const transfer = event.dataTransfer;
-      if (!row || !transfer || (!qolEnabled && row.dataset.ideTreeKind === 'directory')) return;
-      const resolved = qolEnabled
-        ? resolveDragRows(event.currentTarget, row)
-        : { paths: [row.dataset.ideTreePath], kinds: new Map(), multiPayload: false };
+      if (!row || !transfer) return;
+      const resolved = resolveDragRows(event.currentTarget, row);
       if (!resolved.paths.length) return;
       draggedPaths = resolved.paths;
       draggedKinds = resolved.kinds;
@@ -227,7 +221,7 @@
         transfer.setData(TREE_DRAG_MIME, draggedPaths[0]);
         transfer.setData('text/plain', draggedPaths[0]);
       }
-      transfer.effectAllowed = qolEnabled ? 'copyMove' : 'copy';
+      transfer.effectAllowed = 'copyMove';
       for (const path of draggedPaths) findRow(event.currentTarget, path)?.classList.add('ide-tree-row--dragging');
       createGhost(event.currentTarget, draggedPaths.length, transfer);
     }
@@ -281,7 +275,7 @@
     }
 
     function handleDragOver(event) {
-      if (!eventBelongs(event) || !isQolEnabled()) return;
+      if (!eventBelongs(event)) return;
       if (!hasType(event.dataTransfer, TREE_DRAG_MIME)
         && !hasType(event.dataTransfer, TREE_DRAG_PATHS_MIME)) return;
       const paths = draggedPaths.length ? draggedPaths : filterAncestorPaths(readPaths(event.dataTransfer));
@@ -340,7 +334,7 @@
     }
 
     async function handleDrop(event) {
-      if (!eventBelongs(event) || !isQolEnabled()) return;
+      if (!eventBelongs(event)) return;
       const paths = filterAncestorPaths(readPaths(event.dataTransfer));
       const target = targetForEvent(event);
       const copying = event.ctrlKey === true;
@@ -415,16 +409,12 @@
 
     function bindEvents() {
       if (boundHosts.length) return;
-      const qolEnabled = isQolEnabled();
-      if ((legacyOnly && qolEnabled) || (!legacyOnly && !qolEnabled)) return;
       disposed = false;
-      const dom = getDom();
-      boundHosts = [dom.ideRailPanel, dom.ideSecondarySidebarPanel].filter(Boolean);
-      if (!boundHosts.length && getMountEl()) boundHosts = [getMountEl()];
+      // The Files view's own persistent host (row 40 W3).
+      boundHosts = [getMountEl()].filter(Boolean);
       for (const host of boundHosts) {
         host.addEventListener('dragstart', handleDragStart);
         host.addEventListener('dragend', handleDragEnd);
-        if (legacyOnly) continue;
         host.addEventListener('dragenter', handleDragOver);
         host.addEventListener('dragover', handleDragOver);
         host.addEventListener('dragleave', handleDragLeave);

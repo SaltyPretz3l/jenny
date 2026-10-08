@@ -31,7 +31,6 @@
     action: '<path d="M9 2 4 9h3.5L7 14l5-7H8.5z"/>',
     code: '<path d="M6 5 3 8l3 3"/><path d="m10 5 3 3-3 3"/>',
     gear: '<circle cx="8" cy="8" r="2.2"/><path d="M8 3v1.6M8 11.4V13M3 8h1.6M11.4 8H13M4.5 4.5l1.1 1.1M10.4 10.4l1.1 1.1M11.5 4.5l-1.1 1.1M5.6 10.4l-1.1 1.1"/>',
-    plug: '<path d="M6 2v3M10 2v3"/><path d="M4.5 5h7v2.5a3.5 3.5 0 0 1-7 0z"/><path d="M8 11v3"/>',
     undo: '<path d="M3 7h6.5a3 3 0 0 1 0 6H6"/><path d="m5.5 4.5-2.5 2.5 2.5 2.5"/>',
     slash: '<path d="m4 5 3 3-3 3"/><path d="M8.5 11H12"/>',
     help: '<circle cx="8" cy="8" r="5.5"/><path d="M6.5 6.3a1.6 1.6 0 1 1 1.9 1.7v1"/><path d="M8.3 11.3h.01"/>',

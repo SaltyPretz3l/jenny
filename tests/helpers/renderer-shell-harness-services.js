@@ -702,6 +702,13 @@ function createShellStubServices(context) {
         }
         return state.offlineState;
       },
+      // The Model library reads hardware diagnostics on every boot.
+      async getDiagnostics() {
+        if (typeof options.offline?.getDiagnostics === 'function') {
+          return options.offline.getDiagnostics({ state });
+        }
+        return {};
+      },
       async updateSettings(patch) {
         state.offlineUpdateCalls.push(patch);
         if (typeof options.offline?.updateSettings === 'function') {
@@ -949,6 +956,12 @@ function createShellStubServices(context) {
           reason: '',
           data: [{ id: 'gpt-test', name: 'GPT Test', loaded: true }],
         };
+      },
+      async listOllamaTags() {
+        if (typeof modelOptions.listOllamaTags === 'function') {
+          return modelOptions.listOllamaTags({ state });
+        }
+        return { object: 'list', available: true, reason: '', data: [] };
       },
       async load(model) {
         if (typeof modelOptions.load === 'function') {

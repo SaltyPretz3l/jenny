@@ -55,12 +55,6 @@
     return String(value == null ? '' : value).trim();
   }
 
-  function readFeatureFlags(state) {
-    return (state && state.features && state.features.featureFlags)
-      || (state && state.featureFlags)
-      || {};
-  }
-
   function readLiveState(state, sessionId) {
     const store = state && state.ui && state.ui.chatTimelineLiveStateBySession;
     if (store instanceof Map) {
@@ -95,7 +89,7 @@
     if (!activeTurn) {
       return idle;
     }
-    const parts = phaseUtils.collectModelParts(activeTurn, readFeatureFlags(state));
+    const parts = phaseUtils.collectModelParts(activeTurn);
     const terminal = phaseUtils.buildTerminal(activeTurn, parts.rows);
     return {
       phase: trimString(phaseUtils.resolvePhaseKey(parts, terminal)) || 'idle',

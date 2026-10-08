@@ -212,6 +212,9 @@
     const getViewportRect = typeof o.getViewportRect === 'function'
       ? o.getViewportRect
       : defaultViewportRect;
+    // The px at the viewport top that the floating controls cover; a fit
+    // centers the content below them (they wrap to three rows in a narrow group).
+    const getTopInset = typeof o.getTopInset === 'function' ? o.getTopInset : () => 0;
 
     function viewportSize() {
       const rect = getViewportRect() || {};
@@ -412,13 +415,17 @@
       }
       const contentW = Math.max(1, b.maxX - b.minX);
       const contentH = Math.max(1, b.maxY - b.minY);
-      const scale = clampScale(Math.min(vp.width / contentW, vp.height / contentH) * 0.9);
+      const rawInset = Number(getTopInset()) || 0;
+      // Never let the controls take more than half the height from the fit.
+      const inset = Math.min(Math.max(0, rawInset), vp.height / 2);
+      const usableH = vp.height - inset;
+      const scale = clampScale(Math.min(vp.width / contentW, usableH / contentH) * 0.9);
       const cx = (b.minX + b.maxX) / 2;
       const cy = (b.minY + b.maxY) / 2;
       return {
         scale,
         tx: (vp.width / 2) - (cx * scale),
-        ty: (vp.height / 2) - (cy * scale),
+        ty: inset + (usableH / 2) - (cy * scale),
       };
     }
 

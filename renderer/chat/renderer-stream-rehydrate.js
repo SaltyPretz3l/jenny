@@ -38,6 +38,7 @@
     'tool_executing',
     'tool_result',
     'approval_requested',
+    'user_questions_requested',
     'approval_resolved',
     'stream_reset',
     'complete',

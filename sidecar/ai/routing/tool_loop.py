@@ -44,6 +44,8 @@ from sidecar.ai.feature_flags import (
 from sidecar.ai.routing import (  # noqa: F401
     loop_event_emit,
     plan_presentation,
+    promise_nudge,
+    propose_presentation,
     thinking_checkpoint,
     tool_loop_compaction,
     tool_loop_recovery,
@@ -80,6 +82,7 @@ from sidecar.ai.routing.tool_observation import (
     KIND_TURN_FAILED,  # noqa: F401
     KIND_USER_APPROVAL_REQUESTED,  # noqa: F401
 )
+from sidecar.ai.routing.visible_reply import finalize_visible_reply
 from sidecar.ai.tools import text_tool_calls  # noqa: F401
 from sidecar.ai.tools.assembly import current_info_remediation
 from sidecar.ai.tools.contracts import ToolExecutionFailure
@@ -349,6 +352,8 @@ class ToolLoopResult:
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Bounds tool output and sub-agent reports that re-enter the model's context.
+# The user-visible final reply uses visible_reply.MAX_VISIBLE_REPLY_CHARS.
 MAX_RESPONSE_CHARS = 16_000
 TOOL_NUDGE_FALLBACK_RESPONSE = (
     "I wasn't able to complete that request because the model kept "
@@ -822,10 +827,7 @@ def _build_stopped_response_text(
 ) -> tuple[str, str]:
     """Build a stopped response without replacing model text with the guardrail."""
 
-    generated = sanitize_assistant_output(
-        str(generated_response_text or ""),
-        max_chars=MAX_RESPONSE_CHARS,
-    ).rstrip()
+    generated = finalize_visible_reply(generated_response_text).rstrip()
     visible_model_text = generated or drained_text.rstrip()
     if visible_model_text:
         return f"{visible_model_text}{GUARDRAIL_FOOTER}", "model"

@@ -132,6 +132,30 @@
   font-size: var(--font-size-caption);
 }
 
+/* Row 38 item 1: the failed state, one quiet line with the cause's fix beside it. */
+.composer-loading-line[data-tone="failed"] {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+}
+
+.composer-loading-line-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.composer-loading-line-action:hover,
+.composer-loading-line-action:focus-visible {
+  color: var(--text-primary);
+}
+
 .composer-mode-chips[data-composer-meta-align="right"] {
   justify-content: flex-end;
 }

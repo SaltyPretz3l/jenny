@@ -107,7 +107,7 @@
       getActivitySnapshot, getMostRecentActivity, isActivityBusy, applyActivityAttributes,
       renderComposerInteractivePanel, closeComposerPopover, syncComposerInputHeight,
       setComposerHoloState, updateComposerSafeOffset, renderSessions,
-      renderWorkspaceChrome, renderSettings, renderIde = noop, layoutIdeEditor = noop,
+      renderWorkspaceChrome, renderSettings, renderComposerCarriers = noop, renderIde = noop, layoutIdeEditor = noop,
       reconcileChatDockHost = function noopReconcileChatDockHost() { return false; },
       renderArtifactReviewPanel,
       isArtifactReviewVisible = function noopArtifactReviewVisible() { return false; },
@@ -403,6 +403,7 @@
         applySurfaceEffect: (...a) => applySurfaceEffect(...a),
         syncBackendNotice: (...a) => syncBackendNotice(...a),
         renderSettings: (...a) => renderSettings(...a),
+        renderComposerCarriers: (...a) => renderComposerCarriers(...a),
         renderIde: (...a) => renderIde(...a),
         layoutIdeEditor: (...a) => layoutIdeEditor(...a),
         reconcileChatDockHost: (...a) => reconcileChatDockHost(...a),
@@ -977,6 +978,7 @@
       getPaneSessionId,
       toggleThreadBranch,
       timelineVirtualizer: virtualizer,
+      rebuildVirtualizer: () => virtualizerFacade.rebuild(), // after a host move (a pane the Workspace hosts)
       dispose: disposeRenderPipeline,
     };
   }

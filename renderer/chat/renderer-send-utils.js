@@ -309,6 +309,7 @@
     const sendReceipts = createReceiptStore({
       state,
       chatInput,
+      getInputSessionId: Number(sessionContext.paneId) > 0 ? () => sessionContext.getSessionId() : undefined,
       getComposerController: () => globalThis.rendererComposerSessionStateController || null,
       releaseAssets: (assetPaths) => window.jennyShell?.attachments?.releaseAssets?.(assetPaths),
       log: appendClientLog,

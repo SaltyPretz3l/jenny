@@ -24,7 +24,7 @@ Live constants and schema registries below own the current values.
 - [Scheduled task store schema (JSON)](#scheduled-task-store-schema-json)
 - [Runtime config schema](#runtime-config-schema)
 - [Ollama catalog cache schema (JSON)](#ollama-catalog-cache-schema-json)
-- [Plugin catalog source schema (retired)](#plugin-catalog-source-schema-retired)
+- [Plugin platform schemas (retired)](#plugin-platform-schemas-retired)
 - [Standalone MCP configuration schema (JSON)](#standalone-mcp-configuration-schema-json)
 - [FileJsonStore corruption policy](#filejsonstore-corruption-policy)
 - [Cache boundary marker (accepted risk)](#cache-boundary-marker-accepted-risk)
@@ -151,7 +151,7 @@ Registry rows are display-safe metadata:
   "surface": "Electron session store",
   "owner": "electron",
   "kind": "json_schema",
-  "version": 22,
+  "version": 23,
   "forward_policy": "migrate_forward_block_future_write",
   "source": "services/backend/session-store-migrations.js"
 }
@@ -340,13 +340,15 @@ stage tests. Every schema bump must add the immediate predecessor fixture.
 
 ## Electron session store schema (JSON)
 
-**Source of truth:** `STORE_SCHEMA_VERSION = 22` in
+**Source of truth:** `STORE_SCHEMA_VERSION = 24` in
 [services/backend/session-store-migrations.js](../../services/backend/session-store-migrations.js).
 
 The informal combined shape below describes normalized in-memory session data,
 not one physical monolithic file. The current session store is a split layout under `{userData}/sessions/`:
-`_index.json` carries the schema and session id list, and each session lives in
-`<session_id>.json`. Older monolithic `{userData}/sessions.json` payloads are
+`_index.json` carries the schema and session summaries, and each session lives in
+`<session_id>.json` plus an append-only journal (see
+[On-disk shape: base plus journal](#on-disk-shape-base-plus-journal-schema-23)).
+Older monolithic `{userData}/sessions.json` payloads are
 still accepted by the migration path. Migrations run on every load via
 `migrateStorePayload` -> `normalizeStorePayload`.
 
@@ -354,7 +356,7 @@ still accepted by the migration path. Migrations run on every load via
 
 ```jsonc
 {
-  "schema_version": 22,           // integer; always equals STORE_SCHEMA_VERSION on write
+  "schema_version": 24,           // integer; always equals STORE_SCHEMA_VERSION on write
   "sessions": {
     "<session_id>": {
       "id": "<session_id>",
@@ -401,7 +403,7 @@ Top-level store fields (`schema_version`, `sessions`) follow the same rule:
 `normalizeStorePayload` only re-serializes known fields. Unknown top-level
 fields are dropped on the next write.
 
-### Migration chain (v1 -> v22)
+### Migration chain (v1 -> v24)
 
 | From | To | Repair function | What changed |
 |---|---|---|---|
@@ -425,6 +427,8 @@ fields are dropped on the next write.
 | 19 | 20 | `repairSessionForV20` | Add bounded per-session tool-category overrides. |
 | 20 | 21 | `repairSessionForV21` | Add durable project attribution and canonical runtime continuations; legacy chats belong to General. |
 | 21 | 22 | `repairSessionForV22` | Normalize bounded failure-retry reasoning snapshots. |
+| 22 | 23 | identity | Chat files move to a base plus append-only journal; record unchanged. |
+| 23 | 24 | `repairSessionForV24` | Add the bounded per-chat `suggested_changes` record (Propose mode, row 35); older chats get an empty record. |
 
 Each upgrade is idempotent and runs on every load. The matching one-line
 comments beside each `repairSessionForV*` helper in
@@ -432,15 +436,64 @@ comments beside each `repairSessionForV*` helper in
 are part of the migration lifecycle contract: future schema bumps should add the
 same short summary next to the new repair helper.
 
+### On-disk shape: base plus journal (schema 23)
+
+Under `{userData}/sessions/` a chat and the index are each a base file plus
+append-only journals, written by `JournaledJsonStore`
+([journaled-json-store.js](../../services/backend/journaled-json-store.js),
+record format in [session-journal.js](../../services/backend/session-journal.js)):
+
+| File | Content |
+|---|---|
+| `<session_id>.json` | Base: `{"journal_epoch": N, "schema_version": 24, "session": {...}}` |
+| `<session_id>.<N>.journal` | Delta records appended since base epoch N was written. |
+| `_index.json` | Base: `{"journal_epoch": N, "schema_version": 24, "sessions": {...}}` |
+| `_index.<N>.journal` | Delta records for the index (a changed summary is a `set`, a deleted chat an `unset`). |
+
+- `journal_epoch` is the first key of a base. `0` or absent means the file was
+  never journaled (a kill-switch write, or a profile from before schema 23); no
+  journal is ever replayed over such a base. Every base replacement bumps the
+  epoch, and the previous epoch's journal is kept until the next replacement.
+- A journal is a header line plus one line per record
+  (`J1 <byte length> <crc32> <json>`). A torn final record is the normal result of a
+  crash and is dropped; a damaged record followed by more data is reported
+  (`session_store.session_journal_damaged`) and the readable prefix is used.
+- **The base alone may be stale between compactions.** A read is the base plus
+  its journal; tools that read `<session_id>.json` directly must go through
+  `JournaledJsonStore.readFile(path, { payloadKey: 'session' })` (index:
+  `payloadKey: 'sessions'`) or they miss the newest messages.
+- **Compaction** (a new base that contains everything) happens when a delta cannot
+  be appended, when the journal passes its size limit (1 MiB or half the base,
+  whichever is larger), on `dispose` / `flushAsync` (shutdown, backup, uninstall),
+  on cache eviction, and when the oldest un-compacted change is 10 minutes old.
+  A process's first write of a chat always replaces the base.
+- If the rename of a newer base is lost to power failure, the older base plus its
+  journal plus the next journal (header `continues: true`) rebuild the state.
+  Process-kill safety is tested; power-loss safety holds as far as the
+  platform's rename durability plus this one-generation retention.
+- **Flag and kill switch.** The `session_journal` feature flag is default ON.
+  `JENNY_ENABLE_SESSION_JOURNAL=0` makes every chat and index write a whole-file
+  write again (an epoch-less base); journals already on disk are still read
+  completely, and index journals are removed after the first whole-file index write.
+  The shadow store never journals.
+- **Downgrade.** A 1.3.x build (schema 22) that opens a profile written by this
+  build sees a schema newer than it supports: it freezes the store (no writes) and
+  logs `session_store.newer_schema_detected`. Chats saved at schema 23 do not open
+  there, as with any schema bump, and it does not read journals. Returning to the
+  newer build restores everything; the files are left untouched.
+- The release-compat fixtures `userdata-v24-current` (un-compacted journals) and
+  `userdata-v24-journal-recovery` (lost base rename) pin this layout;
+  `userdata-v23-current` is the v23 -> v24 migration input.
+
 ### Template for the next migration
 
-For the next incompatible session shape, bump `STORE_SCHEMA_VERSION` to 23,
-add/export a pure idempotent `repairSessionForV23(session)` helper, and append
-`[23, repairSessionForV23]` to `SESSION_MIGRATION_STEPS` in
+For the next incompatible session shape, bump `STORE_SCHEMA_VERSION` to 25,
+add/export a pure idempotent `repairSessionForV25(session)` helper, and append
+`[25, repairSessionForV25]` to `SESSION_MIGRATION_STEPS` in
 `services/backend/session-store-migrations.js`. The ordered `< threshold` loop
 applies each relevant repair and re-normalizes linked-session IDs.
 
-Cover v22 → v23, repeated normalization and forward-version write refusal with
+Cover v24 → v25, repeated normalization and forward-version write refusal with
 focused migration/session-store tests. Update the schema registry (which imports
 the live constant), this table and immutable release-compat fixtures together.
 Do not rewrite existing historical fixtures or reset the schema to an older value.
@@ -822,12 +875,17 @@ Ollama catalog fields only (`id`, known boolean `capabilities`, and
 `models.list`. The cache stores display-safe metadata only and is safe to
 delete; it is derived state, not a source of truth.
 
-## Plugin catalog source schema (retired)
+## Plugin platform schemas (retired)
 
-`electron.plugin_catalog_sources` is no longer registered: plugin catalogs,
-offline mirrors, and the pinned-TUF-root source store were retired with the
-plugin platform. The frozen plugin package and generation contract families are
-unchanged, and old `catalog` evidence in existing generations stays readable.
+The plugin platform was removed (2026-10-05). Its schema-registry entries
+(`electron.plugin_catalog_sources`, `electron.plugin_contract_set`,
+`electron.plugin_generation_store` and `sidecar.plugin_contract_set`) are no
+longer registered, and the frozen plugin contract families and their generator
+are gone. Jenny never reads or migrates a leftover `<userData>/plugins/`
+folder; it stays on disk and the uninstaller removes it. The one exception is
+the legacy ChatGPT sign-in choice, which is read once from an old plugin store
+file before the first ChatGPT start. Session data from the retired image plugin
+is covered by the session-store migrations above.
 
 ## Standalone MCP configuration schema (JSON)
 
@@ -851,77 +909,7 @@ The additive `mcp.inspect` request shares `API_VERSION` negotiation and adds no
 notification, turn-event kind, or durable sidecar state. Configuration edits or
 `CMP-MCP-0009` tool-surface drift invalidate approval and return the row to
 disabled/pending review. See
-[PLUGIN_SECURITY.md ` Plugin Catalogs and MCP Trust](../PLUGIN_SECURITY.md#surviving-plugins-and-standalone-mcp-trust)
-(plugin catalogs and plugin-supplied MCP were retired on 2026-10-02, plugin platform retirement stage 4; that section holds the retirement note and the standalone MCP trust model).
-
-## Plugin contract and generation compatibility
-
-Plugin contracts are generated from `config/plugins/v1/*.schema.json`. W11
-irreversibly froze every named V1 contract and `_common` on 2026-08-03 and wrote
-`config/plugins/contract-lock.json` with the exact source digest for all 25
-files. V1 is immutable: change requires a new versioned contract, validator
-support, parity cases, registry entry, and explicit migration/compatibility
-intent. Never edit a frozen V1 schema or either generated validator directly.
-
-Electron registers `electron.plugin_contract_set` and
-`electron.plugin_generation_store`; Python registers
-`sidecar.plugin_contract_set`. Registry constants are literal metadata and do
-not import plugin runtime modules on flag-off startup.
-
-Stage-4A generation compatibility is deliberately asymmetric and requires no
-schema migration:
-
-- current V1 `installed_disabled` and `active` generations may rehydrate;
-- every `active` package is re-read from its exact persisted archive and must
-  pass signature, current trust root, manifest, digest, and declarative-content
-  verification before the sidecar receives a snapshot;
-- committed V1 `preparing` or `disabling` is invalid transitional evidence and
-  makes the store mutation-blocking rather than being normalized;
-- a newer generation schema is preserved byte-for-byte and makes the entire
-  plugin store read-only;
-- recovery must inspect retained generations even when the active pointer is
-  missing, so it cannot erase or route around future evidence;
-- incompatible, corrupt, safe-mode, or failed-rehydration state is core-only;
-  no plugin contribution executes; and
-- `plugins.getState` reports bounded `read_only`, `store_writable`, and
-  incompatibility metadata for Manager explanation.
-
-`PluginOperationReceiptV1.generation_id` is required attribution, not inferred
-from an epoch or journal row. The V1 shape requires `retain_until` on every row:
-pending rows carry the non-expiring `9999-12-31T23:59:59Z` sentinel and terminal
-settlement replaces it with the real 30-day deadline. Terminal receipts are
-capped at 4,096. Expired terminals are deleted first, then the oldest terminal
-rows. Pending or corrupt evidence is never automatically deleted. Pre-W11 rows
-missing generation attribution or retention are preserved byte-for-byte as
-corrupt evidence; status lookup returns indeterminate and neither recovery nor
-compaction infers an outcome. A lookup after early cap eviction fails closed as
-expired/indeterminate and emits bounded structured eviction diagnostics.
-
-Release compatibility is pinned by
-`tests/release-compat/test_plugin_store_compat.js` with current disabled,
-Stage-4A active, transitional-invalid, and future-schema fixture trees. Any
-plugin generation schema or permitted-state change updates that corpus in the
-same change.
-
-### Stage 4B V2 plugin state
-
-The V1 contract directory and `contract-lock.json` remain immutable. Stage 4B
-adds an independently locked V2 family for manifest, declarative content,
-generation, runtime snapshot, settings state, and command invocation. Startup
-may read mixed V1/V2 state but never rewrites or downgrades it. The first
-Stage-4B mutation normalizes the complete graph into `PluginGenerationV2` while
-retaining the V1 active-pointer format and exact V1 package validity.
-
-Settings are content-addressed records beneath the owning plugin data directory.
-Generations bind their exact state digest and revision. An update writes and
-validates the replacement settings/runtime state before the active-pointer CAS;
-stale generation or revision fails closed. Disable retains settings. Uninstall
-withdraws authority first and then attempts idempotent contained deletion; a
-failure records pending cleanup without re-enabling authority.
-
-`plugin-store-v2-stage4b` is the current V2 compatibility fixture.
-`plugin-store-v3-future` proves a future generation remains byte-preserved and
-read-only. A future schema is never inferred, normalized, or routed around.
+[MCP servers](../TOOLS.md#mcp-servers) for the trust model.
 
 ## FileJsonStore corruption policy
 

@@ -33,17 +33,20 @@ function createConfigService() {
 test('only add metadata includes the bounded persisted task title', async () => {
   const configService = createConfigService();
   const title = `${'A'.repeat(98)}\n${'B'.repeat(100)}`;
-  const added = await taskBoardTool.execute({ action: 'add', title }, { configService });
+  const context = { configService, projectAuthority: { project_id: 'project_a' } };
+  const added = await taskBoardTool.execute({ action: 'add', title }, context);
   const taskId = added.metadata.task_id;
 
   assert.equal(taskId, 'task-1');
   assert.equal(added.metadata.task_title.includes('\n'), false);
   assert.ok(added.metadata.task_title.length <= 200);
+  assert.equal(added.metadata.project_id, 'project_a');
 
-  const updated = await taskBoardTool.execute({ action: 'update', id: taskId, title: 'Updated' }, { configService });
-  const completed = await taskBoardTool.execute({ action: 'complete', id: taskId }, { configService });
-  const listed = await taskBoardTool.execute({ action: 'list' }, { configService });
+  const updated = await taskBoardTool.execute({ action: 'update', id: taskId, title: 'Updated' }, context);
+  const completed = await taskBoardTool.execute({ action: 'complete', id: taskId }, context);
+  const listed = await taskBoardTool.execute({ action: 'list' }, context);
   for (const result of [updated, completed, listed]) {
     assert.equal(Object.hasOwn(result.metadata, 'task_title'), false);
+    assert.equal(result.metadata.project_id, 'project_a');
   }
 });

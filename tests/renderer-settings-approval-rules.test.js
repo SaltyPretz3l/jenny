@@ -417,6 +417,9 @@ test('Tools workspace line shows ready paths without idle text and invalid roots
     } } });
     t.after(dispose);
     const doc = window.document;
+    // The Settings page paints on activation (renderAll no longer paints it on the chat view).
+    doc.querySelector('[data-tab-id="settings"]').click();
+    await waitForUi(window, 20);
     assert.equal(doc.getElementById('toolsWorkspaceLine').dataset.state, rootState === 'ready' ? 'ready' : 'blocked');
     assert.equal(doc.getElementById('toolsWorkspacePath').textContent, 'G:/workspace/example');
     assert.equal(doc.getElementById('toolsWorkspaceStatus').textContent, rootState === 'ready' ? '' : 'The selected root is invalid.');
@@ -517,6 +520,9 @@ test('a running connection test keeps its lock through Web tools changes and rel
 test('the tool row link to PDF reading opens Tools with keyboard focus on the first usable control of the add-on group', async (t) => {
   const { window, dispose } = await loadRendererApp();
   t.after(dispose);
+  window.document.querySelector('[data-tab-id="settings"]').click();
+  await waitForUi(window, 100);
+  window.document.querySelector('[data-tab-id="chat"]').click();
   const doc = window.document;
   const host = doc.getElementById('toolsPdfAddonHost');
   // The harness has no add-on bridge, so the group shows its unsupported state with no actions; give it two.

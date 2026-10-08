@@ -249,6 +249,7 @@
     function ensurePullController() {
       if (!pullController) {
         pullController = sourcesModule.createPullController({
+          state: shellState, windowRef: windowRef,
           setupService: setupService,
           onChange: handlePullChange,
           appendClientLog: appendClientLog,

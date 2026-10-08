@@ -103,6 +103,24 @@ function imageMimeTypeFromBytes(buffer) {
   throw new Error('Attachment is not a supported image.');
 }
 
+// ISO base-media major brands that carry audio; AVIF/HEIF images share the
+// `ftyp` box and must not pass as audio/mp4.
+const MP4_AUDIO_BRANDS = new Set(['M4A ', 'M4B ', 'M4P ', 'mp41', 'mp42', 'isom', 'iso2',
+  'iso5', 'iso6', 'dash', 'qt  ', '3gp4', 'F4A ', 'F4B ']);
+
+function audioMimeTypeFromBytes(buffer) {
+  const prefix = buffer.subarray(0, 4).toString('latin1');
+  if (prefix === 'RIFF' && buffer.subarray(8, 12).toString('latin1') === 'WAVE') return 'audio/wav';
+  if (buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return 'audio/webm';
+  if (prefix === 'OggS') return 'audio/ogg';
+  if (buffer.subarray(0, 3).toString('latin1') === 'ID3'
+    || (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0)) return 'audio/mpeg';
+  if (buffer.subarray(4, 8).toString('latin1') === 'ftyp'
+    && MP4_AUDIO_BRANDS.has(buffer.subarray(8, 12).toString('latin1'))) return 'audio/mp4';
+  if (prefix === 'fLaC') return 'audio/flac';
+  throw new Error('Attachment is not a supported audio clip.');
+}
+
 function readImportedBytes(filePath, maxBytes, label) {
   const readPath = realpathExisting(filePath);
   const before = fs.statSync(readPath);
@@ -366,9 +384,10 @@ class AttachmentAssetStore {
         `Audio buffer exceeds the ${MAX_AUDIO_SIZE_BYTES} byte limit (received ${buffer.length} bytes).`
       );
     }
+    const mimeType = audioMimeTypeFromBytes(buffer);
     const displayName = sanitizeDisplayName(options.displayName, 'Voice Clip');
     const extension = inferAudioExtension({
-      mimeType: options.mimeType,
+      mimeType,
       displayName,
     });
     const assetPath = buildReservedAssetPath(audioDir, extension);
@@ -380,7 +399,7 @@ class AttachmentAssetStore {
       id: createAttachmentId('audio'),
       kind: 'audio',
       displayName,
-      mimeType: normalizeMimeType(options.mimeType) || inferMimeTypeFromPath(assetPath) || 'audio/webm',
+      mimeType,
       sizeBytes: buffer.length,
       durationMs: normalizeDurationMs(options.durationMs),
       assetPath,

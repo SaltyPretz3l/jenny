@@ -376,6 +376,17 @@ test('normalizeCompanionState preserves the structured workspaceGit field', () =
   assert.deepEqual(empty.workspaceGit, { available: false, branch: '', recentCommits: [], summary: '' });
 });
 
+test('normalizeCompanionState keeps the project id on open-loop board entries', () => {
+  const normalized = normalizeCompanionState({
+    openLoopsBoard: {
+      active: [{ id: 'followup:t1', followUpId: 't1', title: 'Scoped', projectId: ' project_abc ', sourceKind: 'agent_task' }],
+      deferred: [{ id: 'followup:t2', followUpId: 't2', title: 'Unscoped' }],
+    },
+  });
+  assert.equal(normalized.openLoopsBoard.active[0].projectId, 'project_abc');
+  assert.equal(normalized.openLoopsBoard.deferred[0].projectId, '');
+});
+
 test('widgets config reorders and hides cards; unknown ids are inert', () => {
   const { documentRef, grid } = createDom();
   const registry = dashboardRegistryModule.createDashboardRegistry({ documentRef });

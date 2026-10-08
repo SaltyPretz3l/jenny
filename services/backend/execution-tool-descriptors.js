@@ -12,6 +12,7 @@ const descriptors = new Map(toolManifest.tools.map(tool => [tool.name, Object.fr
   server_name: '',
   actions: tool.actions,
   plan_mode_only: tool.availability?.plan_mode_only === true,
+  propose_mode_only: tool.availability?.propose_mode_only === true,
   plan_mode_artifact_write: tool.availability?.plan_mode_artifact_write === true,
   workspace_required: tool.availability?.workspace_required !== false,
 })]));

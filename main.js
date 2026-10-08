@@ -44,10 +44,10 @@ const { createRuntimeShutdownController } = require('./services/main/runtime-shu
 const { scheduleStartupRetentionTasks } = require('./services/main/startup-retention-tasks');
 const dataLifecycleStartup = require('./services/main/data-lifecycle-startup');
 const { registerArtifactFramePrivilegedScheme } = require('./services/artifact-frame-protocol');
-const { PLUGIN_VIEW_PRIVILEGED_SCHEME } = require('./services/main/plugin-view-protocol');
 const { installDefaultSessionWiring } = require('./services/main/default-session-wiring');
+const { createTrustedSenderAuthorizer, unauthorizedIpcResult } = require('./services/main/ipc-sender-authorization');
 // Electron permits this registration only once and only before readiness.
-registerArtifactFramePrivilegedScheme(protocol, [PLUGIN_VIEW_PRIVILEGED_SCHEME]);
+registerArtifactFramePrivilegedScheme(protocol);
 const {
   resolveBootFailureAction,
   shouldAutoStartMainProcess,
@@ -83,7 +83,6 @@ let mcpDiscoveryService;
 let attachmentAssetStore;
 let artifactService;
 let mainLifecycle;
-let chatStreamBridge;
 let usageHistory;
 let updateService;
 let windowStateService;
@@ -294,7 +293,6 @@ const createBackendService = () => {
   calendarService = created.calendarService;
   offlineIntelligenceService = created.offlineIntelligenceService;
   companionService = created.companionService;
-  chatStreamBridge = created.chatStreamBridge;
   startDeferredBackgroundRefreshes = created.startDeferredBackgroundRefreshes;
 };
 
@@ -420,7 +418,6 @@ const registerIpcHandlers = () => mainIpcRegistration.registerMainIpcHandlers({
   schedulerService,
   linkStatusService,
   calendarService,
-  chatStreamBridge,
   getStartupAuditConfig,
   createStartupAuditMarkHandler,
   createStartupAuditMarksBatchHandler,
@@ -573,10 +570,15 @@ function startMainProcess() {
           flushStartupAuditMarks();
           // Deny-by-default permission guard, display-media picker, and the
           // jenny-artifact:// preview protocol — see default-session-wiring.js.
+          require('./services/main/ipc-handler-timing').installIpcHandlerTiming(ipcMain, { log });
           ({ displayMediaSourceHandler } = installDefaultSessionWiring({
             session: session.defaultSession,
             desktopCapturer,
             ipcMain,
+            authorization: {
+              authorize: createTrustedSenderAuthorizer({ getMainWindow: () => mainWindow, log }),
+              unauthorizedResult: unauthorizedIpcResult,
+            },
             sendBridgeEvent,
             log,
           }));

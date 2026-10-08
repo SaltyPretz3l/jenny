@@ -7,7 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  // turn_activity_envelope: coalesce ALL of a turn's projected rows into ONE
+  // Turn-activity envelope: coalesce ALL of a turn's projected rows into ONE
   // turn-article. The per-bucket dispatch in
   // renderer-render-pipeline-article-markup.js renders one article per
   // assistant render-message (each holding only that message's rows), so a

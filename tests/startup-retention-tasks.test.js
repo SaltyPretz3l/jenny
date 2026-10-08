@@ -151,6 +151,93 @@ test('collectReferencedAttachmentAssetPaths falls back to getSessionMessages wit
   assert.deepEqual(collectReferencedAttachmentAssetPaths(store), ['C:\\assets\\legacy.png']);
 });
 
+test('the scheduled sweep retains persisted tool-event media, re-read when the stamp moves', t => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { createTrackedTempDir, cleanupTrackedResources } = require('./helpers/resource-cleanup');
+  const { AttachmentAssetStore } = require('../services/attachment-asset-store');
+  const { ElectronSessionStore } = require('../services/backend/electron-session-store');
+  const { toPersistedToolResultAttachmentRefs } = require('../services/backend/tool-result-attachments');
+  t.after(cleanupTrackedResources);
+  const root = createTrackedTempDir('jenny-retention-tool-refs-');
+  const sessionPath = path.join(root, 'sessions.json');
+  const assetStore = new AttachmentAssetStore({ rootDir: path.join(root, 'assets'), nativeImage: null });
+  const old = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
+  const makeAgedAsset = () => {
+    const asset = assetStore.saveImageBufferSync(Buffer.from([0xff, 0xd8, 0xff, 0x00]));
+    fs.utimesSync(asset.assetPath, old, old);
+    return { ...asset, sourceId: asset.id, byteLength: 4 };
+  };
+  const retained = ['image', 'pdf_page', 'chart'].map(kind => ({ ...makeAgedAsset(), kind }));
+  const orphan = makeAgedAsset();
+  const refs = toPersistedToolResultAttachmentRefs(retained);
+  const writer = new ElectronSessionStore(sessionPath);
+  const sessionId = writer.createSession({ title: 'Tool media retention' }).id;
+  writer.appendMessage(sessionId, {
+    id: 'result-1', role: 'tool', kind: 'tool_result', content: 'Generated media',
+    tool_result: { call_id: 'call-1', tool_name: 'read_file' }, // refs only on the event
+  });
+  const appendEvent = (store, eventId, attachmentRefs) => {
+    const result = store.appendTurnEvents(sessionId, [{
+      event_id: eventId, turn_id: 'turn-1', kind: 'tool_result', tool_call_id: 'call-1',
+      payload: { trusted_attachment_refs: attachmentRefs },
+    }]);
+    assert.equal(result.ok, true);
+  };
+  appendEvent(writer, 'event-1', refs);
+  writer.flush();
+  const backend = createFakeBackend('ready');
+  backend.sessionStore = new ElectronSessionStore(sessionPath);
+  assert.deepEqual(backend.sessionStore.getSessionTurnEvents(sessionId)[0].payload.trusted_attachment_refs, refs);
+  const timers = [];
+  const intervals = [];
+  const logs = [];
+  scheduleStartupRetentionTasks({
+    backendService: backend, attachmentAssetStore: assetStore,
+    setTimeoutRef: (fn, ms) => { timers.push({ fn, ms }); return { unref() {} }; },
+    setIntervalRef: fn => { intervals.push(fn); return { unref() {} }; },
+    log: (...entry) => logs.push(entry),
+  });
+  timers.find(timer => timer.ms === 8000).fn();
+  assert.equal(fs.existsSync(orphan.assetPath), false, 'the aged orphan is removed');
+  for (const asset of retained) {
+    assert.equal(fs.existsSync(asset.assetPath), true, 'persisted tool-result media must survive the sweep');
+  }
+  const lateAsset = makeAgedAsset();
+  const lateOrphan = makeAgedAsset();
+  const before = backend.sessionStore.listSessions()[0];
+  appendEvent(backend.sessionStore, 'event-2', toPersistedToolResultAttachmentRefs([lateAsset]));
+  const after = backend.sessionStore.listSessions()[0];
+  assert.equal(after.updated_at, before.updated_at);
+  assert.equal(after.message_count, before.message_count);
+  // An event write does not move the stamp; a message append does, and the
+  // re-read then collects the late event ref together with the message refs.
+  backend.sessionStore.appendMessage(sessionId, { id: 'user-2', role: 'user', content: 'again' });
+  backend.sessionStore.flush();
+  intervals[0]();
+  assert.equal(fs.existsSync(lateAsset.assetPath), true, 'event refs are re-collected with the body');
+  assert.equal(fs.existsSync(lateOrphan.assetPath), false);
+  for (const asset of retained) assert.equal(fs.existsSync(asset.assetPath), true);
+  assert.equal(logs.some(([level]) => level === 'WARN'), false, 'retention completed without aborting');
+});
+
+test('message tool-result refs retain every media kind and tolerate absent or malformed refs', () => {
+  const store = createFakeSessionStore([{ id: 's1', updated_at: 'T1', message_count: 4, messages: [
+    { tool_result: { trusted_attachment_refs: [
+      { kind: 'image', asset_path: ' C:/assets/image.png ' },
+      { kind: 'pdf_page', asset_path: 'C:/assets/page.png' },
+      { kind: 'chart', assetPath: 'C:/assets/chart.png' },
+      null, { id: 'id-only' },
+    ] } },
+    { tool_result: { trusted_attachment_refs: null } },
+    { tool_result: { trusted_attachment_refs: {} } },
+    { tool_result: {} },
+  ] }]);
+  assert.deepEqual(collectReferencedAttachmentAssetPaths(store), [
+    'C:/assets/image.png', 'C:/assets/page.png', 'C:/assets/chart.png',
+  ]);
+});
+
 test('sweep memo cache skips unchanged sessions, re-reads changed ones, and drops deleted ids', () => {
   const store = createFakeSessionStore([
     { id: 's1', updated_at: 'T1', message_count: 1, messages: [attachmentMessage('one')] },

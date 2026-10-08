@@ -112,6 +112,58 @@ function replay(payloads) {
   return { liveRows: state.turns_by_id['stream-r'].rows, turnEvents };
 }
 
+for (const withIds of [false, true]) {
+  test(`a re-asked approval stays pending in projectTurn and the live reducer (ids: ${withIds})`, () => {
+    const payloads = streamPayloads('call-r', {
+      status: 'approved', approvalState: 'approved', approvalScope: 'once', approvalId: 'approval-A',
+    }).slice(0, 4);
+    payloads[2].approvalId = 'approval-A';
+    payloads.push({ ...payloads[2], approvalId: 'approval-B' });
+    if (!withIds) payloads.forEach((payload) => { delete payload.approvalId; });
+    const { liveRows, turnEvents } = replay(payloads);
+    const { rows } = projectTurn({ turn_id: 'stream-r', events: turnEvents }, DETERMINISTIC);
+    for (const candidates of [liveRows, rows]) {
+      const gap = candidates.find((row) => row.kind === 'approval_gap');
+      assert.ok(gap, 'the re-ask keeps its approval card');
+      assert.equal(gap.payload.state, 'awaiting_approval');
+      // The live reducer says `pending`; the hydrated projector keeps the request event's `pending_approval`.
+      assert.ok(['pending', 'pending_approval'].includes(gap.payload.status), gap.payload.status);
+      assert.equal('decision' in gap.payload, false);
+    }
+  });
+}
+
+test('a late resolution for approval A does not settle unmatched approval B', () => {
+  const { turnEvents } = replay(streamPayloads('call-r', {
+    status: 'approved', approvalState: 'approved', approvalId: 'approval-A',
+  }).slice(0, 4));
+  const request = turnEvents.find((event) => event.kind === 'approval_requested');
+  request.payload.approval_id = 'approval-A';
+  const resolution = turnEvents.find((event) => event.kind === 'approval_resolved');
+  resolution.payload.approval_id = 'approval-A';
+  const reask = { ...request, event_id: 'reask-B', sort_key: [4, 0, 0], payload: { ...request.payload, approval_id: 'approval-B' } };
+  turnEvents.push(reask, { ...resolution, event_id: 'late-A', sort_key: [5, 0, 0] });
+  const pickGap = () => projectTurn({ turn_id: 'stream-r', events: turnEvents }, DETERMINISTIC)
+    .rows.find((row) => row.kind === 'approval_gap');
+  assert.equal(pickGap().payload.state, 'awaiting_approval');
+  assert.equal(pickGap().payload.status, 'pending_approval');
+  assert.equal('decision' in pickGap().payload, false);
+  turnEvents.push({ ...resolution, event_id: 'answer-B', sort_key: [6, 0, 0], payload: { ...resolution.payload, approval_id: 'approval-B' } });
+  assert.equal(pickGap().payload.state, 'resolved');
+  assert.equal(pickGap().payload.decision, 'allowed');
+});
+
+test('projectTurn keeps the allowed receipt after approval A and a result', () => {
+  const { liveRows, turnEvents } = replay(streamPayloads('call-r', {
+    status: 'approved', approvalState: 'approved', approvalScope: 'once',
+  }));
+  const { rows } = projectTurn({ turn_id: 'stream-r', events: turnEvents }, DETERMINISTIC);
+  for (const candidates of [liveRows, rows]) {
+    const gap = candidates.find((row) => row.kind === 'approval_gap');
+    assert.deepEqual([gap.payload.state, gap.payload.status, gap.payload.decision], ['resolved', 'resolved', 'allowed']);
+  }
+});
+
 for (const [label, resolution, expected] of [
   ['allowed always', { status: 'approved', approvalState: 'approved', approvalScope: 'always' }, { decision: 'allowed', approval_scope: 'always' }],
   ['denied', { status: 'denied', approvalState: 'denied' }, { decision: 'denied' }],

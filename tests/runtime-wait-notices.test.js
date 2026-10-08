@@ -11,7 +11,6 @@ const os = require('node:os');
 const { ResourceBroker, capacityResource, filesystemResource } = require('../services/session-runtime/resource-broker');
 const { PhysicalPathResolver } = require('../services/session-runtime/physical-paths');
 const { HEARTBEAT_MS, createRuntimeWaitNotices } = require('../services/backend/runtime-wait-notices');
-const { buildEnvelopeSources } = require('../services/stream-envelope-shape');
 
 const INCARNATION = 'inc_wait_notice';
 const folder = () => [capacityResource('tool_operations'),
@@ -243,11 +242,4 @@ test('the broker names the leases in the way without conveying one', () => {
   assert.equal(broker.snapshot().lease_count, 1, 'describing a wait reserves nothing');
   broker.release(held.lease, { producerSettled: true });
   assert.deepEqual(broker.describeWait(folder()).holders, []);
-});
-
-test('a waiting notice crosses the stream envelope one to one', () => {
-  // 'delta' envelopes are merged per key; a state report must arrive whole.
-  const sources = buildEnvelopeSources({ type: 'runtime_waiting', streamId: 'stream_b', waitState: 'waiting' }, 'runtime_waiting');
-  assert.deepEqual(sources.map(source => [source.channel, source.eventKind, source.payload.waitState]),
-    [['control', 'progress', 'waiting']]);
 });

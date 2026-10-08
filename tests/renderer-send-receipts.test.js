@@ -65,6 +65,33 @@ test('receipt snapshots are immutable and synchronously claim only the origin dr
   assert.throws(() => { receipt.payload.runtimePreferences.preferredModel = 'mutated'; }, TypeError);
 });
 
+test('a pane send controller hands its receipt store the pane session; pane 0 keeps the current one', (t) => {
+  const seen = [];
+  const capture = (deps) => { seen.push(deps.getInputSessionId); return createSendReceiptStore(deps); };
+  const pane = createControllerHarness([], {
+    createSendReceiptStore: capture,
+    sessionContextFor: () => ({ paneId: 1, getSessionId: () => 'session-pane-1', setSessionId: () => {}, isCurrent: (id) => id === 'session-pane-1' }),
+  });
+  t.after(() => pane.restore());
+  assert.equal(typeof seen[0], 'function');
+  assert.equal(seen[0](), 'session-pane-1');
+  const primary = createControllerHarness([], { createSendReceiptStore: capture });
+  t.after(() => primary.restore());
+  assert.equal(seen[1], undefined, 'pane 0 keeps the current-session check');
+});
+
+test('a second pane clears its own input on send while another session is current (row 40 gate: Chat 2)', () => {
+  const state = { currentSessionId: 'session-pane-0', attachments: { queued: [] }, composerSessionState: new Map() };
+  const chatInput = { value: 'pane one prompt', selectionStart: 15, selectionEnd: 15 };
+  const store = createSendReceiptStore({ state, chatInput, getInputSessionId: () => 'session-pane-1' });
+  store.begin({ sessionId: 'session-pane-1', prompt: 'pane one prompt', attachments: [] }, { consumeDraft: true, restoreOnFailure: true });
+  assert.equal(chatInput.value, '', 'the pane input is cleared although pane 0 holds the current session');
+  // Without the pane getter the current session decides, as before: another session's input is left alone.
+  const other = { value: 'kept', selectionStart: 4, selectionEnd: 4 };
+  createSendReceiptStore({ state, chatInput: other }).begin({ sessionId: 'session-pane-1', prompt: 'x', attachments: [] }, { consumeDraft: true });
+  assert.equal(other.value, 'kept');
+});
+
 test('failure after a session switch restores the origin record without touching the visible session', () => {
   const env = createStoreEnv();
   const receipt = beginOriginReceipt(env);

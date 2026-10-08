@@ -84,9 +84,9 @@ test('read-only boundary admits the declared read action of a mixed tool (HB-002
   assert.deepEqual(executed, ['list']);
 });
 
-test('Plan Mode keeps task_board list and home calendar_list but refuses their writes', () => {
+test('Plan Mode keeps task_board list, project_notes read and home calendar_list but refuses their writes', () => {
   const executor = new ToolExecutor({
-    registry: createDefaultRegistry({ toolsHomeEnabled: true, toolsTaskBoardEnabled: true }),
+    registry: createDefaultRegistry({ toolsHomeEnabled: true, toolsTaskBoardEnabled: true, toolsProjectNotesEnabled: true }),
     permissionStore: { getSnapshot: () => ({ version: 1, legacy_policies: {}, rules: [] }) },
     pathPolicy: {}, logger: () => {},
   });
@@ -100,6 +100,9 @@ test('Plan Mode keeps task_board list and home calendar_list but refuses their w
   };
   assert.equal(verdict('task_board', { action: 'list' }), 'allowed');
   assert.equal(verdict('task_board', { action: 'add', label: 'x' }), 'refused');
+  assert.equal(verdict('project_notes', { action: 'read' }), 'allowed');
+  assert.equal(verdict('project_notes', { action: 'append', text: 'x' }), 'refused');
+  assert.equal(verdict('project_notes', { action: 'replace', old_text: 'a', new_text: 'b' }), 'refused');
   assert.equal(verdict('home', { action: 'calendar_list' }), 'allowed');
   assert.equal(verdict('home', { action: 'scratchpad_read' }), 'allowed');
   assert.equal(verdict('home', { action: 'event_upsert' }), 'refused');

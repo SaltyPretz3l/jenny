@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { executeSandboxCommand } = require('../services/execution/command-bridge');
+const { executeSandboxCommand, ALLOWED: SANDBOX_BRIDGE_TOOLS } = require('../services/execution/command-bridge');
 const { executeElectronToolRequest } = require('../services/backend/electron-tool-bridge');
 const { normalizeSandboxResultMetadata } = require('../services/backend/sandbox-result-metadata');
 const { normalizeCommandSandbox } = require('../services/shell-config-command-sandbox');
@@ -62,7 +62,7 @@ test('Electron indirect executable paths are fenced before plugin and checkpoint
   const { service } = fixture();
   service.workspaceGitService = { createCheckpoint: () => { throw new Error('must not invoke'); } };
   for (const tool_name of ['__jenny_git_checkpoint','verify','worktree_create','python_execute','plugin:a:b:c']) {
-    const result = await executeElectronToolRequest(service, { params: { tool_name }, pluginRuntimeAuthority: { mode: 'plugin' } });
+    const result = await executeElectronToolRequest(service, { params: { tool_name } });
     assert.equal(result.success, false);
   }
 });
@@ -147,4 +147,8 @@ test('cancelled bridge result persists before terminal settlement and releases t
  await Promise.all([pending, terminal]);
  assert.deepEqual(events, ['persisted', 'drained', 'terminal']);
  assert.equal(service._desktopSandboxBridgeRequests.size, 0);
+});
+
+test('the sandbox bridge passes every Electron-owned shell-free tool through (seam 17 of a new manifest tool)', () => {
+  assert.deepEqual([...SANDBOX_BRIDGE_TOOLS].sort(), ['ask_user', 'exit_plan_mode', 'home', 'project_notes', 'run_command', 'task_board']);
 });

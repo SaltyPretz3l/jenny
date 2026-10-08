@@ -398,8 +398,7 @@
       renderAll();
     }
 
-    // Returns false only when a plugin-navigation guard vetoes the switch;
-    // successful hydration returns true and operational failures still throw.
+    // Successful hydration returns true; operational failures throw.
     async function openSession(sessionId, { silent = false, outgoingSessionId: outgoingId } = {}) {
       evictPretextArticlePredictions();
       if (!silent) {
@@ -415,15 +414,6 @@
       const outgoingSessionId = String((outgoingId ?? state.currentSessionId) || '').trim();
       const composerSessionState = globalThis.rendererComposerSessionStateController || null;
       const incomingSessionId = String(sessionId || '').trim();
-      // Session-bound plugin views wait for broker-confirmed teardown. Opening
-      // a provider workspace alone does not pre-empt an unrelated chat turn;
-      // exclusive GPU admission happens only when the provider invokes work.
-      const pluginSessions = globalThis.rendererPluginSessions?.instance || null;
-      if (pluginSessions && !silent && outgoingSessionId !== incomingSessionId) {
-        if (!(await pluginSessions.guardLeaveSession(outgoingSessionId, 'open_session'))) {
-          return false;
-        }
-      }
       if (composerSessionState && outgoingSessionId && outgoingSessionId !== incomingSessionId) {
         composerSessionState.captureActive(outgoingSessionId, 'session_switch');
       }
@@ -492,9 +482,6 @@
       }
       if (!silent) {
         renderAll();
-        if (activeSession?.session_type === 'plugin') {
-          await pluginSessions?.openSessionView?.(incomingSessionId, { userInitiated: true });
-        }
       }
       return true;
     }

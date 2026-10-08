@@ -1,7 +1,7 @@
 'use strict';
 
 /* Shared `preview_test` fixtures: a temp workspace with index.html, a stub
- * BrowserSessionService that records calls (open/click/type/eval/inspect/
+ * BrowserSessionService that records calls (open/click/type/hover/focus/press/eval/inspect/
  * screenshot/close), the tool context, and a call filter. Used by
  * tests/preview-test-tool.test.js and tests/preview-test-evidence.test.js. */
 
@@ -42,6 +42,18 @@ function stubService(overrides = {}) {
     async type(sessionId, options) {
       calls.push(['type', sessionId, options]);
       return overrides.typeResult || { status: 'typed' };
+    },
+    async hover(sessionId, options) {
+      calls.push(['hover', sessionId, options]);
+      return overrides.hoverResult || { status: 'hovered' };
+    },
+    async focus(sessionId, options) {
+      calls.push(['focus', sessionId, options]);
+      return overrides.focusResult || { status: 'focused' };
+    },
+    async press(sessionId, options) {
+      calls.push(['press', sessionId, options]);
+      return overrides.pressResult || { status: 'pressed' };
     },
     async inspect(sessionId) {
       calls.push(['inspect', sessionId]);

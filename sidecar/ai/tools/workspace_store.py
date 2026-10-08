@@ -29,6 +29,7 @@ from weakref import WeakValueDictionary
 
 from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED, CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.contracts import ToolExecutionFailure
+from sidecar.ai.tools.jenny_state_dir import ensure_jenny_dir_gitignore
 from sidecar.ai.tools.workspace import ensure_safe_internal_destination
 from sidecar.ai.tools.workspace_path_identity import (
     NodeIdentity,
@@ -44,6 +45,8 @@ from sidecar.ai.tools.workspace_store_file_ops import (
     create_empty_regular_leaf,
     fsync_directory,
     link_exclusive,
+    read_fd_bounded,
+    unlink_link_object,
 )
 from sidecar.runtime.diagnostics import log_event
 from sidecar.runtime.file_locking import acquire_file_lock
@@ -240,7 +243,7 @@ class GuardedWorkspaceStore:
                 opened_stat = os.fstat(fd)
                 if not resolved.leaf_identity.matches_open_stat(opened_stat):
                     raise _store_failure("workspace store entry changed before read")
-                data = _read_fd_bounded(fd, limit)
+                data = read_fd_bounded(fd, limit)
                 final_stat = os.fstat(fd)
                 if not resolved.leaf_identity.matches_open_stat(final_stat):
                     raise _store_failure("workspace store entry changed during read")
@@ -353,7 +356,7 @@ class GuardedWorkspaceStore:
                 raise _store_failure("checkpoint source is not a regular file", retryable=False)
             if source_stat.st_size > limit:
                 raise _cap_failure("checkpoint source exceeds byte limit")
-            data = _read_fd_bounded(fd, limit)
+            data = read_fd_bounded(fd, limit)
             if not source_identity.leaf_identity.matches_open_stat(os.fstat(fd)):
                 raise _store_failure("checkpoint source changed during read")
         finally:
@@ -728,6 +731,9 @@ class GuardedWorkspaceStore:
         current = _node_identity(jenny)
         if is_link_object(jenny) or not stat_module.S_ISDIR(current.mode):
             raise _store_failure("workspace store root identity is unsafe")
+        if create:
+            # Best-effort: keep `.jenny` out of the project's Git status.
+            ensure_jenny_dir_gitignore(jenny)
         return jenny
 
     def _quarantine_top_level_jenny(self, jenny: Path, identity: NodeIdentity) -> None:
@@ -826,7 +832,7 @@ class GuardedWorkspaceStore:
             raise _cap_failure("workspace store delete exceeds entry limit")
         identity = _node_identity(path)
         if is_link_object(path):
-            _unlink_link_object(path, identity)
+            unlink_link_object(path, identity)
             counter[0] += 1
             return
         if stat_module.S_ISDIR(identity.mode):
@@ -943,31 +949,6 @@ def _quarantine_layout(
                 directory.rmdir()
         raise _store_failure("unsafe workspace store layout quarantine failed") from error
     return source.joinpath(*destination_parts, staged_destination.name)
-
-
-def _read_fd_bounded(fd: int, limit: int) -> bytes:
-    chunks: list[bytes] = []
-    total = 0
-    while True:
-        chunk = os.read(fd, min(64 * 1024, limit + 1 - total))
-        if not chunk:
-            return b"".join(chunks)
-        chunks.append(chunk)
-        total += len(chunk)
-        if total > limit:
-            raise _cap_failure("workspace store read exceeds byte limit")
-
-
-def _unlink_link_object(path: Path, identity: NodeIdentity) -> None:
-    try:
-        path.unlink()
-    except IsADirectoryError:
-        path.rmdir()
-    except PermissionError:
-        if stat_module.S_ISDIR(identity.mode):
-            path.rmdir()
-        else:
-            raise
 
 
 def _unlink_if_identity(

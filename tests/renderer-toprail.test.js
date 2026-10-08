@@ -258,6 +258,18 @@ async function loadRailWithMeasurableIndicator(t) {
   return { ...setup, roInstances };
 }
 
+test('the sliding indicator hides while the active view has no rail tab (Settings is the gear)', async (t) => {
+  const { window, doc, controller } = await loadRailWithMeasurableIndicator(t);
+  const indicator = doc.getElementById('topRailIndicator');
+  assert.equal(indicator.hidden, false, 'a measurable active tab shows the underline');
+  window.__rendererState.ui.activeView = 'settings';
+  controller.updateIndicator();
+  assert.equal(indicator.hidden, true, 'no tab is active, so no underline may stay under the last one');
+  window.__rendererState.ui.activeView = 'chat';
+  controller.updateIndicator();
+  assert.equal(indicator.hidden, false, 'returning to a tab shows the underline again');
+});
+
 test('indicator re-measures when the rail or a tab resizes (UIUX-040)', async (t) => {
   const { doc, roInstances } = await loadRailWithMeasurableIndicator(t);
   const indicator = doc.getElementById('topRailIndicator');

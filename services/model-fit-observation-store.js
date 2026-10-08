@@ -132,17 +132,20 @@ class ModelFitObservationStore {
    * Looks up by (engine, model-identity, GPU) only — ignoring context length —
    * and, when multiple context-length measurements exist for that tuple,
    * returns the one recorded at the largest context length (the conservative
-   * fit: it was measured under the heaviest KV-cache load).
+   * fit: it was measured under the heaviest KV-cache load). A positive
+   * `contextLength` asks for that exact window first.
    */
-  get({ modelId, digest, gpuName, gpuVramMb, engine = 'ollama' } = {}) {
+  get({ modelId, digest, gpuName, gpuVramMb, engine = 'ollama', contextLength = 0 } = {}) {
     try {
       const identityKey = buildObservationIdentityKey({ engine, digest, modelId, gpuName, gpuVramMb });
       const state = this._readState();
       const prefix = `${identityKey}|`;
+      const wanted = _nonNegInt(contextLength);
       let best = null;
       for (const [key, raw] of Object.entries(state.observations || {})) {
         if (!key.startsWith(prefix)) continue;
         const normalized = normalizeObservation(raw);
+        if (wanted && normalized.contextLength === wanted) return normalized;
         if (!best || normalized.contextLength > best.contextLength) best = normalized;
       }
       return best;

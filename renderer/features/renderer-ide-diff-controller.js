@@ -36,14 +36,7 @@
     return {};
   }
 
-  function defaultEscape(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const defaultEscape = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   // EOL normalization is owned by the find/replace util (toLf); resolved at
   // module scope so the exported normalizeDiffText below can delegate to that
@@ -61,6 +54,33 @@
       : String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   }
 
+  // Plain-text rendering of a change whose pre-edit snapshot is gone
+  // (evicted / never captured): the recorded hunks - or an honest note when
+  // even those were truncated away - instead of a misleading side-by-side.
+  function buildHunksSummaryText(change) {
+    const path = String(change?.path || '');
+    const status = String(change?.status || 'modified');
+    const additions = Number(change?.additions) || 0;
+    const deletions = Number(change?.deletions) || 0;
+    const header = jt('ide.changes.recordedChangeSummary', 'The original version of this file is no longer available, '
+      + 'so a side-by-side diff cannot be shown.\nRecorded change summary:\n\n'
+      + '{path} - {status} (+{additions} -{deletions})', { path, status, additions, deletions });
+    const hunks = Array.isArray(change?.hunks) ? change.hunks : [];
+    if (!hunks.length) {
+      const reason = change?.truncated
+        ? jt('ide.changes.diffTooLargeForLineDetails', '\n\nThe diff was too large to record line by line ({reason}).', { reason: change.truncationReason || jt('ide.changes.truncatedReason', 'truncated') })
+        : jt('ide.changes.noLineDetails', '\n\nNo line-level details were recorded for this change.');
+      return header + reason;
+    }
+    const parts = hunks.map((hunk) => {
+      const lines = Array.isArray(hunk?.lines) ? hunk.lines : [];
+      return `@@ -${Number(hunk?.oldStart) || 0},${Number(hunk?.oldLines) || 0}`
+        + ` +${Number(hunk?.newStart) || 0},${Number(hunk?.newLines) || 0} @@\n`
+        + lines.join('\n');
+    });
+    return `${header}\n\n${parts.join('\n\n')}`;
+  }
+
   function createIdeDiffController(deps) {
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
@@ -68,6 +88,7 @@
       ? deps.getWorkspaceFsApi
       : () => null;
     const editorHost = deps?.editorHost || null;
+    const showDiffTab = deps?.showDiffTab || ((id) => editorHost.activateDocument(id));
     const getFileOperations = typeof deps?.getFileOperations === 'function'
       ? deps.getFileOperations : () => null;
     const workspaceIdentityEnforced = typeof deps?.getWorkspaceId === 'function';
@@ -79,7 +100,6 @@
       renderTabs = noop,
       showShellErrorToast = noop,
       appendClientLog = noop,
-      buildHunksSummaryText = () => '',
     } = callbacks;
     const ideStateUtils = resolveModule('rendererIdeState', './renderer-ide-state');
     const hunkUtils = resolveModule('rendererIdeHunkApplyUtils', './renderer-ide-hunk-apply-utils');
@@ -105,6 +125,7 @@
     // immutable "Jenny's version" base used for hunk math + the live decisions.
     const contexts = new Map();
     let toolbarBound = false;
+    const toolbarElements = new WeakSet();
     // Serializes safety writes while letting a root reset invalidate an old
     // operation without allowing its finally block to release a newer write.
     let activeWriteToken = null;
@@ -112,6 +133,10 @@
     let disposed = false;
 
     const isCurrent = (epoch) => !disposed && epoch === rootEpoch;
+    // Suggested changes (row 35) get their own diff tabs and decision bar.
+    const suggestionDiff = resolveModule('rendererIdeSuggestionDiff', './renderer-ide-suggestion-diff').createIdeSuggestionDiff?.({
+      getIde, getDom, editorHost, getFileOperations, getWorkspaceFsApi, ideStateUtils, renderTabs, appendClientLog, showDiffTab,
+    }) || null;
     function beginWrite() {
       if (activeWriteToken) return null;
       const token = { epoch: rootEpoch };
@@ -293,7 +318,7 @@
         return false;
       }
       ideStateUtils.openDiffTab?.(getIde(), { id, label });
-      editorHost.activateDocument(id);
+      showDiffTab(id);
       pruneClosedContexts(id);
       // Capture the review context for the safety toolbar. baseModifiedText is
       // "Jenny's version" (the immutable base for hunk decisions); originalText
@@ -374,7 +399,7 @@
         return false;
       }
       ideStateUtils.openDiffTab?.(getIde(), { id, label });
-      editorHost.activateDocument(id);
+      showDiffTab(id);
       renderTabs();
       return true;
     }
@@ -451,7 +476,7 @@
     /* ---------------------------------------------------------------- */
 
     // Restore the pre-change snapshot of a Jenny change, confirm-gated.
-    // Callable from the changes-panel rows AND the diff-tab toolbar. Reads the
+    // Called from the diff-tab toolbar. Reads the
     // snapshot and writes it back with the file's current EOL (watcher
     // reconciles) — except a created file, which has no "before" snapshot to
     // restore to and is instead removed through the guarded workspace-fs
@@ -571,14 +596,15 @@
           // than pushing it onto the reopen stack, which lives one layer up and
           // would otherwise offer to resurrect a path that no longer exists.
           const ideForClose = getIde();
+          const wasPrimaryActive = ideForClose.activeTabPath === change.path;
           const nextActivePath = typeof ideStateUtils.closeTab === 'function'
             ? ideStateUtils.closeTab(ideForClose, change.path)
             : ideForClose.activeTabPath;
           editorHost.closeDocument(change.path);
           getFileOperations()?.close(change.path);
-          if (nextActivePath && editorHost.hasDocument(nextActivePath)) {
+          if (wasPrimaryActive && nextActivePath && editorHost.hasDocument(nextActivePath)) {
             editorHost.activateDocument(nextActivePath);
-          } else {
+          } else if (wasPrimaryActive) {
             editorHost.showEmpty();
           }
         } else {
@@ -608,13 +634,18 @@
           if (isCreated) {
             // Nothing is left to diff once the file is deleted: collapse the
             // diff tab itself instead of showing an empty-vs-empty comparison.
-            const nextAfterDiff = ideStateUtils.closeTab?.(getIde(), ctx.id);
+            const ide = getIde(), group = ideStateUtils.getTab(ide, ctx.id)?.group;
+            const groupTabs = group ? ide.openTabs.filter((tab) => tab.group === group) : [];
+            const at = groupTabs.findIndex((tab) => tab.path === ctx.id);
+            const neighbour = groupTabs[at + 1] || groupTabs[at - 1];
+            const nextAfterDiff = ideStateUtils.closeTab?.(ide, ctx.id);
             editorHost.closeDocument(ctx.id);
             contexts.delete(ctx.id);
             // closeDocument blanks the editor when the diff was the active
             // document; land on the tab the IDE state selected, as the
             // file-tab close above does, instead of a stale or empty pane.
-            if (nextAfterDiff && editorHost.hasDocument?.(nextAfterDiff)) editorHost.activateDocument(nextAfterDiff);
+            if (group) { if (neighbour) (ide.groupActive || (ide.groupActive = {}))[group] = neighbour.path; }
+            else if (nextAfterDiff && editorHost.hasDocument?.(nextAfterDiff)) editorHost.activateDocument(nextAfterDiff);
             else editorHost.showEmpty?.();
           } else if (ctx.originalText !== null) {
             await editorHost.openDiffDocument({
@@ -626,8 +657,8 @@
               shouldApply: () => isCurrentWrite(writeToken),
             });
             if (!isCurrentWrite(writeToken)) return false;
-            if (getIde().activeTabPath === ctx.id) {
-              editorHost.activateDocument(ctx.id);
+            if (getIde().activeTabPath === ctx.id || Object.values(getIde().groupActive || {}).includes(ctx.id)) {
+              showDiffTab(ctx.id);
             }
           }
         }
@@ -708,8 +739,8 @@
           shouldApply: () => isCurrentWrite(writeToken),
         });
         if (!isCurrentWrite(writeToken)) return false;
-        if (getIde().activeTabPath === ctx.id) {
-          editorHost.activateDocument(ctx.id);
+        if (getIde().activeTabPath === ctx.id || Object.values(getIde().groupActive || {}).includes(ctx.id)) {
+          showDiffTab(ctx.id);
         }
         renderTabs();
         return true;
@@ -813,24 +844,27 @@
 
     // Self-gating render called from the controller's renderTabs(): shows the
     // toolbar only when the active tab is a Jenny-change diff we captured.
-    function renderToolbar() {
+    function renderToolbar() { return renderToolbarFor(getDom().ideDiffToolbar, getIde().activeTabPath); }
+
+    function renderToolbarFor(el, activeId) {
       if (disposed) {
         return;
       }
       pruneClosedContexts();
-      const el = getDom().ideDiffToolbar;
       if (!el) {
         return;
       }
-      const activeId = getIde().activeTabPath;
+      el.setAttribute('data-ide-diff-id', activeId || '');
       const ctx = activeId && contexts.has(activeId) ? contexts.get(activeId) : null;
       if (!ctx) {
-        if (el.__diffToolbarMarkup) {
+        if (suggestionDiff?.renderToolbarFor(el, activeId)) return true;
+        if (el.__diffToolbarMarkup || el.__suggestionBarMarkup) {
           el.innerHTML = '';
           el.__diffToolbarMarkup = '';
+          el.__suggestionBarMarkup = '';
         }
         el.classList.add('hidden');
-        return;
+        return false;
       }
       const markup = buildToolbarMarkup(ctx);
       if (el.__diffToolbarMarkup !== markup) {
@@ -838,6 +872,8 @@
         el.__diffToolbarMarkup = markup;
       }
       el.classList.remove('hidden');
+      if (!toolbarElements.has(el)) { el.addEventListener('click', handleToolbarClick); toolbarElements.add(el); }
+      return true;
     }
 
     function handleToolbarClick(event) {
@@ -848,7 +884,7 @@
       if (!target || typeof target.closest !== 'function') {
         return;
       }
-      const activeId = getIde().activeTabPath;
+      const activeId = event.currentTarget?.getAttribute('data-ide-diff-id') || getIde().activeTabPath;
       const ctx = activeId ? contexts.get(activeId) : null;
       if (!ctx) {
         return;
@@ -881,11 +917,12 @@
         return;
       }
       toolbarBound = true;
-      el.addEventListener('click', handleToolbarClick);
+      if (!toolbarElements.has(el)) { el.addEventListener('click', handleToolbarClick); toolbarElements.add(el); }
     }
 
     function resetForRoot() {
       rootEpoch += 1;
+      suggestionDiff?.resetForRoot();
       activeWriteToken = null;
       contexts.clear();
       const el = getDom().ideDiffToolbar;
@@ -898,6 +935,7 @@
 
     function dispose() {
       disposed = true;
+      suggestionDiff?.dispose();
       const el = getDom().ideDiffToolbar;
       if (el && toolbarBound) {
         el.removeEventListener('click', handleToolbarClick);
@@ -908,9 +946,14 @@
 
     return {
       openChangeDiff,
+      openSuggestionDiff: (sessionId, id) => (suggestionDiff ? suggestionDiff.openSuggestion(sessionId, id) : false),
+      // The tab ids these opens use (W7c routes a bound chat's diff by id).
+      changeDiffId,
+      suggestionDiffId: (sessionId) => suggestionDiff?.tabIdFor(sessionId) || '',
       openUnsavedCompare,
       revertChange,
       renderToolbar,
+      renderToolbarFor,
       bindEvents,
       resetForRoot,
       dispose,

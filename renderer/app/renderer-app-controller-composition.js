@@ -122,18 +122,23 @@
   }) || null;
   ({
     renderSettings = noop,
+    renderComposerCarriers = noop,
     renderComposerPopover = noop,
     renderCommandPopover = noop,
     syncComposerInputHeight = noop,
   } = settingsShellController || {});
-  window.rendererSettingsCommandSandboxUtils?.bindCommandSandboxSettings?.(window, registerRendererCleanup);
-  window.rendererSettingsCloudModels?.bindCloudModelsSettings?.(window, registerRendererCleanup);
-  window.rendererSettingsPdfAddonUtils?.bindPdfAddonSettings?.(window, registerRendererCleanup);
+  settingsShellController?.whenSettingsPageReady(() => {
+    window.rendererSettingsCommandSandboxUtils?.bindCommandSandboxSettings?.(window, registerRendererCleanup);
+    window.rendererSettingsCloudModels?.bindCloudModelsSettings?.(window, registerRendererCleanup);
+    window.rendererSettingsPdfAddonUtils?.bindPdfAddonSettings?.(window, registerRendererCleanup);
+  });
   /* logRendererController */
   const logRenderUtils = window.rendererDiagnosticsRenderUtils || {};
   const logRendererController = logRenderUtils.createLogRenderer?.({
     state,
     dom: { logList },
+    // Diagnostics > Runs attaches to the runtime console the Settings page group publishes.
+    callbacks: { ensureSettingsPage: () => settingsShellController?.ensureSettingsPage?.() },
   }) || null;
   const {
     dispose: disposeDiagnosticsView = noop,
@@ -251,6 +256,7 @@
       syncComposerInputHeight: (...a) => syncComposerInputHeight(...a), setComposerHoloState: (...a) => setComposerHoloState(...a),
       updateComposerSafeOffset: (...a) => updateComposerSafeOffset(...a), renderSessions: (...a) => renderSessions(...a),
       renderWorkspaceChrome: (...a) => renderWorkspaceChrome(...a),
+      renderComposerCarriers: (...a) => renderComposerCarriers(...a),
       renderSettings: (...a) => renderSettings(...a), renderIde: (...a) => renderIdeSafe(...a), layoutIdeEditor: (...a) => layoutIdeEditorSafe(...a), reconcileChatDockHost: (...a) => reconcileChatDockHostSafe(...a),
       renderArtifactReviewPanel: (...a) => renderArtifactReviewPanelSafe(...a),
       isArtifactReviewVisible: (...a) => isArtifactReviewVisible(...a),
@@ -817,7 +823,8 @@
         if (!changeId) return false;
         try {
           setActiveView('ide');
-          const opened = await Promise.resolve(openIdeChangeDiffSafe(changeId));
+          // A click in the Workspace's second chat looks in that chat's changes (row 40 W6b).
+          const opened = await Promise.resolve(openIdeChangeDiffSafe(changeId, { secondChat: Boolean(payload?.contextNode?.closest?.('[data-pane-hosted]')) }));
           // Read/workspace refusals already showed the controller's specific
           // "Jenny's Changes" toast for this click — don't stack a generic one.
           if (opened !== true && opened !== 'read_failed' && opened !== 'workspace_unavailable') {
@@ -860,7 +867,7 @@
       settingsShellController, chatShellController, buildRenderPipeline, buildChatShellController,
       chatWayfinderController,
       contextUsageModule,
-      renderSettings, renderComposerPopover,
+      renderSettings, renderComposerCarriers, renderComposerPopover,
       renderCommandPopover,
       syncComposerInputHeight,
       getLogEntryById,

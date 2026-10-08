@@ -413,9 +413,11 @@
           event_id: eventId,
           turn_id: turnId,
           kind: 'stream_reset',
+          // Live translator only: replayed resets lack this, so they tombstone
+          // without stamping a "Draft discarded" fold.
+          live: true,
           // Sidecar reset reason: 'tool_continuation' marks a preserved
-          // genuine-commentary reset (no truncation stamp downstream); every
-          // other/absent reason is a discarding reset.
+          // genuine-commentary reset; every other/absent reason discards.
           reason: normalizeId(payload && payload.reason),
           // Main names what it erased instead of leaving the renderer to
           // re-derive it from `reason` (it cannot: the tool_continuation

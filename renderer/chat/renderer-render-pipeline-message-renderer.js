@@ -248,22 +248,7 @@
       // view travels through render options instead.
       if (typeof document !== 'undefined' && document.documentElement?.dataset) {
         const featureFlags = state?.features?.featureFlags || state?.featureFlags || {};
-        // reasoning_prettify: joinReasoningEntriesMarkdown
-        // (chat-thinking-utils.js) reads it back to gate display-time
-        // whitespace repair of glued thinking text. Write only on change: the
-        // flag is stable for a session, so this avoids a dataset mutation (and
-        // its attribute-selector style invalidation) on every streaming repaint.
-        const nextReasoningPrettify = featureFlags.reasoning_prettify === false ? 'false' : 'true';
-        if (document.documentElement.dataset.reasoningPrettify !== nextReasoningPrettify) {
-          document.documentElement.dataset.reasoningPrettify = nextReasoningPrettify;
-        }
-        // turn_activity_envelope rides the same dataset-reflection channel: the
-        // pure article/row builders read it back without threading state.
-        const nextTurnActivityEnvelope = featureFlags.turn_activity_envelope === true ? 'true' : 'false';
-        if (document.documentElement.dataset.turnActivityEnvelope !== nextTurnActivityEnvelope) {
-          document.documentElement.dataset.turnActivityEnvelope = nextTurnActivityEnvelope;
-        }
-        // chat_render_content_visibility (Ht-D) rides the same channel, but
+        // chat_render_content_visibility (Ht-D) rides the dataset channel, but
         // OFF means the attribute is ABSENT (not 'false') so the CSS
         // attribute-selector rule in chat-thread.css is inert and markup
         // stays byte-identical pre-Ht-D — jsdom-pinnable per the design spec.
@@ -485,7 +470,7 @@
           template.innerHTML = String(nextArticleMarkup || '').trim();
           nextArticle = template.content.querySelector('.chat-entry[data-message-id]');
         }
-        // HB-006: under turn_activity_envelope the live article hosts the WHOLE
+        // HB-006: under the turn-activity envelope the live article hosts the WHOLE
         // turn's row list. When the dispatcher answers with a compat stub (the
         // anchor moved, or the article's message fell out of `messages` and the
         // streaming segment stood in), the legacy branch below wrote only that
@@ -513,7 +498,7 @@
               article,
               nextArticleMarkup,
               {
-                collectStats: state?.features?.featureFlags?.chat_timeline_render_telemetry === true,
+                collectStats: true,
                 rowListSegments: hostsRowList && rowListSegments.length ? rowListSegments : null,
               }
             );

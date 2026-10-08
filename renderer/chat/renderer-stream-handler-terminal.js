@@ -631,9 +631,11 @@
     async function handleComplete(payload, callOptions = {}) {
       completeThinkingIndicator(payload.sessionId);
       const durability = normalizeUnsavedDurability(payload.durability);
-      const knownResumableStops = resumableStopKinds();
-      const resumableStop = typeof payload.resumableStop === 'string' && Array.isArray(knownResumableStops)
-        && knownResumableStops.includes(payload.resumableStop) ? payload.resumableStop : '';
+      const draftCount = Number.isInteger(payload.discardedDrafts?.count) ? payload.discardedDrafts.count : 0;
+      const liveStamps = {
+        ...(resumableStopKinds()?.includes(payload.resumableStop) ? { resumable_stop: payload.resumableStop } : {}),
+        ...(draftCount > 0 ? { discarded_drafts: { count: draftCount, latest_reason: String(payload.discardedDrafts.latest_reason || '').slice(0, 64) } } : {}),
+      };
       appendClientLog('DEBUG', 'stream.handle_complete', {
         streamId: payload.streamId,
         sessionId: String(payload.sessionId || '').slice(0, 30),
@@ -658,11 +660,8 @@
           stream_error: '',
           finalizedAt: new Date().toISOString(),
           ...(durability ? { durability } : {}),
-          // Parity with `durability` on this same reconcile. Not independently
-          // covered: the harness cannot reach this branch (a duplicate terminal is
-          // absorbed upstream), and omitting the field while applying its neighbour
-          // would be the anomaly.
-          ...(resumableStop ? { resumable_stop: resumableStop } : {}),
+          // Parity with `durability`; the harness cannot reach this branch.
+          ...liveStamps,
         };
         setSessionMessages(payload.sessionId, activeMessages, `session_${payload.sessionId}`);
         // The admitted late terminal is still authoritative for request usage.
@@ -705,7 +704,7 @@
         stream_error: '',
         finalizedAt: new Date().toISOString(),
         ...(durability ? { durability } : {}),
-        ...(resumableStop ? { resumable_stop: resumableStop } : {}),
+        ...liveStamps,
       };
       setSessionMessages(payload.sessionId, activeMessages, `session_${payload.sessionId}`);
       updateContextUsage(payload.sessionId, payload);

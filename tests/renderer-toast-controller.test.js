@@ -251,6 +251,13 @@ test('toast content is set as text, never parsed as markup', (t) => {
   assert.equal(message.querySelector('img'), null);
 });
 
+test('a toast message takes its own direction (quoted text in another script)', (t) => {
+  const app = mount();
+  t.after(() => app.dispose());
+  app.showToastMessage('Explain things step by step when helping the user.');
+  assert.equal(app.nodes()[0].querySelector('.inv-toast__message').getAttribute('dir'), 'auto');
+});
+
 test('the queued remainder is surfaced instead of silently dropped', (t) => {
   const app = mount();
   t.after(() => app.dispose());

@@ -8,6 +8,7 @@ const path = require('node:path');
 const { createAttachmentContentStore } = require('./attachment-content-store');
 const { AttachmentAssetStore } = require('../attachment-asset-store');
 const { BackendService } = require('../backend/backend-service');
+const { createSuggestedChangesService } = require('../backend/suggested-changes-wiring');
 const { ShellConfigService } = require('../shell-config-service');
 const { buildFeatureFlags } = require('../feature-flags');
 const { createConversationToolExecutor } = require('./conversation-tool-executor');
@@ -205,6 +206,8 @@ function createHostedBackend(options = {}) {
 
   backend.hostExecutionBroker = options.executionBroker || null;
   backend.hostExecutionStagingRoot = options.executionStagingRoot || null;
+  // Propose mode (row 35): the same suggestion record and journaled apply as desktop.
+  backend.suggestedChanges = createSuggestedChangesService({ backendService: backend, log });
 
   const onServiceLog = (entry) => log(entry.level || 'INFO', entry.event || 'backend.service', entry.details || {});
   const onDiagnosticEntry = (entry) => {

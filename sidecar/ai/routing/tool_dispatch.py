@@ -9,6 +9,7 @@ from typing import Any, Callable
 from sidecar.ai.error_codes import CMP_TOOL_DISABLED, CMP_TOOL_EXECUTION_FAILED
 from sidecar.ai.host_policy import HOST_EXECUTION_POLICY_VERSION
 from sidecar.ai.mcp.exceptions import MCPError
+from sidecar.ai.routing.auto_checkpoint import inject_restore_point
 from sidecar.ai.routing.tool_authority import admit_scoped_tool_call
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 
@@ -20,7 +21,7 @@ _PROCESS_BACKED_BUILTINS = frozenset({
 _ELECTRON_RESOURCE_START_TOOLS = frozenset({
     "jenny_status", "worktree_list", "worktree_create", "worktree_select", "worktree_delete",
     "automation_list", "automation_read", "workspace_present", "preview_test",
-    "home", "task_board", "verify", "image_generate", "run_command",
+    "home", "task_board", "project_notes", "verify", "image_generate", "run_command",
 })
 _CLEANUP_FIELDS = frozenset({
     "cleanup", "output_readers_terminated", "process_tree_terminated", "reason",
@@ -216,6 +217,9 @@ def dispatch_tool_call(  # noqa: PLR0913
             call.tool_id, tool_arguments, timeout_seconds=timeout_seconds,
             cancel_handle=cancel_handle, **dispatch_kwargs,
         )
+    # Row 34 S5: builtin scripted calls carry the run's user-only restore point
+    # (after admission, so only the transport sees it).
+    inject_restore_point(tool_arguments, call=call, descriptor=descriptor)
     request_context = getattr(runtime, "request_context", None)
     if getattr(request_context, "execution_context", None) is None:
         _dispatch_ready(on_dispatch_ready)

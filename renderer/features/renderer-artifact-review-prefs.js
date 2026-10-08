@@ -85,6 +85,10 @@
     // mode; loadArtifactReviewPreferences never restores it, so a restart cannot
     // reopen an empty monitor.
     if (raw === 'subagents') return 'subagents';
+    // The Project Notes rail (renderer-project-notes-rail.js). Renderer-local like
+    // `subagents`: the loader and saver never carry the mode, so a restart cannot
+    // reopen the rail.
+    if (raw === 'notes') return 'notes';
     return 'artifact';
   }
 

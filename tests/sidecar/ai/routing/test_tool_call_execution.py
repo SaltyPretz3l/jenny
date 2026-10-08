@@ -360,6 +360,40 @@ def test_tool_search_refreshes_payload_without_reordering() -> None:
 # ── F19: reserved calls outside the approved window get terminal outcomes ────
 
 
+def test_settle_dropped_tool_calls_lists_the_batch_on_the_last_row() -> None:
+    """One line names the window and everything to re-issue (Pocket Wild dogfood)."""
+    runtime, _events = _runtime()
+    outcomes: list[ToolExecutionOutcome] = []
+
+    settle_dropped_tool_calls(
+        kernel=_Kernel(),
+        runtime=runtime,
+        result=SimpleNamespace(),
+        request_id="req-1",
+        session_id="session-1",
+        dropped_calls=(
+            _call("write_file", call_id="call-write"),
+            _call("run_command", call_id="call-run"),
+        ),
+        outcomes=outcomes,
+        working_messages=[],
+        iteration_calls=[],
+        streamed_event_types=set(),
+        approved_tool_id="edit_file",
+        window_calls=(
+            _call("edit_file", call_id="call-edit"),
+            _call("workspace_present", call_id="call-present"),
+        ),
+    )
+
+    assert "Batch status" not in outcomes[0].output
+    assert outcomes[1].output.endswith(
+        "Batch status: approved window edit_file, workspace_present (see their results); "
+        "not run, re-issue these: write_file, run_command."
+    )
+    assert "paused for approval of 'edit_file'" in outcomes[1].output
+
+
 def test_settle_dropped_tool_calls_settles_every_reserved_call() -> None:
     """Every budget-reserved call the resume skips gets an explicit outcome."""
     kernel = _Kernel()

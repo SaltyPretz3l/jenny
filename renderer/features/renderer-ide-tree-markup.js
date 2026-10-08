@@ -63,14 +63,6 @@
     return compareNames(left, right);
   }
 
-  // Single path segment only: inline inputs never create nested paths.
-  function isValidEntryName(name) {
-    if (!name || name === '.' || name === '..') {
-      return false;
-    }
-    return !/[\\/\0:*?"<>|]/.test(name);
-  }
-
   // Tier-2 git slice: file-tree decoration badges by git state.
   const GIT_TREE_BADGE = {
     modified: 'M',
@@ -95,7 +87,6 @@
     const getRootNeedsChoose = deps.getRootNeedsChoose;
     const hasChooseRoot = deps.hasChooseRoot;
     const onLazyLoad = deps.onLazyLoad;
-    const isQolEnabled = deps.isQolEnabled;
     const isSelected = deps.isSelected;
     const isCut = typeof deps.isCut === 'function' ? deps.isCut : () => false;
     // Projects v2: when a switcher is wired the header title is the current
@@ -132,25 +123,22 @@
     function buildEntryRowMarkup(entry, depth) {
       const pendingEdit = getPendingEdit();
       if (pendingEdit?.mode === 'rename' && pendingEdit.targetPath === entry.relPath) {
-        const editName = isQolEnabled()
-          ? pendingEdit.draftName ?? pendingEdit.originalName
-          : pendingEdit.originalName;
+        const editName = pendingEdit.draftName ?? pendingEdit.originalName;
         return buildEditRowMarkup(depth, 'rename', editName);
       }
       const ide = getIde();
       const isDir = entry.kind === 'directory';
       const expanded = isDir && ide.expandedDirs?.has(entry.relPath);
-      const qolEnabled = isQolEnabled();
       const active = !isDir && entry.relPath === ide.activeTabPath;
-      const selected = qolEnabled ? isSelected(entry.relPath) : active;
+      const selected = isSelected(entry.relPath);
       const classes = ['ide-tree-row', `ide-tree-row--${entry.kind}`];
-      if (qolEnabled && active) {
+      if (active) {
         classes.push('ide-tree-row--active');
       }
       if (selected) {
         classes.push('ide-tree-row--selected');
       }
-      if (qolEnabled && isCut(entry.relPath)) {
+      if (isCut(entry.relPath)) {
         classes.push('ide-tree-row--cut');
       }
       // Git decoration: a colour class + an M/A/U badge (files) or a roll-up dot
@@ -171,11 +159,10 @@
       const icon = ideIcons.fileIconMarkup?.(entry.name, entry.kind, { expanded }) || '';
       return `<div class="${classes.join(' ')}" role="treeitem" aria-level="${depth + 1}"`
         + (isDir ? ` aria-expanded="${expanded ? 'true' : 'false'}"` : '')
-        // Files/symlinks stay draggable for editor-stage open. With Explorer
-        // QoL enabled, directories join them for internal tree moves; flag-off
-        // markup remains the legacy file-only shape.
-        + (!isDir || qolEnabled ? ' draggable="true"' : '')
-        + (qolEnabled && active ? ' aria-current="true"' : '')
+        // Files, symlinks and directories are draggable (editor-stage open and
+        // internal tree moves).
+        + ' draggable="true"'
+        + (active ? ' aria-current="true"' : '')
         + (selected ? ' aria-selected="true"' : '')
         + ` data-ide-tree-path="${escapeHtml(entry.relPath)}" data-ide-tree-kind="${escapeHtml(entry.kind)}"`
         + ` style="--ide-tree-depth:${depth}" tabindex="-1" title="${escapeHtml(entry.relPath)}">`
@@ -191,17 +178,15 @@
       const pendingEdit = getPendingEdit();
       let markup = '';
       if (pendingEdit && pendingEdit.mode !== 'rename' && pendingEdit.dirPath === dirPath) {
-        const editName = isQolEnabled() ? pendingEdit.draftName : undefined;
-        markup += buildEditRowMarkup(depth, pendingEdit.mode, editName);
+        markup += buildEditRowMarkup(depth, pendingEdit.mode, pendingEdit.draftName);
       }
       const cachedEntries = childrenByDir.get(dirPath);
       if (!cachedEntries) {
         const failure = errorByDir.get(dirPath);
         return markup + buildStatusRow(failure || 'Loading…', depth);
       }
-      const entries = isQolEnabled()
-        ? [...cachedEntries].sort((left, right) => compareEntries(left, right, getIde().explorerSortMode))
-        : cachedEntries;
+      const entries = [...cachedEntries]
+        .sort((left, right) => compareEntries(left, right, getIde().explorerSortMode));
       for (const entry of entries) {
         markup += buildEntryRowMarkup(entry, depth);
         if (entry.kind === 'directory' && ide.expandedDirs?.has(entry.relPath)) {
@@ -241,17 +226,15 @@
         { ariaLabel: jt('ide.tree.refreshExplorer', 'Refresh Explorer'), title: jt('common.refresh', 'Refresh'), trustedHtml: refreshSvg, dataset: { 'ide-tree-action': 'refresh' } },
         { ariaLabel: jt('ide.tree.collapseAllFolders', 'Collapse All Folders'), title: jt('ide.tree.collapseAll', 'Collapse All'), trustedHtml: collapseSvg, dataset: { 'ide-tree-action': 'collapse-all' } },
       ];
-      if (isQolEnabled()) {
-        const sortMode = EXPLORER_SORT_MODES.includes(getIde().explorerSortMode)
-          ? getIde().explorerSortMode
-          : 'name';
-        const sortTitle = jt('ide.tree.sortTitle', 'Sort: {mode} — click to change', { mode: sortMode });
-        buttons.unshift(
-          { ariaLabel: jt('ide.tree.newFile', 'New File'), title: jt('ide.tree.newFile', 'New File'), trustedHtml: newFileSvg, dataset: { 'ide-tree-action': 'new-file' } },
-          { ariaLabel: jt('ide.tree.newFolder', 'New Folder'), title: jt('ide.tree.newFolder', 'New Folder'), trustedHtml: newFolderSvg, dataset: { 'ide-tree-action': 'new-folder' } },
-          { ariaLabel: sortTitle, title: sortTitle, trustedHtml: sortSvg, dataset: { 'ide-tree-action': 'cycle-sort' } }
-        );
-      }
+      const sortMode = EXPLORER_SORT_MODES.includes(getIde().explorerSortMode)
+        ? getIde().explorerSortMode
+        : 'name';
+      const sortTitle = jt('ide.tree.sortTitle', 'Sort: {mode} — click to change', { mode: sortMode });
+      buttons.unshift(
+        { ariaLabel: jt('ide.tree.newFile', 'New File'), title: jt('ide.tree.newFile', 'New File'), trustedHtml: newFileSvg, dataset: { 'ide-tree-action': 'new-file' } },
+        { ariaLabel: jt('ide.tree.newFolder', 'New Folder'), title: jt('ide.tree.newFolder', 'New Folder'), trustedHtml: newFolderSvg, dataset: { 'ide-tree-action': 'new-folder' } },
+        { ariaLabel: sortTitle, title: sortTitle, trustedHtml: sortSvg, dataset: { 'ide-tree-action': 'cycle-sort' } }
+      );
       const buttonMarkup = (getRootNeedsChoose() ? [] : buttons)
         .map((options) => actionButton({ plain: true, className: 'ide-tree-header-button', ...options }))
         .join('');
@@ -319,9 +302,7 @@
         }
       }
       return buildTreeHeaderMarkup()
-        + (isQolEnabled()
-          ? `<div class="ide-tree ide-tree--qol" role="tree" aria-label="${escapeHtml(jt('ide.tree.workspaceFiles', 'Workspace files'))}" aria-multiselectable="true">${body}</div>`
-          : `<div class="ide-tree" role="tree" aria-label="${escapeHtml(jt('ide.tree.workspaceFiles', 'Workspace files'))}">${body}</div>`);
+        + `<div class="ide-tree ide-tree--qol" role="tree" aria-label="${escapeHtml(jt('ide.tree.workspaceFiles', 'Workspace files'))}" aria-multiselectable="true">${body}</div>`;
     }
 
     return {
@@ -345,6 +326,5 @@
     readProjectNudgeKey,
     parentDirOf,
     nameOf,
-    isValidEntryName,
   };
 });

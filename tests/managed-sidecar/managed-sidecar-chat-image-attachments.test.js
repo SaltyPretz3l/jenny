@@ -24,13 +24,12 @@ test.afterEach(async () => {
   await cleanupTrackedResources();
 });
 
-for (const { engineType, modelId, featureFlags, expectedMode, flagState } of [
-  { engineType: 'openai-compatible', modelId: 'C:/models/vision.gguf', expectedMode: 'assist', flagState: 'absent' },
-  { engineType: 'chatgpt', modelId: 'gpt-5.2', featureFlags: { vision_unified_turn: true }, expectedMode: 'assist', flagState: 'on' },
-  { engineType: 'openai-compatible', modelId: 'C:/models/vision.gguf', featureFlags: { vision_unified_turn: false }, expectedMode: 'chat', flagState: 'off' },
+for (const { engineType, modelId } of [
+  { engineType: 'openai-compatible', modelId: 'C:/models/vision.gguf' },
+  { engineType: 'chatgpt', modelId: 'gpt-5.2' },
 ]) {
-  test(`image attachment reaches chat.send in ${expectedMode} mode with unified flag ${flagState}`, async () => {
-    const service = createManagedChatServiceStub({ featureFlags });
+  test(`image attachment reaches chat.send in assist mode on ${engineType}`, async () => {
+    const service = createManagedChatServiceStub();
     const tempDir = createTrackedTempDir(`jenny-managed-${engineType}-image-`);
     const realImagePath = path.join(tempDir, 'capture.png');
     fs.writeFileSync(realImagePath, Buffer.from('image-bytes'));
@@ -83,6 +82,6 @@ for (const { engineType, modelId, featureFlags, expectedMode, flagState } of [
     assert.equal(chatSendCount, 1);
     assert.equal(chatSendParams.attachments.length, 1);
     assert.equal(chatSendParams.attachments[0].kind, 'image');
-    assert.equal(chatSendParams.mode, expectedMode);
+    assert.equal(chatSendParams.mode, 'assist');
   });
 }

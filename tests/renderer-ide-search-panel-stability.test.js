@@ -31,7 +31,7 @@ function makeHarness(t, files) {
 }
 
 function panelOf(harness) {
-  return harness.getDom().ideRailPanel;
+  return harness.viewHost('search');
 }
 
 function queryInput(harness) {

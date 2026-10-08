@@ -1,4 +1,4 @@
-"""Request-scoped plan-mode prompt overlay."""
+"""Request-scoped plan-mode and propose-mode prompt overlays."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from sidecar.ai.context.runtime_message_markers import (
     APPROVED_PLAN_OVERLAY_HEADING,
     PLAN_MODE_OVERLAY_HEADING,
     PLAN_REVISION_OVERLAY_HEADING,
+    PROPOSE_MODE_OVERLAY_HEADING,
 )
 
 # The renderer sends this when the user chose Keep planning without typing feedback.
@@ -18,20 +19,26 @@ NO_PLAN_FEEDBACK = "<no feedback given>"
 PLAN_REVISION_FEEDBACK_LIMIT = 800
 
 
-def _contract_path() -> Path:
+def _contract_path(name: str = "plan-mode-contract.json") -> Path:
     bundled_root = getattr(sys, "_MEIPASS", None)
+    # Literal bundled-root paths: the packaging gate scans for them and checks
+    # each one has a BUNDLED_DATA_FILES entry.
+    if bundled_root and name == "propose-mode-contract.json":
+        return Path(bundled_root) / "services" / "tools" / "propose-mode-contract.json"
     if bundled_root:
         return Path(bundled_root) / "services" / "tools" / "plan-mode-contract.json"
-    return Path(__file__).resolve().parents[3] / "services" / "tools" / "plan-mode-contract.json"
+    return Path(__file__).resolve().parents[3] / "services" / "tools" / name
 
 
-@lru_cache(maxsize=1)
-def _contract() -> dict[str, object]:
-    return json.loads(_contract_path().read_text(encoding="utf-8"))
+@lru_cache(maxsize=2)
+def _contract(name: str = "plan-mode-contract.json") -> dict[str, object]:
+    return json.loads(_contract_path(name).read_text(encoding="utf-8"))
 
 
 PLAN_MODE_GUIDANCE = str(_contract()["plan_mode_prompt"])
 APPROVED_PLAN_GUIDANCE = str(_contract()["approved_plan_prompt"])
+# Plan Plus (Propose mode); adapted from the 2026-10-05 spike's mode block.
+PROPOSE_MODE_GUIDANCE = str(_contract("propose-mode-contract.json")["propose_mode_prompt"])
 
 
 def build_plan_mode_overlay(*, plan_mode_active: bool) -> str:
@@ -48,6 +55,38 @@ def append_plan_mode_runtime_overlay(
     overlay = build_plan_mode_overlay(plan_mode_active=plan_mode_active)
     if overlay:
         runtime_system_messages.append(overlay)
+
+
+def build_propose_mode_overlay(*, propose_mode_active: bool) -> str:
+    if not propose_mode_active:
+        return ""
+    return f"{PROPOSE_MODE_OVERLAY_HEADING}\n{PROPOSE_MODE_GUIDANCE}"
+
+
+def append_propose_mode_runtime_overlay(
+    runtime_system_messages: list[str],
+    *,
+    propose_mode_active: bool,
+) -> None:
+    overlay = build_propose_mode_overlay(propose_mode_active=propose_mode_active)
+    if overlay:
+        runtime_system_messages.append(overlay)
+
+
+def append_mode_runtime_overlays(
+    runtime_system_messages: list[str],
+    *,
+    request_context: object,
+) -> None:
+    """The request's run-mode overlays: Plan Mode, then Propose mode."""
+    append_plan_mode_runtime_overlay(
+        runtime_system_messages,
+        plan_mode_active=bool(getattr(request_context, "plan_mode", False)),
+    )
+    append_propose_mode_runtime_overlay(
+        runtime_system_messages,
+        propose_mode_active=bool(getattr(request_context, "propose_mode", False)),
+    )
 
 
 def build_approved_plan_overlay(
@@ -121,9 +160,13 @@ def append_approved_plan_runtime_overlay(
 __all__ = [
     "PLAN_MODE_GUIDANCE",
     "APPROVED_PLAN_GUIDANCE",
+    "PROPOSE_MODE_GUIDANCE",
     "append_plan_mode_runtime_overlay",
+    "append_propose_mode_runtime_overlay",
     "append_approved_plan_runtime_overlay",
+    "append_mode_runtime_overlays",
     "build_approved_plan_overlay",
     "build_plan_revision_overlay",
     "build_plan_mode_overlay",
+    "build_propose_mode_overlay",
 ]

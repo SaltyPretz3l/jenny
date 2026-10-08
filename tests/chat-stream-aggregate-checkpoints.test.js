@@ -8,13 +8,6 @@ const {
   mergeDeltaPayloads,
 } = require('../services/chat-stream-bridge-support');
 const {
-  buildEnvelopeSources,
-  STREAM_ENVELOPE_SCHEMA_VERSION,
-} = require('../services/stream-envelope-shape');
-const {
-  streamEnvelopeToLegacyPayload,
-} = require('../renderer/chat/renderer-stream-envelope-v2');
-const {
   createTextCursor,
   readDelta,
 } = require('../renderer/chat/renderer-stream-text-cursor');
@@ -285,40 +278,6 @@ test('reasoning-only delta carries aggregateLength without aggregate between che
   assert.equal(payload.content, '');
   assert.equal(payload.aggregateLength, 'visible'.length);
   assert.equal(hasAggregate(payload), false);
-});
-
-test('aggregate and aggregateLength survive response and reasoning envelope round trips', () => {
-  const cases = [
-    {
-      channel: 'response',
-      payload: { type: 'delta', content: 'abc', aggregate: 'abc', aggregateLength: 3 },
-    },
-    {
-      channel: 'reasoning',
-      payload: {
-        type: 'delta',
-        content: '',
-        aggregate: 'abc',
-        aggregateLength: 3,
-        reasoning: { source: 'provider', entriesDelta: [{ id: 'r1', text: 'why' }] },
-      },
-    },
-  ];
-
-  for (const entry of cases) {
-    const source = buildEnvelopeSources(entry.payload, 'delta')
-      .find((candidate) => candidate.channel === entry.channel);
-    assert.ok(source);
-    const decoded = streamEnvelopeToLegacyPayload({
-      schemaVersion: STREAM_ENVELOPE_SCHEMA_VERSION,
-      streamId: `stream-${entry.channel}`,
-      sessionId: 'session-1',
-      turnId: 'turn-1',
-      ...source,
-    });
-    assert.equal(decoded.aggregate, 'abc');
-    assert.equal(decoded.aggregateLength, 3);
-  }
 });
 
 // The clock must advance here. The safety net is time-based, so freezing Date.now

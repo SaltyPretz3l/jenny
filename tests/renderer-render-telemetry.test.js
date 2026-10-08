@@ -1,12 +1,11 @@
-// Track A (streaming-flicker investigation): debug-gated render-path
-// telemetry. These tests pin the additive, byte-identical-when-off contract:
+// Track A (streaming-flicker investigation): render-path telemetry. These
+// tests pin its additive contract:
 //   (a) morphChildren's optional `stats` accumulator counts reused/cloned/
 //       removed child nodes correctly.
 //   (b) setOuterHtmlPreservingCodeScroll returns { outcome, stats } — the
 //       precise outcome, plus stats only when the caller opts in (collectStats).
 //   (c) patchActiveTurnRoot emits one `active_turn_root_rebuild` rollout
-//       signal per committed rebuild when chat_timeline_render_telemetry is
-//       on, with the correct `reason`.
+//       signal per committed rebuild, with the correct `reason`.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
@@ -113,8 +112,7 @@ test('setOuterHtmlPreservingCodeScroll without options is unaffected (byte-ident
 
 // Shared harness for the patchActiveTurnRoot signal tests: a timeline seeded
 // with one committed user turn root (u1), plus a stubbed rollout-signal sink.
-// The only per-test variable is the telemetry flag value.
-function buildPatchHarness(telemetryEnabled) {
+function buildPatchHarness() {
   const dom = new JSDOM(`
     <!doctype html>
     <html>
@@ -133,7 +131,6 @@ function buildPatchHarness(telemetryEnabled) {
     reducedMotionQuery: { matches: false },
     renderStreamingMarkdownUnits: () => ({ html: '', units: [], fingerprints: [], changedStartIndex: -1 }),
     escapeSelectorValue: (value) => String(value || ''),
-    state: { features: { featureFlags: { chat_timeline_render_telemetry: telemetryEnabled } } },
     recordChatTimelineRolloutSignal: (sessionId, signal, details) => {
       signalCalls.push({ sessionId, signal, details });
       return { logged: true, count: signalCalls.length };
@@ -163,8 +160,8 @@ function commitThenPatchTail(controller) {
   });
 }
 
-test('patchActiveTurnRoot emits one active_turn_root_rebuild signal (reason: tail_fingerprint) when the flag is on', () => {
-  const { signalCalls, controller } = buildPatchHarness(true);
+test('patchActiveTurnRoot emits one active_turn_root_rebuild signal (reason: tail_fingerprint)', () => {
+  const { signalCalls, controller } = buildPatchHarness();
 
   const patched = commitThenPatchTail(controller);
 
@@ -198,16 +195,6 @@ test('patchActiveTurnRoot emits one active_turn_root_rebuild signal (reason: tai
   assert.equal(domWrite.details.outcome, 'morph_applied');
 });
 
-test('patchActiveTurnRoot does not emit a signal when chat_timeline_render_telemetry is off', () => {
-  const { timeline, signalCalls, controller } = buildPatchHarness(false);
-
-  const patched = commitThenPatchTail(controller);
-
-  assert.equal(patched, true);
-  assert.equal(signalCalls.length, 0, 'flag-off must not emit any telemetry signal');
-  assert.match(String(timeline.children[0].textContent || ''), /u1-new/);
-});
-
 function installDocumentForRenderer(t, documentRef) {
   const priorDocument = global.document;
   global.document = documentRef;
@@ -239,7 +226,6 @@ function buildStreamingArticleHarness(t, options = {}) {
   const chatThreadScroll = doc.getElementById('scroll');
   const featureFlags = {
     chat_timeline_streaming_article_morph: options.morphEnabled === true,
-    chat_timeline_render_telemetry: options.telemetryEnabled === true,
   };
   const messages = [{
     id: 'assistant_stream',
@@ -385,10 +371,9 @@ test('streaming article morph flag off still reconciles the article attributes',
   );
 });
 
-test('streaming article rebuild telemetry emits once per structural rebuild when enabled', (t) => {
+test('streaming article rebuild telemetry emits once per structural rebuild', (t) => {
   const harness = buildStreamingArticleHarness(t, {
     morphEnabled: true,
-    telemetryEnabled: true,
   });
 
   harness.renderer.renderMessages();
@@ -426,15 +411,4 @@ test('streaming article rebuild telemetry emits once per structural rebuild when
   assert.equal(harness.signalCalls[0].details.turnId, 'assistant_stream');
   assert.equal(harness.signalCalls[0].details.streamingMessageId, 'assistant_stream');
   assert.equal(harness.signalCalls[0].details.outcome, 'morph_applied');
-});
-
-test('streaming article rebuild telemetry is silent when the telemetry flag is off', (t) => {
-  const harness = buildStreamingArticleHarness(t, {
-    morphEnabled: true,
-    telemetryEnabled: false,
-  });
-
-  harness.renderer.renderMessages();
-
-  assert.equal(harness.signalCalls.length, 0);
 });

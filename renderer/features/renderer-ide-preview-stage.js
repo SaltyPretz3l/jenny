@@ -1,7 +1,6 @@
 /* renderer/features/renderer-ide-preview-stage.js — the unified Preview STAGE
- * surface (WORKSPACE_PREVIEW_AND_MAP_PANELS_PLAN.md Phase 4,
- * workspace_preview_surface). Renders a workspace file into the keep-alive
- * #idePreviewHost stage sibling:
+ * surface (WORKSPACE_PREVIEW_AND_MAP_PANELS_PLAN.md Phase 4). Renders a
+ * workspace file into the keep-alive #idePreviewHost stage sibling:
  *   - md / markdown / mmd / mermaid → the chat's existing sanitized markdown
  *     pipeline (marked + DOMPurify + lazy mermaid runtime — never a second
  *     mermaid load), live-updating from the Monaco buffer (200ms debounce);
@@ -219,9 +218,8 @@
       bodyEl.innerHTML = `<div class="ide-preview-stage-state" data-preview-state="${escapeHtml(stateKind)}">${escapeHtml(message)}</div>`;
     }
 
-    // Mirrors renderer-ide-preview-controller.js buildPreviewHtml (the two are
-    // kept in sync by convention): .mmd/.mermaid wraps as a mermaid fence so
-    // the SAME sanitize + lazy-mermaid path renders both kinds.
+    // .mmd/.mermaid wraps as a mermaid fence so the SAME sanitize +
+    // lazy-mermaid path renders both kinds.
     function buildMarkdownHtml(path, text) {
       const extension = extensionOf(path);
       const source = extension === 'mmd' || extension === 'mermaid'

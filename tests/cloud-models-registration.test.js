@@ -95,7 +95,8 @@ function setup({ config = {}, auth = fakeAuth(), backend = {}, readLegacyPluginF
 
 test('registers every cloudModels invoke method and owns the ChatGPT catalog', async () => {
   const { ipc, handle, backendService } = setup();
-  for (const method of ['getState', 'setChatgptEnabled', 'chatgptSignIn', 'chatgptCancel', 'chatgptSignOut']) {
+  for (const method of ['getState', 'setChatgptEnabled', 'chatgptSignIn', 'chatgptCancel', 'chatgptSignOut',
+    'chatgptCompletePasted', 'chatgptExtendPending', 'chatgptPendingLink']) {
     assert.ok(ipc.handlers.has(getBridgeChannel(`cloudModels.${method}`, 'invoke')), method);
   }
   assert.equal(backendService.chatgptModelCatalogService, handle.catalog);
@@ -103,6 +104,37 @@ test('registers every cloudModels invoke method and owns the ChatGPT catalog', a
   handle.dispose();
   assert.equal(backendService.chatgptModelCatalogService, undefined);
   assert.equal(backendService._awaitChatgptStartupCatalog, undefined);
+});
+
+test('paste handlers pass through bounded service results and the public state', async (t) => {
+  const auth = fakeAuth();
+  const calls = [];
+  auth.completeFromPastedUrl = (url) => { calls.push(url); return { ok: false, reason: 'state_mismatch' }; };
+  auth.extendPending = () => ({ ok: true, deadline_ms: 600000 });
+  auth.getPendingAuthorizeUrl = () => 'https://auth.openai.com/oauth/authorize?state=pending';
+  const { ipc, handle } = setup({ auth });
+  t.after(() => handle.dispose());
+  const state = handle.getState();
+  const raw = 'http://localhost:1455/auth/callback?code=private';
+  assert.deepEqual(await ipc.invoke('cloudModels.chatgptCompletePasted', raw), { ok: false, reason: 'state_mismatch', state });
+  assert.deepEqual(calls, [raw]);
+  auth.completeFromPastedUrl = () => ({ ok: true });
+  assert.deepEqual(await handle.chatgptCompletePasted(raw), { ok: true, reason: undefined, state });
+  assert.deepEqual(await ipc.invoke('cloudModels.chatgptExtendPending'), { ok: true, reason: undefined, deadlineMs: 600000, state });
+  assert.deepEqual(await ipc.invoke('cloudModels.chatgptPendingLink'), { ok: true,
+    url: 'https://auth.openai.com/oauth/authorize?state=pending', state });
+  auth.extendPending = () => ({ ok: false, reason: 'no_pending_flow' });
+  assert.deepEqual(await handle.chatgptExtendPending(), { ok: false, reason: 'no_pending_flow', deadlineMs: undefined, state });
+});
+
+test('paste handlers fail closed when the auth methods are unavailable', async (t) => {
+  const { ipc, handle } = setup();
+  t.after(() => handle.dispose());
+  for (const method of ['chatgptCompletePasted', 'chatgptExtendPending', 'chatgptPendingLink']) {
+    assert.deepEqual(await ipc.invoke(`cloudModels.${method}`), {
+      ok: false, reason: 'chatgpt_auth_unavailable', state: handle.getState(),
+    });
+  }
 });
 
 test('the state carries status, email and plan but never token material', async () => {

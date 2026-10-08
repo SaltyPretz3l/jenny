@@ -109,7 +109,10 @@ WIRING_CAPS = {
     # routing. Independently reviewed; retain both visible security dependencies.
     (ROOT / "sidecar/ai/routing/tool_execution.py").resolve(): 8,
     (ROOT / "sidecar/ai/tools/assembly.py").resolve(): 8,
-    (ROOT / "sidecar/ai/tools/builtins/edit_file.py").resolve(): 7,
+    # Plan Plus (2026-10-05): the pure matching helpers moved to edit_matching.py
+    # so propose_change validates with exactly edit_file's matching (7 -> 8).
+    # Extraction, not a hub; keep the shared-matching dependency visible.
+    (ROOT / "sidecar/ai/tools/builtins/edit_file.py").resolve(): 8,
     # The tool-loop runner settles its workspace change set on every exit and
     # must recognise the approval-pause suspension type to do so (6 -> 7,
     # session-runtime review 2026-09-13). Reviewed; keep the dependency visible.

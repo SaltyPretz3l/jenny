@@ -44,8 +44,6 @@ test('authoritative tool boundary names both the pending message and the live te
 const { handleNotification } = require('../services/backend/chat-stream-managed-runtime-notifications');
 const { handleToolNotification } = require('../services/backend/chat-stream-tool-handling');
 const { makeCtx, canonicalEvent } = require('./helpers/managed-runtime-notification-harness');
-const { buildEnvelopeSources } = require('../services/stream-envelope-shape');
-const { streamEnvelopeToLegacyPayload } = require('../renderer/chat/renderer-stream-envelope-v2');
 const { createPipelineHarness, createRenderDom, withWindowGlobals } = require('./helpers/render-pipeline-test-harness');
 const { projectTurnTree } = require('../renderer/chat/renderer-turn-tree-projector');
 
@@ -94,9 +92,6 @@ for (const canonical of [false, true]) {
       const payload = backend.tool('call-1');
       assert.equal(payload.next_assistant_message_id, `assistant_stream-1_seg${scenario.next}`);
       assert.equal(backend.ctx.textSegmentIndex, scenario.next);
-      const source = buildEnvelopeSources(payload)[0];
-      const roundtrip = streamEnvelopeToLegacyPayload({ schemaVersion: 2, streamId: 'stream-1', sessionId: 'session-1', ...source });
-      assert.equal(roundtrip.next_assistant_message_id, payload.next_assistant_message_id);
       if (scenario.refuse) {
         assert.equal(backend.ctx.segmentPersistRefused, true);
         assert.equal(backend.ctx.persistedTextSegmentIds.length, 0);

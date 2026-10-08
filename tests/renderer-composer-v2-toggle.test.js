@@ -42,7 +42,7 @@ test('send preferences are the chat overrides only, never a default for every pr
   assert.equal(controller.getViewModel().connections[0].label, 'GitHub');
 });
 
-test('view model reports blocked and partially usable families, approvals and plugin labels', () => {
+test('view model reports blocked and partially usable families, approvals and ignores retired plugin connections', () => {
   const controller = setup({}, [entry('files', 'read_file', { available: false, reason: 'No workspace' }),
     entry('files', 'edit_file', { approvalDefault: 'ask' }), entry('web', 'web_search', { available: false, reason: 'Offline' }),
     entry('', 'plugin_tool', { connectionId: 'plugin:publisher:calendar', sourceKind: 'plugin' })]);
@@ -54,8 +54,7 @@ test('view model reports blocked and partially usable families, approvals and pl
   assert.deepEqual(files.members[0], { name: 'read_file', usable: false, reason: 'No workspace', asksFirst: false });
   assert.equal(vm.sections[2].families[0].state, 'blocked');
   assert.equal(vm.sections[2].families[0].reason, 'Offline');
-  assert.equal(vm.connections[0].label, 'calendar');
-  assert.equal(vm.connections[0].kind, 'plugin');
+  assert.equal(vm.connections.length, 0, 'a retired plugin: connection id no longer forms a connection row');
 });
 
 test('settings defaults yield to chat overrides and hydrateForSession clears both previous maps', () => {

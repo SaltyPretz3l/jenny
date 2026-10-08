@@ -189,6 +189,8 @@ function runImageGeneration(options = {}) {
   const startedAt = clock();
   let child;
   let pidPath;
+  let spawnedWallAt;
+  let spawnReturnedWallAt;
   try {
     pidPath = pidfile.getImageEnginePidPath(userDataPath);
     // Refuse a pre-existing link before the native process can write through it.
@@ -197,10 +199,14 @@ function runImageGeneration(options = {}) {
         return Promise.resolve({ ...result, reason: 'image_output_invalid' });
       }
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    // Wall-clock bounds on the root's creation time; survivors are told apart
+    // from processes that later reuse its pid by creation time.
+    spawnedWallAt = Date.now();
     child = spawnImpl(exePath, argv, {
       cwd: path.dirname(exePath), shell: false, detached: false, windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'], env: sanitizeSpawnEnv(process.env),
     });
+    spawnReturnedWallAt = Date.now();
   } catch (_error) { return Promise.resolve({ ...result, reason: 'image_engine_spawn_failed' }); }
 
   return new Promise((resolve) => {
@@ -208,6 +214,7 @@ function runImageGeneration(options = {}) {
     let finished = false;
     let recorded = false;
     let exitedAt = null;
+    let exitedWallAt = null;
     let deadlineTimer;
     let enumerationTimer;
     let enumeration = null;
@@ -271,6 +278,19 @@ function runImageGeneration(options = {}) {
       catch (_error) { enumeration = { ok: false, pids: [] }; }
       resolveEnumeration(enumeration);
     };
+    // Node keeps the root's pid reserved until it observes the exit, so a child
+    // of the root created before then is ours; after it, the pid may be reused.
+    const reapSurvivors = async (snapshot) => {
+      const rootHeldUntilMs = exitedWallAt ?? Date.now();
+      let table = { ok: false, rows: [] };
+      try { table = await processTools.listProcessRows(); } catch (_error) { /* Unavailable proof is never clean. */ }
+      if (!table.ok) return false;
+      const survivors = processTools.selectRootSurvivors({ rootPid: child.pid, spawnedAtMs: spawnedWallAt,
+        spawnReturnedAtMs: spawnReturnedWallAt, rootHeldUntilMs, snapshot, rows: table.rows });
+      await processTools.terminatePids(survivors.pids);
+      const proof = await processTools.confirmAllGone(survivors.pids);
+      return snapshot.ok === true && survivors.ok === true && proof.confirmed === true;
+    };
     const removePartial = () => {
       try { assertOutputParent(root, outputPath, fsImpl); fsImpl.unlinkSync(outputPath); }
       catch (_error) { /* Missing output or changed containment is safe to leave alone. */ }
@@ -294,19 +314,16 @@ function runImageGeneration(options = {}) {
       let confirmed;
       try {
         if (trigger === 'exit') {
-          const snapshot = await enumerationPromise;
-          // A worker started after the early snapshot can outlive a root that
-          // exited normally; Windows keeps the dead root as its parent, so a
-          // second listing still finds it. Survivors are killed with proof.
-          let late = { ok: false, pids: [] };
-          try { late = await processTools.enumerateDescendants(child.pid); }
-          catch (_error) { /* Unavailable proof is never clean. */ }
-          const known = [...new Set([...snapshot.pids, ...late.pids])];
-          for (const pid of known) {
-            try { await processTools.killTreeWithProof(pid); } catch (_error) { /* Proof below owns the verdict. */ }
+          // A root that exits before the early snapshot leaves nothing to snapshot.
+          if (!enumerationStarted) {
+            clearTimeout(enumerationTimer);
+            enumerationStarted = true;
+            resolveEnumeration({ ok: true, pids: [], processes: [], rootCreatedMs: null });
           }
-          const proof = await processTools.confirmAllGone([child.pid, ...known]);
-          confirmed = snapshot.ok === true && late.ok === true && proof.confirmed === true;
+          // A worker started after the early snapshot can outlive a root that
+          // exited normally; Windows keeps the dead root as its parent. The
+          // exited root's own pid is never a target: it may name another process.
+          confirmed = await reapSurvivors(await enumerationPromise);
           result.status = result.exitCode === 0 && !result.signal ? 'ok' : 'failed';
           result.reason = result.status === 'ok' ? '' : 'image_engine_failed';
         } else {
@@ -316,8 +333,8 @@ function runImageGeneration(options = {}) {
             confirmed = proof.confirmed === true;
             if (enumerationStarted) {
               const snapshot = await enumerationPromise;
-              const known = await processTools.confirmAllGone(snapshot.pids);
-              confirmed = confirmed && known.confirmed === true;
+              const gone = await processTools.confirmAllGone(snapshot.pids, { timeoutMs: 0 });
+              if (gone.confirmed !== true) confirmed = (await reapSurvivors(snapshot)) && confirmed;
             }
           } else confirmed = true;
           const outcomes = {
@@ -365,6 +382,7 @@ function runImageGeneration(options = {}) {
     };
     const onAbort = () => { requestSettlement('abort'); };
     child.on('exit', (code, signal) => {
+      exitedWallAt ??= Date.now();
       if (finished) return;
       exitedAt = clock();
       result.exitCode = code;

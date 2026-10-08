@@ -36,14 +36,7 @@
       || null;
   }
 
-  var escapeHtml = resolveStringUtils().escapeHtml || function fallbackEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  };
+  var escapeHtml = resolveStringUtils().escapeHtml || (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function boundedStatusMessage(value, fallback) {
     var message = String(value && value.message ? value.message : value || '').trim();

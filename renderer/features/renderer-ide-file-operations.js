@@ -259,10 +259,14 @@
       queueTail = execute.catch(() => undefined);
       return execute;
     }
-    function beginOpen(path) {
-      openIntentSequence += 1;
+    // A background open (a secondary editor group loading its tab, row 40 W5) neither
+    // supersedes the user's opens nor is superseded by them: only a root switch or
+    // disposal makes it stale.
+    function beginOpen(path, { background = false } = {}) {
+      if (!background) openIntentSequence += 1;
       return Object.freeze({
-        id: openIntentSequence,
+        id: background ? 0 : openIntentSequence,
+        background: background === true,
         path: normalizePath(path),
         pathKey: pathKey(path),
         controllerEpoch,
@@ -272,7 +276,7 @@
     function isOpenIntentCurrent(intent) {
       return Boolean(intent
         && !disposed
-        && intent.id === openIntentSequence
+        && (intent.background === true || intent.id === openIntentSequence)
         && intent.controllerEpoch === controllerEpoch);
     }
 

@@ -22,7 +22,6 @@ function dispatchDrag(harness, target, type, transfer, options = {}) {
 }
 
 function buildHarness({
-  enabled = true,
   attachments = {},
   preview = null,
   confirm = true,
@@ -86,7 +85,6 @@ function buildHarness({
     isActivePanel: () => true,
     getIde: () => ({ rootEpoch: currentRootEpoch }),
     getRootEpoch: () => currentRootEpoch,
-    isImportEnabled: () => enabled,
     getAttachmentsApi: () => attachmentsApi,
     getWorkspaceFsApi: () => workspaceFs,
     getMutationContext: async () => ({ rootId: 'root-test', generation: 7, phase: 'ready' }),
@@ -127,22 +125,6 @@ function buildHarness({
     },
   };
 }
-
-test('flag off binds no external drop listeners and creates no strip', async (t) => {
-  const harness = buildHarness({ enabled: false });
-  t.after(() => harness.dispose());
-  const event = dispatchDrag(
-    harness,
-    harness.row('docs'),
-    'drop',
-    createTransfer([{ path: 'C:/outside/a.txt' }])
-  );
-  await settle();
-
-  assert.equal(event.defaultPrevented, false);
-  assert.deepEqual(harness.calls.paths, []);
-  assert.equal(harness.panel.querySelector('.ide-tree-import-strip'), null);
-});
 
 test('external dragover paints a directory while internal tree drags remain owned by dnd', (t) => {
   const harness = buildHarness();
@@ -228,6 +210,21 @@ test('drop imports into a directory, paints progress, and settles all imported r
   assert.deepEqual(harness.calls.reveals, [{ path: 'docs/a.txt', options: { focus: false } }]);
   assert.equal(harness.calls.toasts[0].message, 'Imported 2 items, 1 skipped');
   assert.equal(harness.calls.unsubscribes, 1);
+});
+
+test('a one-file import toast says "1 item", not "1 items"', async (t) => {
+  const harness = buildHarness();
+  t.after(() => harness.dispose());
+  dispatchDrag(harness, harness.row('docs'), 'drop', createTransfer([{ path: 'C:/outside/a.txt' }]));
+  await settle();
+  harness.importDeferred.resolve({
+    ok: true,
+    imported: [{ path: 'docs/a.txt', kind: 'file' }],
+    skipped: [],
+    totals: { files: 1, directories: 0, bytes: 10 },
+  });
+  await settle(20);
+  assert.equal(harness.calls.toasts[0].message, 'Imported 1 item');
 });
 
 test('sensitive preview requires confirmation and threads allowSensitive only on acceptance', async (t) => {

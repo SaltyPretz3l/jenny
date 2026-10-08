@@ -9,7 +9,7 @@ side channel: :func:`record_plan_usage_snapshot` is called from inside the
 engine's HTTP hook and stashes a scrubbed snapshot into the current request
 context and publishes it through the runtime-bound writer during the turn;
 :func:`attach_plan_usage` is called later from the runtime layer
-(``chat_decision_render.py`` / ``chat_streaming.py``) to copy that snapshot
+(``chat_decision_render.py``) to copy that snapshot
 onto the outgoing ``chat.done``/``chat.error`` payload.
 
 Security/robustness posture mirrors the existing usage-meter scrubs: only

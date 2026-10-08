@@ -493,19 +493,9 @@
         }
       }
     }
-    // Markdown implementation relocated to renderer-artifacts-render-markdown.js
-    // (WS2); this delegation keeps the legacy flag-off dispatch running the
-    // identical code the registry path runs.
-    function renderMarkdownGeneratedArtifact(surface, artifact, file, editable) {
-      if (!markdownKindModule || typeof markdownKindModule.renderMarkdownGeneratedArtifact !== 'function') {
-        return;
-      }
-      markdownKindModule.renderMarkdownGeneratedArtifact(surface, artifact, file, editable, rendererDeps);
-    }
-    // Tool-output mermaid (the legacy else-branch's mermaid case), kept
-    // controller-local because it leans on renderMermaidPreviewIntoHost and
-    // shared note/editor toggles; the registry mermaid kind receives it
-    // through rendererDeps so both dispatch paths run this exact function.
+    // Tool-output mermaid, kept controller-local because it leans on
+    // renderMermaidPreviewIntoHost and shared note/editor toggles; the registry
+    // mermaid kind receives it through rendererDeps.
     function renderMermaidToolOutputArtifact(surface, artifact) {
       surface.editorShell.classList.add('hidden');
       surface.previewContent.classList.remove('hidden');
@@ -660,41 +650,14 @@
         renderProvenanceTimeline(surface.provenanceTimeline, artifact);
         return;
       }
-      // Registry and legacy dispatch share the same per-kind renderers.
-      if (isRendererRegistryEnabled()) {
-        const kind = rendererRegistryModule.resolveArtifactRenderKind(artifact, rendererKindPredicates);
-        artifactRendererRegistry.render(kind, {
-          surface,
-          artifact,
-          file,
-          editable,
-          deps: rendererDeps,
-        });
-        renderProvenanceTimeline(surface.provenanceTimeline, artifact);
-        return;
-      }
-      if (isGenerated) {
-        if (isMermaidGenerated) {
-          renderMermaidGeneratedArtifact(surface, artifact, file, editable);
-          renderProvenanceTimeline(surface.provenanceTimeline, artifact);
-          return;
-        }
-        if (isMarkdownGenerated) {
-          renderMarkdownGeneratedArtifact(surface, artifact, file, editable);
-          renderProvenanceTimeline(surface.provenanceTimeline, artifact);
-          return;
-        }
-        codeKindModule?.renderCodeArtifactKind?.({ surface, artifact, file, editable, deps: rendererDeps });
-      } else if (isImage) {
-        imageKindModule?.renderImageArtifactKind?.({ surface, artifact, deps: rendererDeps });
-      } else {
-        const mermaidSource = extractMermaidSourceFromToolArtifact(artifact);
-        if (mermaidSource) {
-          renderMermaidToolOutputArtifact(surface, artifact);
-        } else {
-          textKindModule?.renderTextArtifactKind?.({ surface, artifact, deps: rendererDeps });
-        }
-      }
+      const kind = rendererRegistryModule.resolveArtifactRenderKind(artifact, rendererKindPredicates);
+      artifactRendererRegistry.render(kind, {
+        surface,
+        artifact,
+        file,
+        editable,
+        deps: rendererDeps,
+      });
       renderProvenanceTimeline(surface.provenanceTimeline, artifact);
     }
     // Async file operations own target fencing; image loading stays local.
@@ -898,8 +861,7 @@
     }
 
     // ── WS2 renderer registry wiring ──
-    // One deps bundle shared by the registry ctx and the legacy delegations,
-    // so both dispatch paths run identical per-kind implementations.
+    // One deps bundle shared by the registry ctx and the controller delegations.
     const rendererDeps = {
       state,
       escapeHtml,
@@ -951,11 +913,6 @@
         chart: chartKindModule?.renderChartArtifactKind,
       })
       : null;
-    function isRendererRegistryEnabled() {
-      return state.features?.featureFlags?.artifact_renderer_registry === true
-        && Boolean(artifactRendererRegistry)
-        && typeof rendererRegistryModule?.resolveArtifactRenderKind === 'function';
-    }
 
     return {
       applySelection,

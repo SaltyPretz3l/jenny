@@ -25,6 +25,7 @@ const { SystemStatsMonitor } = require('../system-stats');
 const { isGpuTelemetrySupported } = require('../system-stats-payload');
 const { createDefaultRegistry, ToolPathPolicy, ToolPermissionStore, ToolExecutor } = require('../tools');
 const { UpdateService } = require('../update-service');
+const { createGitHubReleaseClient } = require('../github-release-client');
 const { createWorkspaceIdeSnapshotStore } = require('../workspace-ide-snapshot-store');
 const { WorkspacePresentationService } = require('../workspace-presentation-service');
 const { WindowStateService } = require('../window-state-service');
@@ -164,6 +165,12 @@ function createRuntimeServicesWithDeps({
     app,
     storePath: path.join(userDataPath, 'update-state.json'),
     logger: log,
+    // Electron's network stack, not Node's fetch: it follows the system proxy
+    // and certificate store, where Node's connects directly and is refused
+    // behind a proxy. Same fixed URL, no credentials, redirects still rejected.
+    releaseClient: createGitHubReleaseClient({
+      fetchImpl: (url, init) => require('electron').net.fetch(url, init),
+    }),
   });
   updateService.on('changed', (state) => {
     sendBridgeEvent('updates.onChanged', state);
@@ -435,6 +442,7 @@ function createRuntimeServicesWithDeps({
     toolsImageGenerateEnabled = buildEffectiveFeatureFlags().tools_image_generate_enabled === true,
     toolsHomeEnabled = buildEffectiveFeatureFlags().tools_home_enabled === true,
     toolsTaskBoardEnabled = buildEffectiveFeatureFlags().tools_task_board_enabled === true,
+    toolsProjectNotesEnabled = buildEffectiveFeatureFlags().tools_project_notes_enabled === true,
   } = {}) {
     return createDefaultRegistry({
       toolsWorktreeEnabled,
@@ -445,6 +453,7 @@ function createRuntimeServicesWithDeps({
       toolsImageGenerateEnabled,
       toolsHomeEnabled,
       toolsTaskBoardEnabled,
+      toolsProjectNotesEnabled,
     });
   }
 
@@ -470,6 +479,7 @@ function createRuntimeServicesWithDeps({
     // backend-service-wiring, which runs AFTER this composition pass — hence a
     // live getter, the same reason refreshManagedConfig below uses one.
     homeAssistantService: () => getBackendService()?.homeAssistantService || null,
+    projectNotesService: () => getBackendService()?.projectNotesService || null,
     configService: shellConfigService,
     refreshManagedConfig: async (reason) => {
       const backendService = getBackendService();
@@ -502,6 +512,7 @@ function createRuntimeServicesWithDeps({
     const toolsImageGenerateEnabled = buildEffectiveFeatureFlags().tools_image_generate_enabled === true;
     const toolsHomeEnabled = buildEffectiveFeatureFlags().tools_home_enabled === true;
     const toolsTaskBoardEnabled = buildEffectiveFeatureFlags().tools_task_board_enabled === true;
+    const toolsProjectNotesEnabled = buildEffectiveFeatureFlags().tools_project_notes_enabled === true;
     toolExecutor.registry = createToolRegistryForCurrentConfig({
       toolsWorktreeEnabled,
       toolsAutomationsEnabled,
@@ -511,6 +522,7 @@ function createRuntimeServicesWithDeps({
       toolsImageGenerateEnabled,
       toolsHomeEnabled,
       toolsTaskBoardEnabled,
+      toolsProjectNotesEnabled,
     });
   }
 

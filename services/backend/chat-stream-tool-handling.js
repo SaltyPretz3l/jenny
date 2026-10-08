@@ -404,6 +404,8 @@ function handleToolNotification(service, context, notification, options = {}) {
     };
     planDocuments.recordPlanToolOutcome({ toolName, service, sessionId: resolvedSessionId, streamId, callId,
       result: { isError: params.success === false, metadata: normalizedMetadata }, turnEventCollector });
+    service.suggestedChanges?.recordToolOutcome?.({ toolName, sessionId: resolvedSessionId, callId,
+      turnId: streamId, result: { isError: params.success === false, metadata: normalizedMetadata } });
     const metadataOptions = {
       streamId,
       callId,

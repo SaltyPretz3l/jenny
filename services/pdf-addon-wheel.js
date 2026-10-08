@@ -15,9 +15,8 @@
  *    entry's real size against its declared size;
  *  - files are created with `wx`, so a duplicate (including a case-folded
  *    duplicate on Windows) fails instead of overwriting.
- * The plugin reader (services/plugins/package/zip-package-reader.js) is not
- * reused: it buffers entries in memory with 4 MiB caps and rejects directory
- * entries, which real wheels carry.
+ * A generic in-memory zip reader with small entry caps would not do: real
+ * wheels carry directory entries and larger files.
  */
 
 const fs = require('fs');

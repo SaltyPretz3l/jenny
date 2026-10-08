@@ -128,6 +128,7 @@ function createControllerHarness({ files }) {
   });
   return {
     dom, getDom, bridge, controller, state, toasts, infoToasts,
+    viewHost: (id) => dom.window.document.getElementById(`wbView-${id}`),
     dispose() {
       for (const cleanup of cleanups.splice(0)) {
         try { cleanup(); } catch (_error) { /* noop */ }
@@ -156,7 +157,7 @@ test('end to end: an edit made after the delete confirmation keeps its editor op
   await harness.controller.openFile('app.js');
   await settle();
   const doc = harness.dom.window.document;
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   typeIntoEditor(harness, 'edited before the prompt');
 
   // The user keeps typing while the backend delete is in flight.

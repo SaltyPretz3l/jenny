@@ -62,7 +62,7 @@ function toolCallEvents(iteration, callId) {
 
 test('timeline-perf: a full render leaves the active turn rows stamped, so the next write keeps settled rows', async (t) => {
   const app = await loadRendererApp({ shell: {
-    features: { state: { featureFlags: { ...buildFeatureFlagDefaults(), chat_timeline_render_telemetry: true } } },
+    features: { state: { featureFlags: { ...buildFeatureFlagDefaults() } } },
     chat: {
       async startStream(_payload, { state }) {
         state.sessions = [{ id: SESSION_ID, title: 'full render row stamps', conversation_mode: 'chat', preferred_model: 'gpt-test',
@@ -80,6 +80,15 @@ test('timeline-perf: a full render leaves the active turn rows stamped, so the n
   const emit = async (payload, settleMs = 10) => {
     await shell.__emitChat({ sessionId: SESSION_ID, streamId: STREAM_ID, ...payload });
     await waitForUi(window, settleMs);
+  };
+  // Stream writes paint on batched frames, which a loaded machine can push past
+  // any fixed settle; wait for the paint itself before reading the metrics.
+  const waitForPaint = async (label, painted) => {
+    const deadline = Date.now() + 5000;
+    while (!painted()) {
+      assert.ok(Date.now() < deadline, `${label} painted within 5s`);
+      await waitForUi(window, 10);
+    }
   };
 
   const input = document.getElementById('chatInput');
@@ -103,7 +112,8 @@ test('timeline-perf: a full render leaves the active turn rows stamped, so the n
   // The new segment's first delta renders the whole timeline.
   await emit(reasoningPhaseEvent('phase_started', 3));
   metrics.take(STREAM_ID);
-  await emit(reasoningDelta(3, 'Planning step 3.'), 40);
+  await emit(reasoningDelta(3, 'Planning step 3.'), 0);
+  await waitForPaint('the first delta of the segment', () => document.body.textContent.includes('Planning step 3.'));
   const fullRender = metrics.take(STREAM_ID) || {};
   assert.ok((fullRender.full_renders || 0) >= 1, `precondition: the segment's first delta is a full render (${JSON.stringify(fullRender.full_render_reasons)})`);
 
@@ -115,7 +125,9 @@ test('timeline-perf: a full render leaves the active turn rows stamped, so the n
   const toolRowsBefore = document.querySelectorAll('.chat-row[data-row-kind="tool_call"]').length;
 
   await emit(reasoningPhaseEvent('phase_completed', 3), 40);
-  await emit(pendingToolUse('call_3_a'), 60);
+  await emit(pendingToolUse('call_3_a'), 0);
+  await waitForPaint('the new tool row',
+    () => document.querySelectorAll('.chat-row[data-row-kind="tool_call"]').length === toolRowsBefore + 1);
   await waitForUi(window, 60);
   const after = metrics.take(STREAM_ID) || {};
 

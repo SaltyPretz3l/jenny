@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   indexRowsByRenderMessageId,
+  _rowDedupKey,
   _SOURCE_RANK,
 } = require('../renderer/chat/renderer-render-message-index-utils');
 
@@ -60,6 +61,67 @@ test('indexRowsByRenderMessageId prefers canonical assistant_text over live over
   const bucket = index.get('msg_collide') || [];
   assert.equal(bucket.length, 1, 'multi-turn collision must collapse to a single bucket entry');
   assert.equal(bucket[0].payload.text, 'Canonical final body');
+});
+
+test('indexRowsByRenderMessageId keeps text groups around reasoning in order with canonical precedence', () => {
+  const before = row({ row_id: 'row:before', segment_group_index: 0, payload: { text: 'Before' } });
+  const reasoning = row({
+    row_id: 'row:reasoning',
+    kind: 'reasoning',
+    phase_id: 'phase_reopened',
+    payload: { phase_id: 'phase_reopened', entries: [{ text: 'Reconsidering' }] },
+  });
+  const after = row({ row_id: 'row:after', segment_group_index: 1, payload: { text: 'After' } });
+  const canonical = [before, reasoning, after];
+  const live = canonical.map((entry) => ({
+    ...entry,
+    row_id: `${entry.row_id}:live`,
+    _dedup_source: 'live',
+    payload: { ...entry.payload, text: 'Partial' },
+  }));
+  for (const turns of [[canonical], [canonical, live], [live, canonical]]) {
+    const index = indexRowsByRenderMessageId(new Map(turns.map((rows, i) => [`turn_${i}`, rows])));
+    const bucket = index.get('msg_test') || [];
+    assert.deepEqual(bucket.map((entry) => [entry.kind, entry.payload.text]), [
+      ['assistant_text', 'Before'],
+      ['reasoning', undefined],
+      ['assistant_text', 'After'],
+    ]);
+    bucket.forEach((entry, i) => assert.strictEqual(entry, canonical[i]));
+  }
+});
+
+test('indexRowsByRenderMessageId collapses group zero and legacy live copies to canonical', () => {
+  const canonical = row({ row_id: 'row:canonical', segment_group_index: 0 });
+  for (const segmentGroupIndex of [0, undefined]) {
+    const live = row({
+      row_id: 'row:live',
+      segment_group_index: segmentGroupIndex,
+      _dedup_source: 'live',
+      payload: { text: 'Partial' },
+    });
+    for (const rows of [[canonical, live], [live, canonical]]) {
+      const bucket = indexRowsByRenderMessageId(new Map([['turn_test', rows]])).get('msg_test');
+      assert.equal(bucket.length, 1);
+      assert.strictEqual(bucket[0], canonical);
+    }
+  }
+});
+
+test('assistant text dedup keys include only finite positive numeric text group indexes', () => {
+  assert.equal(_rowDedupKey(row()), 'assistant_text|msg_test');
+  for (const segmentGroupIndex of [0, -1, NaN, Infinity, -Infinity, undefined, null, '1']) {
+    assert.equal(_rowDedupKey(row({ segment_group_index: segmentGroupIndex })), 'assistant_text|msg_test');
+  }
+  for (const segmentGroupIndex of [1, 2, 0.5]) {
+    assert.equal(_rowDedupKey(row({ segment_group_index: segmentGroupIndex })),
+      `assistant_text|msg_test|${segmentGroupIndex}`);
+    assert.equal(_rowDedupKey(row({ primary_message_id: '', segment_group_index: segmentGroupIndex })), '');
+    assert.equal(_rowDedupKey(row({ discarded: true, segment_group_index: segmentGroupIndex })),
+      'assistant_text|discarded|row:test');
+    assert.equal(_rowDedupKey(row({ payload: { discarded: true }, segment_group_index: segmentGroupIndex })),
+      'assistant_text|discarded|row:test');
+  }
 });
 
 test('indexRowsByRenderMessageId lets a live running tool row beat a canonical interrupted misprojection', () => {

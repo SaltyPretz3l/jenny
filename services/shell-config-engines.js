@@ -32,6 +32,16 @@ const DEFAULT_LOCAL_ENGINES = Object.freeze({
       perModel: Object.freeze({}),
     }),
   }),
+  // The semantic catalog's bring-your-own embedding model, served by its own
+  // managed llama-server (services/main/embedding-server-manager.js). Inert
+  // while modelPath is empty; profileId '' means auto-detect, dims 0 native.
+  embedding: Object.freeze({
+    enabled: true,
+    modelPath: '',
+    profileId: '',
+    device: 'cpu',
+    dims: 0,
+  }),
 });
 const DEFAULT_CODEX_CLI = Object.freeze({
   enabled: false,
@@ -252,6 +262,29 @@ function normalizeOpenAICompatibleSettings(value = {}) {
   };
 }
 
+// Total over every older config (a missing block reads back as the defaults),
+// so adding it needs no CONFIG_VERSION bump.
+function normalizeEmbeddingSettings(value, { platform = process.platform } = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const modelPathRaw = typeof source.modelPath === 'string' ? source.modelPath.trim() : '';
+  const modelPath = modelPathRaw.length <= 1024
+    && isLocalAbsolutePath(modelPathRaw, { platform })
+    && /\.gguf$/i.test(modelPathRaw)
+    ? modelPathRaw
+    : '';
+  const profileId = typeof source.profileId === 'string' && /^[a-z0-9][a-z0-9-]{0,31}$/.test(source.profileId)
+    ? source.profileId
+    : '';
+  const dims = Number.isInteger(source.dims) && source.dims >= 0 && source.dims <= 4096 ? source.dims : 0;
+  return {
+    enabled: source.enabled !== false,
+    modelPath,
+    profileId,
+    device: source.device === 'gpu' ? 'gpu' : 'cpu',
+    dims,
+  };
+}
+
 function normalizeLocalEngines(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return {
@@ -260,6 +293,7 @@ function normalizeLocalEngines(value = {}) {
     openaiCompatible: normalizeOpenAICompatibleSettings(
       source.openaiCompatible ?? source.openai_compatible,
     ),
+    embedding: normalizeEmbeddingSettings(source.embedding),
   };
 }
 
@@ -407,6 +441,7 @@ module.exports = {
   normalizeAcceleration,
   normalizeManagedLlamaServer,
   normalizeOpenAICompatibleSettings,
+  normalizeEmbeddingSettings,
   normalizeLocalEngines,
   normalizePreferredEngineType,
   normalizeLastChatgptModel,

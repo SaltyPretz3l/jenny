@@ -1,10 +1,9 @@
 /**
  * renderer/features/renderer-artifact-html-preview-render.js — executable-HTML
- * live-preview renderer + chrome (HTML Artifact Preview, artifact_html_preview,
- * default-on with an internal environment rollback).
+ * live-preview renderer + chrome (HTML Artifact Preview).
  * renderer-artifacts-render-web.js delegates here from its
  * html/svg kinds when shouldRenderHtmlPreview() says so; every other case
- * (flag off, edit mode, inert svg, blank/loading/errored artifact) falls
+ * (edit mode, inert svg, blank/loading/errored artifact) falls
  * through to the WS2 strict-DOMPurify inline path byte-identically.
  *
  * Chrome per design-specs/HTML_PREVIEW_CHROME_SPEC.md (owner-approved
@@ -50,10 +49,6 @@
     return null;
   }
 
-  function isPreviewFlagEnabled(state) {
-    return state?.features?.featureFlags?.artifact_html_preview === true;
-  }
-
   function hasLiveFrameForArtifact(ctx, kind) {
     const node = ctx?.surface?.previewContent || null;
     const held = node ? node[PREVIEW_SIGNATURE_KEY] : '';
@@ -64,13 +59,12 @@
 
   /**
    * Routing predicate for renderer-artifacts-render-web.js. False routes the
-   * kind to the WS2 inline path unchanged, which is what keeps flag-off (and
-   * every inert/edit/loading case) byte-identical.
+   * kind to the WS2 inline path unchanged, which is what keeps every
+   * inert/edit/loading case byte-identical.
    */
   function shouldRenderHtmlPreview(ctx, kind) {
     const deps = ctx?.deps || {};
     const state = deps.state || {};
-    if (!isPreviewFlagEnabled(state)) return false;
     if (state.artifacts?.lastError) return false;
     const mode = typeof deps.getArtifactViewMode === 'function' ? deps.getArtifactViewMode(kind) : 'preview';
     if (mode === 'edit') return false;

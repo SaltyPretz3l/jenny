@@ -2,8 +2,8 @@
 
 /* Stage-surface controller — the single owner of editor-stage visibility
  * (renderer/features/renderer-ide-stage-surface-controller.js). Covers the
- * four-way mutual exclusivity (including the exploded view, handoff §B.1), display-level flag gating (late-hydrating flags never wipe persisted
- * state), the editor-activation reset + its one-shot bootstrap suppression
+ * four-way mutual exclusivity (including the exploded view, handoff §B.1),
+ * the editor-activation reset + its one-shot bootstrap suppression
  * (handoff §C.2), and the sync() fan-out contract to the map/exploded stage
  * siblings. Pure factory tests with hand-rolled stubs. */
 
@@ -16,7 +16,7 @@ const {
   createIdeStageSurfaceController,
 } = require('../renderer/features/renderer-ide-stage-surface-controller');
 
-function makeHarness({ flags = {}, windowRef } = {}) {
+function makeHarness({ windowRef } = {}) {
   const dom = new JSDOM(`
     <div id="main">
       <nav id="breadcrumbs"></nav>
@@ -33,7 +33,6 @@ function makeHarness({ flags = {}, windowRef } = {}) {
   const emptyState = dom.window.document.getElementById('emptyState');
   const ide = ideState.createIdeUiState();
   const calls = { persist: 0, render: 0, map: [], explode: [], previewSync: [], logs: [] };
-  let currentFlags = { ...flags };
   const controller = createIdeStageSurfaceController({
     getDom: () => ({
       ideMain: main,
@@ -44,7 +43,6 @@ function makeHarness({ flags = {}, windowRef } = {}) {
     }),
     getIde: () => ide,
     ideStateUtils: ideState,
-    getFeatureFlags: () => currentFlags,
     schedulePersist: () => { calls.persist += 1; },
     requestRender: () => { calls.render += 1; },
     appendClientLog: (level, event, meta) => calls.logs.push({ level, event, meta }),
@@ -63,17 +61,11 @@ function makeHarness({ flags = {}, windowRef } = {}) {
     editorFallback,
     emptyState,
     dom,
-    setFlags: (next) => { currentFlags = { ...next }; },
   };
 }
 
-const ALL_ON = {
-  workspace_preview_surface: true,
-  workspace_file_map: true,
-};
-
 test('default surface is editor; sync hides every overlay host', (t) => {
-  const h = makeHarness({ flags: ALL_ON });
+  const h = makeHarness();
   t.after(() => h.controller.dispose());
   assert.equal(h.controller.getEffectiveSurface(), 'editor');
   assert.equal(h.controller.sync(), 'editor');
@@ -87,7 +79,7 @@ test('default surface is editor; sync hides every overlay host', (t) => {
 });
 
 test('activate stores the surface, persists once, renders, and drives exclusivity through sync', (t) => {
-  const h = makeHarness({ flags: ALL_ON });
+  const h = makeHarness();
   t.after(() => h.controller.dispose());
   assert.equal(h.controller.activate('file_map'), 'file_map');
   assert.equal(h.ide.activeStageSurface, 'file_map');
@@ -116,7 +108,7 @@ test('activate stores the surface, persists once, renders, and drives exclusivit
 });
 
 test('non-editor stages release focus from the mounted editor cluster and restore it on return', (t) => {
-  const h = makeHarness({ flags: ALL_ON });
+  const h = makeHarness();
   t.after(() => h.controller.dispose());
   const focusTarget = h.dom.window.document.getElementById('editorFocus');
   focusTarget.focus();
@@ -140,28 +132,16 @@ test('stage CSS hides mounted editor layers and Preview breadcrumbs through the 
   assert.match(css, /data-stage-surface="preview"[^\n]*> \.ide-breadcrumbs/);
 });
 
-test('flag-off targets are rejected with a WARN and never stored', (t) => {
-  const h = makeHarness({ flags: { workspace_file_map: true } });
+test('unknown targets are rejected with a WARN and never stored', (t) => {
+  const h = makeHarness();
   t.after(() => h.controller.dispose());
-  assert.equal(h.controller.activate('preview'), 'editor', 'preview flag off → rejected');
+  assert.equal(h.controller.activate('bogus'), 'editor', 'unknown surface → rejected');
   assert.equal(h.ide.activeStageSurface, 'editor');
   assert.equal(h.calls.logs.at(-1)?.event, 'ide_stage.activate_rejected');
-  assert.equal(h.controller.activate('bogus'), 'editor', 'unknown surface → rejected');
 });
 
-test('display-level flag gating: a persisted surface survives a late-hydrating flag (RC2 race)', (t) => {
-  const h = makeHarness({ flags: {} });
-  t.after(() => h.controller.dispose());
-  // Simulate hydrate restoring a persisted preview surface BEFORE flags land.
-  h.ide.activeStageSurface = 'preview';
-  assert.equal(h.controller.getEffectiveSurface(), 'editor', 'flag not yet true → displays as editor');
-  assert.equal(h.ide.activeStageSurface, 'preview', 'the stored value is NOT wiped');
-  h.setFlags(ALL_ON);
-  assert.equal(h.controller.getEffectiveSurface(), 'preview', 'flag lands → surface restores');
-});
-
-test('exploded (flag ON) derives from the active tab viewMode and excludes the other surfaces', (t) => {
-  const h = makeHarness({ flags: ALL_ON });
+test('exploded derives from the active tab viewMode and excludes the other surfaces', (t) => {
+  const h = makeHarness();
   t.after(() => h.controller.dispose());
   ideState.openTab(h.ide, 'src/app.ts');
   ideState.setTabViewMode(h.ide, 'src/app.ts', 'exploded');
@@ -187,7 +167,7 @@ test('exploded (flag ON) derives from the active tab viewMode and excludes the o
 });
 
 test('noteEditorActivation resets preview/file_map to the editor cluster; suppression is one-shot', (t) => {
-  const h = makeHarness({ flags: ALL_ON });
+  const h = makeHarness();
   t.after(() => h.controller.dispose());
   h.controller.activate('file_map');
   h.controller.noteEditorActivation();
@@ -202,7 +182,7 @@ test('noteEditorActivation resets preview/file_map to the editor cluster; suppre
 });
 
 test('the ide:active-file-changed window event drives the reset (diff/ghost-edit channel)', (t) => {
-  const h = makeHarness({ flags: ALL_ON });
+  const h = makeHarness();
   t.after(() => h.controller.dispose());
   h.controller.bindEvents();
   h.controller.activate('file_map');
@@ -220,7 +200,7 @@ test('the ide:active-file-changed window event drives the reset (diff/ghost-edit
 });
 
 test('toggle: re-toggling the active surface returns to the editor; toggling an inactive surface activates it', (t) => {
-  const h = makeHarness({ flags: ALL_ON });
+  const h = makeHarness();
   t.after(() => h.controller.dispose());
   assert.equal(h.controller.activate('preview'), 'preview');
   assert.equal(h.controller.toggle('preview'), 'editor', 'toggling the already-active surface returns to editor');
@@ -232,16 +212,8 @@ test('toggle: re-toggling the active surface returns to the editor; toggling an 
   assert.equal(h.controller.toggle('file_map'), 'editor', 'toggling it again returns to editor');
 });
 
-test('toggle on a flag-off surface is rejected exactly like activate', (t) => {
-  const h = makeHarness({ flags: { workspace_file_map: true } });
-  t.after(() => h.controller.dispose());
-  assert.equal(h.controller.toggle('preview'), 'editor', 'preview flag off → rejected');
-  assert.equal(h.ide.activeStageSurface, 'editor');
-  assert.equal(h.calls.logs.at(-1)?.event, 'ide_stage.activate_rejected');
-});
-
 test('toggle after dispose returns the effective surface without mutating state', (t) => {
-  const h = makeHarness({ flags: ALL_ON });
+  const h = makeHarness();
   h.controller.activate('preview');
   h.controller.dispose();
   assert.equal(h.controller.toggle('preview'), 'preview', 'disposed controller reports the frozen effective surface');
@@ -254,7 +226,6 @@ test('sync degrades cleanly when sibling controllers and the preview host are ab
     getDom: () => ({}),
     getIde: () => ide,
     ideStateUtils: ideState,
-    getFeatureFlags: () => ALL_ON,
   });
   assert.equal(controller.sync(), 'editor');
   controller.dispose();

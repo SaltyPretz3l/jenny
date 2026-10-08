@@ -65,7 +65,7 @@ async function mountTitlebar(browser, { width, readout = false }) {
   });
   for (const file of MODULES) await page.addScriptTag({ content: fs.readFileSync(path.join(ROOT, file), 'utf8') });
   await page.evaluate(({ withReadout }) => {
-    const state = { ui: { activeView: 'chat' }, features: { featureFlags: { titlebar_gpu_telemetry: true } } };
+    const state = { ui: { activeView: 'chat' } };
     const rail = window.rendererTopRailUtils.createTopRailController({
       state,
       staticModel: { tabs: [

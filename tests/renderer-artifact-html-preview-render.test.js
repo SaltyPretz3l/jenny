@@ -46,7 +46,6 @@ function generatedMessage(artifactId, fileName, timestamp) {
 
 function makeCtx(t, {
   content = '<p>live</p>',
-  flagOn = true,
   viewMode = 'preview',
   editable = true,
   artifact = null,
@@ -75,7 +74,6 @@ function makeCtx(t, {
   const surface = { key: 'full', previewContent: el(), editorShell: el(), detailNote: el() };
   const state = {
     artifacts: { loading: false, lastError: '' },
-    features: { featureFlags: { artifact_html_preview: flagOn } },
   };
   if (messages) state.messagesBySession = new Map([['s1', messages]]);
   const deps = {
@@ -110,13 +108,12 @@ function settleStaging() {
 
 /* ── routing predicate ── */
 
-test('shouldRenderHtmlPreview: flag ON + executable html + preview mode', (t) => {
+test('shouldRenderHtmlPreview: executable html + preview mode', (t) => {
   const { ctx } = makeCtx(t);
   assert.equal(shouldRenderHtmlPreview(ctx, 'html'), true);
 });
 
-test('shouldRenderHtmlPreview is false when the flag is off, in edit mode, when loading, or for blank source', (t) => {
-  assert.equal(shouldRenderHtmlPreview(makeCtx(t, { flagOn: false }).ctx, 'html'), false);
+test('shouldRenderHtmlPreview is false in edit mode, when loading, or for blank source', (t) => {
   assert.equal(shouldRenderHtmlPreview(makeCtx(t, { viewMode: 'edit' }).ctx, 'html'), false);
   assert.equal(shouldRenderHtmlPreview(makeCtx(t, { content: '   ' }).ctx, 'html'), false);
   // Loading with NO live frame mounted yet (first selection) keeps the

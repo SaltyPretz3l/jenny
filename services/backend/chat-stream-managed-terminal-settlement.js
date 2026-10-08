@@ -6,6 +6,7 @@ const {
   buildQuestionBatchTerminalMutation,
 } = require('./chat-stream-session-lifecycle');
 const { settleTerminalMutation } = require('./chat-terminal-settlement-service');
+const { buildTerminalMessageExtras, patchLastSegmentDiscardedDrafts } = require('./chat-stream-discarded-drafts');
 const {
   buildTerminalErrorPayload,
   enrichTerminalErrorPayloadForEmit,
@@ -125,6 +126,9 @@ async function settleManagedAssistantCompletion(ctx) {
   // coordinator.settle, so a retarget after it never reaches disk. Both the
   // message and the events go to that one settle, so they land or fail together.
   if (assistant) retargetSettledSliceReasoning(ctx, assistant.id);
+  // The receipt renders under an assistant text row, so it only rides on a
+  // message that has text (a reasoning-only final slice does not qualify).
+  const finalHasText = Boolean(String(assistant?.content || '').trim());
   const mutation = buildAssistantCompletionTerminalMutation({
     messageId: assistant?.id || ctx.assistantBaseMessageId,
     content: assistant?.content || '',
@@ -139,6 +143,7 @@ async function settleManagedAssistantCompletion(ctx) {
     normalizedInteractiveResponse: ctx.normalizedInteractiveResponse,
     exchangeTitle: ctx.exchangeTitle,
     resumableStop: ctx.resumableStop,
+    discardedDrafts: finalHasText ? ctx.discardedDrafts : null,
     timestamp,
     includeAssistantMessage: Boolean(assistant),
   });
@@ -146,6 +151,11 @@ async function settleManagedAssistantCompletion(ctx) {
     ? ctx.refusedTextSegments.map((message) => ({ ...message }))
     : [];
   if (refusedSegments.length) mutation.messages = [...refusedSegments, ...mutation.messages];
+  // No text-bearing final message: the receipt rides on the last refused text
+  // segment this settle commits, or is patched onto the last saved one.
+  const refusedCarrier = finalHasText ? null
+    : [...refusedSegments].reverse().find((message) => String(message?.content || '').trim()) || null;
+  if (refusedCarrier) Object.assign(refusedCarrier, buildTerminalMessageExtras({ discardedDrafts: ctx.discardedDrafts }));
   const canonicalAssistant = mutation.messages.find((message) => message.id === assistant?.id)
     || mutation.messages[mutation.messages.length - 1]
     || null;
@@ -163,11 +173,15 @@ async function settleManagedAssistantCompletion(ctx) {
       content: ctx.assistantText,
       ...(ctx.turnUsage ? { usage: ctx.turnUsage } : {}),
       ...(ctx.resumableStop ? { resumableStop: ctx.resumableStop } : {}),
+      ...(ctx.discardedDrafts ? { discardedDrafts: ctx.discardedDrafts } : {}),
       ...ctx.eventBase,
     },
   });
   if (settled.handled) {
     if (assistant) ctx.visibleAssistantMessageId = assistant.id;
+    if (!finalHasText && !refusedCarrier && settled.result?.durableTerminal === true) {
+      patchLastSegmentDiscardedDrafts(ctx.service?.sessionStore, ctx.resolvedSessionId, ctx.persistedTextSegmentIds, ctx.discardedDrafts);
+    }
     ctx.visibleCompletionEmitted = settled.result?.visibleTerminal === true;
     ctx.transcriptCollector.resetSlice();
     if (ctx.visibleCompletionEmitted) ctx.onVisibleCompletion?.({

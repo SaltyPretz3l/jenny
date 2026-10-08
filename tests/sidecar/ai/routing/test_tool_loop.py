@@ -4342,18 +4342,21 @@ _INTENT_CONTENT = (
 )
 
 
-def test_reflexive_retry_appends_one_corrective_message_when_enabled(
+def test_reflexive_retry_allows_two_unparseable_retries_when_enabled(
     _reflexive_retry_reset,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     from sidecar.ai.tools.tool_call_healing import configure_tool_call_healing
 
     configure_tool_call_healing({"tool_call_reliability_net_enabled": True})
+    caplog.set_level("INFO")
     store, profile_id = _seed_route_profile(route=ROUTE_NATIVE_TOOLS)
     events: list[object] = []
     engine = _InbandFallbackEngine(
         plans=[
-            _intent_plan(_INTENT_CONTENT),  # -> reflexive retry
-            _intent_plan(_INTENT_CONTENT),  # -> retry exhausted; nudge fires
+            _intent_plan(_INTENT_CONTENT),  # -> reflexive retry 1
+            _intent_plan(_INTENT_CONTENT),  # -> reflexive retry 2
+            _intent_plan(_INTENT_CONTENT),  # -> budget spent; the nudge fires
             _ToolPlan(result=GenerationResult(content="ok", finish_reason="stop")),
         ],
         store=store,
@@ -4384,26 +4387,27 @@ def test_reflexive_retry_appends_one_corrective_message_when_enabled(
             for m in req.get("messages", [])
         )
     ]
-    # Exactly one generation carried the corrective message across the whole turn.
     assert len(corrective) >= 1
-    # The retry never fires a second time: the counter increments once only.
+    # The parse budget is two retries: the third failure does not retry again.
     counters = store.get_reliability_counters(profile_id=profile_id)
     assert counters is not None
-    assert counters.tool_execution_retries == 1
+    assert counters.tool_execution_retries == 2
+    final = [r for r in caplog.records if getattr(r, "event", "") == "ai.router.tool_call_parse_retries_exhausted"]
+    assert len(final) == 1
 
     # The generation AFTER the retry received the schema'd response_format
     # (engine reports no native tool support).
     with_format = [
         req for req in engine.requests if req.get("response_format") is not None
     ]
-    assert len(with_format) == 1
+    assert len(with_format) == 2
     assert with_format[0]["response_format"].type == "json_object"
     reflexive_resets = [
         event
         for event in events
         if isinstance(event, StreamResetEvent) and event.reason == "reflexive_retry"
     ]
-    assert len(reflexive_resets) == 1
+    assert len(reflexive_resets) == 2
 
 
 def test_reflexive_retry_off_by_default_is_byte_parity(

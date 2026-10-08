@@ -65,6 +65,7 @@ function makeManager(overrides = {}) {
     spawnImpl: () => { throw new Error('spawnImpl not configured'); },
     killProcessTreeImpl: async () => {},
     isProcessAliveImpl: () => false,
+    listOllamaRunnerProcessesImpl: () => [], // a dead root's runner reap never lists the host
     waitForProcessExitImpl: async () => true,
     listLocalOllamaProcessesImpl: () => [],
     forceKillAnyRemainingLocalOllamaSyncImpl: () => ({ discoveredPids: [], killedPids: [] }),

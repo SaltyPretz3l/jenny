@@ -121,10 +121,12 @@
             throw new Error('unavailable');
           }
           if (strip) strip.dataset.taskSpawnBusy = 'true';
+          const projectId = normalizeId(currentDeps.getProjectId?.(taskId));
           operation = taskSessionActions.start({
             title: taskTitle,
             initialPrompt: buildTaskBrief({ title: taskTitle, body: currentDeps.getTaskNotes?.(taskId) || '' }, { linkedTaskId: taskId }),
             linkedTaskId: taskId,
+            ...(projectId ? { projectId } : {}),
           });
         } else if (kind === 'show') {
           const taskRailActions = globalThis.rendererTaskRailActions;

@@ -132,7 +132,7 @@ def test_apply_budget_check_budgets_against_the_configured_window() -> None:
         num_tools=0,
     )
     assert budget is not None and tracker is not None
-    assert budget.context_window == CONFIGURED, (
+    assert budget.context_window == int(CONFIGURED * 0.70), (
         "budgeting off the 131072 native window means auto-compaction cannot "
         "fire before the 32768 num_ctx the request is actually served with"
     )

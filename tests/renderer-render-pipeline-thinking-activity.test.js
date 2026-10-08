@@ -485,3 +485,19 @@ test('a split pane reads its own send controller for the admission wait, not the
   assert.equal(activityOf(harness), 'wait');
   close(harness);
 });
+
+// Live recheck 2026-10-05: the calm "Stopped when Jenny closed" card wore the
+// red "!" dot. A calm recovery class is a stop, so it gets the square dot.
+test('a calm recovery class settles the sprite as stopped, a plain error as error', () => {
+  for (const [recoveryClass, expected] of [['app_restart_rerun', 'stopped'], ['app_restart', 'stopped'],
+    ['run_mode_changed', 'stopped'], ['sidecar_transport', 'error'], [undefined, 'error']]) {
+    const harness = createHarness({ messages: liveMessages() });
+    startTurn(harness);
+    pass(harness);
+    finishTurn(harness);
+    harness.messages[1].status = 'error';
+    if (recoveryClass) harness.messages[1].recovery_class = recoveryClass;
+    expectActivity(harness, expected, String(recoveryClass));
+    close(harness);
+  }
+});

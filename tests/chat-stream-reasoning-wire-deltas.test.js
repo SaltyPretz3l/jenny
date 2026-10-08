@@ -13,7 +13,6 @@ const {
   createReasoningStreamMerger,
 } = require('../renderer/chat/renderer-stream-handler-reasoning-merge');
 const { createChatStreamBridge } = require('../services/chat-stream-bridge');
-const { projectLegacyStreamPayload } = require('../services/stream-envelope-parity');
 
 function createMergeState(entries = []) {
   const { indexById, contentKeyCounts } = buildReasoningEntryMergeIndexes(entries);
@@ -332,46 +331,4 @@ test('300 reasoning wire frames stay stale after a mismatch and heal at the next
       `frame ${frameIndex + 1}`
     );
   }
-});
-
-test('stream envelope parity applies matching edits and skips mismatches without poisoning the base', () => {
-  const projection = {
-    content: '',
-    reasoningEntries: [],
-    phases: [],
-    tools: [],
-    terminalStatus: '',
-    reasoningEditMismatches: 0,
-  };
-  projectLegacyStreamPayload(projection, {
-    type: 'delta',
-    reasoning: {
-      entriesDelta: [{ id: 'r1', text: 'abc', timestamp: 't1' }],
-    },
-  });
-  projectLegacyStreamPayload(projection, {
-    type: 'delta',
-    reasoning: {
-      entriesDelta: [{ id: 'r1', baseLength: 3, baseTail: 'abc', append: 'def', timestamp: 't2' }],
-    },
-  });
-  assert.deepEqual(projection.reasoningEntries, [
-    { id: 'r1', text: 'abcdef', timestamp: 't1' },
-  ]);
-
-  const mismatch = { id: 'r1', baseLength: 6, baseTail: 'wrong', append: 'stale', timestamp: 't3' };
-  projectLegacyStreamPayload(projection, {
-    type: 'delta',
-    reasoning: { entriesDelta: [mismatch] },
-  });
-  projectLegacyStreamPayload(projection, {
-    type: 'delta',
-    reasoning: {
-      entriesDelta: [{ id: 'r1', baseLength: 6, baseTail: 'abcdef', append: 'g' }],
-    },
-  });
-  assert.deepEqual(projection.reasoningEntries, [
-    { id: 'r1', text: 'abcdefg', timestamp: 't1' },
-  ]);
-  assert.equal(projection.reasoningEditMismatches, 1);
 });

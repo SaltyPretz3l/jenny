@@ -39,6 +39,27 @@ test('adapter accepts paused cleanup only from the exact idle deletion owner', t
   assert.equal(actors.rollbackDeletion(deletionHandle), true);
 });
 
+test('adapter proves cleanup for restart-paused work that published no checkpoint (gate F1)', t => {
+  const { adapter, service, sessionId } = createAdapterHarness(t);
+  ensureSessionTurnActorRegistry(service);
+  const attempt = { attempt_id: 'attempt-restart', stream_id: 'stream-restart',
+    incarnation: 'host-before-restart', authority_revision: 'authority-restart' };
+  const restartPaused = { kind: 'restart_paused', previous_status: 'running',
+    reason: 'Unfinished work requires an explicit resume after restart.', at: '2026-10-06T00:59:16.749Z' };
+  const work = { work_id: 'work-restart', session_id: sessionId, status: 'paused', attempt,
+    checkpoint_ref: null, recovery: restartPaused };
+
+  // The process tree of that attempt died with the restart and it left nothing
+  // to release, so a Stop must settle instead of staying "requested" for good.
+  assert.equal(adapter.provePausedCleanup(work), true);
+  assert.equal(adapter.provePausedCleanup({ ...work, recovery: null }), false,
+    'a pause without the restart proof still needs its checkpoint');
+  assert.equal(adapter.provePausedCleanup({ ...work, recovery: { ...restartPaused, kind: 'transition_repaired' } }), false);
+  assert.equal(adapter.provePausedCleanup({ ...work, attempt: null }), false);
+  service.sessionStore.getActiveTurn = () => ({ turn_id: 'live', stream_id: 'live' });
+  assert.equal(adapter.provePausedCleanup(work), false, 'an active turn in the session keeps the proof fenced');
+});
+
 test('adapter binds the captured route and inference gateway through terminal producer proof', async t => {
   const { adapter, service, sessionId } = createAdapterHarness(t);
   const prepared = await adapter.prepareImmediate(request(sessionId), {}, {

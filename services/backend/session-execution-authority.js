@@ -10,10 +10,6 @@ const { evaluatePolicy } = require('../tools/tool-policy-evaluator');
 const { effectiveSideEffecting } = require('../tools/tool-policy-actions');
 const { ALWAYS_ON_TOOL_NAMES } = require('../tools/tool-surface-families');
 const { PROJECT_ERROR_CODES, RUNTIME_ERROR_CODES, TOOL_ERROR_CODES } = require('./error-codes');
-const {
-  authorityFingerprint,
-  fingerprintsMatch,
-} = require('./plugin-tool-execution-authority');
 
 const EXECUTION_CONTEXT_SCHEMA_VERSION = 1;
 const SIDECAR_API_VERSION = '2026-08-17';
@@ -99,8 +95,9 @@ function resolveCurrentRunState(projectAuthority, sessionId, nonPlanMode, nonPla
   if (!session) return null;
   const runMode = String(session.run_mode || '').trim().toLowerCase();
   const planMode = session.plan_mode === true || runMode === 'plan';
+  // Propose (row 35) is read-only: suggestions are recorded, never written.
   return { mode: planMode ? 'plan' : nonPlanMode,
-    readOnly: nonPlanReadOnly || planMode, runMode };
+    readOnly: nonPlanReadOnly || planMode || runMode === 'propose', runMode };
 }
 
 function normalizeCapturedAuthority(value) {
@@ -228,39 +225,6 @@ function getTrustedExecutionBinding(binding) {
   return state && !state.closed ? state.trustedContext : null;
 }
 
-function normalizePluginToolCapture(value, expectedAuthority) {
-  if (!isPlainRecord(value) || !Array.isArray(value.descriptors)
-    || !/^[0-9a-f]{64}$/u.test(String(value.descriptor_digest || ''))
-    || value.descriptors.length > 256) {
-    throw new Error('Captured plugin tool authority is invalid.');
-  }
-  const expected = authorityFingerprint(expectedAuthority);
-  const captured = authorityFingerprint(value.authority);
-  if (!expected || !captured || !fingerprintsMatch(expected, captured)) {
-    throw new Error('Captured plugin tool authority fingerprint is stale.');
-  }
-  const descriptors = new Map();
-  for (const raw of value.descriptors) {
-    const descriptor = deepFreeze(cloneJson(raw, 'Plugin tool descriptor', 256 * 1024));
-    const name = boundedToken(descriptor.name, MAX_OPERATION_CHARS);
-    if (!name || descriptor.name !== name || typeof descriptor.side_effecting !== 'boolean'
-      || typeof descriptor.read_only !== 'boolean'
-      || typeof descriptor.tool_family !== 'string'
-      || typeof descriptor.source_kind !== 'string'
-      || typeof descriptor.server_name !== 'string'
-      || descriptor.plan_mode_only !== false || descriptor.workspace_required !== false
-      || builtinExecutionDescriptor(name) || descriptors.has(name)) {
-      throw new Error('Captured plugin tool descriptor is invalid.');
-    }
-    descriptors.set(name, descriptor);
-  }
-  return {
-    authority: captured,
-    descriptorDigest: value.descriptor_digest,
-    descriptors,
-  };
-}
-
 // Grow-only for the binding's life; always-on tools are never disabled.
 function addLiveDisabledTools(state, toolNames) {
   let changed = false;
@@ -281,7 +245,6 @@ class SessionExecutionAuthority {
     knowledgeService,
     skillsService = null,
     resolveProjectWorkspaceServices,
-    resolvePluginToolAuthority = null,
     resolveSessionDisabledTools = null,
     randomUUID: createUUID = randomUUID,
   } = {}) {
@@ -298,16 +261,11 @@ class SessionExecutionAuthority {
     if (typeof resolveProjectWorkspaceServices !== 'function') {
       throw new TypeError('SessionExecutionAuthority requires scoped workspace services.');
     }
-    if (resolvePluginToolAuthority !== null
-      && typeof resolvePluginToolAuthority !== 'function') {
-      throw new TypeError('Plugin tool authority resolver is invalid.');
-    }
     this._projectAuthority = projectAuthority;
     this._permissionStore = permissionStore;
     this._knowledgeService = knowledgeService;
     this._skillsService = skillsService;
     this._resolveProjectWorkspaceServices = resolveProjectWorkspaceServices;
-    this._resolvePluginToolAuthority = resolvePluginToolAuthority;
     this._createUUID = createUUID;
     this._resolveSessionDisabledTools = resolveSessionDisabledTools;
     this._sessionBindings = new Map();
@@ -357,9 +315,11 @@ class SessionExecutionAuthority {
     }
     const requestedMode = String(mode || '').trim().slice(0, 40);
     const nonPlanMode = requestedMode === 'plan' ? 'assist' : requestedMode;
-    const capturedMode = resolveCurrentRunState(this._projectAuthority, normalizedSessionId,
-      nonPlanMode, readOnly === true)?.mode || requestedMode;
-    const capturedReadOnly = readOnly === true || capturedMode === 'plan';
+    const runState = resolveCurrentRunState(this._projectAuthority, normalizedSessionId,
+      nonPlanMode, readOnly === true);
+    const capturedMode = runState?.mode || requestedMode;
+    const capturedPropose = runState?.runMode === 'propose';
+    const capturedReadOnly = readOnly === true || capturedMode === 'plan' || capturedPropose;
     const executionContext = deepFreeze({
       schema_version: EXECUTION_CONTEXT_SCHEMA_VERSION,
       authority_revision: authorityRevision,
@@ -381,12 +341,10 @@ class SessionExecutionAuthority {
       get mode() { return bindingStates.get(binding)?.mode || capturedMode; },
       get readOnly() { return bindingStates.get(binding)?.readOnly ?? capturedReadOnly; },
       assertCurrent: () => this.requireCurrent(binding),
-      captureRuntimeTool: (toolName) => this.captureRuntimeTool(binding, toolName),
       describeToolAvailability: (status) => {
         this.requireCurrent(binding);
         const state = bindingStates.get(binding);
-        return scopedToolAvailability(status, state,
-          (name) => builtinExecutionDescriptor(name) || state.pluginDescriptors.get(name));
+        return scopedToolAvailability(status, state, builtinExecutionDescriptor);
       },
     });
     bindingStates.set(binding, {
@@ -400,15 +358,13 @@ class SessionExecutionAuthority {
       executionContext,
       mode: capturedMode,
       nonPlanMode,
-      pluginDescriptors: new Map(),
-      pluginToolAuthority: null,
       planApprovals: new Map(),
       nonPlanReadOnly: readOnly === true,
+      proposeMode: capturedPropose,
       readOnly: capturedReadOnly,
       requestId: normalizedRequestId,
       sessionId: normalizedSessionId,
       signal,
-      runtimeSealed: false,
       toolPreferences: isPlainRecord(toolPreferences) ? cloneJson(toolPreferences, 'Tool preferences', 64 * 1024) : null,
       trustedContext,
     });
@@ -458,6 +414,7 @@ class SessionExecutionAuthority {
       state.nonPlanMode, state.nonPlanReadOnly);
     if (currentRunState && (currentRunState.mode !== state.mode
       || (currentRunState.readOnly && !state.readOnly)
+      || (currentRunState.runMode === 'propose') !== state.proposeMode
       || (state.autoRun && currentRunState.runMode !== 'auto'))) {
       // Coded so the terminal classifier can name the user's own mode flip
       // (calm card, retry alone) instead of the generic retry copy.
@@ -466,68 +423,7 @@ class SessionExecutionAuthority {
         { code: 'run_mode_changed', retryable: true }
       );
     }
-    if (state.pluginToolAuthority?.authority) {
-      if (!this._resolvePluginToolAuthority) {
-        throw new Error('Plugin tool authority resolver is unavailable.');
-      }
-      const current = normalizePluginToolCapture(
-        this._resolvePluginToolAuthority(state.pluginToolAuthority.authority),
-        state.pluginToolAuthority.authority
-      );
-      if (current.descriptorDigest !== state.pluginToolAuthority.descriptorDigest) {
-        throw new Error('Plugin tool authority changed during the request.');
-      }
-    }
     return state.authority;
-  }
-
-  bindPluginTools(binding, expectedAuthority) {
-    const state = bindingStates.get(binding);
-    if (!state || state.closed || state.signal?.aborted) {
-      throw new Error('Execution authority is cancelled or unavailable.');
-    }
-    const sessionAuthority = this._projectAuthority.captureSession(state.sessionId);
-    if (!authoritiesMatch(sessionAuthority, state.authority)) {
-      throw new Error('Session project authority changed during the request.');
-    }
-    this._projectAuthority.requireCurrent(state.authority);
-    let next;
-    if (isPlainRecord(expectedAuthority) && expectedAuthority.mode === 'core_only'
-      && Object.keys(expectedAuthority).length === 1) {
-      next = { authority: null, descriptorDigest: null, descriptors: new Map() };
-    } else {
-      if (!this._resolvePluginToolAuthority) {
-        throw new Error('Plugin tool authority resolver is unavailable.');
-      }
-      next = normalizePluginToolCapture(
-        this._resolvePluginToolAuthority(expectedAuthority),
-        expectedAuthority
-      );
-    }
-    const prior = state.pluginToolAuthority;
-    const unchanged = prior && prior.descriptorDigest === next.descriptorDigest
-      && ((!prior.authority && !next.authority)
-        || fingerprintsMatch(prior.authority, next.authority));
-    if (!unchanged && state.runtimeSealed) {
-      throw new Error('Plugin tool authority is sealed for this request.');
-    }
-    state.pluginToolAuthority = Object.freeze({
-      authority: next.authority,
-      descriptorDigest: next.descriptorDigest,
-    });
-    state.pluginDescriptors = next.descriptors;
-    return true;
-  }
-
-  captureRuntimeTool(binding, toolName) {
-    const state = bindingStates.get(binding);
-    this.requireCurrent(binding);
-    const descriptor = state?.pluginDescriptors.get(String(toolName || '').trim());
-    if (!descriptor || !state.pluginToolAuthority?.authority) return null;
-    return Object.freeze({
-      authority: state.pluginToolAuthority.authority,
-      descriptor,
-    });
   }
 
   noteApproved(binding, { operationId, toolName, arguments: args, decision } = {}) {
@@ -536,7 +432,6 @@ class SessionExecutionAuthority {
     const normalizedOperationId = boundedToken(operationId, MAX_OPERATION_CHARS);
     const normalizedToolName = boundedToken(toolName, MAX_OPERATION_CHARS);
     if (!state || !normalizedOperationId || !normalizedToolName || !isPlainRecord(args)) return false;
-    state.runtimeSealed = true;
     state.approved.set(normalizedOperationId, operationSignature(normalizedToolName, args));
     if (normalizedToolName === 'exit_plan_mode' && ['approved', 'approved_auto'].includes(decision)) {
       state.planApprovals.set(normalizedOperationId, decision);
@@ -584,20 +479,19 @@ class SessionExecutionAuthority {
       return rejected(validation.operationId, RUNTIME_ERROR_CODES.ADMISSION_REJECTED, 'authority_mismatch',
         'Runtime operation authority does not match the active request.');
     }
-    state.runtimeSealed = true;
     try {
       this.requireCurrent(binding);
     } catch (error) {
       return rejected(validation.operationId, PROJECT_ERROR_CODES.STALE, 'project_authority_stale',
         String(error?.message || error || 'Project authority is stale.').slice(0, 300));
     }
-    const descriptor = builtinExecutionDescriptor(validation.toolName)
-      || state.pluginDescriptors.get(validation.toolName);
+    const descriptor = builtinExecutionDescriptor(validation.toolName);
     if (!descriptor || (descriptor.workspace_required && !state.authority.root_path)) {
       return rejected(validation.operationId, TOOL_ERROR_CODES.DISABLED, 'tool_unavailable',
         'The tool is unavailable for this captured project authority.');
     }
     if ((descriptor.plan_mode_only && state.mode !== 'plan')
+      || (descriptor.propose_mode_only && state.proposeMode !== true)
       || (state.readOnly && effectiveSideEffecting(descriptor, validation.args)
         && !(state.mode === 'plan' && !state.nonPlanReadOnly
           && allowsPlanArtifact(descriptor, validation.args)))) {
@@ -628,7 +522,7 @@ class SessionExecutionAuthority {
     const approved = approvedSignature === operationSignature(validation.toolName, validation.args);
     // The trusted run grant covers ordinary asks; Python still applies its
     // mandatory destructive/interactive gates before this final authority check.
-    const ordinaryAutoRun = state.autoRun && !descriptor.plan_mode_only;
+    const ordinaryAutoRun = state.autoRun && !descriptor.plan_mode_only && !descriptor.propose_mode_only;
     const planArtifactDefault = state.mode === 'plan' && !state.nonPlanReadOnly
       && allowsPlanArtifact(descriptor, validation.args)
       && policy.stage === 'tool_default' && policy.matched_rule_id === null;
@@ -654,7 +548,6 @@ class SessionExecutionAuthority {
     if (!bindings?.size) this._sessionBindings.delete(state.sessionId);
     state.approved.clear();
     state.planApprovals.clear();
-    state.pluginDescriptors.clear();
     return true;
   }
 }

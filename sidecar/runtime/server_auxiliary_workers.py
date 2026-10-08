@@ -11,6 +11,10 @@ from typing import Any, Protocol
 from sidecar.ai.engines.admitted import InferenceAdmissionError
 from sidecar.ai.error_codes import CMP_RESOURCE_EXCEEDED
 from sidecar.protocol import (
+    CATALOG_INDEX_STEP_METHOD,
+    CATALOG_PURGE_METHOD,
+    CATALOG_SEARCH_METHOD,
+    CATALOG_STATUS_METHOD,
     CHAT_COMPACT_METHOD,
     COMMIT_GENERATE_MESSAGE_METHOD,
     HARDWARE_PROFILE_METHOD,
@@ -24,10 +28,12 @@ from sidecar.protocol import (
     SUGGESTIONS_GENERATE_METHOD,
     WORKSPACE_ABANDON_RESTORE_METHOD,
     WORKSPACE_ACKNOWLEDGE_RECOVERY_REVIEW_METHOD,
+    WORKSPACE_APPLY_SUGGESTED_CHANGES_METHOD,
     WORKSPACE_CONFIRM_RUNTIME_CHECKPOINT_METHOD,
     WORKSPACE_LIST_CHANGE_SETS_METHOD,
     WORKSPACE_LIST_RECOVERY_REVIEW_METHOD,
     WORKSPACE_PREFLIGHT_UNDO_METHOD,
+    WORKSPACE_REAPPLY_CHANGE_SET_METHOD,
     WORKSPACE_RECONCILE_RUNTIME_PREPARATIONS_METHOD,
     WORKSPACE_RELEASE_RUNTIME_CHECKPOINT_METHOD,
     WORKSPACE_RESTORE_TRASH_ENTRY_METHOD,
@@ -62,16 +68,23 @@ AUXILIARY_FAMILY_BY_METHOD: dict[str, str] = {
     WORKSPACE_LIST_CHANGE_SETS_METHOD: "workspace_recovery",
     WORKSPACE_PREFLIGHT_UNDO_METHOD: "workspace_recovery",
     WORKSPACE_UNDO_CHANGE_SET_METHOD: "workspace_recovery",
+    WORKSPACE_REAPPLY_CHANGE_SET_METHOD: "workspace_recovery",
     WORKSPACE_RESTORE_TRASH_ENTRY_METHOD: "workspace_recovery",
-    # WO-26: same off-loop family as the four WO-25a recovery methods above --
-    # both touch the same journal store filesystem I/O and must not run on
-    # the single-threaded request dispatch loop.
+    # WO-26: same off-loop family as above (journal store I/O, never the dispatch loop).
     WORKSPACE_LIST_RECOVERY_REVIEW_METHOD: "workspace_recovery",
     WORKSPACE_ACKNOWLEDGE_RECOVERY_REVIEW_METHOD: "workspace_recovery",
     WORKSPACE_ABANDON_RESTORE_METHOD: "workspace_recovery",
     WORKSPACE_CONFIRM_RUNTIME_CHECKPOINT_METHOD: "workspace_recovery",
     WORKSPACE_RELEASE_RUNTIME_CHECKPOINT_METHOD: "workspace_recovery",
     WORKSPACE_RECONCILE_RUNTIME_PREPARATIONS_METHOD: "workspace_recovery",
+    # Plan Plus C4: shares the single recovery worker so an apply never races an undo.
+    WORKSPACE_APPLY_SUGGESTED_CHANGES_METHOD: "workspace_recovery",
+    # Semantic catalog: index steps and purges write the index one at a time;
+    # searches and status reads stay available while a step runs.
+    CATALOG_INDEX_STEP_METHOD: "catalog",
+    CATALOG_PURGE_METHOD: "catalog",
+    CATALOG_SEARCH_METHOD: "catalog_read",
+    CATALOG_STATUS_METHOD: "catalog_read",
 }
 DEFAULT_MAX_WORKERS_BY_FAMILY: dict[str, int] = {
     "models": 2,
@@ -81,6 +94,8 @@ DEFAULT_MAX_WORKERS_BY_FAMILY: dict[str, int] = {
     "probe": 1,
     "inference": 1,
     "workspace_recovery": 1,
+    "catalog": 1,
+    "catalog_read": 2,
 }
 AUXILIARY_WORKER_METHODS = frozenset((
     HARDWARE_PROFILE_METHOD,

@@ -85,7 +85,7 @@ class _ToolCallPhasesMixin:
     completed_generations: int
     tool_nudge_attempted: bool
     checkpoint_created: bool
-    reflexive_retry_attempted: bool
+    reflexive_retries_used: dict[str, int]
     pending_retry_response_format: Any | None
     post_tool_continuation_attempted: bool
     sub_agent_report_finalization_requested: bool
@@ -923,10 +923,10 @@ class _ToolCallPhasesMixin:
             validation_errors=_reflexive_b.collect_validation_errors(
                 self.outcomes[outcomes_len_before_tool_phase:]),
             tool_payload=self.tool_payload, working_messages=self.working_messages,
-            already_retried=self.reflexive_retry_attempted, request_id=request_id,
-            session_id=session_id, emit_reliability_event=True)
+            retries_used=self.reflexive_retries_used, request_id=request_id,
+            session_id=session_id, emit_reliability_event=True,
+            parse_diagnostics=getattr(result, "tool_call_parse_diagnostics", None))
         if _did_retry_b:
-            self.reflexive_retry_attempted = True
             self.pending_retry_response_format = _pending_b
 
         # -- Update cycle-detection state -----------------------------

@@ -40,6 +40,9 @@ function execute(root, input) {
       // The tool treats a service without its full surface as unavailable.
       async click() { return { status: 'clicked' }; },
       async type() { return { status: 'typed' }; },
+      async hover() { return { status: 'hovered' }; },
+      async focus() { return { status: 'focused' }; },
+      async press() { return { status: 'pressed' }; },
       async inspect() { return { console_messages: [], page_errors: [] }; },
       async screenshot() { return { buffer: Buffer.from('png'), width: 2, height: 2, thumbnail: null }; },
       async close() {
@@ -80,4 +83,33 @@ test('unknown event arguments cannot silently change the requested interaction',
   assert.equal(result.metadata.reason, 'unknown_event_argument');
   assert.equal(opened.length, 0);
   assert.match(result.content, /text/);
+});
+
+test('unknown event arguments list every allowed key including key', async () => {
+  const root = makeWorkspace();
+  const { result } = await execute(root, {
+    path: 'index.html',
+    events: [{ action: 'press', keycode: 'Enter' }],
+  });
+  assert.equal(result.metadata.reason, 'unknown_event_argument');
+  assert.match(result.content, /action, selector, key, text, press_enter/);
+  assert.match(result.content, /hover/);
+});
+
+test('a press key of " " normalizes to Space before the allowlist check', () => {
+  const { normalizePreviewEvent } = require('../services/tools/builtin/preview-test-arguments');
+  assert.equal(normalizePreviewEvent({ action: 'press', key: ' ' }).event.key, 'Space');
+  assert.equal(normalizePreviewEvent({ action: 'press', key: 'Spacebar' }).event.key, 'Space');
+  assert.equal(normalizePreviewEvent({ action: 'press', key: '' }).failure.reason, 'invalid_event');
+  assert.equal(normalizePreviewEvent({ action: 'press', key: 'enter' }).failure.reason, 'invalid_event');
+});
+
+test('press accepts the key argument and omits selector', async () => {
+  const root = makeWorkspace();
+  const { result, opened } = await execute(root, {
+    path: 'index.html',
+    events: [{ action: 'press', key: 'Tab' }],
+  });
+  assert.equal(result.isError, false);
+  assert.equal(opened.length, 1);
 });

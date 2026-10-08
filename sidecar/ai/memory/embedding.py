@@ -31,12 +31,17 @@ from pathlib import Path
 from typing import Callable, Iterator, Protocol
 
 from sidecar.ai.error_codes import CMP_MEMORY_SCHEMA_MIGRATION
+from sidecar.ai.semantic.vectors import (
+    MAX_EMBEDDING_DIM as MAX_EMBEDDING_DIM,  # noqa: PLC0414 - historical public name
+)
+from sidecar.ai.semantic.vectors import pack_vector as _pack_vector
+from sidecar.ai.semantic.vectors import unpack_vector as _unpack_vector
+from sidecar.ai.semantic.vectors import validate_vector as _validate_vector
 from sidecar.exceptions import MemoryStoreError
 
 logger = logging.getLogger(__name__)
 
 EMBEDDING_SCHEMA_VERSION = 3
-MAX_EMBEDDING_DIM = 4096
 MAX_EMBEDDING_MODEL_NAME_CHARS = 128
 MAX_EMBEDDING_ROWS = 10_000
 EMBEDDING_PROVIDER_TIMEOUT_SECONDS = 10.0
@@ -77,29 +82,6 @@ class SimilarityScan:
         return self.aborted_by_scan_cap
 
 
-def _pack_vector(embedding: list[float]) -> tuple[bytes, int, float]:
-    """Pack to float32 bytes; the norm is computed on the stored precision."""
-    packed = array("f", embedding)
-    norm = math.sqrt(sum(value * value for value in packed))
-    return packed.tobytes(), len(packed), norm
-
-
-def _validate_vector(embedding: object) -> list[float]:
-    if not isinstance(embedding, list) or not embedding:
-        raise ValueError("embedding must be a non-empty list")
-    if len(embedding) > MAX_EMBEDDING_DIM:
-        raise ValueError("embedding exceeds the dimension limit")
-    normalized: list[float] = []
-    for value in embedding:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError("embedding values must be finite numbers")
-        number = float(value)
-        if not math.isfinite(number):
-            raise ValueError("embedding values must be finite numbers")
-        normalized.append(number)
-    return normalized
-
-
 def _positive_int(value: object, *, field: str, maximum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"{field} must be a positive integer")
@@ -111,14 +93,6 @@ def _model_name(value: object) -> str:
     if len(normalized) > MAX_EMBEDDING_MODEL_NAME_CHARS:
         raise ValueError("model_name exceeds its limit")
     return normalized
-
-
-def _unpack_vector(blob: object) -> array | None:
-    if not isinstance(blob, bytes) or len(blob) % 4 != 0:
-        return None
-    unpacked = array("f")
-    unpacked.frombytes(blob)
-    return unpacked
 
 
 class EmbeddingStore:

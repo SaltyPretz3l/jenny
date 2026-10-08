@@ -544,11 +544,11 @@ def resume_before_tool_dispatch(  # noqa: PLR0913
             restored = build_restored_approval_result(run, hydrated=hydrated, checkpoint=checkpoint,
                                                      result=result, approval=approvals[0])
             return run._finish(restored, reason="continuation_approval_wait")
-        from sidecar.ai.routing.tool_resource_progress import (
-            resource_deferral_callback,
-        )
+        from sidecar.ai.routing.auto_checkpoint import maybe_create_auto_checkpoint
+        from sidecar.ai.routing.tool_resource_progress import resource_deferral_callback
         iteration_calls: list[Any] = []
         run.outcome_index = len(calls)
+        maybe_create_auto_checkpoint(run, remaining)  # row 34 S5: the batch's restore point
         execute_tool_calls_sequentially(
             indexed_calls=remaining, runtime=runtime, kernel=kernel, result=result,
             request_id=request_id, session_id=session_id,

@@ -132,7 +132,11 @@ def final_prose_nudge(loop: Any, result: Any, iteration: int) -> bool:
     if not looks_like_plan(reply):
         return False
     loop._plan_prose_nudged = True
-    emit_stream_reset_for_retry(loop.runtime, loop.streamed_event_types, reason="post_tool_restart")
+    # nudge_retry, not post_tool_restart: the draft wrote the plan as prose
+    # instead of calling exit_plan_mode, so the fold reads "it skipped a tool
+    # it needed" rather than blaming tools that may never have run (2026-10-05
+    # recheck, same cause as the promise nudge's gate F5).
+    emit_stream_reset_for_retry(loop.runtime, loop.streamed_event_types, reason="nudge_retry")
     loop.working_messages.append({"role": "assistant", "content": reply.strip()})
     loop.working_messages.append({"role": "user", "content": PLAN_PROSE_NUDGE})
     log_event(

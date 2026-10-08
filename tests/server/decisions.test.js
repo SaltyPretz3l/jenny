@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createDecisionAdapter } = require('../../server/decision-adapter');
+const { validateCommand } = require('../../server/api-contract');
 
 function approvalBackend() {
   const backend = {
@@ -83,4 +84,31 @@ test('question answers validate the exact live batch and convert to backend ids'
   assert.deepEqual(calls, [{
     ref: 'questions_1', payload: { answers: [{ id: 'tests', value: 'yes' }, { id: 'language', value: 'Python' }] },
   }]);
+});
+
+test('question ids with punctuation and Unicode round-trip through the API and live batch', () => {
+  const calls = [];
+  const questions = ['build.target', '目標'].map(id => ({ id, prompt: 'Target?', options: ['yes', 'no'] }));
+  const backend = {
+    pendingUserQuestions: new Map([['questions_1', {
+      questionRef: 'questions_1', streamId: 'stream_1', sessionId: 'session_1', callId: 'call_1', questions,
+    }]]),
+    answerUserQuestions(ref, payload) { calls.push({ ref, payload }); return true; },
+  };
+  const adapter = createDecisionAdapter({ backend });
+  const listed = adapter.listQuestions('session_1', 'stream_1')[0];
+  assert.deepEqual(listed.questions.map(question => question.id), questions.map(question => question.id));
+  const answers = listed.questions.map(question => ({ question_id: question.id, answer: 'yes' }));
+  const command = { api_version: 1, operation: 'questions.answer', request_id: 'answer_1',
+    client_id: 'client_1', boot_epoch: 'boot_1', session_id: 'session_1',
+    params: { stream_id: listed.stream_id, question_ref: listed.question_ref, answers } };
+  assert.equal(validateCommand(command).ok, true);
+  assert.equal(validateCommand({ ...command, params: { ...command.params,
+    answers: [{ question_id: 'x'.repeat(513), answer: 'yes' }] } }).ok, false);
+  assert.deepEqual(adapter.answerQuestions({ sessionId: command.session_id,
+    streamId: command.params.stream_id, questionRef: command.params.question_ref, answers }),
+  { ok: true, question_ref: 'questions_1', answered: true });
+  assert.deepEqual(calls, [{ ref: 'questions_1', payload: {
+    answers: questions.map(question => ({ id: question.id, value: 'yes' })),
+  } }]);
 });

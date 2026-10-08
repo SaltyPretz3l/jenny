@@ -900,7 +900,7 @@ body.mermaid-fullscreen-open {
   object-fit: contain;
 }
 
-/* ── KaTeX math (katex_math) — design spec KATEX_MATH_SPEC.md (K1 classic) ──
+/* ── KaTeX math — design spec KATEX_MATH_SPEC.md (K1 classic) ──
    Scoped under the .markdown-math wrapper spans the protect-then-render
    pipeline emits inside markdown-rendered containers (chat bubbles +
    markdown artifact hosts) — never bare .katex globally. Color inherits

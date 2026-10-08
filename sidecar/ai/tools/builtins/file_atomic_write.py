@@ -5,6 +5,7 @@ from __future__ import annotations
 import codecs
 import hashlib
 import os
+import secrets
 import stat as stat_module
 import tempfile
 from pathlib import Path
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from sidecar.ai.tools.workspace import WorkspaceGuard
 
 _NO_EXPECTATION = object()
+_TEMP_CREATE_ATTEMPTS = 8
 
 
 class _ExpectedCurrentMismatch(Exception):
@@ -121,22 +123,19 @@ def _write_bytes_atomic(
     except _ExpectedCurrentMismatch:
         return False
 
+    _before_temp_create(path)
     try:
-        fd, temp_name = tempfile.mkstemp(
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            dir=str(path.parent),
-        )
+        parent_fd, fd, temp_path = _create_atomic_temp(path, parent_identity)
     except OSError as error:
         raise _failure(f"failed to create temporary file: {error}") from error
-    temp_path = Path(temp_name)
     temp_identity: NodeIdentity | None = None
     try:
         with os.fdopen(fd, "wb") as handle:
+            temp_identity = NodeIdentity.from_stat(os.fstat(handle.fileno()))
+            _revalidate_parent_and_temp(path.parent, parent_identity, temp_path, temp_identity)
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-            temp_identity = NodeIdentity.from_stat(os.fstat(handle.fileno()))
         _revalidate_parent_and_temp(
             path.parent,
             parent_identity,
@@ -144,7 +143,9 @@ def _write_bytes_atomic(
             temp_identity,
         )
         if target_mode is not None:
-            os.chmod(temp_path, target_mode)
+            chmod_parent = parent_fd if os.chmod in os.supports_dir_fd else None
+            os.chmod(temp_path if chmod_parent is None else Path(temp_path.name),
+                     target_mode, dir_fd=chmod_parent)
         if workspace is not None:
             workspace.ensure_safe_mutation_path(path)
 
@@ -160,16 +161,43 @@ def _write_bytes_atomic(
             expected_current_bytes=expected_current_bytes,
             captured_identity=leaf_identity,
         ):
-            _unlink_temp_if_identity(temp_path, temp_identity, parent_identity)
             return False
-        os.replace(temp_path, path)
-    except ToolExecutionFailure:
-        _unlink_temp_if_identity(temp_path, temp_identity, parent_identity)
-        raise
+        if parent_fd is None:
+            os.replace(temp_path, path)
+        else:
+            os.replace(temp_path.name, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
     except OSError as error:
-        _unlink_temp_if_identity(temp_path, temp_identity, parent_identity)
         raise _failure(f"failed to write file: {error}") from error
+    finally:
+        _unlink_temp_if_identity(temp_path, temp_identity, parent_fd=parent_fd)
+        if parent_fd is not None:
+            os.close(parent_fd)
     return True
+
+
+def _create_atomic_temp(path: Path, parent_identity: NodeIdentity) -> tuple[int | None, int, Path]:
+    # os.replace shares renameat with os.rename but CPython registers only
+    # os.rename in supports_dir_fd, so the capability check reads rename.
+    if not all(operation in os.supports_dir_fd for operation in (os.open, os.rename, os.unlink)):
+        fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+        return None, fd, Path(name)
+    nofollow = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    parent_fd = os.open(str(path.parent), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow)
+    try:
+        if not NodeIdentity.from_stat(os.fstat(parent_fd)).same_object(parent_identity):
+            raise _failure("atomic write path identity changed before replacement")
+        for _ in range(_TEMP_CREATE_ATTEMPTS):
+            name = f".{path.name}.{secrets.token_hex(6)}.tmp"
+            try:
+                fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
+                             0o600, dir_fd=parent_fd)
+            except FileExistsError:
+                continue
+            return parent_fd, fd, path.parent / name
+        raise FileExistsError("temporary file names exhausted")
+    except (OSError, ToolExecutionFailure):
+        os.close(parent_fd)
+        raise
 
 
 def _prepare_atomic_target(
@@ -296,21 +324,29 @@ def _optional_identity(path: Path) -> NodeIdentity | None:
 def _unlink_temp_if_identity(
     path: Path,
     expected: NodeIdentity | None,
-    expected_parent: NodeIdentity,
+    *, parent_fd: int | None = None,
 ) -> None:
     if expected is None:
         return
     try:
-        parent = _required_identity(path.parent, "atomic write temp parent")
-        current = _optional_identity(path)
+        current = (_optional_identity(path) if parent_fd is None else NodeIdentity.from_stat(
+            os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)))
         if (
-            parent.same_object(expected_parent)
-            and current is not None
+            current is not None
             and current.same_object(expected)
+            and not stat_module.S_ISLNK(current.mode)
+            and (parent_fd is not None or not is_link_object(path))
         ):
-            path.unlink()
+            if parent_fd is None:
+                path.unlink()
+            else:
+                os.unlink(path.name, dir_fd=parent_fd)
     except (OSError, ToolExecutionFailure):
         return
+
+
+def _before_temp_create(_path: Path) -> None:
+    """Deterministic test seam after target validation and before temp creation."""
 
 
 def _before_atomic_replace(_path: Path) -> None:

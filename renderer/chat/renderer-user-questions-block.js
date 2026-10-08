@@ -17,14 +17,7 @@
     return null;
   })();
 
-  function fallbackEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const fallbackEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
   const defaultEscapeHtml = stringUtils && typeof stringUtils.escapeHtml === 'function'
     ? stringUtils.escapeHtml
     : fallbackEscapeHtml;

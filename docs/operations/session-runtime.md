@@ -3,9 +3,9 @@
 The runtime implements project authority, durable Send/Start, child work,
 continuations and recovery through the shared application services. Source
 implementation and deterministic integration do not by themselves establish
-installed-app, real-model/GPU or hosted qualification. Follow the active
-implementation plan for
-milestone status and acceptance evidence.
+installed-app, real-model/GPU or hosted qualification. See the landed
+reference plan for
+milestone history and acceptance evidence; current status lives in `NEXT_STEPS.md`.
 
 Shell config v54 stores independent local/cloud runtime defaults. This configuration
 foundation does not by itself enable durable dispatch. The default-ON runtime
@@ -135,7 +135,10 @@ scoped to the current session; past one page, or for work that is not pending,
 a row reads queued without a number. Withdraw reads the work's current revision
 and cancels at it; the row stays visible as withdrawing until cleanup is
 confirmed. Work paused by a restart shows Resume, never a position, and never
-resumes on its own.
+resumes on its own. Every work summary carries `resumable` (`null` unless paused,
+then the scheduler's own `canResume` answer): a paused row the scheduler cannot
+continue (no checkpoint for its attempt) reads "Paused, cannot continue" and
+offers Discard alone, and the Runs view hides Resume the same way.
 
 Refusal copy comes from one renderer map keyed by the runtime's own reason.
 A wait (session busy, lane or runtime capacity, closing, transcript catch-up,
@@ -241,13 +244,13 @@ activation still requires the explicit resume and portable lifecycle gates.
 
 Trusted desktop clients may call `sessionRuntime.submit` with an existing
 canonical `session_id`, a stable `idempotency_key`, and nonempty new `prompt`.
-Optional snake-case fields are listed in `services/ipc-contract-runtime-types.js`.
+Optional snake-case fields are listed in `services/session-runtime/submission-contract.js`.
 The closed schema excludes edited turns, interactive responses, failure retries,
 caller-supplied authority, provider routes, work IDs and stream IDs. Those legacy
 immediate-stream entrypoints retain their existing busy/admission behavior.
 
 Submission uses the same request normalization as immediate Send, including local
-inference selection and plugin/skill validation. It captures project/provider
+inference selection and skill validation. It captures project/provider
 scope, rechecks after asynchronous preflight and immediately before the durable
 insert, then returns work/turn/session/project identity, revision, status and
 `created`. No stream identity is returned. Pending work does not allocate an actor,

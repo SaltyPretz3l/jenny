@@ -408,7 +408,7 @@ describe('panel wiring — Wrap, More and non-artifact modes', () => {
 
   test('non-artifact modes keep the shared header with Close but hide Copy, Wrap and More', (t) => {
     const h = makePanel(t);
-    for (const mode of ['tasks', 'code_review', 'file_preview', 'subagents']) {
+    for (const mode of ['tasks', 'code_review', 'file_preview', 'subagents', 'notes']) {
       h.state.ui.artifactReview.mode = mode;
       h.controller.afterRender(toolOutput);
       for (const selector of ['[data-artifact-panel-v2-copy]', '[data-artifact-panel-wrap]', '[data-artifact-panel-overflow]', '[data-artifact-panel-maximize]']) {

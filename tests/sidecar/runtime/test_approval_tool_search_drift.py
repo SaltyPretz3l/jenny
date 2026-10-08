@@ -134,7 +134,8 @@ def _pause_on_gated_read(
         )
         config = replace(
             config,
-            context_length=8_000,
+            # 30% char-fallback headroom (A9-F5): an 8,000-token budget window.
+            context_length=11_429,
             max_tokens=256,
             token_budget_reserved_for_summary=256,
             token_budget_warning_ratio=0.2,

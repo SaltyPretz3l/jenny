@@ -16,7 +16,6 @@ const {
   buildWebSearchSecretStatus,
   registerFeatureIpcHandlers: registerFeatureIpcHandlersWithDeps,
 } = require('../feature-settings-service');
-const { registerPluginsRuntime } = require('./plugins-ipc-registration');
 const { registerCloudModels } = require('./cloud-models-registration');
 const { readRetiredChatgptPluginFacts } = require('./chatgpt-legacy-plugin-choice');
 const { registerChatGptPlanUsageIpc } = require('./chatgpt-plan-usage-ipc');
@@ -70,6 +69,7 @@ function registerOllamaTrayRemediationIpcHandlers(ipcMainLike, {
   backendService,
   log,
   enabled = false,
+  authorization = {},
   detectImpl,
   quitImpl,
   disableImpl,
@@ -168,7 +168,7 @@ function registerOllamaTrayRemediationIpcHandlers(ipcMainLike, {
         return result;
       }
     },
-  });
+  }, authorization);
 }
 
 // Personality v3 agent-name seam. The name is shell-config state, not a
@@ -290,7 +290,6 @@ function registerMainIpcHandlers({
   schedulerService,
   linkStatusService,
   calendarService,
-  chatStreamBridge,
   getStartupAuditConfig,
   createStartupAuditMarkHandler,
   createStartupAuditMarksBatchHandler,
@@ -332,6 +331,7 @@ function registerMainIpcHandlers({
       : createTrustedSenderAuthorizer({ getMainWindow, log }),
     unauthorizedResult: unauthorizedIpcResult,
   };
+  require('./suggested-changes-ipc-registration').registerSuggestedChangesIpc(ipcMain, { backendService, authorization: workspaceAuthorization });
   require('./tools-settings-ipc-registration').registerToolsSettingsIpc(ipcMain, {
     backendService, authorization: workspaceAuthorization, dialog, getMainWindow, userDataPath: app.getPath('userData'),
   });
@@ -378,8 +378,6 @@ function registerMainIpcHandlers({
   });
   const workspaceImportService = new WorkspaceImportService({
     rootContextProvider: () => workspaceRootCoordinator,
-    isQolEnabled: () => backendService?.featureFlags?.workspace_explorer_qol === true,
-    isImportEnabled: () => backendService?.featureFlags?.workspace_external_import === true,
     sendProgress: (payload) => sendBridgeEvent('workspaceFs.onImportProgress', payload),
     logger: log,
   });
@@ -419,9 +417,8 @@ function registerMainIpcHandlers({
   // before any chat turn runs, without adding a new constructor param.
   backendService.workspaceGitService = workspaceGitService;
   registerWorkspaceGitIpcHandlers(ipcMain, workspaceGitService, workspaceAuthorization);
-  // workspaceFileMap.* namespace: interactive dependency-graph "Map" tab,
-  // gated by the default-on workspace_file_map flag (renderer-side gate —
-  // registration here is unconditional, matching the house pattern). Reuses
+  // workspaceFileMap.* namespace: interactive dependency-graph "Map" tab
+  // (registration here is unconditional, matching the house pattern). Reuses
   // the already-constructed workspaceIdeService/workspaceGitService so file
   // enumeration/reads and co-change history share the same root-scoped,
   // fail-soft primitives as the rest of the Workspace IDE surface.
@@ -566,7 +563,7 @@ function registerMainIpcHandlers({
       const handler = getDisplayMediaSourceHandler && getDisplayMediaSourceHandler();
       return handler ? handler.resolvePick(requestId, sourceId) : false;
     },
-  });
+  }, workspaceAuthorization);
   // Belt-and-braces orphan guard: graceful quit now runs through the main
   // lifecycle's awaited shutdown task list, so the async PTY termination can
   // finish before app.exit(). The app.once fallback keeps standalone
@@ -594,9 +591,15 @@ function registerMainIpcHandlers({
     projectAuthority: backendService?.projectAuthority || null,
     authorization: workspaceAuthorization,
   });
+  require('./catalog-ipc-handlers').registerCatalogIpcHandlers(ipcMain, {
+    enabled: backendService?.featureFlags?.semantic_catalog === true,
+    getCatalogService: () => backendService?.semanticCatalogService || null,
+    shellConfigService, dialog, getOwnerWindow: getMainWindow, authorization: workspaceAuthorization,
+  });
   registerOllamaTrayRemediationIpcHandlers(ipcMain, {
     backendService,
     log,
+    authorization: workspaceAuthorization,
     enabled: backendService?.featureFlags?.ollama_tray_remediation === true,
   });
   registerLlamaServerIpcHandlers(ipcMain, {
@@ -636,8 +639,7 @@ function registerMainIpcHandlers({
     const purged = backendService?.secureStore?.purgeRetiredSecrets?.() || [];
     if (purged.length > 0) log('INFO', 'secure_store.retired_secrets_purged', { count: purged.length });
   } catch (_error) { /* best effort */ }
-  // Core owner of the ChatGPT catalog and the cloudModels.* IPC; composed
-  // before the plugin runtime, which still hosts the legacy setup panel.
+  // Core owner of the ChatGPT catalog and the cloudModels.* IPC.
   const cloudModels = registerCloudModels(ipcMain, {
     backendService,
     shellConfigService,
@@ -655,19 +657,10 @@ function registerMainIpcHandlers({
   } else if (typeof app?.once === 'function') {
     app.once('will-quit', cloudModels.dispose);
   }
-  const pluginsRuntime = registerPluginsRuntime(ipcMain, {
-    app,
-    backendService,
-    processRef,
-    getMainWindow,
-    getMainLifecycle,
-    sendBridgeEvent,
-    setChatgptModelsEnabled: (value) => cloudModels.setChatgptEnabled(null, value),
-    log,
-  });
   // Composed AFTER registerCloudModels so backendService.chatgptAuthService
   // (the core ChatGPT auth owner) already exists to attach the sign-out clear.
   const teardownChatgptPlanUsageIpc = registerChatGptPlanUsageIpc(ipcMain, {
+    authorization: workspaceAuthorization,
     app,
     backendService,
     shellConfigService,
@@ -714,6 +707,7 @@ function registerMainIpcHandlers({
     }
   }
   registerClientLogIpcHandler(ipcMain, {
+    authorize: workspaceAuthorization.authorize,
     getDiagnosticLogService,
     getProcessLogWriter,
     getRedactionPrefixes: getLogRedactionPrefixes,
@@ -976,7 +970,9 @@ function registerMainIpcHandlers({
     linkStatusService,
     calendarService,
     homeAssistantService: backendService?.homeAssistantService || null,
-    chatStreamBridge,
+    projectNotesService: backendService?.projectNotesService || null,
+    workspaceGitService,
+    workspaceIdeService,
   });
 
   return {

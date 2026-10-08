@@ -480,6 +480,43 @@ def test_generate_with_tools_plain_text_finishes_stop():
     assert result.content == sanitize_output("just text").strip()
 
 
+def test_generate_with_tools_plain_text_finishes_length():
+    engine = FakeEngine(
+        post_response={"message": {"content": "just text"}, "done_reason": "length"}
+    )
+    result = _impl(engine)
+    assert result.finish_reason == "length"
+    assert result.tool_calls == ()
+    assert result.content == sanitize_output("just text").strip()
+
+
+def test_generate_with_tools_length_with_native_tool_call_finishes_tool_calls():
+    engine = FakeEngine(
+        post_response={
+            "message": {
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "read_file", "arguments": {"path": "a"}}, "id": "c1"}
+                ],
+            },
+            "done_reason": "length",
+        }
+    )
+    result = _impl(engine, tools=[{"function": {"name": "read_file"}}])
+    assert result.finish_reason == "tool_calls"
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].tool_id == "read_file"
+    assert result.tool_calls[0].arguments == {"path": "a"}
+
+
+def test_generate_with_tools_inband_error_finishes_error():
+    engine = FakeEngine(post_response={"error": "provider failed"})
+    result = _impl(engine)
+    assert result.finish_reason == "error"
+    assert result.tool_calls == ()
+    assert result.content == ""
+
+
 def test_generate_with_tools_json_object_without_schema_parity():
     """Parity: ResponseFormat(type="json_object") with no schema and no tools
     -> "json" literal, matching the with-tools builder's behavior today."""

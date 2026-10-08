@@ -318,7 +318,14 @@ test('"Jump to chat" scrolls and highlights the pane that shows the panel\'s cha
   const highlighted = Array.from(doc.querySelectorAll('.artifact-source-highlight'));
   assert.equal(highlighted.length, 1, 'one row is highlighted');
   assert.ok(pane1.dom.chatTimeline.contains(highlighted[0]), 'in pane 1\'s timeline');
-  assert.equal(highlighted[0].getAttribute('data-message-id'), 'tool_use_session-b');
+  // The turn activity envelope renders the tool row inside the turn's
+  // article (the source id keeps only a compat anchor), so the highlight
+  // lands on the article that renders the source row.
+  assert.equal(highlighted[0].getAttribute('data-message-id'), 'assistant_session-b');
+  assert.ok(
+    highlighted[0].querySelector('[data-source-message-ids~="tool_use_session-b"]'),
+    'the highlighted article renders the source row'
+  );
   assert.equal(doc.getElementById('chatTimeline').querySelector('.artifact-source-highlight'), null, 'pane 0 is untouched');
   assert.equal(scroll1.calls.length, 1, 'pane 1\'s transcript reveals the row');
   assert.equal(scroll1.calls[0].element, highlighted[0]);

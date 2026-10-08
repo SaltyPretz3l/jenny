@@ -80,11 +80,6 @@ For a smaller real example, inspect the bundled
 `skills/verification-specialist/SKILL.md`. It defines the `/verify` command
 and focuses on a reusable verification workflow.
 
-The retained plugin runtime can also contribute skills, but ordinary skill
-folders need no plugin package or signature. Prefer the folder scopes below
-for new reusable instructions; see [plugin authoring](plugins/README.md) for
-the retained declarative package boundary.
-
 ## Scopes: bundled, user, and project
 
 Jenny resolves configured skill scopes in this order:

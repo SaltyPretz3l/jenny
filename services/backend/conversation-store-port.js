@@ -549,6 +549,7 @@ function createConversationStorePort(store, { kind = 'unknown' } = {}) {
         epochs = getStoreEpochs(store, id);
         durableCommit = flushed && epochs.durableEpoch >= commitEpoch;
       }
+      if (!durable || durableCommit) store.logTurnWriteVolume?.(id);
       if (!durable || durableCommit) return buildCommitResult({
         ok: true,
         applied: true,

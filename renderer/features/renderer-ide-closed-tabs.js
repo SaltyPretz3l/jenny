@@ -1,6 +1,6 @@
 /* renderer/features/renderer-ide-closed-tabs.js
  *
- * Bounded LIFO of recently closed file tabs ({ path, viewState }) backing the
+ * Bounded LIFO of recently closed file tabs ({ path, viewState, group }) backing the
  * reopen-closed-tab shortcut (Ctrl+Shift+T). Pure - no DOM, no IPC, no Monaco.
  *
  * Entries are dropped when their file is deleted or renamed (dropUnder mirrors
@@ -43,7 +43,7 @@
       // De-dupe: re-closing a path moves it back to the top with its newest
       // view state rather than accumulating stale duplicates.
       dropPath(path);
-      stack.push({ path, viewState: (entry && entry.viewState) || null });
+      stack.push({ path, viewState: (entry && entry.viewState) || null, group: typeof entry?.group === 'string' ? entry.group : '' });
       while (stack.length > limit) {
         stack.shift();
       }
@@ -56,6 +56,14 @@
     // Top entry without removing it (a reopen that can still fail peeks first).
     function peek() {
       return stack.length ? stack[stack.length - 1] : null;
+    }
+
+    // The newest entry for an exact path (a rename's own tab under later closes).
+    function find(path) {
+      for (let i = stack.length - 1; i >= 0; i -= 1) {
+        if (stack[i].path === path) return stack[i];
+      }
+      return null;
     }
 
     // Drops a path and everything beneath it (directory delete/rename).
@@ -76,7 +84,7 @@
       stack.length = 0;
     }
 
-    return { push, pop, peek, dropPath, dropUnder, clear };
+    return { push, pop, peek, find, dropPath, dropUnder, clear };
   }
 
   return { createIdeClosedTabsStack };

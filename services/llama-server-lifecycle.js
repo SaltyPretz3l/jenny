@@ -49,7 +49,16 @@ const {
 const DEFAULT_GRACEFUL_STOP_TIMEOUT_MS = 3_000;
 // Per-launch api-key files (see startLlamaServer). Swept on every launch so a
 // main process that died mid-startup cannot leave secrets behind.
+const DEFAULT_API_KEY_FILE_PREFIX = 'llama-server';
+const API_KEY_FILE_PREFIX_PATTERN = /^[a-z][a-z0-9-]{2,31}$/;
 const API_KEY_FILE_PATTERN = /^llama-server-[0-9a-f]{8}\.key$/;
+// Each managed server (chat, embedding) owns one prefix, so one server's
+// launch sweep never deletes the other's live key file.
+function apiKeyFilePattern(prefix) {
+  return prefix === DEFAULT_API_KEY_FILE_PREFIX
+    ? API_KEY_FILE_PATTERN
+    : new RegExp(`^${prefix}-[0-9a-f]{8}\\.key$`);
+}
 // A build that cannot read the model file exits during load and says why only
 // on stderr: a quant type newer than the build ("invalid ggml type 142") or an
 // architecture it predates. Load errors come first, so a bounded prefix of
@@ -164,8 +173,13 @@ function resolveBinaryPath({
 
 // Any llama-server-*.key left in userData belongs to a launch whose main
 // process died before readiness settled; the server it authenticated is gone
-// or being reaped, so the files are just leaked secrets.
-function sweepStaleApiKeyFiles(userDataPath, fsImpl = fs) {
+// or being reaped, so the files are just leaked secrets. Only `prefix`'s files
+// are touched; an invalid prefix sweeps nothing.
+function sweepStaleApiKeyFiles(userDataPath, fsImpl = fs, prefix = DEFAULT_API_KEY_FILE_PREFIX) {
+  if (!API_KEY_FILE_PREFIX_PATTERN.test(String(prefix))) {
+    return;
+  }
+  const pattern = apiKeyFilePattern(prefix);
   let names;
   try {
     names = fsImpl.readdirSync(userDataPath);
@@ -173,7 +187,7 @@ function sweepStaleApiKeyFiles(userDataPath, fsImpl = fs) {
     return;
   }
   for (const name of names) {
-    if (API_KEY_FILE_PATTERN.test(name)) {
+    if (pattern.test(name)) {
       try {
         fsImpl.unlinkSync(path.join(userDataPath, name));
       } catch (_error) { /* best effort only */ }
@@ -256,11 +270,23 @@ async function startLlamaServer({
   // the port, since its key is not the retained one.
   retainedApiKey = '',
   adopt = true,
+  // A second managed server (services/main/embedding-server-manager.js) keeps
+  // its own pid record and key-file prefix so the two never reap or sweep
+  // each other's state.
+  pidFileName = PID_FILENAME,
+  apiKeyFilePrefix = DEFAULT_API_KEY_FILE_PREFIX,
+  // false only for the loopback embedding server, whose callers include the
+  // builtin-tools subprocess that never holds secrets: no key file, no
+  // --api-key-file/--no-slots, no sweep, and an unkeyed readiness probe.
+  authenticate = true,
 } = {}) {
   const log = normalizeLogger(logger);
   const baseUrl = `http://${host}:${port}/v1`;
   if (retainedApiKey && !/^[0-9a-f]{32}$/.test(String(retainedApiKey))) {
     throw new Error('llama_server_retained_key_invalid');
+  }
+  if (typeof apiKeyFilePrefix !== 'string' || !API_KEY_FILE_PREFIX_PATTERN.test(apiKeyFilePrefix)) {
+    throw new Error('llama_server_key_prefix_invalid');
   }
   if (abortSignal && abortSignal.aborted) {
     throw new Error('readiness_aborted');
@@ -326,7 +352,13 @@ async function startLlamaServer({
     throw new Error(`llama_server_model_not_found:${resolvedModelReason}`);
   }
 
-  reapStalePidFile({ userDataPath, logger: log, platform, spawnSyncImpl, isProcessAliveImpl });
+  const reap = reapStalePidFile({ userDataPath, pidFileName, logger: log, platform, spawnSyncImpl, isProcessAliveImpl });
+  if (reap && reap.retained === true) {
+    log('WARN', 'llama.server.orphan_cleanup_unconfirmed', { pid: reap.pid });
+    const error = new Error('llama_server_orphan_cleanup_unconfirmed');
+    error.cleanupUnconfirmed = true;
+    throw error;
+  }
 
   const resolvedBinary = binaryPath || resolveBinaryPath({ repoRoot, resourcesPath, platform, fsImpl });
   if (!resolvedBinary) {
@@ -338,21 +370,27 @@ async function startLlamaServer({
     // unauthenticated launch must never happen silently.
     throw new Error('llama_server_user_data_path_required');
   }
-  const pidPath = getPidFilePath(userDataPath);
+  const pidPath = getPidFilePath(userDataPath, pidFileName);
   // Per-launch filename: a late 'exit' from a previous, force-killed child (the
   // acceleration fallback relaunches immediately) cannot unlink a fresh
   // launch's file. llama-server reads the file once while parsing its
   // arguments, before it listens, so the file is deleted the moment readiness
   // settles (ready, timed out, aborted, exited) and never sits on disk for the
   // server's lifetime. The spawn-failure path below is the only earlier exit.
-  const apiKeyPath = path.join(userDataPath, `llama-server-${crypto.randomBytes(4).toString('hex')}.key`);
-  const apiKey = retainedApiKey || crypto.randomBytes(16).toString('hex');
+  const keyed = authenticate !== false;
+  const apiKeyPath = keyed
+    ? path.join(userDataPath, `${apiKeyFilePrefix}-${crypto.randomBytes(4).toString('hex')}.key`)
+    : '';
+  const apiKey = keyed ? retainedApiKey || crypto.randomBytes(16).toString('hex') : '';
   const removeApiKeyFile = () => {
+    if (!apiKeyPath) return;
     try {
       fsImpl.unlinkSync(apiKeyPath);
     } catch (_error) { /* best effort: absent or already removed */ }
   };
-  sweepStaleApiKeyFiles(userDataPath, fsImpl);
+  if (keyed) {
+    sweepStaleApiKeyFiles(userDataPath, fsImpl, apiKeyFilePrefix);
+  }
 
   const args = buildLaunchArgs({
     modelPath: resolvedModel,
@@ -377,8 +415,10 @@ async function startLlamaServer({
 
   let child;
   try {
-    fsImpl.mkdirSync(path.dirname(apiKeyPath), { recursive: true });
-    fsImpl.writeFileSync(apiKeyPath, `${apiKey}\n`, { mode: 0o600 });
+    if (apiKeyPath) {
+      fsImpl.mkdirSync(path.dirname(apiKeyPath), { recursive: true });
+      fsImpl.writeFileSync(apiKeyPath, `${apiKey}\n`, { mode: 0o600 });
+    }
     child = spawnImpl(resolvedBinary, args, {
       cwd: path.dirname(resolvedBinary),
       detached: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],

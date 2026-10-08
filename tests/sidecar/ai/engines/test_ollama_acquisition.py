@@ -3,7 +3,9 @@ from __future__ import annotations
 import io
 import json
 import socket
+import threading
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -301,6 +303,65 @@ class _ClosableResponse:
 
     def close(self) -> None:
         self.closed = True
+
+
+def test_pull_deadline_force_closes_socket_before_waiting_for_reader_lock(monkeypatch) -> None:
+    reader_lock = threading.Lock()
+    reader_started = threading.Event()
+    socket_closed = threading.Event()
+    calls: list[tuple[str, int | None]] = []
+
+    class BlockedSocket:
+        def shutdown(self, how: int) -> None:
+            calls.append(("shutdown", how))
+
+        def detach(self) -> int:
+            calls.append(("detach", None))
+            return 123
+
+    class BlockedResponse:
+        def __init__(self) -> None:
+            self.fp = SimpleNamespace(raw=SimpleNamespace(_sock=BlockedSocket()))
+
+        def close(self) -> None:
+            with reader_lock:
+                calls.append(("response.close", None))
+
+    def close_socket(handle: int) -> None:
+        calls.append(("socket.close", handle))
+        socket_closed.set()
+
+    def blocked_reader() -> None:
+        with reader_lock:
+            reader_started.set()
+            socket_closed.wait()
+
+    monkeypatch.setattr(socket, "close", close_socket)
+    reader = threading.Thread(target=blocked_reader, daemon=True)
+    deadline = _PullDeadline(0.05)
+    reader.start()
+    try:
+        assert reader_started.wait(2.0), "reader must hold the buffer lock"
+        deadline.start(BlockedResponse())
+        timer = deadline._timer
+        assert timer is not None
+        timer.join(timeout=2.0)
+        assert not timer.is_alive(), "deadline expiry must unblock the reader lock"
+        assert calls == [
+            ("shutdown", socket.SHUT_RDWR),
+            ("detach", None),
+            ("socket.close", 123),
+            ("response.close", None),
+        ]
+        assert deadline.expired()
+        with pytest.raises(RuntimeError, match="total timeout"):
+            deadline.raise_if_expired()
+    finally:
+        socket_closed.set()
+        reader.join(timeout=2.0)
+        if deadline._timer is not None:
+            deadline._timer.join(timeout=2.0)
+        deadline.close()
 
 
 def test_pull_deadline_timer_is_scheduled_against_the_absolute_deadline(

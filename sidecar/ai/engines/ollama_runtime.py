@@ -43,6 +43,7 @@ from sidecar.ai.engines.ollama_telemetry import (
 from sidecar.ai.engines.ollama_tool_call_announce import build_tool_call_announcement
 from sidecar.ai.engines.provider_call_finalize import ProviderCallFinalizer
 from sidecar.ai.routing.provider_stream_normalizer import (
+    FINISH_REASON_INCOMPLETE,  # noqa: F401 - re-exported to ollama_generation
     FINISH_REASON_PROVIDER_ERROR,
     FINISH_REASON_THINKING_BUDGET,
     ProviderStreamNormalizer,
@@ -937,15 +938,15 @@ def generate_with_tools_impl(
             if extraction.calls:
                 tool_calls = extraction.calls
                 content = extraction.remaining_text
-        finish_reason = "tool_calls" if tool_calls else "stop"
+        finish_reason = resolve_ollama_completion_finish_reason(
+            response, has_tool_calls=bool(tool_calls)
+        )
         engine._record_first_chunk()
         engine._record_provider_usage(response)
         if content:
             engine._record_visible_output(content)
         response["_jenny_ttft_ms"] = current_time_to_first_token_ms(engine)
-        finalizer.finish_reason = resolve_ollama_completion_finish_reason(
-            response, has_tool_calls=bool(tool_calls)
-        )
+        finalizer.finish_reason = finish_reason
         # The non-streaming response body carries the same usage fields as the
         # streaming done-chunk (prompt_eval_count / eval_count).
         return GenerationResult(

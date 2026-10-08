@@ -17,7 +17,6 @@ const DIST_NODE_TESTS = Object.freeze([
   // now fails the policy gate if this list drifts from the directory again.
   'tests/release-compat/test_archive_compat.js',
   'tests/release-compat/test_mcp_config_compat.js',
-  'tests/release-compat/test_plugin_store_compat.js',
   'tests/release-compat/test_session_store_v18_stability.js',
   'tests/release-compat/test_shell_config_v49_run_mode.js',
   'tests/release-compat/test_shell_config_v52_i18n_safety.js',

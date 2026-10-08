@@ -18,6 +18,28 @@ function waitMicrotask(win) {
   return new Promise((resolve) => win.setTimeout(resolve, 0));
 }
 
+for (const explicitDefault of [false, true]) {
+  test(`empty Send title falls back through blocking and destroy (explicit=${explicitDefault})`, async (t) => {
+    const harness = buildHarness(t, { defaultTitle: '' });
+    t.after(() => harness.dom.window.close());
+    const renderer = createComposerBlockedSendTooltipRenderer({
+      sendButton: harness.sendButton,
+      getReason: () => 'Type a message or attach a file.',
+      ...(explicitDefault ? { defaultTitle: '' } : {}),
+    });
+    t.after(() => renderer.destroy());
+    assert.equal(harness.sendButton.title, 'Send message (Enter)');
+    harness.sendButton.disabled = true;
+    await waitMicrotask(harness.dom.window);
+    assert.equal(harness.sendButton.title, 'Type a message or attach a file.');
+    harness.sendButton.disabled = false;
+    await waitMicrotask(harness.dom.window);
+    assert.equal(harness.sendButton.title, 'Send message (Enter)');
+    renderer.destroy();
+    assert.equal(harness.sendButton.title, 'Send message (Enter)');
+  });
+}
+
 test('tooltip initial render leaves default title when button is enabled', (t) => {
   const harness = buildHarness(t);
   const renderer = createComposerBlockedSendTooltipRenderer({

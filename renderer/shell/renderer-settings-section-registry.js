@@ -20,6 +20,8 @@
     cost: 'usage',
     // 2026-09-21: the Model library was folded into Models; stored deep links still name it.
     modelLibrary: 'models',
+    // 2026-10-05: Plugins & Extensions became Extensions when the plugin platform was retired.
+    plugins: 'extensions',
   });
 
   /* Top-level nav groups, in render order. */
@@ -92,11 +94,11 @@
       domKey: 'skills',
       navItemId: 'skillsSettingsNavItem',
       lazy: true,
-      // Merged into Plugins & Extensions as a subsection: skills keeps its full lazy
+      // Merged into Extensions as a subsection: skills keeps its full lazy
       // lifecycle (MCP discovery stays deferred) but no longer renders its own
-      // nav item. The Plugins host readies + refreshes it as a companion on reveal.
+      // nav item. The Extensions host readies + refreshes it as a companion on reveal.
       hidden: true,
-      mergedInto: 'plugins',
+      mergedInto: 'extensions',
       refreshPolicy: 'skills',
       diagnosticsLifecycle: 'none',
     },
@@ -179,16 +181,11 @@
       diagnosticsLifecycle: 'none',
     },
     {
-      // Plugin Manager (Stage 3B, owner-approved 2026-07-31): body group mounts
-      // dynamically from renderer-plugins-settings.js. The nav item is
-      // feature-gated at runtime (featureFlags.plugins,
-      // default-off): the controller stamps data-feature-gated + hidden on it,
-      // and renderer-settings-nav-utils resolveSectionId falls back to the
-      // default section while it is hidden, so flag-off keeps the section absent.
-      id: 'plugins',
+      // Skill folders (the merged skills section) and standalone MCP servers.
+      id: 'extensions',
       group: 'system',
-      label: jt('settings.sections.plugins.title', 'Plugins & Extensions'),
-      domKey: 'plugins',
+      label: jt('settings.sections.extensions.title', 'Extensions'),
+      domKey: 'extensions',
       refreshPolicy: 'render',
       diagnosticsLifecycle: 'none',
     },

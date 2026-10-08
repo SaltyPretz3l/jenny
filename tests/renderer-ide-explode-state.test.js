@@ -17,7 +17,6 @@ const {
   createIdeUiState,
   openTab,
   openDiffTab,
-  openPreviewTab,
   getTabViewMode,
   setTabViewMode,
   toggleTabViewMode,
@@ -52,7 +51,7 @@ test('setTabViewMode: applies exploded/code on a file tab and returns the applie
 test('setTabViewMode: returns null for diff/preview/map tabs and never sets viewMode on them', () => {
   const ide = freshIde();
   openDiffTab(ide, { id: 'diff://a/b', label: 'Diff' });
-  openPreviewTab(ide, { id: 'preview://README.md', label: 'Preview' });
+  ide.openTabs.push({ path: 'preview://README.md', kind: 'preview', label: 'Preview' }); // legacy restored tab
 
   assert.equal(setTabViewMode(ide, 'diff://a/b', 'exploded'), null);
   assert.equal(setTabViewMode(ide, 'preview://README.md', 'exploded'), null);
@@ -76,7 +75,7 @@ test('toggleTabViewMode: flips code<->exploded only on file tabs', () => {
 test('toggleTabViewMode: returns false for diff/preview/map tabs, mirrors toggleTabPinned', () => {
   const ide = freshIde();
   openDiffTab(ide, { id: 'diff://a/b', label: 'Diff' });
-  openPreviewTab(ide, { id: 'preview://README.md', label: 'Preview' });
+  ide.openTabs.push({ path: 'preview://README.md', kind: 'preview', label: 'Preview' }); // legacy restored tab
 
   assert.equal(toggleTabViewMode(ide, 'diff://a/b'), false);
   assert.equal(toggleTabViewMode(ide, 'preview://README.md'), false);

@@ -15,6 +15,7 @@ const HINT_COPY = {
   ask: 'Jenny asks before running tools that change things.',
   auto: 'Tools run without asking. Python, blocked commands, and explicit denies still prompt.',
   plan: 'Read-only: Jenny plans first and presents it before acting.',
+  propose: 'Jenny suggests exact changes for you to review. Nothing in your files changes until you accept.',
 };
 
 function buildHarness(t, { runMode = 'ask' } = {}) {
@@ -138,7 +139,7 @@ function pressedModes(doc) {
     .map((button) => button.getAttribute('data-run-mode-option'));
 }
 
-test('the slot also mounts an Ask | Auto | Plan segment group after the chip', (t) => {
+test('the slot also mounts an Ask | Auto | Plan | Propose segment group after the chip', (t) => {
   const h = buildHarness(t, { runMode: 'auto' });
   const slot = h.doc.getElementById('composerRunModeSlot');
   assert.equal(slot.children.length, 2);
@@ -149,9 +150,9 @@ test('the slot also mounts an Ask | Auto | Plan segment group after the chip', (
   assert.equal(group.getAttribute('aria-label'), 'Run mode');
   assert.equal(group.id, '', 'segments get no ids');
   const buttons = Array.from(group.children);
-  assert.deepEqual(buttons.map((b) => b.getAttribute('data-run-mode-option')), ['ask', 'auto', 'plan']);
+  assert.deepEqual(buttons.map((b) => b.getAttribute('data-run-mode-option')), ['ask', 'auto', 'plan', 'propose']);
   buttons.forEach((button, index) => {
-    const mode = ['ask', 'auto', 'plan'][index];
+    const mode = ['ask', 'auto', 'plan', 'propose'][index];
     assert.equal(button.tagName, 'BUTTON');
     assert.equal(button.getAttribute('type'), 'button');
     assert.ok(button.classList.contains('composer-run-mode-segment'));
@@ -161,7 +162,7 @@ test('the slot also mounts an Ask | Auto | Plan segment group after the chip', (
     const icon = button.querySelector('.composer-run-mode-segment-icon');
     assert.equal(icon.getAttribute('aria-hidden'), 'true');
     assert.ok(icon.querySelector('svg'), 'the mode icon');
-    assert.equal(button.querySelector('.composer-run-mode-segment-label').textContent, ['Ask', 'Auto', 'Plan'][index]);
+    assert.equal(button.querySelector('.composer-run-mode-segment-label').textContent, ['Ask', 'Auto', 'Plan', 'Propose'][index]);
   });
   assert.deepEqual(pressedModes(h.doc), ['auto']);
   assert.ok(buttons[1].classList.contains('is-active'));
@@ -197,7 +198,7 @@ test('an unchanged apply writes nothing to the segments (gate C13 cache)', (t) =
   assert.ok(observer.takeRecords().length > 0, 'a mode change writes');
 });
 
-test('a disabled chip disables all three segments, and re-enabling mirrors back', async (t) => {
+test('a disabled chip disables every segment, and re-enabling mirrors back', async (t) => {
   const h = buildHarness(t);
   const chip = chipOf(h.doc);
   const buttons = () => Array.from(segmentsOf(h.doc).querySelectorAll('[data-run-mode-option]'));
@@ -205,17 +206,17 @@ test('a disabled chip disables all three segments, and re-enabling mirrors back'
   // both panes flip chip.disabled directly (plugin read-only sessions)
   chip.disabled = true;
   await settle();
-  assert.deepEqual(buttons().map((b) => b.disabled), [true, true, true], 'the observer mirrors a direct flip');
+  assert.deepEqual(buttons().map((b) => b.disabled), [true, true, true, true], 'the observer mirrors a direct flip');
   chip.disabled = false;
   await settle();
-  assert.deepEqual(buttons().map((b) => b.disabled), [false, false, false]);
+  assert.deepEqual(buttons().map((b) => b.disabled), [false, false, false, false]);
   // the exported helper: slot, chip or group; synchronous
   assert.equal(syncRunModeSegmentsDisabled(h.doc.getElementById('composerRunModeSlot'), true), true);
-  assert.deepEqual(buttons().map((b) => b.disabled), [true, true, true]);
+  assert.deepEqual(buttons().map((b) => b.disabled), [true, true, true, true]);
   assert.equal(syncRunModeSegmentsDisabled(chip, false), true);
-  assert.deepEqual(buttons().map((b) => b.disabled), [false, false, false]);
+  assert.deepEqual(buttons().map((b) => b.disabled), [false, false, false, false]);
   assert.equal(syncRunModeSegmentsDisabled(segmentsOf(h.doc), true), true);
-  assert.deepEqual(buttons().map((b) => b.disabled), [true, true, true]);
+  assert.deepEqual(buttons().map((b) => b.disabled), [true, true, true, true]);
   syncRunModeSegmentsDisabled(chip, false);
   assert.equal(syncRunModeSegmentsDisabled(null, true), false);
   assert.equal(syncRunModeSegmentsDisabled(h.doc.body.appendChild(h.doc.createElement('div')), true), false);
@@ -230,10 +231,10 @@ test('applyRunModeChip mirrors the chip disabled state synchronously (disabled r
   const chip = chipOf(doc);
   chip.disabled = true;
   renderer.sync();
-  assert.deepEqual(buttons(), [true, true, true], 'no microtask needed on the apply path');
+  assert.deepEqual(buttons(), [true, true, true, true], 'no microtask needed on the apply path');
   chip.disabled = false;
   renderer.sync();
-  assert.deepEqual(buttons(), [false, false, false]);
+  assert.deepEqual(buttons(), [false, false, false, false]);
 });
 
 test('segment clicks do not trigger the chip cycle handler', (t) => {

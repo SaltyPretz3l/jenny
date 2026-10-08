@@ -1,5 +1,6 @@
 const { normalizeString } = require('./backend/path-utils');
 const { COMPANION_ERROR_CODES } = require('./backend/error-codes');
+const { normalizeProjectId } = require('./projects/project-schema');
 const {
   MAX_FOLLOW_UP_BODY_CHARS,
   MAX_FOLLOW_UP_LABEL_CHARS,
@@ -111,6 +112,9 @@ const followUpActionMethods = {
         readPatchedIsoString(source, 'archivedAt', 'archived_at', '')
         || normalizeString(existing?.archivedAt),
       sessionId: readPatchedString(source, 'sessionId', 'session_id', normalizeString(existing?.sessionId)),
+      projectId: normalizeProjectId(
+        readPatchedString(source, 'projectId', 'project_id', normalizeString(existing?.projectId))
+      ),
       sourceKind: readPatchedString(source, 'sourceKind', 'source_kind', normalizeString(existing?.sourceKind)),
       sourceId: readPatchedString(source, 'sourceId', 'source_id', normalizeString(existing?.sourceId)),
       sourceMeta:
@@ -484,6 +488,59 @@ const followUpActionMethods = {
       },
       'follow_up_unarchived'
     );
+  },
+
+  /* Quiet re-scope: sets only projectId. It never touches updatedAt or history
+   * (a project move is not a user edit of the task) and writes once, only when
+   * at least one row actually changed. */
+  stampFollowUpProjects(assignments) {
+    const wanted = new Map();
+    for (const entry of Array.isArray(assignments) ? assignments : []) {
+      const id = normalizeString(entry?.id);
+      const projectId = normalizeProjectId(entry?.projectId);
+      if (id && projectId) {
+        wanted.set(id, projectId);
+      }
+    }
+    let changed = 0;
+    const followUps = this.state.followUps.map((followUp) => {
+      const projectId = wanted.get(followUp.id);
+      if (!projectId || normalizeProjectId(followUp.projectId) === projectId) {
+        return followUp;
+      }
+      changed += 1;
+      return { ...followUp, projectId };
+    });
+    if (changed === 0) {
+      return { changed: 0, state: this.getState() };
+    }
+    const state = this._writeState({ ...this.state, followUps }, 'follow_up_projects_stamped', { changed });
+    return { changed, state };
+  },
+
+  // Every agent task still stamped with `fromProjectId` moves to `toProjectId`
+  // (a deleted project's rail-added or orphaned tasks, which no chat move covers).
+  restampAgentTasksForProject(fromProjectId, toProjectId) {
+    const from = normalizeProjectId(fromProjectId);
+    const to = normalizeProjectId(toProjectId);
+    if (!from || !to || from === to) {
+      return { changed: 0 };
+    }
+    const assignments = this.state.followUps
+      .filter((followUp) => followUp.sourceKind === 'agent_task' && normalizeProjectId(followUp.projectId) === from)
+      .map((followUp) => ({ id: followUp.id, projectId: to }));
+    return { changed: this.stampFollowUpProjects(assignments).changed };
+  },
+
+  restampAgentTasksForSession(sessionId, projectId) {
+    const normalizedSessionId = normalizeString(sessionId);
+    if (!normalizedSessionId || !normalizeProjectId(projectId)) {
+      return { changed: 0 };
+    }
+    const assignments = this.state.followUps
+      .filter((followUp) => followUp.sourceKind === 'agent_task' && followUp.sessionId === normalizedSessionId)
+      .map((followUp) => ({ id: followUp.id, projectId }));
+    return { changed: this.stampFollowUpProjects(assignments).changed };
   },
 
   deleteFollowUp(id) {

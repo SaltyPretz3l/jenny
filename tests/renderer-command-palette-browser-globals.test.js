@@ -37,6 +37,7 @@ const ROOT = path.resolve(__dirname, '..');
 // Production order, from index.html: result sources, then row DOM + the keyed
 // reconciler, then the controller that consumes both.
 const SCRIPTS = [
+  'renderer/shared/string-utils.js',
   'renderer/shared/async-fence.js',
   'renderer/shell/renderer-command-palette-providers.js',
   'renderer/shell/renderer-command-palette-render.js',

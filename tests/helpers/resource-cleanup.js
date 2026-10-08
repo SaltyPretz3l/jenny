@@ -6,7 +6,8 @@ const { execFile } = require('child_process');
 const { killProcessTree, waitForPortToClose } = require('../../services/backend/process-utils');
 
 const trackedCloseables = new Set();
-const trackedProcesses = new Set();
+// pid -> { pid, createdNotAfterMs, handle, exitedAtMs }; see selectOwnedKillTargets.
+const trackedProcesses = new Map();
 const trackedPorts = new Set();
 const trackedDirectories = new Set();
 let cleanupPromise = null;
@@ -65,91 +66,151 @@ function isPidAlive(pid) {
   }
 }
 
-function readOwnedPid(filePath, { requireAppOwned = false } = {}) {
+// The recorded process existed when its pid file was written, so the file's
+// mtime bounds its creation time: a later process holding the same pid is a
+// stranger that reused it.
+function readOwnedRoot(filePath, { requireAppOwned = false } = {}) {
   const payload = readJsonFile(filePath);
   const pid = Number(payload && payload.pid);
   if (!Number.isInteger(pid) || pid <= 0) {
-    return 0;
+    return null;
   }
   if (requireAppOwned && payload.app_owned !== true) {
-    return 0;
+    return null;
   }
-  return pid;
+  let createdNotAfterMs;
+  try {
+    createdNotAfterMs = fs.statSync(filePath).mtimeMs;
+  } catch (_error) {
+    return null;
+  }
+  return { pid, createdNotAfterMs, handle: null, exitedAtMs: null };
 }
 
 // Reads the pids an app run recorded under ONE directory: the managed sidecar
 // writes backend-sidecar/sidecar-state.json, and ollama-process.json is only
 // ours to kill when the app actually spawned it (app_owned).
-function getOwnedPidsForDirectory(dirPath) {
-  const ownedPids = new Set();
+function getOwnedRootsForDirectory(dirPath) {
+  const roots = [];
   const normalizedDir = String(dirPath || '').trim();
   if (!normalizedDir) {
-    return ownedPids;
+    return roots;
   }
 
   const sidecarStatePath = path.join(normalizedDir, 'backend-sidecar', 'sidecar-state.json');
   const ollamaStatePath = path.join(normalizedDir, 'ollama-process.json');
 
-  const sidecarPid = readOwnedPid(sidecarStatePath);
-  const ollamaPid = readOwnedPid(ollamaStatePath, { requireAppOwned: true });
+  const sidecarRoot = readOwnedRoot(sidecarStatePath);
+  const ollamaRoot = readOwnedRoot(ollamaStatePath, { requireAppOwned: true });
 
-  if (sidecarPid) {
-    ownedPids.add(sidecarPid);
+  if (sidecarRoot) {
+    roots.push(sidecarRoot);
   }
-  if (ollamaPid) {
-    ownedPids.add(ollamaPid);
+  if (ollamaRoot) {
+    roots.push(ollamaRoot);
   }
-  return ownedPids;
+  return roots;
 }
 
-function getOwnedProcessPidsFromTrackedDirectories() {
-  const ownedPids = new Set();
+function getOwnedRootsFromTrackedDirectories() {
+  const roots = [];
   for (const dirPath of trackedDirectories) {
-    for (const pid of getOwnedPidsForDirectory(dirPath)) {
-      ownedPids.add(pid);
-    }
+    roots.push(...getOwnedRootsForDirectory(dirPath));
   }
-  return ownedPids;
+  return roots;
 }
 
-function expandProcessTreePids(rootPids, processRows) {
-  const expanded = new Set();
-  const childrenByParent = new Map();
+function hasExited(root) {
+  const handle = root && root.handle;
+  return Boolean(handle) && (handle.exitCode != null || handle.signalCode != null);
+}
 
+function normalizeProcessRows(processRows) {
+  const byPid = new Map();
+  const childrenByParent = new Map();
   for (const row of processRows || []) {
     const pid = Number(row && row.pid);
     const ppid = Number(row && row.ppid);
     if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(ppid) || ppid <= 0) {
       continue;
     }
+    const createdMs = Number.isFinite(row.createdMs) ? row.createdMs : null;
+    const normalized = { pid, ppid, createdMs };
+    byPid.set(pid, normalized);
     if (!childrenByParent.has(ppid)) {
       childrenByParent.set(ppid, []);
     }
-    childrenByParent.get(ppid).push(pid);
+    childrenByParent.get(ppid).push(normalized);
   }
+  return { byPid, childrenByParent };
+}
 
-  const queue = [];
-  for (const rootPid of rootPids || []) {
-    const pid = Number(rootPid);
-    if (!Number.isInteger(pid) || pid <= 0 || expanded.has(pid)) {
-      continue;
+// Picks the pids cleanup may force-kill. Windows reuses a freed pid within
+// seconds under a loaded full-suite run, so a dead root's pid can already name
+// a sibling test's process (a reused pid killed renderer-proactive's child
+// mid-boot: exit 1, no output). A root is killed only while it is provably the
+// recorded process: an un-exited handle (its pid cannot be reused yet), or a
+// process-table row created no later than the record was made. Descendants are
+// created after their parent. A dead root's orphans keep their stale ppid link
+// on Windows, so they are reaped only when created before the root exited and
+// before any process that reused its pid; without creation times (POSIX, where
+// orphans reparent to init) a dead root contributes nothing.
+function selectOwnedKillTargets(roots, processRows) {
+  const { byPid, childrenByParent } = normalizeProcessRows(processRows);
+  const targets = new Set();
+  const enumerated = byPid.size > 0;
+
+  const addTree = (pid, createdMs) => {
+    if (targets.has(pid)) {
+      return;
     }
-    expanded.add(pid);
-    queue.push(pid);
-  }
-
-  while (queue.length > 0) {
-    const parentPid = queue.shift();
-    for (const childPid of childrenByParent.get(parentPid) || []) {
-      if (expanded.has(childPid)) {
+    targets.add(pid);
+    for (const child of childrenByParent.get(pid) || []) {
+      if (createdMs != null && child.createdMs != null && child.createdMs < createdMs) {
         continue;
       }
-      expanded.add(childPid);
-      queue.push(childPid);
+      addTree(child.pid, child.createdMs);
+    }
+  };
+
+  for (const root of roots || []) {
+    const pid = Number(root && root.pid);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      continue;
+    }
+    const exited = hasExited(root);
+    const row = byPid.get(pid) || null;
+    if (!exited && !enumerated) {
+      // The process table could not be read: degrade to the bare root.
+      targets.add(pid);
+      continue;
+    }
+    const notAfter = Number.isFinite(root.createdNotAfterMs) ? root.createdNotAfterMs : null;
+    const liveHandle = Boolean(root.handle) && !exited;
+    const sameProcess = row && (liveHandle || row.createdMs == null || notAfter == null
+      || row.createdMs <= notAfter);
+    if (!exited && sameProcess) {
+      addTree(pid, row.createdMs);
+      continue;
+    }
+    if (row && row.createdMs == null) {
+      continue;
+    }
+    let orphanCutoff = Infinity;
+    if (exited) {
+      orphanCutoff = Number.isFinite(root.exitedAtMs) ? root.exitedAtMs : (notAfter ?? -Infinity);
+    }
+    if (row) {
+      orphanCutoff = Math.min(orphanCutoff, row.createdMs);
+    }
+    for (const orphan of childrenByParent.get(pid) || []) {
+      if (orphan.createdMs != null && orphan.createdMs < orphanCutoff) {
+        addTree(orphan.pid, orphan.createdMs);
+      }
     }
   }
 
-  return expanded;
+  return targets;
 }
 
 // Bounded: under a loaded full-suite run dozens of children fire this cleanup
@@ -157,8 +218,8 @@ function expandProcessTreePids(rootPids, processRows) {
 // unbounded query can wedge for minutes and push the whole test file past its
 // per-file watchdog (backend-service-inject hung exactly this way once the
 // sequential lane started overlapping the parallel pool, 2026-07-20). On
-// timeout the child is killed and we resolve '' -- expandOwnedProcessPids then
-// degrades to killing just the root pids instead of the full tree.
+// timeout the child is killed and we resolve '' -- selectOwnedKillTargets then
+// degrades to killing just the un-exited root pids instead of the full tree.
 const PROCESS_LIST_TIMEOUT_MS = 15_000;
 
 function execFileText(command, args) {
@@ -197,6 +258,7 @@ function parseWindowsProcessRows(output) {
     return items.map((item) => ({
       pid: Number(item && item.ProcessId),
       ppid: Number(item && item.ParentProcessId),
+      createdMs: item && item.CreatedMs != null ? Number(item.CreatedMs) : null,
     }));
   } catch (_error) {
     return [];
@@ -208,7 +270,9 @@ async function listProcessRows() {
     const output = await execFileText('powershell', [
       '-NoProfile',
       '-Command',
-      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress',
+      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,'
+        + "@{n='CreatedMs';e={if ($_.CreationDate) { [DateTimeOffset]::new($_.CreationDate).ToUnixTimeMilliseconds() }}}"
+        + ' | ConvertTo-Json -Compress',
     ]);
     return parseWindowsProcessRows(output);
   }
@@ -217,9 +281,9 @@ async function listProcessRows() {
   return parsePosixProcessRows(output);
 }
 
-async function expandOwnedProcessPids(rootPids) {
+async function selectOwnedKillTargetsFromHost(roots) {
   const rows = await listProcessRows().catch(() => []);
-  return expandProcessTreePids(rootPids, rows);
+  return selectOwnedKillTargets(roots, rows);
 }
 
 // Best-effort kills the process tree recorded under ONE directory's pid files.
@@ -230,15 +294,15 @@ async function expandOwnedProcessPids(rootPids) {
 // launch never handed back a process handle to trackProcess (see launchJenny in
 // tests/gui-smoke/gui-smoke-harness.js).
 async function killOwnedProcessesForDirectory(dirPath) {
-  const rootPids = getOwnedPidsForDirectory(dirPath);
-  if (rootPids.size === 0) {
+  const roots = getOwnedRootsForDirectory(dirPath);
+  if (roots.length === 0) {
     // Nothing recorded a pid under this directory, so nothing spawned: return
     // without enumerating the host process table (see the WMI-cost note in
     // cleanupTrackedResources -- that query serializes system-wide on Windows).
     return { rootsAttempted: 0 };
   }
 
-  const processTreePids = await expandOwnedProcessPids(rootPids);
+  const processTreePids = await selectOwnedKillTargetsFromHost(roots);
   for (const pid of [...processTreePids].sort((left, right) => right - left)) {
     // A stale pid file can name a since-reused pid; never let that reuse
     // point the force-kill at this test process itself.
@@ -247,14 +311,35 @@ async function killOwnedProcessesForDirectory(dirPath) {
     }
     await killProcessTree(pid, { force: true }).catch(() => null);
   }
-  return { rootsAttempted: rootPids.size };
+  return { rootsAttempted: roots.length };
 }
 
+// Accepts a ChildProcess or a bare { pid }. The process was created before
+// this call, which bounds its creation time for the pid-reuse check.
 function trackProcess(processHandle) {
   installProcessCleanupHooks();
-  if (processHandle && processHandle.pid) {
-    trackedProcesses.add(Number(processHandle.pid));
+  const pid = Number(processHandle && processHandle.pid);
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return;
   }
+  const trackedAtMs = Date.now();
+  const isChildProcess = typeof processHandle.once === 'function' && 'exitCode' in processHandle;
+  const root = {
+    pid,
+    createdNotAfterMs: trackedAtMs,
+    handle: isChildProcess ? processHandle : null,
+    exitedAtMs: null,
+  };
+  if (isChildProcess) {
+    if (hasExited(root)) {
+      root.exitedAtMs = trackedAtMs;
+    } else {
+      processHandle.once('exit', () => {
+        root.exitedAtMs = Date.now();
+      });
+    }
+  }
+  trackedProcesses.set(pid, root);
 }
 
 function createTrackedTempDir(prefix) {
@@ -310,10 +395,8 @@ async function cleanupTrackedResources() {
   }
 
   cleanupPromise = (async () => {
-    const ownedPids = getOwnedProcessPidsFromTrackedDirectories();
-    for (const pid of trackedProcesses) {
-      ownedPids.add(pid);
-    }
+    const ownedRoots = getOwnedRootsFromTrackedDirectories();
+    ownedRoots.push(...trackedProcesses.values());
     // Only enumerate the host process table when at least one owned PID is
     // still ALIVE. Most test files track no processes (closeables/dirs only),
     // and stale pid files (a companion-mode service's state file, a long-dead
@@ -327,9 +410,9 @@ async function cleanupTrackedResources() {
     // only discoverable via their stale ppid links in the process table. The
     // skip stays in place for the common case (closeables/dirs only, or stale
     // pid FILES left by processes this file never spawned).
-    const anyOwnedPidAlive = [...ownedPids].some(isPidAlive);
+    const anyOwnedPidAlive = ownedRoots.some((root) => isPidAlive(root.pid));
     const processTreePids = anyOwnedPidAlive || trackedProcesses.size > 0
-      ? await expandOwnedProcessPids(ownedPids)
+      ? await selectOwnedKillTargetsFromHost(ownedRoots)
       : new Set();
 
     const closeables = [...trackedCloseables];
@@ -365,8 +448,8 @@ async function cleanupTrackedResources() {
 module.exports = {
   cleanupTrackedResources,
   createTrackedTempDir,
-  expandProcessTreePids,
   killOwnedProcessesForDirectory,
+  selectOwnedKillTargets,
   trackCloseable,
   trackDirectory,
   trackPort,

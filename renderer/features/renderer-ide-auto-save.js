@@ -8,8 +8,9 @@
  * (diff / preview / image) are
  * skipped, and the pending save is cancelled on tab switch / close so a stale
  * buffer can never land on the wrong path. As a belt-and-suspenders, fire()
- * re-reads the active tab and only writes when it is STILL the scheduled file
- * tab — so even a missed cancel cannot misroute a write.
+ * re-reads the scheduled tab and only writes when it is STILL an open, dirty file
+ * tab. With deps.saveFile(path) the write targets that path, so a file in a
+ * secondary editor group saves too; without it only the primary's active tab does.
  *
  * Controller-free chrome: the debounce + gating live here; the IDE controller
  * only constructs this, feeds onChange() from the editor change signal, and
@@ -30,6 +31,8 @@
     const editorHost = deps?.editorHost || null;
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
     const saveActiveFile = typeof deps?.saveActiveFile === 'function' ? deps.saveActiveFile : null;
+    // Path-specific save (row 40 editor groups): an edit in a secondary group schedules its own file.
+    const saveFile = typeof deps?.saveFile === 'function' ? deps.saveFile : null;
     const isEnabled = typeof deps?.isEnabled === 'function' ? deps.isEnabled : () => false;
     // True while the file-lifecycle is mid-write (its re-entrancy guard). A save
     // that fires during one would be a silent no-op, so we re-arm instead.
@@ -50,10 +53,12 @@
       pendingPath = '';
     }
 
-    // The active tab descriptor, read fresh at fire time. A non-file kind
+    // The scheduled tab's descriptor, read fresh at fire time: the primary's active
+    // tab, or with saveFile any open tab (a secondary group's file). A non-file kind
     // (diff/preview/image) or a stale (externally-changed) tab is never written.
-    function activeTab() {
-      const path = editorHost?.getActivePath?.() || '';
+    function scheduledTab(scheduled) {
+      const open = (getIde()?.openTabs || []).some((entry) => entry.path === scheduled);
+      const path = saveFile ? (open ? scheduled : '') : editorHost?.getActivePath?.() || '';
       if (!path) {
         return { path: '', kind: '', dirty: false, stale: false };
       }
@@ -68,12 +73,12 @@
     function fire() {
       timer = null;
       const scheduled = pendingPath;
-      if (!saveActiveFile || isEnabled() !== true) {
+      if ((!saveFile && !saveActiveFile) || isEnabled() !== true) {
         pendingPath = '';
         return;
       }
-      const tab = activeTab();
-      // The scheduled file must still be the active FILE tab, be dirty, and NOT
+      const tab = scheduledTab(scheduled);
+      // The scheduled file must still be an open (or the active) FILE tab, be dirty, and NOT
       // be in a conflicted/stale state (defer — never silently overwrite a
       // conflict; saveActiveFile would otherwise hit the mtime guard each tick).
       if (
@@ -95,7 +100,7 @@
       }
       pendingPath = '';
       try {
-        Promise.resolve(saveActiveFile()).catch(() => {});
+        Promise.resolve(saveFile ? saveFile(scheduled) : saveActiveFile()).catch(() => {});
       } catch (_error) {
         /* save failures surface through saveActiveFile's own conflict toast */
       }

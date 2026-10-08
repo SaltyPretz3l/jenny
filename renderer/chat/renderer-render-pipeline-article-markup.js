@@ -343,16 +343,8 @@
       'plan_document',
     ]);
 
-    // turn_activity_envelope (coalesced turn articles): flag is reflected onto
-    // the root dataset by renderMessages (renderer-render-pipeline-message-
-    // renderer.js) — same channel as reasoningPrettify. The coalesce helpers
+    // Turn-activity envelope (coalesced turn articles): the coalesce helpers
     // load as their own script; resolve lazily so script order stays free.
-    function resolveTurnActivityEnvelopeEnabled() {
-      return typeof document !== 'undefined'
-        && !!document.documentElement
-        && document.documentElement.dataset.turnActivityEnvelope === 'true';
-    }
-
     function resolveTurnArticleCoalesceUtils() {
       const utils = typeof globalThis !== 'undefined'
         ? globalThis.rendererTurnArticleCoalesceUtils
@@ -569,7 +561,7 @@
     }
 
     // @legacy-fallback (compat scaffolding, NOT dead code; see
-    // docs/plans/RENDER_PIPELINE_SPLIT_PLAN.md §4): the projected dispatch
+    // docs/archive/RENDER_PIPELINE_SPLIT_PLAN.md §4): the projected dispatch
     // renders a non-primary sibling inside a coalesced turn-article here, so
     // updateThreadRailExtents() finds a per-row node-dot for nested compat
     // nodes. The orphan-dot guard (isBodyMarkupVisuallyEmpty) does NOT apply:
@@ -591,14 +583,12 @@
     }
 
     // True when this turn renders as ONE coalesced envelope article (the
-    // turn_activity_envelope path will derive an anchor): sibling compat
+    // turn-activity envelope path will derive an anchor): sibling compat
     // anchors must then render dotless — the article's own rows carry the
     // rail landmarks. Mirrors the anchor derivation the assistant dispatch
     // performs so tool_result anchors agree with their turn's shape.
     function isEnvelopeCoalescedTurn(turnId, rows, projectionContext) {
-      const coalesceUtils = resolveTurnActivityEnvelopeEnabled()
-        ? resolveTurnArticleCoalesceUtils()
-        : null;
+      const coalesceUtils = resolveTurnArticleCoalesceUtils();
       if (!coalesceUtils) {
         return false;
       }
@@ -609,7 +599,7 @@
     // canRenderProjectedTurnArticle is false (turn not yet coalesced, or a row
     // kind outside COALESCED_TURN_ROW_KINDS). Removal is gated on the
     // `legacy_message_article_markup_render` signal staying at zero for a
-    // sprint (docs/plans/RENDER_PIPELINE_SPLIT_PLAN.md §4).
+    // sprint (docs/archive/RENDER_PIPELINE_SPLIT_PLAN.md §4).
     function buildMessageArticleMarkupLegacy(
       message,
       messages,
@@ -729,16 +719,14 @@
           });
         }
         if (canRenderTurnArticle) {
-          // turn_activity_envelope: render the WHOLE turn at one deterministic
+          // Turn-activity envelope: render the WHOLE turn at one deterministic
           // anchor message (all other turn messages become compat anchors), so
           // a multi-iteration turn is one article/avatar and the step grouping
           // sees the full iteration run. Anchor derivation is a pure function
           // of the projection context, so full renders and single-message
           // re-renders agree. No safe anchor -> fall through to the
           // per-bucket dispatch unchanged.
-          const coalesceUtils = resolveTurnActivityEnvelopeEnabled()
-            ? resolveTurnArticleCoalesceUtils()
-            : null;
+          const coalesceUtils = resolveTurnArticleCoalesceUtils();
           if (coalesceUtils) {
             const anchorMessageId = coalesceUtils.deriveTurnArticleAnchorMessageId(
               turnId,

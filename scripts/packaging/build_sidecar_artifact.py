@@ -46,6 +46,8 @@ BUNDLED_DATA_FILES: tuple[tuple[Path, str], ...] = (
     # exactly like catalog.py reads the manifest; the packaged sidecar failed
     # initialize with FileNotFoundError when this entry was missing.
     (ROOT / "services" / "tools" / "plan-mode-contract.json", "services/tools"),
+    # Same bundled-root read for the Plan Plus Propose-mode overlay.
+    (ROOT / "services" / "tools" / "propose-mode-contract.json", "services/tools"),
     # Every journaled workspace write validates against this schema; without it
     # the packaged write_file failed "Workspace journal schema is unavailable".
     (ROOT / "config" / "workspace-mutation-journal-v1.schema.json", "config"),

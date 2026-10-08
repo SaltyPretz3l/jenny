@@ -148,6 +148,10 @@ PROMPT_INJECTION_PATTERNS = (
 )
 
 _TRUNCATED_SUFFIX = " [truncated]"
+# The user-visible final reply never carries the bare tool-output marker: past
+# its ceiling it is cut at a boundary with this footer (live gate 2026-10-05).
+VISIBLE_REPLY_CUT_FOOTER = "\n\n_(Reply cut here: it ran past the length Jenny can keep.)_"
+_SENTENCE_ENDS = (". ", "! ", "? ")
 _UNTRUSTED_OPEN_TAG = "<untrusted_tool_output>"
 _UNTRUSTED_CLOSE_TAG = "</untrusted_tool_output>"
 
@@ -290,6 +294,20 @@ def sanitize_assistant_output(output: object, *, max_chars: int = 4000) -> str:
     Also strips post-response analysis blocks (e.g. ``### Tool Call Analysis``)
     that some local models append after their actual response.
     """
+    return _truncate(_sanitize_assistant_body(output), max_chars)
+
+
+def sanitize_visible_reply(output: object, *, max_chars: int) -> tuple[str, bool]:
+    """``sanitize_assistant_output`` for the user-visible final reply.
+
+    Same cleaning, but a reply past ``max_chars`` is cut at a paragraph or
+    sentence boundary with ``VISIBLE_REPLY_CUT_FOOTER`` instead of the bare
+    tool-output marker. Returns ``(text, was_cut)``.
+    """
+    return bound_visible_reply(_sanitize_assistant_body(output), max_chars)
+
+
+def _sanitize_assistant_body(output: object) -> str:
     raw = str(output or "")
     normalized = _normalize_whitespace_and_control(raw)
     normalized = strip_invisible_chars(normalized)
@@ -314,8 +332,7 @@ def sanitize_assistant_output(output: object, *, max_chars: int = 4000) -> str:
                 "removed_chars": max(len(before_wrapper_strip) - len(normalized), 0),
             },
         )
-    redacted = redact_obvious_secrets(normalized.strip())
-    return _truncate(redacted, max_chars)
+    return redact_obvious_secrets(normalized.strip())
 
 
 def neutralize_prompt_injection(text: str, *, tool_name: str | None = None) -> str:
@@ -452,6 +469,31 @@ def _truncate(text: str, max_chars: int) -> str:
     return f"{text[: limit - len(_TRUNCATED_SUFFIX)]}{_TRUNCATED_SUFFIX}"
 
 
+def bound_visible_reply(text: str, max_chars: int) -> tuple[str, bool]:
+    """Cut a visible reply that passed ``max_chars`` at a boundary, with honest copy.
+
+    The kept text never passes ``max_chars``; the footer is appended after it.
+    The boundary search looks back at most half the allowance, so a reply with
+    one early paragraph break is not cut to a stub.
+    """
+    limit = max(1, int(max_chars))
+    if len(text) <= limit:
+        return text, False
+    cut = _visible_cut_index(text, limit)
+    return f"{text[:cut].rstrip()}{VISIBLE_REPLY_CUT_FOOTER}", True
+
+
+def _visible_cut_index(text: str, limit: int) -> int:
+    floor = limit // 2
+    paragraph = text.rfind("\n\n", floor, limit)
+    if paragraph != -1:
+        return paragraph
+    candidates = [text.rfind(end, floor, limit) + 1 for end in _SENTENCE_ENDS]
+    candidates.append(text.rfind("\n", floor, limit))
+    best = max(candidates)
+    return best if best > 0 else limit
+
+
 def sanitize_tool_output_no_truncate(
     output: object,
     *,
@@ -466,7 +508,7 @@ def sanitize_tool_output_no_truncate(
     """
     raw = str(output or "")
     normalized = _normalize_whitespace_and_control(raw)
-    normalized = strip_invisible_chars(normalized)
+    normalized = _normalize_prompt_text(normalized)
     normalized = strip_special_tokens(normalized)
     normalized = neutralize_prompt_injection(normalized, tool_name=tool_name)
     # Escape wire-level prompt markers (cache boundary, Llama

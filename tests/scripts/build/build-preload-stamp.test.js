@@ -10,7 +10,6 @@ const ESBUILD_PATH = require.resolve('esbuild');
 const ENTRYPOINTS = [
   'preload.js',
   'uninstall-preload.js',
-  'plugin-view-preload.js',
 ];
 
 test.after(cleanupTrackedResources);
@@ -141,7 +140,7 @@ test('preload stamp skips unchanged work and rebuilds for stale or corrupt state
   buildPreloadBundle({ root });
   assert.equal(buildCount, 2, 'a changed transitive input rebuilds');
 
-  fs.rmSync(path.join(root, 'plugin-view-preload.bundle.js'));
+  fs.rmSync(path.join(root, 'preload.bundle.js'));
   buildPreloadBundle({ root });
   assert.equal(buildCount, 3, 'a missing expected output rebuilds');
 

@@ -16,9 +16,9 @@ from scripts.checks.bounded_process import run_bounded  # noqa: E402
 
 # The pre-commit hook runs this driver, and the driver had no wall clock: any
 # check that wedged blocked every commit indefinitely with nothing printed.
-# Bounding the two plugin Node probes closed the known instances; this closes
-# the class for all 50. The whole gate is ~35-85s and the slowest single check
-# is ~9s, so this ceiling only fires on a genuine wedge.
+# This closes the class of wedged checks for every check in the list. The whole
+# gate is ~35-85s and the slowest single check is ~9s, so this ceiling only fires
+# on a genuine wedge.
 CHECK_TIMEOUT_SECONDS = 600
 # The checks are independent read-only scans, one subprocess each, so several run
 # at once (run serially the stage took 46-55 s of every gate and commit,
@@ -47,13 +47,6 @@ CHECKS = [
     "check_changed_target_test_map.py",
     "check_chat_lifecycle_v2_matrix.py",
     "check_chat_lifecycle_contract_parity.py",
-    "check_plugin_contract_parity.py",
-    "check_plugin_content_pins.py",
-    "check_plugin_contract_freeze.py",
-    "measure_plugin_budgets.py",
-    "check_plugin_boundary.py",
-    "check_plugin_stage5_budgets.py",
-    "check_plugin_stage7_budgets.py",
     "check_provider_descriptor_fixtures.py",
     "check_test_coverage_map.py",
     "check_vacuous_oracle.py",
@@ -65,6 +58,7 @@ CHECKS = [
     "check_doc_as_code.py",
     "check_no_stdout_print.py",
     "check_no_raw_html_primitives.py",
+    "check_icon_button_labels.py",
     "check_i18n_ledger.py",
     "check_i18n_catalogs.py",
     "check_no_os_getenv.py",
@@ -105,11 +99,8 @@ def _forward_passing_output(check: str, stdout: str, stderr: str) -> None:
 
 def _run_check(check: str) -> tuple[subprocess.CompletedProcess[str] | None, str, float]:
     check_started = time.perf_counter()
-    is_budget_check = check == "measure_plugin_budgets.py"
-    script = ROOT / "scripts" / (check if is_budget_check else f"checks/{check}")
+    script = ROOT / "scripts" / "checks" / check
     command = [sys.executable, str(script)]
-    if is_budget_check:
-        command.append("--check")
     try:
         result = run_bounded(
             command,

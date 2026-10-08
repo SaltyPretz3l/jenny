@@ -69,16 +69,46 @@ const FORCE_DENY_ENV_KEYS = Object.freeze({
 // Retired flags whose JENNY_ENABLE_* name is still ACCEPTED AND IGNORED until
 // the listed release, so a leftover operator setting stays harmless: no flag
 // key is emitted and nothing reads the env var. Drop each entry at removeIn.
-// Post-1.2.0 sweep S8 retired workspace_pty_terminal (the ConPTY terminal is
-// the only Workspace IDE terminal; the piped line terminal is gone). The
-// Workspace IDE inline code suggestions were removed (owner, 2026-10-01).
-// Remote Control was removed (owner, 2026-10-02). The privileged (full-host)
-// plugin tier was retired with the plugin platform (owner, 2026-10-02).
+// The plugin platform's own `plugins` and `plugin_developer_profile` flags went
+// with its deletion (owner, 2026-10-05).
+// Failed-attempt reasoning capture for retries was deleted unreplayed, and the
+// unproven stream envelope v2 transport was deleted (owner, 2026-10-05).
 const RETIRED_FEATURE_FLAG_ENV_KEYS = Object.freeze({
-  workspace_pty_terminal: Object.freeze({ env: 'JENNY_ENABLE_WORKSPACE_PTY_TERMINAL', removeIn: '1.2.2' }),
-  workspace_inline_suggest: Object.freeze({ env: 'JENNY_ENABLE_WORKSPACE_INLINE_SUGGEST', removeIn: '1.2.2' }),
-  remote_control: Object.freeze({ env: 'JENNY_ENABLE_REMOTE_CONTROL', removeIn: '1.2.2' }),
-  privileged_plugins: Object.freeze({ env: 'JENNY_ENABLE_PRIVILEGED_PLUGINS', removeIn: '1.2.2' }),
+  failure_retry_reasoning_carry: Object.freeze({ env: 'JENNY_ENABLE_FAILURE_RETRY_REASONING_CARRY', removeIn: '1.4.0' }),
+  stream_envelope_v2: Object.freeze({ env: 'JENNY_ENABLE_STREAM_ENVELOPE_V2', removeIn: '1.4.0' }),
+  plugins: Object.freeze({ env: 'JENNY_ENABLE_PLUGINS', removeIn: '1.5.0' }),
+  plugin_developer_profile: Object.freeze({ env: 'JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE', removeIn: '1.5.0' }),
+  // Row 39 (owner, 2026-10-06): default-ON flags collapsed to their ON
+  // behaviour, and the compatibility-only subagent_batch input dropped.
+  chatgpt_auth_turn_retry: Object.freeze({ env: 'JENNY_ENABLE_CHATGPT_AUTH_TURN_RETRY', removeIn: '1.5.0' }),
+  reasoning_prettify: Object.freeze({ env: 'JENNY_ENABLE_REASONING_PRETTIFY', removeIn: '1.5.0' }),
+  quick_settings: Object.freeze({ env: 'JENNY_ENABLE_QUICK_SETTINGS', removeIn: '1.5.0' }),
+  composer_turn_timer: Object.freeze({ env: 'JENNY_ENABLE_COMPOSER_TURN_TIMER', removeIn: '1.5.0' }),
+  scratchpad_pin: Object.freeze({ env: 'JENNY_ENABLE_SCRATCHPAD_PIN', removeIn: '1.5.0' }),
+  turn_activity_envelope: Object.freeze({ env: 'JENNY_ENABLE_TURN_ACTIVITY_ENVELOPE', removeIn: '1.5.0' }),
+  katex_math: Object.freeze({ env: 'JENNY_ENABLE_KATEX_MATH', removeIn: '1.5.0' }),
+  artifact_renderer_registry: Object.freeze({ env: 'JENNY_ENABLE_ARTIFACT_RENDERER_REGISTRY', removeIn: '1.5.0' }),
+  artifact_html_preview: Object.freeze({ env: 'JENNY_ENABLE_ARTIFACT_HTML_PREVIEW', removeIn: '1.5.0' }),
+  settings_search: Object.freeze({ env: 'JENNY_ENABLE_SETTINGS_SEARCH', removeIn: '1.5.0' }),
+  setup_hub: Object.freeze({ env: 'JENNY_ENABLE_SETUP_HUB', removeIn: '1.5.0' }),
+  mcp_management_ui: Object.freeze({ env: 'JENNY_ENABLE_MCP_MANAGEMENT_UI', removeIn: '1.5.0' }),
+  model_management_ui: Object.freeze({ env: 'JENNY_ENABLE_MODEL_MANAGEMENT_UI', removeIn: '1.5.0' }),
+  chat_timeline_render_telemetry: Object.freeze({ env: 'JENNY_ENABLE_CHAT_TIMELINE_RENDER_TELEMETRY', removeIn: '1.5.0' }),
+  workspace_root_nudge: Object.freeze({ env: 'JENNY_ENABLE_WORKSPACE_ROOT_NUDGE', removeIn: '1.5.0' }),
+  workspace_preview_surface: Object.freeze({ env: 'JENNY_ENABLE_WORKSPACE_PREVIEW_SURFACE', removeIn: '1.5.0' }),
+  file_preview_html_render: Object.freeze({ env: 'JENNY_ENABLE_FILE_PREVIEW_HTML_RENDER', removeIn: '1.5.0' }),
+  titlebar_gpu_telemetry: Object.freeze({ env: 'JENNY_ENABLE_TITLEBAR_GPU_TELEMETRY', removeIn: '1.5.0' }),
+  workspace_explorer_qol: Object.freeze({ env: 'JENNY_ENABLE_WORKSPACE_EXPLORER_QOL', removeIn: '1.5.0' }),
+  workspace_external_import: Object.freeze({ env: 'JENNY_ENABLE_WORKSPACE_EXTERNAL_IMPORT', removeIn: '1.5.0' }),
+  surface_effect_heartbeat: Object.freeze({ env: 'JENNY_ENABLE_SURFACE_EFFECT_HEARTBEAT', removeIn: '1.5.0' }),
+  workspace_file_map: Object.freeze({ env: 'JENNY_ENABLE_WORKSPACE_FILE_MAP', removeIn: '1.5.0' }),
+  mcp_http_transport: Object.freeze({ env: 'JENNY_ENABLE_MCP_HTTP_TRANSPORT', removeIn: '1.5.0' }),
+  model_fit_estimates: Object.freeze({ env: 'JENNY_ENABLE_MODEL_FIT_ESTIMATES', removeIn: '1.5.0' }),
+  subagent_batch: Object.freeze({ env: 'JENNY_ENABLE_SUBAGENT_BATCH', removeIn: '1.5.0' }),
+  // Row 39 B1 (2026-10-06): the legacy vision and plain-chat live-stream paths
+  // these gated are deleted from the sidecar.
+  vision_unified_turn: Object.freeze({ env: 'JENNY_ENABLE_VISION_UNIFIED_TURN', removeIn: '1.5.0' }),
+  canonical_text_primary: Object.freeze({ env: 'JENNY_ENABLE_CANONICAL_TEXT_PRIMARY', removeIn: '1.5.0' }),
 });
 
 const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
@@ -91,13 +121,10 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   'canonical_m3_rollout',
   'canonical_turn_events',
   'canonical_bridge',
-  'canonical_text_primary',
   'chat_stream_paint_v2',
   'chat_stream_token_fade',
   'aggregate_checkpoints',
   'reasoning_wire_deltas',
-  'failure_retry_reasoning_carry',
-  'stream_envelope_v2',
   'canonical_renderer_projection',
   'workspace_manifest',
   'repo_delta_resume',
@@ -116,11 +143,10 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   'tools_home_enabled',
   // gates the default-on durable Open Loops task_board tool
   'tools_task_board_enabled',
+  // gates the default-on per-project note tool (project_notes)
+  'tools_project_notes_enabled',
   // gates the default-on OS toast notifier; Settings owns the user switch
   'desktop_notifications',
-  // Compatibility-only input retained for one release. No model-facing tool
-  // consumes it after Delegation V2; keep parsing it so rollback configs load.
-  'subagent_batch',
   'agent_test_hooks',
   // surface_effect_gallery gates the dev-only, nav-unlinked surface-effect
   // review gallery (window.__jennySurfaceGallery.open()). Never linked from
@@ -128,9 +154,6 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   // build. Defaults on under the agent/dev launcher (JENNY_AGENT_DEV) and off
   // everywhere else, same as agent_test_hooks.
   'surface_effect_gallery',
-  // surface_effect_heartbeat gates the S11 streamed-chunk cadence term. It is
-  // default-on with env-only rollback; it never changes persisted appearance.
-  'surface_effect_heartbeat',
   // startup_animation is the kill switch for the boot curtain's starfield; the
   // user choice is the persisted appearance toggle, so this stays env-only.
   'startup_animation',
@@ -138,12 +161,8 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   'workspace_codebase_context',
   'workspace_active_file_context',
   'workspace_ghost_edit',
-  'scratchpad_pin',
   'workspace_test_runner',
-  'katex_math',
-  'artifact_renderer_registry',
   'web_search_providers',
-  'settings_search',
   // Provider-aware prompt caching and bounded deferred tool search are runtime
   // policy, not routine user preferences. Both remain default-on with an
   // environment-only rollback switch.
@@ -153,86 +172,32 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   // kind + the renderer citation-chip row (web_search provenance). Internal,
   // DEFAULT-ON since 2026-07-02; JENNY_ENABLE_SOURCE_CITATIONS=0 rolls back.
   'source_citations',
-  // artifact_html_preview gates the sandboxed executable-HTML artifact live
-  // preview (staged jenny-artifact:// iframe, sandbox="allow-scripts",
-  // strict no-network CSP).
-  // Internal, DEFAULT-ON since 2026-07-02 (it executes model-authored JS inside
-  // that sandbox); JENNY_ENABLE_ARTIFACT_HTML_PREVIEW=0 rolls back.
-  'artifact_html_preview',
   // knowledge_layer gates the user-folder "knowledge roots" registry
   // (KnowledgeService + knowledge.* IPC + knowledge_roots managed-sidecar
   // config). Internal, DEFAULT-ON since 2026-07-02; flag-off (=0) is byte-identical
   // (service inert, no knowledge.json, handlers not registered, no config keys).
   'knowledge_layer',
-  // mcp_http_transport gates the real MCP Streamable-HTTP/SSE transport
-  // forwarding (Electron-side kill switch). Internal, DEFAULT-OFF.
-  'mcp_http_transport',
-  // mcp_management_ui gates the Settings > Tools "MCP servers" group (status
-  // list + auth editor) that replaces the Skills-embedded MCP discovery
-  // panel. Internal, DEFAULT-OFF (flips true in buildFeatureFlagDefaults
-  // below per the 2026-07-05 owner-approved spec).
-  'mcp_management_ui',
+  // semantic_catalog gates the passive bring-your-own embedding index over the
+  // knowledge folders (row 41). Internal, DEFAULT-ON (inert until the user picks
+  // an embedding model); JENNY_ENABLE_SEMANTIC_CATALOG=0 is the kill switch.
+  'semantic_catalog',
   // thread_root_markup_memo gates settled-root markdown->HTML memoization
   // (finding #3). Internal, DEFAULT-ON with env-only rollback
   // (JENNY_ENABLE_THREAD_ROOT_MARKUP_MEMO=0).
   'thread_root_markup_memo',
-  // turn_activity_envelope gates turn-article coalescing (one article per
-  // turn; renderer/chat/renderer-turn-article-coalesce-utils.js). Internal,
-  // DEFAULT-ON with env-only rollback (JENNY_ENABLE_TURN_ACTIVITY_ENVELOPE=0).
-  'turn_activity_envelope',
   // ide_chat_dock gates the Workspace Chat Dock (the chat subtree relocated
   // into an IDE side column; same controller, no second instance). Internal,
   // DEFAULT-ON with env-only rollback (JENNY_ENABLE_IDE_CHAT_DOCK=0 —
   // flag-off is byte-identical: the nodes never leave #chatView).
   'ide_chat_dock',
-  // composer_turn_timer is DEFAULT-ON with env-only rollback (JENNY_ENABLE_COMPOSER_TURN_TIMER=0).
-  'composer_turn_timer',
   // chat_render_content_visibility (Ht-D) gates the chat transcript
   // content-visibility paint-skip. Internal, DEFAULT-ON with env-only
   // rollback (JENNY_ENABLE_CHAT_RENDER_CONTENT_VISIBILITY=0).
   'chat_render_content_visibility',
-  // workspace_file_map gates the IDE "Map" tab (interactive file-dependency
-  // graph). Internal, DEFAULT-ON with env-only rollback
-  // (JENNY_ENABLE_WORKSPACE_FILE_MAP=0 — flag-off is byte-identical: the Map
-  // tab/affordance never appears).
-  'workspace_file_map',
-  // workspace_preview_surface gates the IDE unified Preview stage surface
-  // (markdown/mermaid + sandboxed HTML preview of a workspace file) and its
-  // activity-bar entry. Internal, DEFAULT-ON with env-only rollback
-  // (JENNY_ENABLE_WORKSPACE_PREVIEW_SURFACE=0 — flag-off hides the entry and
-  // the persisted surface falls back to the editor).
-  'workspace_preview_surface',
-  // file_preview_html_render gates the CHAT RAIL file-preview's sandboxed HTML
-  // render for .html/.htm targets (the same staged jenny-artifact:// frame the
-  // IDE Preview stage and HTML artifacts use). Internal, DEFAULT-ON with
-  // env-only rollback (JENNY_ENABLE_FILE_PREVIEW_HTML_RENDER=0 — flag-off is
-  // byte-identical: html falls back to the existing code view, no toggle, no
-  // frame).
-  'file_preview_html_render',
-  // titlebar_gpu_telemetry gates the titlebar GPU% metric, staleness dimming,
-  // and click-to-refresh. Flag-off renders the legacy CPU + VRAM/RAM strip
-  // byte-identically.
-  'titlebar_gpu_telemetry',
   // verification_gate gates the turn-finalization gate that runs the user's
   // designated Test Runner configuration after a typed file mutation and hands a
   // failing verdict back to the model. Internal, DEFAULT-OFF.
   'verification_gate',
-  // workspace_explorer_qol gates Explorer multi-select and its split active-file
-  // presentation. Internal, DEFAULT-ON with env-only rollback
-  // (JENNY_ENABLE_WORKSPACE_EXPLORER_QOL=0).
-  'workspace_explorer_qol',
-  // workspace_external_import gates absolute-path drag/drop imports into the
-  // workspace. Internal, DEFAULT-ON with env-only rollback
-  // (JENNY_ENABLE_WORKSPACE_EXTERNAL_IMPORT=0).
-  'workspace_external_import',
-  // chat_timeline_render_telemetry gates TEMPORARY render-path diagnostics for
-  // the streaming-flicker investigation (Track A): morph reuse/clone/removed
-  // counts from the DOM-patch morph pass + patchActiveTurnRoot rebuild-reason
-  // signals, logged via recordChatTimelineRolloutSignal so the owner can read
-  // shell.log from one live streaming turn. Internal, DEFAULT-ON since
-  // 2026-07-07; set JENNY_ENABLE_CHAT_TIMELINE_RENDER_TELEMETRY=0 to roll back.
-  // (Flag-off is byte-identical: no stats objects observed, no extra log lines.)
-  'chat_timeline_render_telemetry',
   // chat_timeline_streaming_article_morph gates Track B's in-place keyed morph
   // for structural streaming article rebuilds. Internal, DEFAULT-ON since
   // 2026-07-11 (live telemetry confirmed the raw-innerHTML swap as the
@@ -246,11 +211,11 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   // JENNY_ENABLE_CHAT_LONG_THREAD_BOUNDS=0 to restore the prior full-history
   // renderer cache/virtualizer path during the R2 soak.
   'chat_long_thread_bounds',
-  // quick_settings gates the Tier D quick-settings modal (JENNY_UIUX_OVERHAUL_PLAN.md
-  // L91-94): the Ctrl/Cmd+, chord + command-palette "Open quick settings" entry.
-  // Internal, DEFAULT-ON; set JENNY_ENABLE_QUICK_SETTINGS=0 to roll back
-  // (flag-off is byte-identical: the chord no-ops, the palette item never appears).
-  'quick_settings',
+  // session_journal stores chat files as a base plus append-only journal
+  // (services/backend/session-journal-wiring.js). Internal, DEFAULT-ON; set
+  // JENNY_ENABLE_SESSION_JOURNAL=0 to make every chat write replace the whole
+  // file again (journals already on disk are still read).
+  'session_journal',
   // Per-session chat egress gate. Default-on with env-only rollback.
   'session_offline_lockdown',
   // llama_server_acceleration gates the managed llama-server product surface:
@@ -260,26 +225,6 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   // since 2026-09-01; JENNY_ENABLE_LLAMA_SERVER_ACCELERATION=0 rolls back
   // byte-identical (no probe, no args, no DOM).
   'llama_server_acceleration',
-  // model_fit_estimates gates the pure-estimator fit computed for installed
-  // local models with no catalog entry (services/model-fit-estimator.js),
-  // surfaced in diagnostics as modelFitEstimates. No UI in this wave.
-  // Internal, DEFAULT-ON; JENNY_ENABLE_MODEL_FIT_ESTIMATES=0 rolls back to
-  // modelFitEstimates always being [].
-  'model_fit_estimates',
-  // chatgpt_auth_turn_retry gates the M2 request-time 401 recovery: a ChatGPT
-  // token that expires mid-turn takes ONE forced refresh + managed reconfigure
-  // + same-request_id retry, but only before the turn produced any output or
-  // tool effect. Internal, DEFAULT-ON; set
-  // JENNY_ENABLE_CHATGPT_AUTH_TURN_RETRY=0 to roll back to the pre-M2 behavior
-  // (the 401 stays terminal and the stale token stays installed).
-  'chatgpt_auth_turn_retry',
-  // plugins gates the plugin-platform control plane (PLUGIN_SYSTEM_ARCHITECTURE
-  // _AND_ROADMAP.md). Internal, DEFAULT-ON at the Stage 7 exit boundary;
-  // JENNY_ENABLE_PLUGINS=0 remains the emergency kill switch. Earlier stages
-  // phases: flag-off is byte-identical (no plugin service composed, no plugins.*
-  // IPC registered, no userData/plugins access). Independent of the launch-level
-  // plugins-safe-mode switch, which bypasses activation regardless of this flag.
-  'plugins',
 ]);
 
 function normalizeBooleanOverride(value) {
@@ -313,7 +258,6 @@ function buildFeatureFlagDefaults(env = process.env) {
   const canonicalM3Rollout = fe('CANONICAL_M3_ROLLOUT', true);
   const canonicalM3Default = (key, defaultValue = false) =>
     fe(key, canonicalM3Rollout === true ? true : defaultValue);
-  const canonicalTextPrimary = fe('CANONICAL_TEXT_PRIMARY', false);
 
   return {
     skills_system: fe('SKILLS_SYSTEM'),
@@ -331,30 +275,6 @@ function buildFeatureFlagDefaults(env = process.env) {
     agent_progress_durable: fe('AGENT_PROGRESS_DURABLE', false),
     resource_discipline: fe('RESOURCE_DISCIPLINE', true),
     session_offline_lockdown: fe('SESSION_OFFLINE_LOCKDOWN', true),
-    // chatgpt_auth_turn_retry gates the one-shot mid-turn ChatGPT auth recovery
-    // (forced token refresh + managed reconfigure + same-request_id retry,
-    // allowed only before any output or tool effect). DEFAULT-ON; set
-    // JENNY_ENABLE_CHATGPT_AUTH_TURN_RETRY=0 to roll back (flag-off is
-    // byte-identical: the send goes straight through and a 401 stays terminal).
-    chatgpt_auth_turn_retry: fe('CHATGPT_AUTH_TURN_RETRY', true),
-    // plugins: plugin-platform control plane. DEFAULT-ON after Stage 7; the
-    // environment override remains the owner kill switch.
-    plugins: fe('PLUGINS', true),
-    // plugin_developer_profile admits unsigned local packages while retaining every check except publisher signature.
-    // Developer installs remain visibly labelled and isolated by source-trust kind in the shared plugin store.
-    // DEFAULT-OFF (owner, 2026-10-02): an unsigned package reached the system prompt and the Wasm and
-    // MCP tiers from any dropped file. JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE=1 turns it on for authoring.
-    plugin_developer_profile: fe('PLUGIN_DEVELOPER_PROFILE', false),
-    // reasoning_prettify gates display-time whitespace repair for thinking
-    // text from models that stop emitting newlines/spaces on long reasoning
-    // streams (small local models under repeat_penalty). Render-only — stored
-    // entry text is untouched. DEFAULT-ON; set JENNY_ENABLE_REASONING_PRETTIFY=0
-    // to roll back to the raw join (byte-identical pre-feature markup).
-    reasoning_prettify: fe('REASONING_PRETTIFY', true),
-    // vision_unified_turn sends current-turn images through the normal tool loop.
-    // DEFAULT-ON; set JENNY_ENABLE_VISION_UNIFIED_TURN=0 to restore the legacy
-    // single-shot vision path for one release.
-    vision_unified_turn: fe('VISION_UNIFIED_TURN', true),
     // thread_root_markup_memo gates settled-root markdown->HTML memoization in
     // the thread-DOM renderer (finding #3): unchanged settled roots reuse a
     // cached article-markup string instead of rebuilding it every full
@@ -381,9 +301,6 @@ function buildFeatureFlagDefaults(env = process.env) {
     canonical_turn_events: canonicalM3Default('CANONICAL_TURN_EVENTS'),
     // canonical_bridge follows the same rollout and projects accepted turn.event payloads.
     canonical_bridge: canonicalM3Default('CANONICAL_BRIDGE'),
-    // DEFAULT-OFF until canonical text transport is lossless: display projections
-    // must not redact or truncate text, and oversized chunks must split instead of cap.
-    ...(canonicalTextPrimary ? { canonical_text_primary: true } : {}),
     // chat_stream_paint_v2 (Ht-C) gates streaming paint-minimization in the
     // live reasoning patch path: summary-only deltas morph the reasoning
     // header in place instead of destructively rewriting its innerHTML every
@@ -395,48 +312,17 @@ function buildFeatureFlagDefaults(env = process.env) {
     // OFF restores today's plain per-frame innerHTML write; default ON.
     // Set JENNY_ENABLE_CHAT_STREAM_TOKEN_FADE=0 to roll back.
     chat_stream_token_fade: fe('CHAT_STREAM_TOKEN_FADE', true),
-    // quick_settings gates the Tier D quick-settings modal + its Ctrl/Cmd+, chord
-    // and command-palette entry. Internal, DEFAULT-ON since 2026-07-09; set
-    // JENNY_ENABLE_QUICK_SETTINGS=0 to roll back.
-    quick_settings: fe('QUICK_SETTINGS', true),
     // aggregate_checkpoints gates full cumulative `aggregate` values on live
     // delta frames. DEFAULT-ON; set JENNY_ENABLE_AGGREGATE_CHECKPOINTS=0 to
     // roll back. Checkpoints avoid frames x final_length serialization growth
     // and keep background-session deltas under the buffered-bytes cap.
     aggregate_checkpoints: fe('AGGREGATE_CHECKPOINTS', true),
     // reasoning_wire_deltas emits proven append edits plus periodic snapshots.
-    // DEFAULT-OFF; consumers discriminate per entry unconditionally, so edit
-    // and snapshot shapes coexist. Flipping it needs the owner's live gates: a
-    // real thinking-model turn, a trace crossing the truncation cap, and
-    // `npm run smoke:gui`. Do not enable it with stream_envelope_v2: that V2
-    // coalescer (stream-envelope-shape.js) still replaces edits by id and must
-    // be taught to fold them in a deferred slice.
-    reasoning_wire_deltas: fe('REASONING_WIRE_DELTAS', false),
-    failure_retry_reasoning_carry: fe('FAILURE_RETRY_REASONING_CARRY', false),
-    // stream_envelope_v2 gates the bridge-to-renderer delta envelope rollout.
-    // DEFAULT-OFF, and deliberately still off: the chat-timeline consolidation
-    // closed 2026-08-26 having decided this is a SEPARATE transport migration,
-    // not a render-path slice. That program owns where rows are produced; the
-    // envelope is in-flight transport, and B0 (54767e4f) already discharged the
-    // only obligation it had here -- a schema-version mismatch now falls back to
-    // the legacy stream instead of decoding to null, pinned by
-    // tests/stream-envelope-schema-contract.test.js.
-    //
-    // Flipping it needs TWO live stages this program never ran, neither of which
-    // is reachable headless:
-    //   1. a parity soak -- JENNY_STREAM_ENVELOPE_V2_PARITY=1 (dev only, unpackaged,
-    //      NODE_ENV != production) makes the bridge run BOTH paths and warn on
-    //      chat.stream_envelope_v2_parity_mismatch. Note the interlock: parity mode
-    //      forces shouldEmitLegacyStreamEvents() true, so it proves the projection
-    //      matches without the renderer ever consuming an envelope;
-    //   2. an ack-proven run with parity OFF, where envelopeReceiptGate.isProven()
-    //      is what actually retires the legacy emit. Until then the bridge keeps
-    //      emitting legacy anyway, and the watchdog reopens it on
-    //      chat.stream_envelope_v2_no_ack.
-    // So the flip is low-risk by construction but unverifiable from unit tests
-    // alone -- which is exactly the inference that produced this program's earlier
-    // false greens. Set JENNY_ENABLE_STREAM_ENVELOPE_V2=1 to soak it.
-    stream_envelope_v2: fe('STREAM_ENVELOPE_V2', false),
+    // DEFAULT-ON since 2026-10-05 (owner); consumers discriminate per entry
+    // unconditionally, so edit and snapshot shapes coexist. Still owed: a trace
+    // crossing the truncation cap and `npm run smoke:gui`.
+    // JENNY_ENABLE_REASONING_WIRE_DELTAS=0 rolls back to full snapshots.
+    reasoning_wire_deltas: fe('REASONING_WIRE_DELTAS', true),
     // canonical_renderer_projection routes HYDRATED rows through the live fold
     // (renderer-stream-rehydrate projectPersistedEventsWithReducer) instead of the
     // turn-row projector, so a reloaded turn and a streaming one are built by the
@@ -488,8 +374,6 @@ function buildFeatureFlagDefaults(env = process.env) {
     // set JENNY_ENABLE_IDE_CHAT_DOCK=0 to roll back (byte-identical: nodes
     // never leave #chatView, main-chat approval-lock unchanged).
     ide_chat_dock: fe('IDE_CHAT_DOCK', true),
-    // DEFAULT-ON; set JENNY_ENABLE_COMPOSER_TURN_TIMER=0 to roll back.
-    composer_turn_timer: fe('COMPOSER_TURN_TIMER', true),
     // chat_render_content_visibility (Ht-D) gates content-visibility:auto
     // paint-skip on chat transcript turn-articles (.chat-entry), mirrored
     // onto document.documentElement.dataset.chatContentVisibility ('on' when
@@ -535,8 +419,11 @@ function buildFeatureFlagDefaults(env = process.env) {
     // DEFAULT-ON; set JENNY_ENABLE_TOOLS_TASK_BOARD_ENABLED=0 to remove the
     // tool from both the Electron registry and managed-sidecar catalog.
     tools_task_board_enabled: fe('TOOLS_TASK_BOARD_ENABLED', true),
-    // Compatibility-only legacy batch input. Delegation V2 does not consume it.
-    subagent_batch: fe('SUBAGENT_BATCH', false),
+    // tools_project_notes_enabled gates the model's read/append/replace access to
+    // the per-project note. DEFAULT-ON; set
+    // JENNY_ENABLE_TOOLS_PROJECT_NOTES_ENABLED=0 to remove the tool from both
+    // the Electron registry and the managed-sidecar catalog.
+    tools_project_notes_enabled: fe('TOOLS_PROJECT_NOTES_ENABLED', true),
     // error_intake_routing gates the EH intake controller (W8+) + the W11
     // error-center recorder. Default-on since the EH-W12 soak; Settings
     // Advanced / JENNY_ENABLE_ERROR_INTAKE_ROUTING=0 roll back (the raw toast
@@ -572,24 +459,12 @@ function buildFeatureFlagDefaults(env = process.env) {
       'SURFACE_EFFECT_GALLERY',
       isFeatureEnabledByDefault(env.JENNY_AGENT_DEV, false)
     ),
-    // Aggregate streamed-chunk cadence into a bounded, low-pass surface-effect
-    // energy term. DEFAULT-ON; set JENNY_ENABLE_SURFACE_EFFECT_HEARTBEAT=0 to
-    // restore the base phase-energy mapping without changing user preferences.
-    surface_effect_heartbeat: fe('SURFACE_EFFECT_HEARTBEAT', true),
     // startup_animation gates the boot curtain's starfield (a short swirl that
     // collapses into the wordmark once the shell is ready). The per-user choice
     // is Settings > Appearance > "Startup animation" (persisted appearance);
     // this is the kill switch. DEFAULT-ON; set JENNY_ENABLE_STARTUP_ANIMATION=0
     // to roll back to the plain curtain (no stars, no minimum hold).
     startup_animation: fe('STARTUP_ANIMATION', true),
-    // scratchpad_pin gates the pinnable sticky-note overlay: a small set of
-    // scratchpad notes can be pinned (tab "⋯" menu) as compact chips that float
-    // bottom-right over every view and expand to an inline editor (the pin
-    // entry point lives in the multi-note tab menu). Default-ON now
-    // that the overlay is mature; flag-off leaves the #pinnedNoteLayer empty and
-    // the pin/unpin menu item hidden (byte-identical current behavior). Set
-    // JENNY_ENABLE_SCRATCHPAD_PIN=0 to roll it back for this user.
-    scratchpad_pin: fe('SCRATCHPAD_PIN', true),
     // workspace_test_runner gates the Workspace IDE Test Runner: headless
     // execution of a project's own test commands (own process + real exit code,
     // run through a shell) feeding a Home dashboard trend widget AND the IDE
@@ -597,29 +472,6 @@ function buildFeatureFlagDefaults(env = process.env) {
     // that the authoring UI + live panel have landed it ships DEFAULT-ON (internal
     // flag); set JENNY_ENABLE_WORKSPACE_TEST_RUNNER=0 to roll it back for this user.
     workspace_test_runner: fe('WORKSPACE_TEST_RUNNER', true),
-    // turn_activity_envelope gates turn-article coalescing: the render
-    // pipeline coalesces ALL of a turn's rows into ONE turn-article (one
-    // avatar, one flat row list) instead of one article per assistant
-    // render-message (renderer/chat/renderer-turn-article-coalesce-utils.js).
-    // Renderer-only. DEFAULT-ON; set JENNY_ENABLE_TURN_ACTIVITY_ENVELOPE=0 to
-    // roll back to the per-message article timeline.
-    turn_activity_envelope: fe('TURN_ACTIVITY_ENVELOPE', true),
-    // katex_math gates renderer-side KaTeX rendering of $…$ / $$…$$ LaTeX in
-    // chat markdown and .md artifact documents (protect-then-render, post-
-    // DOMPurify live-DOM pass in renderer/shared/markdown-math-utils.js).
-    // Renderer-only: no sidecar/IPC/CONFIG_VERSION surface. DEFAULT-ON; set
-    // JENNY_ENABLE_KATEX_MATH=0 to roll back to raw $-delimited text.
-    katex_math: fe('KATEX_MATH', true),
-    // artifact_renderer_registry (Artifact Overhaul WS2) gates the artifact
-    // renderer registry dispatch in renderer-artifacts-surface-controller.js:
-    // ON = renderSelectedArtifactDetail routes through
-    // renderer-artifacts-renderer-registry.js (adds the sanitized html/svg
-    // kinds + the chart stub); OFF = the legacy if/else dispatch,
-    // byte-identical (both paths share the per-kind implementations).
-    // DEFAULT-ON since the Step-9 parity + sanitize review (2026-07-01: six
-    // shipped-kind fixtures byte-identical, no P0, svg fail-closed fix
-    // applied); set JENNY_ENABLE_ARTIFACT_RENDERER_REGISTRY=0 to roll back.
-    artifact_renderer_registry: fe('ARTIFACT_RENDERER_REGISTRY', true),
     // web_search_providers gates ONLY the Settings UI surface for the
     // multi-provider web-search picker (SearXNG/Brave/Tavily/Serper/Google
     // PSE); the sidecar honors whatever provider config it is given and DDG
@@ -635,40 +487,6 @@ function buildFeatureFlagDefaults(env = process.env) {
     // JENNY_ENABLE_SOURCE_CITATIONS=0 to roll back.
     // Flag-off is byte-identical: no derived events, no chips.
     source_citations: fe('SOURCE_CITATIONS', true),
-    // artifact_html_preview (HTML Artifact Preview) routes EXECUTABLE html
-    // artifacts (and svg carrying <script>) to a sandboxed live-preview
-    // iframe: single-use jenny-artifact:// src (never srcdoc — srcdoc
-    // inherits the parent CSP; the sandbox attribute pins the opaque
-    // origin), sandbox exactly "allow-scripts" (NO allow-same-origin),
-    // strict frame CSP
-    // (default-src 'none'; connect-src 'none' — no network, no exfil), plus
-    // the version-history stepper chrome. Renderer-only. It executes
-    // model-authored JS inside that sandbox; the invariants are test-pinned.
-    // DEFAULT-ON since 2026-07-02 (owner-directed pre-soak flip — the queue
-    // #15 sandbox-probe pass runs against the live default); set
-    // JENNY_ENABLE_ARTIFACT_HTML_PREVIEW=0 to roll back (WS2 inline
-    // DOMPurify path, no iframe, no selector — byte-identical).
-    artifact_html_preview: fe('ARTIFACT_HTML_PREVIEW', true),
-    // settings_search gates the Settings ▸ nav-rail search box (renderer-only:
-    // static index built from the section registry + field-copy map, filters
-    // the nav rail + shows a flat results list, jumps to + flashes the hit via
-    // [data-search-hit]). No sidecar/IPC/CONFIG_VERSION surface. DEFAULT-ON;
-    // set JENNY_ENABLE_SETTINGS_SEARCH=0 to roll back to the plain nav rail.
-    settings_search: fe('SETTINGS_SEARCH', true),
-    // model_management_ui gates the Model library that renders inside Settings >
-    // Models (pull-with-progress, guarded delete, GGUF folders); set
-    // JENNY_ENABLE_MODEL_MANAGEMENT_UI=0 to hide it.
-    model_management_ui: fe('MODEL_MANAGEMENT_UI'),
-    // setup_hub replaces the linear first-run wizard with the checklist hub
-    // (any-order steps, per-step skip, explicit finish gate). Renderer-only.
-    // DEFAULT-ON; JENNY_ENABLE_SETUP_HUB=0 removes the guided surface entirely
-    // and routes first-run/Resume to Home + Settings tiles (the pre-existing,
-    // tested !hubFactory degradation) -- the old wizard is not retained.
-    setup_hub: fe('SETUP_HUB'),
-    // workspace_root_nudge gates the pre-send "no workspace root" composer
-    // chip nudge (a follow-up slice consumes this; added here so
-    // feature-flags.js is touched once). Default-ON.
-    workspace_root_nudge: fe('WORKSPACE_ROOT_NUDGE'),
     // knowledge_layer gates the user-folder knowledge-roots registry
     // (KnowledgeService + knowledge.* IPC + knowledge_roots managed-sidecar
     // config). Internal. DEFAULT-ON since 2026-07-02 (owner-directed
@@ -678,20 +496,11 @@ function buildFeatureFlagDefaults(env = process.env) {
     // addFolder/removeFolder return feature_disabled), the IPC handlers are
     // not registered, and no config keys are published.
     knowledge_layer: fe('KNOWLEDGE_LAYER', true),
-    // mcp_http_transport gates the real MCP Streamable-HTTP/SSE transport
-    // forwarding (Electron-side kill switch). Internal. DEFAULT-ON since
-    // 2026-07-02 (owner-directed pre-soak flip; inert until mcp-servers.json
-    // sets mcp_sse_enabled + an sse server — both gates still required); set
-    // JENNY_ENABLE_MCP_HTTP_TRANSPORT=0 to roll back.
-    mcp_http_transport: fe('MCP_HTTP_TRANSPORT', true),
-    // mcp_management_ui gates the Settings > Tools "MCP servers" group (status
-    // list + kind-aware auth editor for bearer/oauth_client_credentials
-    // secrets), replacing the Skills-embedded MCP discovery panel. Own flag,
-    // independent of mcp_http_transport (owner ratified 2026-07-05).
-    // DEFAULT-ON since 2026-07-05 (owner-approved spec, Direction A hybrid);
-    // set JENNY_ENABLE_MCP_MANAGEMENT_UI=0 to roll back to the legacy
-    // Skills-embedded discovery panel rendering byte-identically.
-    mcp_management_ui: fe('MCP_MANAGEMENT_UI', true),
+    // semantic_catalog: the passive embedding index over knowledge folders
+    // (row 41). Local and offline, so DEFAULT-ON; inert until the user picks an
+    // embedding GGUF in Settings. JENNY_ENABLE_SEMANTIC_CATALOG=0 stops the
+    // scheduler and the embedder and withdraws the sidecar catalog config.
+    semantic_catalog: fe('SEMANTIC_CATALOG', true),
     // ollama_tray_remediation gates the owner-triggered Ollama tray-conflict
     // remediation surface (ollamaTray.* IPC: quit the tray app, disable its
     // Startup shortcut, restart the engine). Explicit-click actions only —
@@ -703,29 +512,6 @@ function buildFeatureFlagDefaults(env = process.env) {
     text_spellcheck: fe('TEXT_SPELLCHECK', true),
     session_runtime: fe('SESSION_RUNTIME', true),
     llama_server_acceleration: fe('LLAMA_SERVER_ACCELERATION', true),
-    // model_fit_estimates gates the pure-estimator fit computed for installed
-    // local models that have no config/model-recommendation-catalog.json
-    // entry (services/model-fit-estimator.js), surfaced in diagnostics as
-    // modelFitEstimates. No UI in this wave. DEFAULT-ON; set
-    // JENNY_ENABLE_MODEL_FIT_ESTIMATES=0 to roll back (modelFitEstimates is
-    // always []).
-    model_fit_estimates: fe('MODEL_FIT_ESTIMATES', true),
-    // workspace_file_map gates the IDE "Map" tab (interactive file-dependency
-    // graph). DEFAULT-ON; set JENNY_ENABLE_WORKSPACE_FILE_MAP=0 to roll back
-    // (the Map tab/affordance never appears; byte-identical to today).
-    workspace_file_map: fe('WORKSPACE_FILE_MAP', true),
-    // workspace_preview_surface gates the IDE unified Preview stage surface
-    // (markdown/mermaid + sandboxed HTML preview) + its activity-bar entry.
-    // DEFAULT-ON; set JENNY_ENABLE_WORKSPACE_PREVIEW_SURFACE=0 to roll back
-    // (no Preview entry; persisted preview surface displays as editor).
-    workspace_preview_surface: fe('WORKSPACE_PREVIEW_SURFACE', true),
-    // file_preview_html_render gates the chat rail's sandboxed HTML file
-    // preview. DEFAULT-ON; set JENNY_ENABLE_FILE_PREVIEW_HTML_RENDER=0 to roll
-    // back to the existing code view with no toggle or frame.
-    file_preview_html_render: fe('FILE_PREVIEW_HTML_RENDER', true),
-    // Gates GPU%, stale-state dimming, and click-to-refresh in the titlebar.
-    // DEFAULT-ON; set JENNY_ENABLE_TITLEBAR_GPU_TELEMETRY=0 to roll back.
-    titlebar_gpu_telemetry: fe('TITLEBAR_GPU_TELEMETRY', true),
     // verification_gate gates the turn-finalization verification gate (sidecar
     // routing/verification_gate.py). It also requires tools_verify_enabled,
     // since the gate reaches the Test Runner through the `verify` tool. The gate
@@ -733,17 +519,6 @@ function buildFeatureFlagDefaults(env = process.env) {
     // becomes one honest sentence on the model's own response. DEFAULT-OFF
     // pending owner sign-off; JENNY_ENABLE_VERIFICATION_GATE=1 to try it.
     verification_gate: fe('VERIFICATION_GATE', false),
-    // workspace_explorer_qol gates Explorer multi-select and its split active-file
-    // presentation. DEFAULT-ON; set JENNY_ENABLE_WORKSPACE_EXPLORER_QOL=0 to roll back.
-    workspace_explorer_qol: fe('WORKSPACE_EXPLORER_QOL', true),
-    // workspace_external_import gates reviewed external-source copies into the
-    // workspace. DEFAULT-ON; set JENNY_ENABLE_WORKSPACE_EXTERNAL_IMPORT=0 to roll back.
-    workspace_external_import: fe('WORKSPACE_EXTERNAL_IMPORT', true),
-    // chat_timeline_render_telemetry gates TEMPORARY render-path diagnostics
-    // (Track A of the streaming-flicker investigation). DEFAULT-ON since
-    // 2026-07-07 (owner-directed flip for the live-repro investigation); set
-    // JENNY_ENABLE_CHAT_TIMELINE_RENDER_TELEMETRY=0 to roll back.
-    chat_timeline_render_telemetry: fe('CHAT_TIMELINE_RENDER_TELEMETRY', true),
     // chat_timeline_streaming_article_morph gates Track B's in-place keyed
     // morph for structural streaming article rebuilds. DEFAULT-ON since
     // 2026-07-11: live telemetry (streaming_article_rebuild outcome=
@@ -754,6 +529,9 @@ function buildFeatureFlagDefaults(env = process.env) {
     // R2 bounded projection/virtualization. Flag-off keeps the pre-R2
     // full-history renderer caches and virtualizer retention behavior.
     chat_long_thread_bounds: fe('CHAT_LONG_THREAD_BOUNDS', true),
+    // session_journal gates append-only chat-file journals. DEFAULT-ON; set
+    // JENNY_ENABLE_SESSION_JOURNAL=0 to roll back to whole-file chat writes.
+    session_journal: fe('SESSION_JOURNAL', true),
   };
 }
 

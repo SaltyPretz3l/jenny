@@ -5,7 +5,7 @@
  * paints: heat (which files Jenny touched, how recently, read vs edit), the
  * numbered per-turn trail, edited-file badges, and turn lifecycle.
  *
- * Contract notes (WORKSPACE_FILE_MAP atlas plan, W3):
+ * Contract notes (archived file-map atlas plan, W3):
  * - Path identity is the make-or-break detail: tool inputs arrive as
  *   absolute Windows paths ('\'-separated, possibly case-mismatched) or
  *   workspace-relative strings. normalizeRelPath() relativizes against the

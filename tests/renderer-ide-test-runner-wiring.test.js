@@ -16,75 +16,9 @@ const actionButton = require('../renderer/inventory/action-button.js');
 const textField = require('../renderer/inventory/text-field.js');
 const selectField = require('../renderer/inventory/select-field.js');
 
-const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-function clickEl(el) {
-  const win = el.ownerDocument.defaultView;
-  el.dispatchEvent(new win.Event('click', { bubbles: true }));
-}
-
-function makeApi(initialState) {
-  const calls = { run: [], abort: 0, saveConfigs: [], getState: 0, onStateChanged: 0 };
-  let listener = null;
-  let rejectGet = false;
-  // WIDE-032: null = default success (mirrors the real service's echo). A test
-  // can override this to return a typed error envelope ({error:{code,message}})
-  // or throw, to simulate a refused/rejected save.
-  let saveBehavior = null;
-  let state = initialState || {
-    configs: [{ id: 'unit', label: 'Unit', command: 'npm test' }],
-    history: { byConfig: {} },
-    activeRun: null,
-    activeConfigId: null,
-  };
-  const api = {
-    run: (payload) => { calls.run.push(payload); return Promise.resolve({ status: 'passed' }); },
-    abort: () => { calls.abort += 1; return Promise.resolve({ aborted: true }); },
-    saveConfigs: (configs) => {
-      calls.saveConfigs.push(configs);
-      if (typeof saveBehavior === 'function') {
-        return Promise.resolve().then(() => saveBehavior(configs));
-      }
-      state = { ...state, configs };
-      return Promise.resolve({ configs });
-    },
-    getState: () => { calls.getState += 1; return rejectGet ? Promise.reject(new Error('bridge gone')) : Promise.resolve(state); },
-    onStateChanged: (cb) => { calls.onStateChanged += 1; listener = cb; return () => { listener = null; }; },
-  };
-  return {
-    api,
-    calls,
-    push: (payload) => { if (listener) { listener(payload); } },
-    setState: (next) => { state = next; },
-    setRejectGetState: (value) => { rejectGet = value; },
-    setSaveBehavior: (fn) => { saveBehavior = fn; },
-    hasListener: () => listener != null,
-  };
-}
-
-function setup(opts = {}) {
-  const dom = new JSDOM('<main><div id="host"></div></main>');
-  const host = dom.window.document.getElementById('host');
-  const fake = makeApi(opts.state);
-  let active = opts.active !== false;
-  const toasts = [];
-  const wiring = createIdeTestRunnerWiring({
-    getApi: () => fake.api,
-    getMountEl: () => host,
-    isActiveView: () => active,
-    panelFactory: createIdeTestRunnerPanel,
-    actionButton,
-    textField,
-    selectField,
-    showShellErrorToast: (message, meta) => toasts.push({ message, meta }),
-  });
-  return { dom, host, wiring, fake, toasts, setActive: (value) => { active = value; } };
-}
-
-function statusOf(host) {
-  const el = host.querySelector('.ide-test-runner-panel__row[data-config-id="unit"] .ide-test-runner-panel__status');
-  return el ? el.dataset.status : null;
-}
+const {
+  tick, clickEl, makeApi, setup, statusOf,
+} = require('./helpers/test-runner-wiring-fixture');
 
 test('wiring: bindEvents fetches state, renders rows, subscribes; Run routes to the bridge', async () => {
   // RED-BECAUSE: the wiring module does not exist yet.
@@ -95,7 +29,7 @@ test('wiring: bindEvents fetches state, renders rows, subscribes; Run routes to 
   assert.ok(fake.calls.getState >= 1, 'getState fetched on bind');
   assert.equal(fake.calls.onStateChanged, 1, 'subscribed to onStateChanged exactly once');
   clickEl(host.querySelector('[data-test-runner-run]'));
-  assert.deepEqual(fake.calls.run, [{ configId: 'unit' }], 'Run routed to api.run with the config id');
+  assert.deepEqual(fake.calls.run, [{ configId: 'unit', includeOutput: true }], 'Run routed to api.run with the config id and an output request');
 });
 
 test('wiring: a started push badges running with no extra getState round-trip', async () => {

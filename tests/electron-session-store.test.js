@@ -9,6 +9,7 @@ const {
   STORE_SCHEMA_VERSION,
   normalizeSession,
 } = require('../services/backend/electron-session-store');
+const { JournaledJsonStore } = require('../services/backend/journaled-json-store');
 const { migrateStorePayload } = require('../services/backend/session-store-migrations');
 const {
   cleanupTrackedResources,
@@ -73,12 +74,17 @@ function sessionFilePath(userDataPath, sessionId) {
   return path.join(sessionsDir(userDataPath), `${sessionId}.json`);
 }
 
+// The index as a restart would see it: the base file with its journal replayed.
 function readIndexOnDisk(userDataPath) {
-  return JSON.parse(fs.readFileSync(indexFilePath(userDataPath), 'utf8'));
+  return JournaledJsonStore.readFile(indexFilePath(userDataPath), { payloadKey: 'sessions' }).value;
 }
 
+// The chat as a restart would see it: the base file with its journal replayed.
 function readSessionOnDisk(userDataPath, sessionId) {
-  return JSON.parse(fs.readFileSync(sessionFilePath(userDataPath, sessionId), 'utf8'));
+  return JournaledJsonStore.readFile(
+    sessionFilePath(userDataPath, sessionId),
+    { payloadKey: 'session' }
+  ).value;
 }
 
 test('electron session store logs write failures without updating the cache', () => {
@@ -157,7 +163,8 @@ test('electron session store quarantines a corrupt session file and re-seeds a w
 
   // The unreadable bytes are preserved for recovery, not overwritten.
   const quarantineDir = path.join(sessionsDir(userDataPath), 'corrupt');
-  const quarantined = fs.readdirSync(quarantineDir);
+  // The chat's journals move along with the base file; this pins the base copy.
+  const quarantined = fs.readdirSync(quarantineDir).filter((name) => name.endsWith('.json'));
   assert.equal(quarantined.length, 1);
   assert.equal(
     fs.readFileSync(path.join(quarantineDir, quarantined[0]), 'utf8'),

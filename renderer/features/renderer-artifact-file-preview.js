@@ -41,11 +41,7 @@
     return Number.isFinite(numeric) && numeric >= 1 ? numeric : null;
   }
 
-  function fallbackEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  }
+  const fallbackEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function createArtifactFilePreview(deps) {
     const d = deps || {};
@@ -140,15 +136,9 @@
       return state.ui.filePreview;
     }
 
-    function isHtmlRenderEnabled() {
-      // DEFAULT-ON kill switch; the renderer boot seed omits this key, so
-      // undefined must read as ENABLED.
-      return state?.features?.featureFlags?.file_preview_html_render !== false;
-    }
-
     function isRenderableKind(kind) {
       if (kind === 'markdown') return true;
-      return kind === 'html' && isHtmlRenderEnabled();
+      return kind === 'html';
     }
 
     function isFilePreviewMode() {

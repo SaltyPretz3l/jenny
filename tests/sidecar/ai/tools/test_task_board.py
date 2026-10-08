@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,8 +39,10 @@ const toolExecutor = new ToolExecutor({
   configService,
 });
 // Bridge calls execute only under a current session execution authority; mint the
-// same General-project binding the desktop runtime would capture for this request.
-const root = Object.freeze({ project_id: 'project_general', root_path: null, root_id: null,
+// same General-project binding the desktop runtime would capture for this request
+// (TASK_BOARD_TEST_PROJECT_ID mints a different captured project for the scoping test).
+const root = Object.freeze({ project_id: process.env.TASK_BOARD_TEST_PROJECT_ID || 'project_general',
+  root_path: null, root_id: null,
   root_revision: 1, device_id: null, inode: null });
 const executionAuthority = new SessionExecutionAuthority({
   projectAuthority: { captureSession: () => root, requireCurrent: () => root },
@@ -69,6 +72,7 @@ tool.execute({ action: 'list' }, {
     getState() { throw new Error('store read failed'); },
     upsertFollowUp() {},
   },
+  projectAuthority: { project_id: 'project_general' },
   logger() {},
 }).then(
   (result) => process.stdout.write(JSON.stringify(result)),
@@ -115,11 +119,15 @@ def _kernel(*, flag: bool, bridge: bool = True) -> SimpleNamespace:
     )
 
 
-def _electron_result(user_data_path: Path, params: dict[str, Any]) -> dict[str, Any]:
+def _electron_result(
+    user_data_path: Path, params: dict[str, Any], project_id: str | None = None
+) -> dict[str, Any]:
     encoded = base64.b64encode(json.dumps(params).encode("utf-8")).decode("ascii")
+    env = {**os.environ, "TASK_BOARD_TEST_PROJECT_ID": project_id} if project_id else None
     completed = subprocess.run(
         ["node", "-e", NODE_BRIDGE_SCRIPT, str(REPO_ROOT), str(user_data_path), encoded],
         cwd=REPO_ROOT,
+        env=env,
         check=True,
         capture_output=True,
         text=True,
@@ -134,6 +142,7 @@ def _model_call(
     call_id: str,
     *,
     expect_bridge: bool = True,
+    project_id: str | None = None,
 ):
     # Build every call from a fresh kernel/runtime. This tears down all
     # sidecar-side registry and module state between calls, matching a sidecar
@@ -147,7 +156,7 @@ def _model_call(
 
     def response_reader_factory(expected_id: int, **_kwargs: object):
         def read_response(_timeout_seconds: float) -> dict[str, Any]:
-            result = _electron_result(user_data_path, sent[-1]["params"])
+            result = _electron_result(user_data_path, sent[-1]["params"], project_id)
             return {"jsonrpc": "2.0", "id": expected_id, "result": result}
 
         return read_response
@@ -232,6 +241,7 @@ def test_model_bridge_writes_survive_restart_and_mutate_by_identity(tmp_path: Pa
     assert "No agent task with id \"missing-task\" exists." == missing.output
     assert listed.success is True
     assert listed.metadata["count"] == 2
+    assert listed.metadata["project_id"] == "project_general"
     assert (
         f"id={first_id} | title=First task updated | status=resolved"
         " | sourceKind=agent_task"
@@ -296,3 +306,32 @@ def test_list_store_failure_returns_a_clean_tool_error() -> None:
     assert result["isError"] is True
     assert result["metadata"]["reason"] == "action_failed"
     assert result["content"] == "The task board action could not be completed."
+
+
+def test_model_bridge_scopes_tasks_to_the_captured_project(tmp_path: Path) -> None:
+    added = _model_call(tmp_path, {"action": "add", "title": "General only"}, "call_scope_add")
+    task_id = added.metadata["task_id"]
+
+    persisted = json.loads((tmp_path / "shell-config.json").read_text(encoding="utf-8"))
+    stored = next(item for item in persisted["followUps"] if item["id"] == task_id)
+    assert stored["projectId"] == "project_general"
+    assert added.metadata["project_id"] == "project_general"
+
+    other_list = _model_call(
+        tmp_path, {"action": "list"}, "call_scope_list_other", project_id="project_other"
+    )
+    other_complete = _model_call(
+        tmp_path,
+        {"action": "complete", "id": task_id},
+        "call_scope_complete_other",
+        project_id="project_other",
+    )
+    own_list = _model_call(tmp_path, {"action": "list"}, "call_scope_list_own")
+
+    assert other_list.success is True
+    assert other_list.metadata["count"] == 0
+    assert other_list.metadata["project_id"] == "project_other"
+    assert other_complete.success is False
+    assert other_complete.metadata["reason"] == "not_found"
+    assert own_list.metadata["count"] == 1
+    assert f"id={task_id} | title=General only | status=active" in own_list.output

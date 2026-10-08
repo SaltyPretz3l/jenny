@@ -26,7 +26,6 @@ const {
 const {
   startActiveTurn,
 } = require('../services/backend/chat-stream-session-lifecycle');
-const { BackendService } = require('../services/backend/backend-service');
 const {
   buildManagedChatRequest,
   createManagedChatServiceStub,
@@ -35,7 +34,6 @@ const {
   cleanupTrackedResources,
   createTrackedTempDir,
 } = require('./helpers/resource-cleanup');
-const { createFakeSafeStorage } = require('./helpers/fake-safe-storage');
 const {
   makeTextChunk,
   makeFinishChunk,
@@ -68,42 +66,6 @@ function stubHangingChatSend(service) {
   };
   return {
     release: () => releaseFirstSend && releaseFirstSend(),
-  };
-}
-
-// --- external-mode helpers ---
-
-function createExternalBackendService(overrides = {}) {
-  const userDataPath = createTrackedTempDir('jenny-chat-stream-overlap-');
-  const service = new BackendService({
-    userDataPath,
-    backendUrl: 'http://127.0.0.1:0/external-stub',
-    safeStorage: createFakeSafeStorage(),
-    ...overrides,
-  });
-  return service;
-}
-
-function buildExternalRequest({ sessionId, prompt, traceId }) {
-  return {
-    sessionId,
-    prompt,
-    visiblePrompt: prompt,
-    traceId,
-    attachments: [],
-    normalizedInteractiveResponse: null,
-    normalizedPreferences: {
-      preferred_model: '',
-      reasoning_effort: 'default',
-      conversation_mode: 'chat',
-      pending_question_batch: null,
-      pending_plan_proposal: null,
-      interactive_sequence_state: 'idle',
-      interactive_round_count: 0,
-      plan_mode: false,
-    },
-    contextPreferences: undefined,
-    clientTiming: null,
   };
 }
 

@@ -315,6 +315,20 @@ test('fitToContent frames the bounds centered in the viewport and returns true',
   );
 });
 
+test('fitToContent frames the content below the floating controls (top inset)', (t) => {
+  const { ctrl, timers } = makeController(t, {
+    getViewportRect: fixedRect(0, 0, 800, 600),
+    extra: { getTopInset: () => 140 },
+  });
+  ctrl.fitToContent({ minX: 0, minY: 0, maxX: 400, maxY: 300 });
+  timers.flushRaf();
+  // usable height 460: scale = min(800/400, 460/300)*0.9 = 1.38; center at y = 140 + 230
+  assert.equal(Number(ctrl.getState().scale.toFixed(9)), 1.38);
+  const top = ctrl.contentToClient({ x: 0, y: 0 });
+  assert.ok(top.y >= 140, `the content top (${top.y}) starts below the controls`);
+  assert.equal(Number(ctrl.contentToClient({ x: 200, y: 150 }).y.toFixed(9)), 370);
+});
+
 test('fitToContent on a 0×0 viewport returns false and keeps the camera', (t) => {
   // A map mounted while its stage is hidden measures 0×0: the fit must
   // report failure so the controller can retry once the viewport has size,

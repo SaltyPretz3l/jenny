@@ -41,7 +41,7 @@
     const model = { snapshot: null, loaded: false, detail: null, draft: {}, busy: false, selected: '',
       readError: '', actionMessage: '', actionWorkId: '', limitErrors: {}, limitWrites: {}, limitRestore: {},
       limitsResetArmed: false, confirmStop: '',
-      finishedOpen: false, filterOpen: false, projectFilter: '', projects: [] };
+      finishedOpen: false, pausedEarlierOpen: false, filterOpen: false, projectFilter: '', projects: [] };
     let timer = null;
     let reading = false;
     let expectedEdit = null;
@@ -82,7 +82,7 @@
         .map(row => [row.id || row.session_id, row.title]);
       return JSON.stringify([vm.snapshot, vm.detail, vm.loaded, vm.readError, vm.actionMessage, vm.limitErrors,
         vm.limitWrites, vm.limitsResetArmed,
-        vm.selected, vm.confirmStop, vm.finishedOpen, vm.filterOpen, vm.projectFilter, vm.busy, titles,
+        vm.selected, vm.confirmStop, vm.finishedOpen, vm.pausedEarlierOpen, vm.filterOpen, vm.projectFilter, vm.busy, titles,
         (vm.projects || []).map(project => [project.id, project.name]), Math.floor(vm.now / 60000), vm.finishedSince,
         vm.snapshot ? (vm.snapshot.work || []).map(item => vm.canControl(item)) : null, vm.draft.edit === undefined,
         // Limit drafts change without typing too (a settled write clears them).
@@ -388,6 +388,7 @@
         case 'runs-stop-confirm': void mutate('cancel', workId); return;
         case 'runs-edit': void mutate('edit', workId); return;
         case 'runs-finished-toggle': model.finishedOpen = !model.finishedOpen; render(); return;
+        case 'runs-paused-earlier-toggle': model.pausedEarlierOpen = !model.pausedEarlierOpen; render(); return;
         case 'runs-filter': model.filterOpen = !model.filterOpen; render();
           if (model.filterOpen) focusAfter('runs', `filter:${model.projectFilter || 'all'}`); return;
         case 'runs-filter-pick': model.projectFilter = String(target.dataset.projectId || ''); model.filterOpen = false;

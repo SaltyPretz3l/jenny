@@ -265,13 +265,13 @@ test('settings shell controller initializes retained lazy sections once and read
     controller.bind();
     assert.ok(navArgs, 'expected nav controller args');
 
-    // Skills is merged under Plugins & Extensions. Offline remains direct.
+    // Skills is merged under Extensions. Offline remains direct.
     // Retired Proactive/Tips Settings owners are never readied or refreshed.
-    navArgs.onSectionChange('plugins', 'models');
+    navArgs.onSectionChange('extensions', 'models');
     await flushAsyncWork();
-    navArgs.onSectionChange('offline', 'plugins');
+    navArgs.onSectionChange('offline', 'extensions');
     await flushAsyncWork();
-    navArgs.onSectionChange('plugins', 'offline');
+    navArgs.onSectionChange('extensions', 'offline');
     await flushAsyncWork();
 
     // Each lazy section (including the merged companions) binds exactly once.

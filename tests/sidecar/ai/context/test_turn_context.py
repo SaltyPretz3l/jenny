@@ -96,10 +96,6 @@ def test_empty_row_holds_the_slot_for_late_overlays() -> None:
     )
 
     assert row["content"] == ""
-    assert tc.strip_turn_context_metadata(messages) == [
-        {"role": "system", "content": "prompt"},
-        {"role": "user", "content": "hi"},
-    ]
     folded = builder.insert_runtime_system_messages(
         messages, [f"{MEMORY_RECALL_HEADING}\n- likes tea"]
     )
@@ -124,9 +120,6 @@ def test_folding_runtime_overlays_is_idempotent() -> None:
     assert once == twice
     assert str(once["content"]).endswith("- likes tea")
     assert cleared["content"] == row["content"]
-    assert tc.strip_turn_context_metadata([once]) == [
-        {"role": "system", "content": once["content"]}
-    ]
 
 
 def test_deferred_prompt_moves_per_turn_sections_out() -> None:

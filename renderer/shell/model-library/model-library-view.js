@@ -52,10 +52,23 @@
     pull: true,
     cancel: true,
     menu: true,
+    retry: true,
+    loadSmaller: true,
+    showFits: true,
+    diagnostics: true,
+    copyDetails: true,
   };
+  // Row 38 item 1 (B): the recovery that matches a classified load failure.
+  var RECOVERY_ACTIONS = { retry: true, loadSmaller: true, showFits: true, diagnostics: true, copyDetails: true };
 
   const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
     || (typeof require === 'function' ? require('../../shared/string-utils') : null)).escapeHtml;
+  var loadFailureUtils = (typeof globalThis !== 'undefined' && globalThis.jennyModelLoadFailure)
+    || (typeof require === 'function' ? require('../../shared/model-load-failure') : null);
+
+  function cardLoadFailure(card) {
+    return card && card.loadFailure && typeof card.loadFailure === 'object' ? card.loadFailure : null;
+  }
 
   function objectOrEmpty(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -124,8 +137,16 @@
 
   function actionApplicable(action, card, pull, compact) {
     var running = pull.status === 'running';
+    var failure = cardLoadFailure(card);
+    if (RECOVERY_ACTIONS[action]) {
+      return compact !== true && Boolean(failure) && card.installed === true && card.engineVisible === true
+        && (loadFailureUtils ? loadFailureUtils.recoveryActions(failure) : ['retry']).indexOf(action) >= 0;
+    }
     if (action === 'use') {
-      return card.installed === true && card.engineVisible === true && card.active !== true;
+      // Retry (or the cause's own fix) replaces Use on a model that did not load;
+      // the compact card has no recovery row, so Use stays as its retry there.
+      return card.installed === true && card.engineVisible === true && card.active !== true
+        && (!failure || compact === true);
     }
     if (action === 'unload') {
       return compact !== true && card.installed === true
@@ -163,6 +184,16 @@
       pull: { label: jt('models.library.pull', 'Pull'), variant: 'primary' },
       cancel: { label: jt('common.cancel', 'Cancel'), variant: 'danger' },
       menu: { label: '⋯', variant: 'ghost', ariaLabel: jt('models.library.moreActionsFor', 'More actions for {model}', { model: name }) },
+      retry: { label: jt('models.library.retry', 'Retry'), variant: 'primary' },
+      loadSmaller: {
+        label: jt('models.library.loadAtContext', 'Load at {context} context', {
+          context: formatContext(loadFailureUtils ? loadFailureUtils.retryContext(cardLoadFailure(card)) : 8192),
+        }),
+        variant: 'primary',
+      },
+      showFits: { label: jt('models.library.showModelsThatFit', 'Show models that fit'), variant: 'secondary' },
+      diagnostics: { label: jt('models.library.openDiagnostics', 'Open Diagnostics'), variant: 'secondary' },
+      copyDetails: { label: jt('models.library.copyDetails', 'Copy details'), variant: 'ghost' },
     }[action];
     var pendingUse = pending && action === 'use';
     return {
@@ -188,9 +219,12 @@
 
   function renderActions(card, actions, pull, compact, activation) {
     var allowed = actionSet(actions);
+    // The cause's own recovery order leads the row (first fix first).
+    var recovery = compact !== true && cardLoadFailure(card) && loadFailureUtils
+      ? loadFailureUtils.recoveryActions(cardLoadFailure(card)) : [];
     var order = compact === true
       ? ['use', 'unload', 'tune', 'remove', 'pull']
-      : ['use', 'unload', 'tune', 'pull', 'menu'];
+      : recovery.concat(['use', 'unload', 'tune', 'pull', 'menu']);
     var html = order.map(function (action) {
       return allowed.has(action) ? renderAction(action, card, pull, compact, activation) : '';
     }).join('');
@@ -322,8 +356,12 @@
     var meta = [];
     var context = formatContext(model.contextLength);
 
+    var loadFailure = pending ? null : cardLoadFailure(model);
     if (model.active === true) {
       badges.push(inventoryBadge({ tone: 'pending', size: 'sm', text: jt('models.library.activeBadge', 'Active') }));
+    }
+    if (loadFailure) {
+      badges.push(inventoryBadge({ tone: 'danger', size: 'sm', text: jt('models.library.didNotLoad', "Didn't load") }));
     }
     if (model.recommended === true) {
       badges.push(inventoryBadge({
@@ -363,6 +401,11 @@
     var engineNote = model.ollamaOnly === true
       ? '<span class="model-card-engine-note">' + escapeHtml(jt('models.library.currentEngineUnavailable', 'Not available to the current engine')) + '</span>'
       : '';
+    // Plain words for the cause; the engine's own message rides as the title.
+    var failureHtml = loadFailure && loadFailureUtils
+      ? '<div class="model-card-note model-card-note--failed" title="' + escapeHtml(loadFailure.message || '') + '">'
+        + escapeHtml(loadFailureUtils.causeSentence(loadFailure)) + '</div>'
+      : '';
     var noteHtml = activation.status === 'idle' && activationMatches
       && String(activation.message || '').trim()
       ? '<div class="model-card-note model-card-note--error">'
@@ -384,12 +427,13 @@
     return ''
       + '<div class="model-row" data-model-key="' + escapeHtml(model.key || '') + '" data-active="'
       + (model.active === true ? 'true' : 'false') + '" data-pending="'
-      + (pending ? 'true' : 'false') + '">'
+      + (pending ? 'true' : 'false') + '" data-load-failed="' + (loadFailure ? 'true' : 'false') + '">'
       + '<div class="model-row-main">'
       + '<div class="model-row-title">' + nameHtml + badges.join('') + '</div>'
       + '<div class="model-row-meta">' + escapeHtml(meta.join(' · ')) + '</div>'
       + engineNote
       + renderPullState(model, pull, opts.actions)
+      + failureHtml
       + noteHtml
       + '</div>'
       + '<div class="model-row-fit">' + fitHtml + '</div>'

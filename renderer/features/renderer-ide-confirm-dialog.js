@@ -21,14 +21,7 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
 
-  function defaultEscape(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const defaultEscape = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function basename(path) {
     const str = String(path || '');
@@ -237,6 +230,32 @@
       });
     }
 
+    // A choice among labelled actions plus Cancel. Resolves the chosen action,
+    // or 'cancel' on Esc / scrim / close / a missing overlay (the safe default).
+    function choose(payload) {
+      const config = payload || {};
+      const choices = (Array.isArray(config.choices) ? config.choices : [])
+        .filter((choice) => choice && /^[a-z][a-z-]{0,31}$/.test(String(choice.action || '')) && choice.action !== 'cancel');
+      const cancelLabel = String(config.cancelLabel || jt('common.cancel', 'Cancel'));
+      if (!actionButton || !choices.length) {
+        return Promise.resolve('cancel');
+      }
+      const buttons = choices.map((choice) => actionButton({
+        label: String(choice.label || choice.action),
+        variant: choice.variant,
+        dataset: { 'ide-confirm-action': choice.action },
+      })).join('') + actionButton({ label: cancelLabel, variant: 'ghost', dataset: { 'ide-confirm-action': 'cancel' } });
+      return runActionDialog({
+        title: String(config.title || ''),
+        titleId: 'ideConfirmChoiceTitle',
+        bodyHtml: `<p class="ide-confirm-message">${escapeHtml(String(config.message || ''))}</p>`
+          + `<div class="ide-confirm-actions">${buttons}</div>`,
+        closeLabel: cancelLabel,
+        actions: [...choices.map((choice) => choice.action), 'cancel'],
+        onDismiss: 'cancel',
+      });
+    }
+
     function dispose() {
       if (overlay) {
         try { overlay.destroy(); } catch (_error) { /* best-effort */ }
@@ -244,7 +263,7 @@
       }
     }
 
-    return { confirm, confirmClose, confirmBranchSwitch, dispose };
+    return { choose, confirm, confirmClose, confirmBranchSwitch, dispose };
   }
 
   return { createIdeConfirmDialog };

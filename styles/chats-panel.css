@@ -60,20 +60,6 @@
   gap: var(--space-3);
 }
 
-.new-session-actions:has(.plugin-session-provider-actions:empty) {
-  display: none;
-}
-
-.new-session-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
-.plugin-session-provider-actions {
-  display: contents;
-}
-
 .new-chat-button {
   --btn-radius: var(--rail-item-radius);
   --btn-min-height: 30px;

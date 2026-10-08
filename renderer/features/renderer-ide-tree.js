@@ -37,18 +37,13 @@
     // Host + active-gate are injectable so the single explorer instance can
     // render into the secondary sidebar when moved there (the "Move View"
     // model); both default to the primary rail for standalone use.
-    const getMountEl = typeof deps?.getMountEl === 'function' ? deps.getMountEl : () => getDom().ideRailPanel;
+    const getMountEl = typeof deps?.getMountEl === 'function' ? deps.getMountEl : () => null;
     const isActivePanel = typeof deps?.isActivePanel === 'function'
       ? deps.isActivePanel
       : () => getIde().railPanel === 'explorer';
     const escapeHtml = typeof deps?.escapeHtml === 'function'
       ? deps.escapeHtml
-      : (value) => String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     const onOpenFile = typeof deps?.onOpenFile === 'function' ? deps.onOpenFile : noop;
     const onEntryDeleted = typeof deps?.onEntryDeleted === 'function' ? deps.onEntryDeleted : noop;
     const onEntryRenamed = typeof deps?.onEntryRenamed === 'function' ? deps.onEntryRenamed : noop;
@@ -76,7 +71,6 @@
     const schedulePersist = typeof deps?.schedulePersist === 'function' ? deps.schedulePersist : noop;
     const showError = typeof deps?.showError === 'function' ? deps.showError : noop;
     const appendClientLog = typeof deps?.appendClientLog === 'function' ? deps.appendClientLog : noop;
-    const isQolEnabled = typeof deps?.isQolEnabled === 'function' ? deps.isQolEnabled : () => false;
     const contextMenu = resolveModule('inventoryContextMenu', '../inventory/context-menu');
     const selectionUtils = resolveModule('rendererIdeTreeSelection', './renderer-ide-tree-selection');
     const treeMarkup = resolveModule('rendererIdeTreeMarkup', './renderer-ide-tree-markup');
@@ -84,7 +78,6 @@
     const treeMutations = resolveModule('rendererIdeTreeMutations', './renderer-ide-tree-mutations');
     const treeKeyboard = resolveModule('rendererIdeTreeKeyboard', './renderer-ide-tree-keyboard');
     const treeClipboard = resolveModule('rendererIdeTreeClipboard', './renderer-ide-tree-clipboard');
-    const treeDnd = resolveModule('rendererIdeTreeDnd', './renderer-ide-tree-dnd');
     const confirmDeleteMany = typeof deps?.confirmDeleteMany === 'function' ? deps.confirmDeleteMany : null;
     const selection = selectionUtils.createIdeTreeSelection();
     const childrenByDir = new Map(); // dirPath ('' = root) -> entries[]
@@ -98,12 +91,18 @@
     let committingEdit = null;
     let rootEpoch = 1;
     let boundHosts = [];
+    // This view's own scroll offset. The host is shared with Search, so the host's
+    // scrollTop is only ours while the tree is what the host currently shows.
+    let ownScrollTop = 0;
+    const isMountedIn = (host) => Boolean(host?.querySelector?.(':scope > .ide-tree'));
+    function handleHostScroll(event) {
+      if (isMountedIn(event.currentTarget)) ownScrollTop = event.currentTarget.scrollTop;
+    }
     // Roving-tabindex bookkeeping: one tree row carries tabindex 0; the
     // focused row survives re-renders by path (innerHTML swaps detach nodes).
     let focusedPath = '';
     let focusAfterRender = false;
     let clipboard = null;
-    let inputEventsBound = false;
     const { parentDirOf, nameOf } = treeMarkup; const { buildTreeMarkup, buildProjectNudge } = treeMarkup.createIdeTreeMarkup({
       // Tier-2 git slice: (relPath, kind) -> git state string | null. Defaults to
       // no decoration so the tree renders exactly as before when git is off.
@@ -111,7 +110,7 @@
       childrenByDir, errorByDir, truncatedDirs, loadingDirs,
       getPendingEdit: () => pendingEdit, getRootError: () => rootError, getRootNeedsChoose: () => rootNeedsChoose,
       hasChooseRoot: () => Boolean(onChooseWorkspaceRoot), onLazyLoad: loadDirectory,
-      isQolEnabled, isSelected: (path) => selection.has(path),
+      isSelected: (path) => selection.has(path),
       isCut: (path) => clipboard?.isCut(path) === true,
       getProjectTitle, getProjectNudge,
     });
@@ -142,7 +141,7 @@
       // Directory renames prune their old cache before the callback can remap
       // selection; successful rename/delete wrappers settle membership below.
       cancelEdit, pruneStaleDirState: (path) => pruneStaleDirState(path, { dropSelection: false }),
-      refreshDirectory, render, isQolEnabled, editSession });
+      refreshDirectory, render, editSession });
     clipboard = treeClipboard.createIdeTreeClipboard?.({
       selection, getFocusedPath: () => focusedPath, getRootEpoch: () => rootEpoch,
       getRenderedRows: renderedRows, moveEntry, deleteEntry, getApi,
@@ -150,7 +149,7 @@
       onNotify: (message) => showError(message, {
         title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: 'ide:tree:paste',
       }),
-      parentDirOf, nameOf, isQolEnabled, showUndoToast: deps?.showUndoToast,
+      parentDirOf, nameOf, showUndoToast: deps?.showUndoToast,
     }) || {
       copy: noop, cut: noop, paste: noop, duplicate: noop, isCut: () => false,
       hasContent: () => false, clear: noop, bindEvents: noop, dispose: noop,
@@ -160,7 +159,7 @@
       getFocusedPath: () => focusedPath,
       setFocusedPath: (value) => { focusedPath = value; },
       setFocusAfterRender: (value) => { focusAfterRender = value; },
-      toggleDir, onOpenFile, selection, isQolEnabled, render,
+      toggleDir, onOpenFile, selection, render,
       onBeginRename: beginRename,
       onDeleteSelection: deleteSelection,
       onNotify: (message) => showError(message, {
@@ -172,14 +171,6 @@
       onClipboardDuplicate: clipboard.duplicate,
       commitEdit, cancelEdit, editSession,
     });
-    // Flag-off compatibility stays owned by the DnD module too: it binds only
-    // the two legacy file-to-editor events, while W3's full binder lives in the
-    // explorer wiring and is created only when the QoL flag is on.
-    const legacyDnd = treeDnd.createIdeTreeDnd?.({
-      getDom, getMountEl, isActivePanel, getIde, isQolEnabled, selection,
-      parentDirOf, nameOf, legacyOnly: true,
-    }) || null;
-
     async function loadDirectory(dirPath) {
       const epoch = rootEpoch;
       if (loadingDirs.has(dirPath)) {
@@ -373,28 +364,24 @@
         const hadFocus = focusAfterRender
           || Boolean(restorePanelFocus && doc && panel.contains(doc.activeElement));
         const editHadFocus = Boolean(doc?.activeElement?.matches?.('[data-ide-tree-edit-control]'));
-        const previousScrollTop = panel.scrollTop;
+        const previousScrollTop = isMountedIn(panel) ? panel.scrollTop : ownScrollTop;
         focusAfterRender = false;
         panel.innerHTML = markup;
         panel.__jennyIdeRailMarkup = markup;
         syncRovingFocus(panel, hadFocus);
         const editControl = panel.querySelector('[data-ide-tree-edit-control]');
         if (editControl) {
-          if (!isQolEnabled()) {
+          // A blur-held invalid edit row stays open UNFOCUSED; only a fresh
+          // edit (first paint) or a swap that displaced focus from the edit
+          // control itself may focus the input - background refreshes and
+          // renders serving another focused row must not steal focus.
+          if (pendingEdit?.selectionApplied !== true || editHadFocus) {
             editControl.focus();
-            editControl.select?.();
-          } else {
-            // A blur-held invalid edit row stays open UNFOCUSED; only a fresh
-            // edit (first paint) or a swap that displaced focus from the edit
-            // control itself may focus the input - background refreshes and
-            // renders serving another focused row must not steal focus.
-            if (pendingEdit?.selectionApplied !== true || editHadFocus) {
-              editControl.focus();
-            }
-            editSession.repaint(panel);
           }
+          editSession.repaint(panel);
         }
         panel.scrollTop = previousScrollTop;
+        ownScrollTop = previousScrollTop;
       }
     }
 
@@ -541,9 +528,9 @@
       const headerAction = event.target?.closest?.('[data-ide-tree-action]');
       if (headerAction) {
         const action = headerAction.dataset.ideTreeAction;
-        if (isQolEnabled() && action === 'new-file') {
+        if (action === 'new-file') {
           beginCreate(resolveTargetDir(), 'create-file');
-        } else if (isQolEnabled() && action === 'new-folder') {
+        } else if (action === 'new-folder') {
           beginCreate(resolveTargetDir(), 'create-directory');
         } else if (action === 'collapse-all') {
           collapseAllDirs();
@@ -551,7 +538,7 @@
           refreshLoadedDirectories();
         } else if (action === 'toggle-generated') {
           toggleGeneratedDirectories();
-        } else if (isQolEnabled() && action === 'cycle-sort') {
+        } else if (action === 'cycle-sort') {
           cycleSortMode();
         } else if (action === 'project-menu') {
           onOpenProjectMenu(headerAction);
@@ -566,13 +553,12 @@
       }
       focusedPath = row.dataset.ideTreePath;
       focusAfterRender = true;
-      const qolEnabled = isQolEnabled();
-      if (qolEnabled && (event.ctrlKey || event.metaKey)) {
+      if (event.ctrlKey || event.metaKey) {
         selection.toggle(row.dataset.ideTreePath);
         render();
         return;
       }
-      if (qolEnabled && event.shiftKey) {
+      if (event.shiftKey) {
         const panel = getMountEl();
         const renderedPaths = [...panel.querySelectorAll('[data-ide-tree-path]')]
           .map((renderedRow) => renderedRow.dataset.ideTreePath);
@@ -580,14 +566,12 @@
         render();
         return;
       }
-      if (qolEnabled) {
-        selection.replace([row.dataset.ideTreePath], row.dataset.ideTreePath);
-      }
+      selection.replace([row.dataset.ideTreePath], row.dataset.ideTreePath);
       if (row.dataset.ideTreeKind === 'directory') {
         toggleDir(row.dataset.ideTreePath);
         return;
       }
-      if (qolEnabled) render();
+      render();
       onOpenFile(row.dataset.ideTreePath, { preview: event.detail < 2 });
     }
 
@@ -615,7 +599,7 @@
             { separator: true }
           );
         }
-        if (isQolEnabled() && kind !== 'directory') {
+        if (kind !== 'directory') {
           const parentPath = parentDirOf(path);
           items.push(
             { label: jt('ide.tree.newFile', 'New File'), action: () => beginCreate(parentPath, 'create-file') },
@@ -631,45 +615,43 @@
         const utilityItems = kind === 'directory'
           ? buildDirectoryContextMenuItems(path)
           : buildFileContextMenuItems(path);
-        if (isQolEnabled()) {
-          deleteItem.danger = true;
-          const seedClipboardTarget = () => {
-            if (!selection.has(path)) {
-              selection.replace([path], path);
-              render();
-            }
-          };
-          items.push(
-            { separator: true },
-            {
-              label: jt('ide.tree.cut', 'Cut'), shortcutHint: 'Ctrl+X', action: () => {
-                seedClipboardTarget(); clipboard.cut();
-              },
-            },
-            {
-              label: jt('common.copy', 'Copy'), shortcutHint: 'Ctrl+C', action: () => {
-                seedClipboardTarget(); clipboard.copy();
-              },
-            },
-            {
-              label: jt('ide.tree.duplicate', 'Duplicate'), shortcutHint: 'Ctrl+D', action: () => {
-                seedClipboardTarget(); return clipboard.duplicate();
-              },
-            }
-          );
-          if (clipboard.hasContent()) {
-            items.push({
-              label: jt('ide.tree.paste', 'Paste'), shortcutHint: 'Ctrl+V',
-              action: () => clipboard.paste(kind === 'directory' ? path : parentDirOf(path)),
-            });
+        deleteItem.danger = true;
+        const seedClipboardTarget = () => {
+          if (!selection.has(path)) {
+            selection.replace([path], path);
+            render();
           }
-          if (kind !== 'directory') {
-            utilityItems.unshift(...buildDirectoryContextMenuItems(parentDirOf(path), {
-              includePathUtilities: false, includeTerminal: false,
-            }));
+        };
+        items.push(
+          { separator: true },
+          {
+            label: jt('ide.tree.cut', 'Cut'), shortcutHint: 'Ctrl+X', action: () => {
+              seedClipboardTarget(); clipboard.cut();
+            },
+          },
+          {
+            label: jt('common.copy', 'Copy'), shortcutHint: 'Ctrl+C', action: () => {
+              seedClipboardTarget(); clipboard.copy();
+            },
+          },
+          {
+            label: jt('ide.tree.duplicate', 'Duplicate'), shortcutHint: 'Ctrl+D', action: () => {
+              seedClipboardTarget(); return clipboard.duplicate();
+            },
           }
-          if (utilityItems.length) items.push({ separator: true });
+        );
+        if (clipboard.hasContent()) {
+          items.push({
+            label: jt('ide.tree.paste', 'Paste'), shortcutHint: 'Ctrl+V',
+            action: () => clipboard.paste(kind === 'directory' ? path : parentDirOf(path)),
+          });
         }
+        if (kind !== 'directory') {
+          utilityItems.unshift(...buildDirectoryContextMenuItems(parentDirOf(path), {
+            includePathUtilities: false, includeTerminal: false,
+          }));
+        }
+        if (utilityItems.length) items.push({ separator: true });
         items.push(...utilityItems);
         showMenu(event, items);
         return;
@@ -682,7 +664,7 @@
         { label: jt('ide.tree.newFolder', 'New Folder'), action: () => beginCreate('', 'create-directory') },
         { separator: true },
       ];
-      if (isQolEnabled() && clipboard.hasContent()) {
+      if (clipboard.hasContent()) {
         items.push(
           { label: jt('ide.tree.paste', 'Paste'), shortcutHint: 'Ctrl+V', action: () => clipboard.paste('') },
           { separator: true }
@@ -703,10 +685,6 @@
       const target = event.target;
       // Re-renders disconnect the input first; only a live blur cancels.
       if (!target?.closest?.('[data-ide-tree-edit-control]') || !target.isConnected) {
-        return;
-      }
-      if (!isQolEnabled()) {
-        cancelEdit();
         return;
       }
       const value = String(target.value == null ? '' : target.value);
@@ -731,26 +709,24 @@
       }
     }
 
-    // Bind BOTH possible hosts (rail + secondary) once: the panel can be moved
-    // between them at runtime and delegation survives innerHTML swaps, so a moved
-    // panel stays live with no rebind. Handlers self-filter (closest / contains).
+    // Bind the panel's own persistent view host once (row 40 W3: the workbench
+    // re-parents the host when the view moves, so delegation stays live with no
+    // rebind and survives innerHTML swaps). Handlers self-filter (closest).
     function bindEvents() {
-      const dom = getDom();
-      const hosts = [dom.ideRailPanel, dom.ideSecondarySidebarPanel].filter(Boolean);
+      const hosts = [getMountEl()].filter(Boolean);
       if (!hosts.length || boundHosts.length) {
         return;
       }
       boundHosts = hosts;
       clipboard?.bindEvents?.();
-      inputEventsBound = isQolEnabled();
       for (const host of hosts) {
         host.addEventListener('click', handleClick);
         host.addEventListener('contextmenu', handleContextMenu);
         host.addEventListener('keydown', handleKeydown);
         host.addEventListener('focusout', handleFocusOut);
-        if (inputEventsBound) host.addEventListener('input', handleInput);
+        host.addEventListener('input', handleInput);
+        host.addEventListener('scroll', handleHostScroll);
       }
-      legacyDnd?.bindEvents();
     }
 
     function dispose() {
@@ -759,13 +735,12 @@
         host.removeEventListener('contextmenu', handleContextMenu);
         host.removeEventListener('keydown', handleKeydown);
         host.removeEventListener('focusout', handleFocusOut);
-        if (inputEventsBound) host.removeEventListener('input', handleInput);
+        host.removeEventListener('input', handleInput);
+        host.removeEventListener('scroll', handleHostScroll);
       }
       boundHosts = [];
-      inputEventsBound = false;
       editSession.clear();
       clipboard?.dispose?.();
-      legacyDnd?.dispose();
       contextMenu?.hide?.();
     }
 
@@ -853,6 +828,7 @@
       pendingEdit = null;
       committingEdit = null;
       focusedPath = '';
+      ownScrollTop = 0;
       for (const host of boundHosts.length ? boundHosts : [getMountEl()]) if (host) host.scrollTop = 0;
       renderExplorer();
     }
@@ -866,7 +842,7 @@
         childrenByDir.clear();
         truncatedDirs.clear();
         errorByDir.clear();
-        if (isQolEnabled()) selection.clear();
+        selection.clear();
         renderExplorer();
         return;
       }

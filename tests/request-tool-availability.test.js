@@ -22,3 +22,15 @@ test('read-only diagnostics keep mixed tools with a read action and block pure w
   assert.equal(tools.write_file.reason, 'read-only mode blocks side-effecting tools');
   assert.equal(tools.purge.available, false);
 });
+
+test('propose_mode_only tools are listed only for a Propose-mode request (Plan Plus)', () => {
+  const descriptorFor = (name) => (name === 'propose_change'
+    ? { name, side_effecting: false, propose_mode_only: true, workspace_required: true } : undefined);
+  const status = { propose_change: { available: false, reason: 'tool is available only in propose mode' } };
+  const outside = scopedToolAvailability(status, { ...state, mode: 'assist' }, descriptorFor);
+  const inside = scopedToolAvailability(status, { ...state, mode: 'assist', proposeMode: true }, descriptorFor);
+  assert.equal(outside.tools_status.propose_change.available, false);
+  assert.equal(outside.tools_status.propose_change.reason, 'tool is available only in propose mode');
+  assert.equal(inside.tools_status.propose_change.available, true);
+  assert.equal(inside.tools_status.propose_change.reason, null);
+});

@@ -15,9 +15,7 @@
   var HIGHLIGHT_CLASS = 'chat-citation-target-highlight';
   var DEFAULT_HIGHLIGHT_DURATION_MS = 2200;
 
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  var normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function hasControlCharacter(value) {
     var text = String(value || '');

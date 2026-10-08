@@ -56,6 +56,13 @@
     return true;
   }
 
+  // The split-view pane a chat element sits in (0 when outside any pane root): a
+  // Workspace chat bound to an editor group opens files there (row 40 W7c).
+  function paneOf(node) {
+    var pane = node && typeof node.closest === 'function' ? node.closest('.chat-pane[data-pane-id]') : null;
+    return pane && pane.getAttribute('data-pane-id') === '1' ? 1 : 0;
+  }
+
   function clampLine(value) {
     var n = parseInt(value, 10);
     return Number.isFinite(n) && n >= 1 ? n : null;
@@ -168,9 +175,9 @@
     // exactly the pre-panel openClaimedPath body — the context menu's
     // "Open in IDE" item and the panel's own escape hatch both target it, so
     // its behavior must stay byte-identical.
-    function openInIdePath(relPath, line, column) {
+    function openInIdePath(relPath, line, column, pane) {
       setActiveView('ide');
-      return Promise.resolve(openIdeFileAtLine(relPath, line, column))
+      return Promise.resolve(openIdeFileAtLine(relPath, line, column, pane === undefined ? undefined : { pane: pane }))
         .then(function settleIdeOpen(opened) {
           if (opened === true) {
             return true;
@@ -203,11 +210,12 @@
     // declines (root vanished mid-open, no preview owner) or rejects is not a
     // failure — it just hands the target back to the IDE ladder.
     function openClaimedPath(relPath, line, column, options) {
+      var pane = options ? options.pane : undefined;
       if (options && options.preferIde === true) {
-        return openInIdePath(relPath, line, column);
+        return openInIdePath(relPath, line, column, pane);
       }
       if (!shouldPreferArtifactPanel()) {
-        return openInIdePath(relPath, line, column);
+        return openInIdePath(relPath, line, column, pane);
       }
       return Promise.resolve()
         .then(function invokePanel() {
@@ -218,14 +226,14 @@
             appendClientLog('INFO', 'chat.path_open_panel', { path: relPath, line: line });
             return true;
           }
-          return openInIdePath(relPath, line, column);
+          return openInIdePath(relPath, line, column, pane);
         })
         .catch(function reportPanelFailure(error) {
           appendClientLog('WARN', 'chat.path_open_panel_failed', {
             path: relPath,
             message: String((error && error.message) || error || ''),
           });
-          return openInIdePath(relPath, line, column);
+          return openInIdePath(relPath, line, column, pane);
         });
     }
 
@@ -247,18 +255,19 @@
       }
       openClaimedPath(relPath, clampLine(detail.line), clampLine(detail.column), {
         preferIde: detail.preferIde === true,
+        pane: detail.pane === 0 || detail.pane === 1 ? detail.pane : undefined,
       });
     }
 
     // Chips re-enter through the shared event so cite links and chips stay on
     // one navigation flow; when nothing claims it (IDE wiring absent) the chip
     // mirrors the cite-utils default-app fallback rather than dying silently.
-    function dispatchOpenForChip(relPath, line, column) {
+    function dispatchOpenForChip(relPath, line, column, pane) {
       var claimed = false;
       try {
         if (typeof windowRef.CustomEvent === 'function' && typeof windowRef.dispatchEvent === 'function') {
           var openEvent = new windowRef.CustomEvent(OPEN_FILE_EVENT, {
-            detail: { path: relPath, line: line, column: column },
+            detail: { path: relPath, line: line, column: column, pane: pane },
             bubbles: true,
             cancelable: true,
           });
@@ -374,7 +383,7 @@
       if (typeof event.stopPropagation === 'function') {
         event.stopPropagation();
       }
-      dispatchOpenForChip(relPath, line, column);
+      dispatchOpenForChip(relPath, line, column, paneOf(target));
     }
 
     // Chips are focusable role=link spans nested inside the row header's
@@ -488,7 +497,7 @@
         items.push({
           label: jt('chat.pathOpen.openInIde', 'Open in IDE'),
           action: function openInIdeAction() {
-            return openInIdePath(resolved.path, resolved.line, resolved.column || null);
+            return openInIdePath(resolved.path, resolved.line, resolved.column || null, paneOf(target));
           },
         });
       }

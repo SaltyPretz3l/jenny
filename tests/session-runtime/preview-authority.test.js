@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createProjectBrowserService } = require('../../services/projects/project-browser-service');
+const { EVENT_ACTIONS } = require('../../services/tools/builtin/preview-test-arguments');
 
 function fixture() {
   let current = true;
@@ -91,4 +92,20 @@ test('preview observation eval is granted explicitly, runs only on the owned ses
   await assert.rejects(facade.eval('a', { script: 'return 3;' }), /stale/);
   assert.deepEqual(h.calls.filter((call) => call[0] === 'eval').map((call) => call[2]), ['return 1;']);
   assert.equal(h.sessions.size, 0, 'lost authority closes the owned producer');
+});
+
+test('every preview_test event action is forwarded on the owned session only', async () => {
+  const h = fixture();
+  for (const action of EVENT_ACTIONS) {
+    h.owner[action] = async (id, options) => { h.calls.push([action, id, options.key]); return { status: 'ok' }; };
+  }
+  const facade = createProjectBrowserService(h.owner, h.execution);
+  const other = createProjectBrowserService(h.owner, h.execution);
+  await facade.open({ sessionId: 'a' });
+  for (const action of EVENT_ACTIONS) {
+    assert.equal(typeof facade[action], 'function', `${action} is exposed`);
+    assert.deepEqual(await facade[action]('a', { selector: '#x', key: 'Enter' }), { status: 'ok' });
+    await assert.rejects(other[action]('a', { selector: '#x' }), /does not belong/);
+  }
+  assert.deepEqual(h.calls.slice(1).map((call) => call[0]), [...EVENT_ACTIONS]);
 });

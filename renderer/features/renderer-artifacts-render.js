@@ -195,10 +195,7 @@
     }
     const escapeHtml = typeof deps?.escapeHtml === 'function'
       ? deps.escapeHtml
-      : (value) => String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     return `<pre class="artifact-preview-pre">${escapeHtml(input?.content || '')}</pre>`;
   }
 

@@ -75,7 +75,7 @@ function timelineDomWrites(window) {
 
 test('HB-010: reasoning deltas on a long row-model turn patch the live row without any turn-scope write', async (t) => {
   const app = await loadRendererApp({ shell: {
-    features: { state: { featureFlags: { ...buildFeatureFlagDefaults(), chat_timeline_render_telemetry: true } } },
+    features: { state: { featureFlags: { ...buildFeatureFlagDefaults() } } },
     chat: {
       async startStream(_payload, { state }) {
         state.sessions = [{ id: SESSION_ID, title: 'HB-010', conversation_mode: 'chat', preferred_model: 'gpt-test',
@@ -178,7 +178,7 @@ function textDelta(iteration, content) {
 // all at once at the terminal render.
 async function streamAnswerAfterReasoning(t, priorIterations) {
   const app = await loadRendererApp({ shell: {
-    features: { state: { featureFlags: { ...buildFeatureFlagDefaults(), chat_timeline_render_telemetry: true } } },
+    features: { state: { featureFlags: { ...buildFeatureFlagDefaults() } } },
     chat: {
       async startStream(_payload, { state }) {
         state.sessions = [{ id: SESSION_ID, title: 'HB-010 answer', conversation_mode: 'chat', preferred_model: 'gpt-test',
@@ -373,7 +373,7 @@ function bigToolBatch(iteration) {
 
 async function runLongManagedTurn(t, { priorIterations = LONG_PRIOR_ITERATIONS, commentary = true, checkpoints = true } = {}) {
   const app = await loadRendererApp({ shell: {
-    features: { state: { featureFlags: { ...buildFeatureFlagDefaults(), chat_timeline_render_telemetry: true } } },
+    features: { state: { featureFlags: { ...buildFeatureFlagDefaults() } } },
     chat: {
       async startStream(_payload, { state }) {
         state.sessions = [{ id: SESSION_ID, title: 'timeline-perf long turn', conversation_mode: 'chat', preferred_model: 'gpt-test',

@@ -9,11 +9,11 @@ const {
   selectActiveTurnFromLiveState,
 } = require('../renderer/chat/renderer-turn-phase-model');
 
-function deriveActiveTurn(activeTurn, featureFlags = {}) {
+function deriveActiveTurn(activeTurn) {
   if (!activeTurn) {
     return { phase: 'idle', terminal: '' };
   }
-  const parts = collectModelParts(activeTurn, featureFlags);
+  const parts = collectModelParts(activeTurn);
   const terminal = buildTerminal(activeTurn, parts.rows);
   return {
     phase: resolvePhaseKey(parts, terminal),
@@ -99,7 +99,7 @@ test('buildTerminal produces every canonical terminal kind', () => {
   assert.deepEqual(buildTerminal({ status: 'streaming' }, []), { kind: '', summary: '' });
 });
 
-test('stream_envelope_v2 controls whether reasoning events reconcile row phases', () => {
+test('reasoning events reconcile row phases', () => {
   const activeTurn = {
     turn_id: 'turn_phase_source',
     status: 'streaming',
@@ -122,22 +122,14 @@ test('stream_envelope_v2 controls whether reasoning events reconcile row phases'
     }],
   };
 
-  const envelopeParts = collectModelParts(activeTurn, { stream_envelope_v2: true });
-  assert.deepEqual(envelopeParts.phases, [{
-    phaseId: 'phase_shared',
-    kind: 'reasoning',
-    summary: 'Planning',
-    completed: false,
-  }]);
-
-  const legacyParts = collectModelParts(activeTurn, { stream_envelope_v2: false });
-  assert.deepEqual(legacyParts.phases, [{
+  const parts = collectModelParts(activeTurn);
+  assert.deepEqual(parts.phases, [{
     phaseId: 'phase_shared',
     kind: 'tool_result',
     summary: 'Read the result',
     completed: true,
   }]);
-  assert.equal(Object.hasOwn(legacyParts, 'todoProjection'), false);
+  assert.equal(Object.hasOwn(parts, 'todoProjection'), false);
 });
 
 test('selectActiveTurnFromLiveState uses the explicit active turn', () => {

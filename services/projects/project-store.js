@@ -25,7 +25,7 @@ class ProjectStore {
   _load() {
     const fallback = this._defaultDocument();
     const status = this._store.readWithStatus(fallback);
-    if (status.corrupted) {
+    if (status.corrupted || status.unreadable) {
       this._readOnlyReason = 'corrupt_store';
       return fallback;
     }

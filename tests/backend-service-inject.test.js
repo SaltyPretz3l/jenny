@@ -581,7 +581,6 @@ test('backend service logs managed-sidecar performance diagnostics and forwards 
     debugOptions: {
       disableThinking: true,
       leanContext: true,
-      plainChatMode: true,
     },
   });
   const pending = service.activeStreams.get(stream.streamId)?._pendingPromise;
@@ -590,13 +589,12 @@ test('backend service logs managed-sidecar performance diagnostics and forwards 
 
   const chatSendRequest = capturedRequests.find((entry) => entry.method === 'chat.send');
   assert.ok(chatSendRequest);
-  assert.equal(chatSendRequest.params.mode, 'chat');
-  assert.equal(chatSendRequest.params.plan_mode, false);
+  assert.equal(chatSendRequest.params.mode, 'assist');
+  assert.equal(chatSendRequest.params.plan_mode, true);
   assert.equal(service.sessionStore.getSession(created.data.id).plan_mode, true);
   assert.deepEqual(chatSendRequest.params.debug_options, {
     disable_thinking: true,
     lean_context: true,
-    plain_chat_mode: true,
   });
   assert.equal(capturedRequests.some((entry) => entry.method === 'memory.recall'), false);
   assert.equal(capturedRequests.some((entry) => entry.method === 'memory.recall_recent'), false);
@@ -605,7 +603,7 @@ test('backend service logs managed-sidecar performance diagnostics and forwards 
 
   const summaryLog = logs.find((entry) => entry.event === 'chat.performance_turn_summary');
   assert.ok(summaryLog);
-  assert.equal(summaryLog.details.mode, 'chat');
+  assert.equal(summaryLog.details.mode, 'assist');
   assert.equal(summaryLog.details.history_scope, 'fresh');
   assert.equal(summaryLog.details.include_personality, false);
   assert.equal(summaryLog.details.include_memory, false);

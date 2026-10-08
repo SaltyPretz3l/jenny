@@ -1,8 +1,0 @@
-{
-  "commit_epoch": 10,
-  "committed_at": "2026-08-06T12:00:00Z",
-  "generation_digest": "6666666666666666666666666666666666666666666666666666666666666666",
-  "generation_id": "gen-future-v6",
-  "registry_schema_version": 1,
-  "revision": 10
-}

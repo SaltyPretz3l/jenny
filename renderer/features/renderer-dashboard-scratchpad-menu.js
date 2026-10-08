@@ -101,8 +101,8 @@
     items.push({ separator: true });
 
     // Pin / unpin the active note onto the sticky-note overlay. Gated on a
-    // resolved noteId (the widget passes it only when the scratchpad_pin flag is
-    // on), so the item is simply absent when the feature is off.
+    // resolved noteId (the widget passes it only for an active note), so the
+    // item is simply absent when there is no active note.
     if (typeof actions.togglePin === 'function' && o.noteId) {
       const isPinned = o.isPinned === true;
       const disabled = !isPinned && o.pinsAtCap === true;

@@ -70,6 +70,7 @@ _DISPLAY_NAME_OVERRIDES = {
     "glob_files": "Glob Files",
     "grep_search": "Grep Search",
     "list_dir": "List Directory",
+    "propose_change": "Suggest Change",
     "jenny_status": "Jenny Status",
     "mermaid_generate": "Mermaid Generate",
     "monitor": "Monitor",
@@ -97,6 +98,8 @@ class CanonicalToolAvailability:
     always_available: bool = False
     plan_mode_only: bool = False
     plan_mode_artifact_write: bool = False
+    # Plan Plus: offered only in a Propose-mode request (mirrors plan_mode_only).
+    propose_mode_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -418,6 +421,7 @@ def _normalize_availability(value: Any) -> CanonicalToolAvailability:
         always_available=payload.get("always_available") is True,
         plan_mode_only=payload.get("plan_mode_only") is True,
         plan_mode_artifact_write=payload.get("plan_mode_artifact_write") is True,
+        propose_mode_only=payload.get("propose_mode_only") is True,
     )
 
 

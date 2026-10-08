@@ -317,7 +317,7 @@ test('s18: re-render after a sibling view clobbered the shared host re-mounts th
   // re-entry. The guard must also require our root to still be mounted.
   const { host, panel } = setup({ configs: [{ id: 'unit', label: 'Unit', command: 'npm test' }] });
   assert.ok(host.querySelector('.ide-test-runner-panel'), 'panel painted on first render');
-  // A sibling view writes into the shared #ideBottomPanelContent host.
+  // A sibling view writes into the same (shared) host.
   host.innerHTML = '<div class="ide-rail-placeholder">Terminal</div>';
   // State is unchanged, but switching back must re-mount the panel.
   panel.render();

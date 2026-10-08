@@ -1,7 +1,7 @@
-// Structural PNG gate for plugin-generated artifact publication.
+// Structural PNG gate for image-engine-generated artifact publication.
 //
-// This is a security boundary rather than a policy check: a trusted native
-// plugin host hands core a scratch-file path, and everything downstream (the
+// This is a security boundary rather than a policy check: the image engine
+// hands core a scratch-file path, and everything downstream (the
 // asset store, transcript row, lightbox, export) treats a published file as a
 // real image. A shallow check validates the signature, a CRC-correct IHDR, and a
 // trailing IEND - which a 45-byte header-only file satisfies with no pixel data

@@ -37,11 +37,10 @@ async function loadRendererTestApp(t, options) {
   return app;
 }
 
-// Five features.onChanged subscriptions are owned by the loaded modules
-// (renderer-app-lifecycle-composition, renderer-app-shell-bindings,
-// renderer-stream-handler-lifecycle, renderer-plugins-settings and
-// renderer-settings-model-library-section); the skills settings rows own the
-// one skills.onChanged. The legacy Model library's own subscription left
+// Three features.onChanged subscriptions are owned by the loaded modules
+// (renderer-app-lifecycle-composition, renderer-app-shell-bindings and
+// renderer-settings-model-library-section); opening Settings > Extensions binds
+// the skills settings rows' own skills.onChanged (a second one). The legacy Model library's own subscription left
 // with that module in b04edf511.
 test('renderer dispose unsubscribes shell listeners and re-init does not duplicate them', async (t) => {
   const app = await loadRendererTestApp(t);
@@ -52,7 +51,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
     auth: 1,
     backend: 1,
     chat: 1,
-    features: 5,
+    features: 3,
     logs: 1,
     proactive: 0,
     speech: 0,
@@ -65,19 +64,19 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
   await waitForUi(window, 40);
   doc.querySelector('.settings-nav-item[data-settings-section="offline"]').click();
   await waitForUi(window, 40);
-  // Skills rides under Plugins & Extensions.
-  doc.querySelector('.settings-nav-item[data-settings-section="plugins"]').click();
+  // Skills rides under Extensions.
+  doc.querySelector('.settings-nav-item[data-settings-section="extensions"]').click();
   await waitForUi(window, 40);
 
   assert.deepEqual(shell.__getListenerCounts(), {
     auth: 1,
     backend: 1,
     chat: 1,
-    features: 5,
+    features: 3,
     logs: 1,
     proactive: 0,
     speech: 0,
-    skills: 1,
+    skills: 2,
     system: 1,
     planUsage: 1,
   });
@@ -103,7 +102,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
     auth: 1,
     backend: 1,
     chat: 1,
-    features: 5,
+    features: 3,
     logs: 1,
     proactive: 0,
     speech: 0,
@@ -116,20 +115,18 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
   await waitForUi(window, 40);
   doc.querySelector('.settings-nav-item[data-settings-section="offline"]').click();
   await waitForUi(window, 40);
-  // The plugin platform is unavailable in this harness, so the Plugins-hosted
-  // Skills subsection stays unbound.
-  doc.querySelector('.settings-nav-item[data-settings-section="plugins"]').click();
+  doc.querySelector('.settings-nav-item[data-settings-section="extensions"]').click();
   await waitForUi(window, 40);
 
   assert.deepEqual(shell.__getListenerCounts(), {
     auth: 1,
     backend: 1,
     chat: 1,
-    features: 5,
+    features: 3,
     logs: 1,
     proactive: 0,
     speech: 0,
-    skills: 1,
+    skills: 2,
     system: 1,
     planUsage: 1,
   });

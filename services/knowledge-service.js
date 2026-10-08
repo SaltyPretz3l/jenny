@@ -533,6 +533,15 @@ class KnowledgeService extends EventEmitter {
     };
   }
 
+  // Every registered root path across all projects, for the semantic catalog
+  // (row 41), which indexes in the background independent of the active chat.
+  getAllRootPaths() {
+    if (!this._isFeatureEnabled()) return [];
+    const document = this._ensureDocument();
+    if (this._readOnlyReason) return [];
+    return [...new Set(document.roots.map((root) => root.path))];
+  }
+
   // Contribution merged into the managed-sidecar config payload. Enabled only
   // when the flag is on AND the user opted in by registering a folder. Roots
   // are absolute realpaths (paths, not secrets — CONFIG channel, not safeStorage).

@@ -50,6 +50,7 @@ class ToolRegistry {
       serverName: typeof definition.serverName === 'string' ? definition.serverName : '',
       workspaceRequired: definition.workspaceRequired !== false,
       planModeOnly: definition.planModeOnly === true,
+      proposeModeOnly: definition.proposeModeOnly === true,
       actions: definition.actions && typeof definition.actions === 'object'
         ? definition.actions
         : undefined,
@@ -76,12 +77,13 @@ class ToolRegistry {
     return Array.from(this._tools.values());
   }
 
-  getToolSchemas({ planMode = false } = {}) {
+  getToolSchemas({ planMode = false, proposeMode = false } = {}) {
     const tools = this.getAllTools();
     const filtered = tools.filter((tool) => (
-      planMode
+      (planMode
         ? tool.readOnly
-        : !tool.planModeOnly
+        : !tool.planModeOnly)
+      && (proposeMode || !tool.proposeModeOnly)
     ));
     return filtered.map((t) => ({
       type: 'function',

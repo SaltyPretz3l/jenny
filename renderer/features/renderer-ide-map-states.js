@@ -1,6 +1,6 @@
 /* renderer/features/renderer-ide-map-states.js - the Workspace File Map's
  * state-panel renderer (idle / loading / empty / error / no-root),
- * copy + tone per WORKSPACE_FILE_MAP_PLAN.md "State machine
+ * copy + tone per the archived file-map plan "State machine
  * (renderer-ide-map-states.js)". Mirrors the three-state copy/tone convention
  * used by renderer-ide-search-panel.js (buildStatusMarkup) and
  * renderer-ide-tree.js, and is built exclusively from inventory components
@@ -62,14 +62,7 @@
   const statusRow = resolveModule('inventoryStatusRow', '../inventory/status-row');
   const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
 
-  function defaultEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   const VALID_STATES = new Set(['idle', 'loading', 'empty', 'error', 'no-root']);
 

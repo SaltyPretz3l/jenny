@@ -1,6 +1,6 @@
 /**
  * renderer/features/renderer-artifacts-render-web.js – html + svg artifact
- * kind renderers (WS2 registry, new kinds behind artifact_renderer_registry).
+ * kind renderers (WS2 registry).
  *
  * These run in the PRIVILEGED renderer, so both kinds sanitize strictly:
  * html through the dedicated HTML_ARTIFACT_SANITIZE DOMPurify profile (no
@@ -133,8 +133,8 @@
     );
   }
 
-  // artifact_html_preview is default-on with an environment rollback. Module
-  // absence or flag-off still falls back to sanitized inline rendering.
+  // Module absence (or a preview predicate that declines) falls back to
+  // sanitized inline rendering.
   function resolveHtmlPreviewModule() {
     if (typeof globalThis !== 'undefined' && globalThis.rendererArtifactHtmlPreviewRender) {
       return globalThis.rendererArtifactHtmlPreviewRender;

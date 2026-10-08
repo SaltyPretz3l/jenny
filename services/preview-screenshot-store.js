@@ -6,6 +6,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { MAX_PREVIEW_IMAGE_BYTES } = require('./preview-vision-image');
 const { normalizeGeneratedArtifactMetadata } = require('./artifact-metadata-utils');
+const { ensureJennyDirGitignore } = require('./jenny-project-dir');
 const workspaceLocks = new Map();
 const MAX_WORKSPACE_CAPTURES = 32;
 const MAX_SESSION_CAPTURES = 4;
@@ -80,6 +81,8 @@ async function savePreviewScreenshot({ fs, workspace, session, content, writeInd
   const realWorkspace = await fs.realpath(workspace);
   assertCurrent();
   const state = await directory(fs, realWorkspace, '.jenny');
+  assertCurrent();
+  await ensureJennyDirGitignore(state, { fs });
   assertCurrent();
   const root = await directory(fs, state, 'artifacts');
   assertCurrent();

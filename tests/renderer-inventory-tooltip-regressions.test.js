@@ -171,3 +171,83 @@ test('an anchor that asks for below gets it while it fits; others stay above-fir
   assert.equal(place('plain', roomBelow), false, 'no attribute keeps the above-first default');
   assert.equal(place('below', dom.window.innerHeight - 21), false, 'no room below falls back to above');
 });
+
+test('pointer-driven focus does not open a tooltip; keyboard focus still does', async () => {
+  // A Workspace drop focuses the moved view's tab (not :focus-visible); its
+  // focus tooltip then stayed up over the editor until focus moved on.
+  const dom = new JSDOM('<button id="anchor" title="Terminal 3">Terminal 3</button>');
+  const { document } = dom.window;
+  const anchor = document.getElementById('anchor');
+  Tooltip.initTooltipHandlers(document);
+  let focusVisible = false;
+  const matches = anchor.matches.bind(anchor);
+  anchor.matches = (selector) => (selector === ':focus-visible' ? focusVisible : matches(selector));
+  const tooltipVisible = () => Boolean(document.querySelector('[role="tooltip"].inv-tooltip--visible'));
+
+  anchor.focus();
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.equal(tooltipVisible(), false, 'pointer-driven focus must not show the tooltip');
+
+  anchor.blur();
+  focusVisible = true;
+  anchor.focus();
+  await waitForUiState(dom.window, tooltipVisible, { timeoutMs: 2000 });
+  assert.equal(tooltipVisible(), true, 'keyboard focus still shows the tooltip');
+  Tooltip.hide({ force: true });
+  dom.window.close();
+});
+
+function tooltipVisible(document) {
+  const tooltip = document.getElementById('inv-tooltip-singleton');
+  return Boolean(tooltip && tooltip.classList.contains('inv-tooltip--visible')
+    && tooltip.getAttribute('aria-hidden') === 'false');
+}
+
+test('an anchor removed from the DOM before the show delay gets no tooltip', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const dom = new JSDOM('<div id="panel"><button id="accept" data-tooltip="Accept and apply">Accept</button></div>');
+  const { document, MouseEvent } = dom.window;
+  t.after(() => {
+    Tooltip.hide({ force: true });
+    dom.window.close();
+  });
+  Tooltip.initTooltipHandlers(document);
+  const anchor = document.getElementById('accept');
+
+  anchor.dispatchEvent(new MouseEvent('mouseenter'));
+  /* The click re-renders the panel: the anchor is gone and never sees mouseleave. */
+  anchor.remove();
+  t.mock.timers.tick(1000);
+
+  assert.equal(tooltipVisible(document), false);
+  assert.equal(anchor.hasAttribute('aria-describedby'), false);
+
+  /* The imperative path refuses a detached anchor as well. */
+  Tooltip.show(anchor, 'Accept and apply');
+  assert.equal(tooltipVisible(document), false);
+});
+
+test('a visible tooltip whose anchor is removed hides on the next delegated event', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const dom = new JSDOM(
+    '<div id="panel"><button id="accept" data-tooltip="Accept and apply">Accept</button></div>'
+      + '<p id="elsewhere">No tooltip here</p>',
+  );
+  const { document, MouseEvent } = dom.window;
+  t.after(() => {
+    Tooltip.hide({ force: true });
+    dom.window.close();
+  });
+  Tooltip.initTooltipHandlers(document);
+  const anchor = document.getElementById('accept');
+
+  anchor.dispatchEvent(new MouseEvent('mouseenter'));
+  t.mock.timers.tick(1000);
+  assert.equal(tooltipVisible(document), true);
+
+  anchor.remove();
+  document.getElementById('elsewhere').dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+
+  assert.equal(tooltipVisible(document), false);
+  assert.equal(anchor.hasAttribute('aria-describedby'), false);
+});

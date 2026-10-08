@@ -60,8 +60,7 @@ def test_request_lockdown_drops_web_mcp_and_plugin_tools_without_cross_session_l
             tools_workspace_root=str(tmp_path),
             tools_web_enabled=True,
         ),
-        _mcp_client=SimpleNamespace(available_tools=[web, mcp]),
-        _plugin_runtime_tool_provider=lambda: (plugin,),
+        _mcp_client=SimpleNamespace(available_tools=[web, mcp, plugin]),
         _engine=SimpleNamespace(
             supports_tool_calling=True,
             supports_inband_tool_calling=False,
@@ -296,7 +295,7 @@ def test_build_default_registry_gates_knowledge_tools() -> None:
         assert tool_name not in disabled
         assert tool_name in enabled
         assert enabled[tool_name].side_effecting is False
-    assert enabled["knowledge_search"].input_schema["required"] == ["pattern"]
+    assert enabled["knowledge_search"].input_schema["required"] == []
     assert enabled["knowledge_view"].input_schema["required"] == ["path"]
     assert enabled["knowledge_exec"].input_schema["required"] == ["op"]
 

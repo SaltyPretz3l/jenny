@@ -10,9 +10,7 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const FALLBACK_LOG_WINDOW_MS = 2000;
 
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function escapeSelectorValue(value) {
     const text = String(value || '');

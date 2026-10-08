@@ -24,9 +24,7 @@
   function noopFn() { /* no-op */ }
   function noopAsync() { return Promise.resolve(null); }
 
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  var normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function isBranchableMessage(message) {
     if (!message || typeof message !== 'object' || Array.isArray(message)) {

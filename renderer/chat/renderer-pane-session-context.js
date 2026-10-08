@@ -36,9 +36,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (paneVisibilityUtils) {
   'use strict';
 
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function resolvePaneId(paneId) {
     if (paneId === undefined || paneId === null) return 0;

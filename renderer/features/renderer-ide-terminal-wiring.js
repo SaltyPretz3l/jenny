@@ -7,7 +7,13 @@
  * UIUX-011: the PTY panel owns a persistent host (outside the shared bottom-panel
  * content host that Problems/Run/Test Runner innerHTML-replace on every
  * activation) so its live xterm instance + ResizeObserver are never orphaned by
- * a sibling repaint. `getPtyMountEl`, when supplied, overrides `deps.getMountEl`. */
+ * a sibling repaint. `getPtyMountEl`, when supplied, overrides `deps.getMountEl`.
+ *
+ * Multi-terminal (row 40 W4): createIdeTerminalPanel stays as the single-panel
+ * back-compat builder. createIdeTerminalSet is a passthrough to
+ * renderer-ide-terminal-set.js (injectable as `terminalSetUtils`) that manages up
+ * to four panels, one per terminal view; it returns null when that module or the
+ * panel module is unavailable. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -30,5 +36,17 @@
     return ptyTerminalPanelUtils.createIdePtyTerminalPanel(ptyDeps) || null;
   }
 
-  return { createIdeTerminalPanel };
+  function createIdeTerminalSet(opts) {
+    const o = opts || {};
+    const utils = o.terminalSetUtils
+      || (typeof globalThis !== 'undefined' && globalThis.rendererIdeTerminalSet)
+      || (typeof require === 'function' ? require('./renderer-ide-terminal-set') : null);
+    if (typeof utils?.createIdeTerminalSet !== 'function'
+      || typeof o.ptyTerminalPanelUtils?.createIdePtyTerminalPanel !== 'function') {
+      return null;
+    }
+    return utils.createIdeTerminalSet(o) || null;
+  }
+
+  return { createIdeTerminalPanel, createIdeTerminalSet };
 });

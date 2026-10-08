@@ -25,6 +25,13 @@ function shellFor(platform) {
     : { shell: 'bash', args: ['-c'] };
 }
 
+// `powershell -Command` reports a failing native command as exit 1; hand back its real code.
+// The command stays one line of its own, so its quoting is untouched.
+function shellScriptFor(platform, command) {
+  if (platform !== 'win32') return command;
+  return `$LASTEXITCODE = 0\n${command}\nif (-not $?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }\nexit 0`;
+}
+
 /**
  * Spawn `command` through an explicit shell and stream its output. Returns
  * synchronously (spawn is fire-and-forget) so the caller can track/kill the
@@ -75,7 +82,7 @@ function startRunTask({
   const { shell, args: shellArgs } = shellFor(platform);
   let child;
   try {
-    child = spawnImpl(shell, [...shellArgs, String(command || '')], {
+    child = spawnImpl(shell, [...shellArgs, shellScriptFor(platform, String(command || ''))], {
       cwd,
       detached: platform !== 'win32',
       windowsHide: true,

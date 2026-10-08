@@ -19,9 +19,7 @@
     'next_action_label',
   ]);
 
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function normalizeRecoveryActionText(value) {
     return typeof value === 'string' ? value.trim() : '';
@@ -87,6 +85,17 @@
     target.recovery_actions = payloadActions.length
       ? payloadActions
       : cloneRecoveryActions(sourceMessage && sourceMessage.recovery_actions);
+  }
+
+  // A failed reply whose turn has since been rerun or resumed: a newer assistant
+  // reply (the resume tail) sits below it, so its card is a record, not a live
+  // offer (live gate F9 recheck, 2026-10-05). The notice must be a real message,
+  // never the `${turn}:system_notice` fallback id.
+  function resolveSupersededErrorNotice(renderMessage, messages, options) {
+    const tailId = normalizeId(options && options.resumeTailMessageId);
+    const ownId = normalizeId(renderMessage && renderMessage.id);
+    if (!tailId || !ownId || tailId === ownId) return false;
+    return Boolean(getMessageById(ownId, messages));
   }
 
   function hasAssistantErrorRecoveryMetadata(message) {
@@ -176,5 +185,6 @@
     hasRecoveryActions,
     normalizeId,
     normalizeReasoningPhase,
+    resolveSupersededErrorNotice,
   };
 });

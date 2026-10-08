@@ -27,6 +27,7 @@ HOST_ALLOWED_TOOL_NAMES: frozenset[str] = frozenset(
         "grep_search",
         "write_file",
         "edit_file",
+        "propose_change",
         "create_artifact",
         "mermaid_generate",
         "ask_user",

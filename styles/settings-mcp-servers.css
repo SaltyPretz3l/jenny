@@ -65,6 +65,12 @@
   gap: var(--space-3);
 }
 
+/* Field groups the editor shows or hides by transport and authentication;
+   their fields stay direct grid items. */
+.mcp-editor-group:not([hidden]) {
+  display: contents;
+}
+
 .mcp-server-details {
   display: grid;
   gap: var(--space-5);

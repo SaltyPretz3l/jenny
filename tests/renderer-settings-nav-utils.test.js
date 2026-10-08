@@ -28,7 +28,7 @@ function setupDom() {
           <section class="settings-card" data-settings-section="tools"></section>
           <section class="settings-card" data-settings-section="proactive"></section>
           <section class="settings-card" data-settings-section="usage"></section>
-          <section class="settings-card" data-settings-section="plugins" hidden></section>
+          <section class="settings-card" data-settings-section="extensions"></section>
           <section class="settings-card" data-settings-section="account"></section>
           <section class="settings-card" data-settings-section="harness"></section>
           <section class="settings-card" data-settings-section="diagnostics"></section>
@@ -43,9 +43,6 @@ function setupDom() {
   });
 
   renderSettingsNav(dom.window.document);
-  const plugins = dom.window.document.querySelector('.settings-nav [data-settings-section="plugins"]');
-  plugins.hidden = true;
-  plugins.setAttribute('data-feature-gated', 'plugins');
   dom.window.document.querySelector('.settings-nav-scroll').insertAdjacentHTML('beforeend', '<button data-settings-section="dev_diagnostics">Retired</button>');
   const previousWindow = global.window;
   const previousDocument = global.document;
@@ -215,67 +212,25 @@ test('settings nav falls back when a hidden dev-only advanced section is request
   }
 });
 
-/* A feature-gated section (Plugins behind featureFlags.plugins, default-off) is
- * stamped data-feature-gated + hidden by its sibling controller while the flag
- * is off. Both entry points below must honour that stamp: getAllCards() filters
- * the hidden card out, so activating the id anyway leaves Settings with NO card
- * active at all — an empty content pane, not a wrong one. */
-test('settings nav falls back when a persisted feature-gated section is hidden', () => {
+/* The retired Plugins & Extensions page left persisted ids behind on old
+ * profiles. The old id opens its successor, Extensions, not an empty pane. */
+test('settings nav opens Extensions when the persisted section is the retired plugins page', () => {
   const harness = setupDom();
   try {
     const state = { ui: { activeSettingsSection: 'models' } };
     const settingsNav = document.querySelector('.settings-nav');
     const settingsContentScroll = document.querySelector('.settings-content-scroll');
-    // A returning user whose last-open section was Plugins, now flag-off.
     localStorage.setItem('jenny.settings.activeSection', 'plugins');
 
     const controller = createSettingsNavController({ state, settingsNav, settingsContentScroll });
     controller.bind();
     controller.restoreActiveSection();
 
-    assert.equal(state.ui.activeSettingsSection, 'models');
+    assert.equal(state.ui.activeSettingsSection, 'extensions');
     assert.equal(
-      document.querySelector('.settings-card[data-settings-section="models"]').classList.contains('settings-section-active'),
+      document.querySelector('.settings-card[data-settings-section="extensions"]').classList.contains('settings-section-active'),
       true
     );
-    assert.equal(
-      document.querySelector('.settings-card[data-settings-section="plugins"]').classList.contains('settings-section-active'),
-      false
-    );
-  } finally {
-    harness.cleanup();
-  }
-});
-
-test('settings nav falls back when a hidden feature-gated section is deep-linked, but not once it is revealed', () => {
-  const harness = setupDom();
-  try {
-    const state = { ui: { activeSettingsSection: 'models' } };
-    const settingsNav = document.querySelector('.settings-nav');
-    const settingsContentScroll = document.querySelector('.settings-content-scroll');
-    const controller = createSettingsNavController({ state, settingsNav, settingsContentScroll });
-    controller.bind();
-
-    const navItem = document.querySelector('.settings-nav [data-settings-section="plugins"]');
-    const card = document.querySelector('.settings-card[data-settings-section="plugins"]');
-
-    controller.setActiveSection('plugins');
-
-    assert.equal(state.ui.activeSettingsSection, 'models', 'a hidden feature-gated section is not activatable');
-    assert.equal(card.classList.contains('settings-section-active'), false);
-
-    // The negative control: the fallback is conditional on the item being
-    // hidden, not a blanket refusal of the id — flag-on reveals the nav item
-    // and the section activates normally.
-    navItem.hidden = false;
-    navItem.classList.remove('hidden');
-    card.hidden = false;
-
-    controller.setActiveSection('plugins');
-
-    assert.equal(state.ui.activeSettingsSection, 'plugins');
-    assert.equal(card.classList.contains('settings-section-active'), true);
-    assert.equal(navItem.getAttribute('aria-selected'), 'true');
   } finally {
     harness.cleanup();
   }
@@ -344,9 +299,12 @@ test('picker groups visible sections and follows every navigation route and runt
     const state = { ui: { activeSettingsSection: 'models' } };
     const controller = createSettingsNavController({ state, settingsNav: document.querySelector('.settings-nav'), settingsContentScroll: document.querySelector('.settings-content-scroll') });
     controller.bind();
-    const pluginOption = picker.querySelector('option[value="plugins"]');
-    assert.equal(pluginOption.hidden, true);
-    assert.equal(pluginOption.disabled, true);
+    const extensionsOption = picker.querySelector('option[value="extensions"]');
+    const extensions = document.querySelector('.settings-nav [data-settings-section="extensions"]');
+    extensions.hidden = true;
+    controller.setActiveSection('models');
+    assert.equal(extensionsOption.hidden, true);
+    assert.equal(extensionsOption.disabled, true);
     picker.value = 'tools';
     picker.dispatchEvent(new window.Event('change', { bubbles: true }));
     assert.equal(state.ui.activeSettingsSection, 'tools');
@@ -369,20 +327,19 @@ test('picker groups visible sections and follows every navigation route and runt
     advanced.hidden = true;
     controller.setActiveSection('models');
     assert.equal(picker.querySelector('option[value="advanced"]').disabled, true);
-    const plugins = document.querySelector('.settings-nav [data-settings-section="plugins"]');
-    plugins.hidden = false;
-    controller.setActiveSection('plugins');
-    assert.equal(pluginOption.hidden, false);
-    assert.equal(pluginOption.disabled, false);
-    assert.equal(picker.value, 'plugins');
+    extensions.hidden = false;
+    controller.setActiveSection('extensions');
+    assert.equal(extensionsOption.hidden, false);
+    assert.equal(extensionsOption.disabled, false);
+    assert.equal(picker.value, 'extensions');
     picker.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-    assert.equal(state.ui.activeSettingsSection, 'plugins');
-    // A page gated off while Settings is open leaves the picker as soon as it is opened.
+    assert.equal(state.ui.activeSettingsSection, 'extensions');
+    // A page hidden while Settings is open leaves the picker as soon as it is opened.
     controller.setActiveSection('models');
-    plugins.hidden = true;
+    extensions.hidden = true;
     picker.dispatchEvent(new window.Event('focus'));
-    assert.equal(pluginOption.hidden, true);
-    assert.equal(pluginOption.disabled, true);
+    assert.equal(extensionsOption.hidden, true);
+    assert.equal(extensionsOption.disabled, true);
   } finally { harness.cleanup(); }
 });
 

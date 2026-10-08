@@ -741,25 +741,6 @@ class TestStream:
 
 
 # ===========================================================================
-# 17. generate_with_vision (lines 490-492)
-# ===========================================================================
-
-
-class TestGenerateWithVision:
-    def test_vision_returns_result(self) -> None:
-        e = _make_engine()
-        result = e.generate_with_vision("what do you see?", ["img1.jpg", "img2.jpg"])
-        assert isinstance(result, GenerationResult)
-        assert "2 image(s)" in result.content
-        assert "what do you see?" in result.content
-
-    def test_vision_empty_images(self) -> None:
-        e = _make_engine()
-        result = e.generate_with_vision("describe", [])
-        assert "0 image(s)" in result.content
-
-
-# ===========================================================================
 # 19. unload_model (lines 507-508)
 # ===========================================================================
 

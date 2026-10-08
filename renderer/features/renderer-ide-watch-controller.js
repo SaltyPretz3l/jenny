@@ -33,9 +33,6 @@
     const onTreeExternalChanges = typeof options.onTreeExternalChanges === 'function'
       ? options.onTreeExternalChanges
       : noop;
-    const refreshChangesPanelIfOpen = typeof options.refreshChangesPanelIfOpen === 'function'
-      ? options.refreshChangesPanelIfOpen
-      : noop;
     const onExternalDelete = typeof options.onExternalDelete === 'function' ? options.onExternalDelete : noop;
     const onExternalPreviewChange = typeof options.onExternalPreviewChange === 'function'
       ? options.onExternalPreviewChange
@@ -212,9 +209,6 @@
         reconciledPaths.add(ideStateUtils.normalizeIdeRelativePath?.(change?.relPath) || change?.relPath);
       }
       if (truncated) revalidateOpenDocuments(reconciledPaths);
-      // Jenny's tool edits arrive through this same watcher; keep the open
-      // changes panel current without any extra plumbing.
-      refreshChangesPanelIfOpen();
     }
 
     function clearRetryTimer() {

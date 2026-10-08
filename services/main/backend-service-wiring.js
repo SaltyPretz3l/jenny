@@ -9,6 +9,7 @@ const { createTrackerForService } = require('../workspace-active-use-tracker');
 const { resolvePackagedSidecarLaunchAsync } = require('../backend/packaged-sidecar-launch');
 const { CalendarService } = require('../calendar-service');
 const { createBackgroundJobTracker } = require('./background-job-tracker');
+const { createSuggestedChangesService } = require('../backend/suggested-changes-wiring');
 const { resolveChromiumSandboxStatus } = require('./chromium-sandbox-status');
 const { BACKEND_UP_PHASES } = require('./packaged-smoke');
 const { shouldBroadcastFeatureState } = require('./main-process-policy');
@@ -18,6 +19,7 @@ const { CompanionService } = require('../companion-service');
 const { HomeAssistantService } = require('../home-assistant-service');
 const { LinkStatusService } = require('../link-status-service');
 const { OfflineIntelligenceService } = require('../offline-intelligence-service');
+const { ProjectNotesService } = require('../project-notes-service');
 const { ModelCatalogService } = require('../model-catalog-service');
 const { ModelFitObservationStore } = require('../model-fit-observation-store');
 const { ModelLoadDurationStore } = require('../model-load-duration-store');
@@ -176,6 +178,17 @@ function createBackendServiceWithDeps({
     usageHistory,
     shellLogStore: logStore,
     systemStatsProvider: getSystemStatsPayload,
+    appMemoryProvider: () => {
+      try {
+        if (typeof app.getAppMetrics !== 'function') return null;
+        return process.memoryUsage().rss + app.getAppMetrics()
+          .filter((metric) => metric.pid !== process.pid)
+          .reduce((bytes, metric) => {
+            if (!Number.isFinite(metric.memory?.workingSetSize)) throw new Error('App memory metric is unavailable.');
+            return bytes + metric.memory.workingSetSize * 1024;
+          }, 0);
+      } catch { return null; }
+    },
     featureFlags: initialFeatureFlags,
     bundledSkillsRoot: skillsService ? skillsService.getBundledRoot() : '',
     resolvePackagedLaunch,
@@ -215,6 +228,13 @@ function createBackendServiceWithDeps({
   });
   backendService.commandSandbox.on('changed', (state) => sendBridgeEvent('commandSandbox.onChanged', state));
   void backendService.commandSandbox.start().catch(() => {});
+  // Row 41: idle-gated semantic catalog over the knowledge folders (inert until
+  // the user picks an embedding model; JENNY_ENABLE_SEMANTIC_CATALOG=0 off).
+  require('./semantic-catalog-wiring').wireSemanticCatalog({
+    backendService, shellConfigService, knowledgeService, buildEffectiveFeatureFlags,
+    userDataPath: app.getPath('userData'), resourcesPath: processRef.resourcesPath || '', appRoot, log,
+    sendBridgeEvent,
+  });
   backendService.workspaceActiveUseTracker = createTrackerForService(backendService, {
     app,
     getWindow: getMainWindow,
@@ -237,39 +257,30 @@ function createBackendServiceWithDeps({
   // Wave 4 "record on first load, then self-catalog": the store persists
   // measured Ollama footprints across restarts; the observer watches
   // backend-status for a newly-ready Ollama model and polls until it shows
-  // up resident, then records it. Both are gated on model_fit_estimates —
-  // constructing them unconditionally would cost nothing at rest, but there
-  // is no reader for the data with the flag off, so skip the file I/O and
-  // listener entirely.
-  const modelFitEstimatesEnabled = buildEffectiveFeatureFlags().model_fit_estimates === true;
-  const modelFitObservationStore = modelFitEstimatesEnabled
-    ? new ModelFitObservationStore({
-      filePath: path.join(app.getPath('userData'), 'model-fit-observations.json'),
-      logger: log,
-    })
-    : null;
+  // up resident, then records it.
+  const modelFitObservationStore = new ModelFitObservationStore({
+    filePath: path.join(app.getPath('userData'), 'model-fit-observations.json'),
+    logger: log,
+  });
   const offlineIntelligenceService = new OfflineIntelligenceService({
     configService: shellConfigService,
     backendService,
     modelCatalogService,
     modelFitObservationStore,
   });
-  const modelFitObserver = modelFitObservationStore
-    ? createModelFitObserver({
-      backendService,
-      store: modelFitObservationStore,
-      getHardwareProfile: async () => {
-        try {
-          const { getHardwareProfile } = require('../backend/backend-runtime');
-          return await getHardwareProfile(backendService, {});
-        } catch (_) {
-          return null;
-        }
-      },
-      logger: log,
-      flagEnabled: () => buildEffectiveFeatureFlags().model_fit_estimates === true,
-    })
-    : null;
+  const modelFitObserver = createModelFitObserver({
+    backendService,
+    store: modelFitObservationStore,
+    getHardwareProfile: async () => {
+      try {
+        const { getHardwareProfile } = require('../backend/backend-runtime');
+        return await getHardwareProfile(backendService, {});
+      } catch (_) {
+        return null;
+      }
+    },
+    logger: log,
+  });
   // Small additive hook (see services/model-tuning-service.js): a successful
   // context-length apply for the active model should re-observe under the
   // new context, rather than waiting for the next natural reload.
@@ -354,16 +365,25 @@ function createBackendServiceWithDeps({
   // precedent above) so main.js needs no module-level slot: the tool executor's
   // live getter and the IPC handler deps both reach it through getBackendService.
   backendService.homeAssistantService = homeAssistantService;
+  // Per-project scratch note (<userData>/project-notes/<projectId>.json). The
+  // renderer note editor and the note tool both write through this service;
+  // it publishes on the backend service like homeAssistantService above.
+  const projectNotesService = new ProjectNotesService({
+    userDataPath: app.getPath('userData'),
+    logger: log,
+    // Hosts without a project service (minimal embedded/test hosts) fail open.
+    projectExists: (projectId) => (typeof backendService.projectService?.get === 'function'
+      ? Boolean(backendService.projectService.get(projectId))
+      : true),
+  });
+  projectNotesService.on('changed', (payload) => {
+    sendBridgeEvent('projectNotes.onChanged', payload);
+  });
+  backendService.projectNotesService = projectNotesService;
   const chatStreamBridge = createChatStreamBridge({
     sendBridgeEvent,
     log,
     usageHistory,
-    isStreamEnvelopeV2Enabled: () => backendService?.featureFlags?.stream_envelope_v2 === true,
-    enableStreamEnvelopeParityDiagnostics: () => (
-      app?.isPackaged !== true
-      && String(processRef.env.NODE_ENV || '').trim() !== 'production'
-      && String(processRef.env.JENNY_STREAM_ENVELOPE_V2_PARITY || '').trim() === '1'
-    ),
   });
 
   backendService.on('backend-status', (status) => {
@@ -406,6 +426,12 @@ function createBackendServiceWithDeps({
   backendService.backgroundJobTracker = backgroundJobTracker;
   backendService.on('background-job-started', (info) => {
     backgroundJobTracker.registerJob(info || {});
+  });
+
+  // Propose-mode suggestions (row 35): Electron owns the per-session record;
+  // accept applies one suggestion through the sidecar's journaled write.
+  backendService.suggestedChanges = createSuggestedChangesService({
+    backendService, emit: (event) => sendBridgeEvent('suggestedChanges.onChanged', event), log,
   });
 
   backendService.on('auth-state', (state) => {
@@ -501,6 +527,7 @@ function createBackendServiceWithDeps({
     chatStreamBridge,
     companionService,
     homeAssistantService,
+    projectNotesService,
     offlineIntelligenceService,
     modelCatalogService,
     modelFitObserver,

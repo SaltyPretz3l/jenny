@@ -26,13 +26,13 @@ function repo() {
 }
 
 function setup(snapshot, opts = {}) {
-  const dom = new JSDOM('<!doctype html><body><div id="ideRailPanel"></div></body>');
+  const dom = new JSDOM('<!doctype html><body><div id="wbView-source-control"></div></body>');
   const doc = dom.window.document;
-  const panelEl = doc.getElementById('ideRailPanel');
+  const panelEl = doc.getElementById('wbView-source-control');
   const calls = { stage: [], unstage: [], stageAll: [], discard: [], delete: [], diff: [], commit: [], getDiff: 0, write: [] };
   const store = { getSnapshot: () => snapshot };
   const deps = {
-    getDom: () => ({ ideRailPanel: panelEl }),
+    getDom: () => ({}), getMountEl: () => panelEl,
     getIde: () => ({ railPanel: opts.railPanel || 'source-control' }),
     actionButton,
     textField,
@@ -91,7 +91,7 @@ test('renders Changed and Ready to commit groups with the right per-row actions'
   assert.ok(aRow.querySelector('[data-ide-scm-action="stage"]'), 'changed row has Stage');
   assert.ok(aRow.querySelector('[data-ide-scm-action="discard"]'), 'changed row has Discard');
   assert.equal(aRow.querySelector('[data-ide-scm-action="stage"]').title, 'Stage this file for commit');
-  assert.equal(aRow.querySelector('[data-ide-scm-action="discard"]').title, 'Discard changes to this file (cannot be undone)');
+  assert.equal(aRow.querySelector('[data-ide-scm-action="discard"]').title, 'Discard all edits since the last commit (cannot be undone)');
   assert.ok(aRow.querySelector('[data-ide-scm-action="diff"]'), 'changed row has open-diff');
   const newRow = panelEl.querySelector('[data-ide-scm-path="new.txt"]');
   assert.ok(newRow.querySelector('[data-ide-scm-action="delete"]'), 'untracked row has Delete');
@@ -479,11 +479,11 @@ test('resetForRoot clears the old root\'s draft, hint, and busy flags (hyg-W4-37
 
 test('a generated message resolving after resetForRoot is discarded, not applied to the new root (hyg-W4-37-F03)', async () => {
   let resolveWrite = null;
-  const dom2 = new JSDOM('<!doctype html><body><div id="ideRailPanel"></div></body>');
-  const panelEl2 = dom2.window.document.getElementById('ideRailPanel');
+  const dom2 = new JSDOM('<!doctype html><body><div id="wbView-source-control"></div></body>');
+  const panelEl2 = dom2.window.document.getElementById('wbView-source-control');
   const snapshot2 = repo();
   const panel2 = createIdeSourceControlPanel({
-    getDom: () => ({ ideRailPanel: panelEl2 }),
+    getDom: () => ({}), getMountEl: () => panelEl2,
     getIde: () => ({ railPanel: 'source-control' }),
     actionButton,
     textField,

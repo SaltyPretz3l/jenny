@@ -20,6 +20,11 @@
   let modelObserver = null;
   let pointerdownHandler = null;
   let lastUncatalogedRefreshKey = '';
+  // Catalog reads are numbered when they start; an app-pushed snapshot counts
+  // as the newest when it applies. A read older than the last applied catalog
+  // is dropped, so a slow model_loading-era read cannot overwrite the ready one.
+  let catalogRequestSeq = 0;
+  let appliedCatalogSeq = 0;
   // Split view W2-2a: carrier pairs beyond pane 0's (attachCarriers).
   const attachedPairs = new Set();
 
@@ -53,13 +58,41 @@
     };
   }
 
+  // Catalog keys are engine-qualified. An option without an engine type (the
+  // composer's "<model> (selected)" fallback for a preferred model the list
+  // has not caught up with) resolves to the one entry with that id; two
+  // engines listing the same id stay unresolved rather than guess.
+  function catalogKeyFor(modelId, engineType) {
+    const exact = capabilityKey(modelId, engineType);
+    if (modelCapabilities.has(exact)) return exact;
+    const untyped = capabilityKey(modelId);
+    if (modelCapabilities.has(untyped)) return untyped;
+    if (String(engineType || '').trim()) return '';
+    const suffix = `::${String(modelId || '').trim()}`;
+    let match = '';
+    for (const key of modelCapabilities.keys()) {
+      if (!key.endsWith(suffix) || key.indexOf('::') !== key.length - suffix.length) continue;
+      if (match) return '';
+      match = key;
+    }
+    return match;
+  }
+
   function capabilitiesFor(modelId, engineType) {
-    return modelCapabilities.get(capabilityKey(modelId, engineType))
-      || modelCapabilities.get(capabilityKey(modelId))
-      || null;
+    const key = catalogKeyFor(modelId, engineType);
+    return key ? modelCapabilities.get(key) || null : null;
   }
 
   function applyModelCatalog(payload) {
+    const applied = applyCatalogEntries(payload);
+    if (applied) {
+      catalogRequestSeq += 1;
+      appliedCatalogSeq = catalogRequestSeq;
+    }
+    return applied;
+  }
+
+  function applyCatalogEntries(payload) {
     if (!payload || typeof payload !== 'object' || payload.available === false) {
       return false;
     }
@@ -81,9 +114,12 @@
   async function refreshModelCapabilities() {
     const listModels = root.jennyShell?.models?.list;
     if (typeof listModels !== 'function') return;
+    catalogRequestSeq += 1;
+    const seq = catalogRequestSeq;
     try {
       const payload = await listModels();
-      applyModelCatalog(payload);
+      if (disposed || seq < appliedCatalogSeq) return;
+      if (applyCatalogEntries(payload)) appliedCatalogSeq = seq;
     } catch (_error) {
       // The existing model picker owns user-visible backend errors. Capability
       // refresh is additive and must not make an otherwise usable picker fail.
@@ -134,8 +170,7 @@
   }
 
   function isCataloged(modelId, engineType) {
-    return modelCapabilities.has(capabilityKey(modelId, engineType))
-      || modelCapabilities.has(capabilityKey(modelId));
+    return Boolean(catalogKeyFor(modelId, engineType));
   }
 
   // renderSettings assigns the saved effort to the select; a value with no

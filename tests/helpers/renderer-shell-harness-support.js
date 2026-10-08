@@ -1,3 +1,4 @@
+const SETTINGS_SCRIPTS = require('../../renderer/shell/renderer-settings-script-manifest').map(([src]) => src);
 const IDE_SCRIPTS = require('../../renderer/shell/renderer-ide-script-manifest').map(([src]) => src);
 const fs = require('node:fs');
 const path = require('node:path');
@@ -159,7 +160,7 @@ function createUpdatesStub(options, state, addListener, emitUpdatesChanged) {
 }
 
 module.exports = {
-  SCRIPT_ORDER, IDE_SCRIPT_ORDER,
+  SCRIPT_ORDER, IDE_SCRIPT_ORDER, SETTINGS_SCRIPTS,
   createCanvasContext,
   createPretextLayoutMock,
   createSchedulerStub,

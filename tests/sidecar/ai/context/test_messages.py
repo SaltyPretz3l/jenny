@@ -5,7 +5,6 @@ from sidecar.ai.context.messages import (
     MAX_SEMANTIC_MESSAGES,
     build_context_block_system_messages,
     compact_semantic_messages,
-    compact_semantic_messages_with_budget,
     compact_semantic_messages_with_report,
     ensure_non_empty_assistant_content,
     filter_orphaned_thinking_only_messages,
@@ -16,7 +15,6 @@ from sidecar.ai.context.messages import (
     strip_thinking_blocks,
     strip_thinking_from_all_messages,
 )
-from sidecar.ai.context.token_budget import TokenBudget
 
 
 def test_sanitize_semantic_message_rejects_system_role_from_request_history() -> None:
@@ -149,19 +147,21 @@ def test_round_retention_never_evicts_the_compaction_summary() -> None:
     assert len(compacted) <= 7
 
 
-def test_budget_retention_never_evicts_the_compaction_summary() -> None:
-    # Same pin for the token-aware walk used on the live streaming path.
+def test_byte_ceiling_retention_never_evicts_the_compaction_summary() -> None:
+    # Same pin through the router's admission entry, hitting the aggregate
+    # byte ceiling rather than the row count.
     summary = "## Compacted Conversation Summary\nsummary body"
     history: list[dict[str, object]] = [{"role": "system", "content": summary}]
     for index in range(30):
-        history.append({"role": "user", "content": f"question_{index} " + "x " * 120})
-        history.append({"role": "assistant", "content": f"answer_{index} " + "y " * 120})
-    budget = TokenBudget(context_window=400, max_output_tokens=64, reserved_for_summary=64)
+        history.append({"role": "user", "content": f"question_{index} " + "x " * 25_000})
+        history.append({"role": "assistant", "content": f"answer_{index} " + "y " * 25_000})
 
-    compacted = compact_semantic_messages_with_budget(history, budget=budget)
+    result = compact_semantic_messages_with_report(history)
 
-    assert compacted[0] == {"role": "system", "content": summary}
-    assert compacted[-1]["content"].startswith("answer_29")
+    assert result.input_complete is False
+    assert result.dropped_messages > 0
+    assert result.messages[0] == {"role": "system", "content": summary}
+    assert str(result.messages[-1]["content"]).startswith("answer_29")
 
 
 def test_compact_semantic_messages_strips_encoded_payloads_and_applies_limit() -> None:
@@ -375,10 +375,12 @@ def test_large_context_path_keeps_all_43_rows_in_complete_rounds() -> None:
     assert compacted[0]["content"] == "message_0"
 
 
-def test_token_budget_compaction_never_splits_latest_tool_round() -> None:
+def test_admission_keeps_an_over_ceiling_latest_tool_round_whole() -> None:
+    # The newest round is always retained whole, even when it alone exceeds
+    # the ceiling: older rounds go, the tool round is never split.
     history: list[dict[str, object]] = [
-        {"role": "user", "content": "old " * 400},
-        {"role": "assistant", "content": "old answer " * 400},
+        {"role": "user", "content": "old"},
+        {"role": "assistant", "content": "old answer"},
         {"role": "user", "content": "latest"},
         {
             "role": "assistant",
@@ -390,12 +392,12 @@ def test_token_budget_compaction_never_splits_latest_tool_round() -> None:
         {"role": "tool", "tool_call_id": "a", "content": "A"},
         {"role": "tool", "tool_call_id": "b", "content": "B"},
     ]
-    budget = TokenBudget(context_window=400, max_output_tokens=64, reserved_for_summary=64)
 
-    compacted = compact_semantic_messages_with_budget(history, budget=budget)
+    result = compact_semantic_messages_with_report(history, max_messages=2)
 
-    assert compacted[0]["content"] == "latest"
-    assert [message.get("tool_call_id") for message in compacted if message["role"] == "tool"] == [
+    assert result.dropped_messages == 2
+    assert result.messages[0]["content"] == "latest"
+    assert [m.get("tool_call_id") for m in result.messages if m["role"] == "tool"] == [
         "a",
         "b",
     ]

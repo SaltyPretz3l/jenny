@@ -5,7 +5,8 @@
  * Structured-result contracts (never throws across the IPC seam), the
  * never-load-native-code-when-rootless pin (a rootless spawn must not call
  * the pty module loader), spawn shape (cwd,
- * scrubbed env, clamped cols/rows), single-session policy, write/resize/kill
+ * scrubbed env, clamped cols/rows), same-slot reuse (multi-slot lives in
+ * workspace-pty-service-slots.test.js), write/resize/kill
  * plumbing to the IPty handle, byte-capped onData / onExit bridge events,
  * MODULE_LOAD_FAILED fail-soft, and the powershell->cmd fixture fallback.
  * Uses a fake pty module - no native ConPTY is launched. */
@@ -118,7 +119,7 @@ test('spawn shape: cwd is root, env scrubbed, cols/rows forwarded and clamped', 
 });
 
 // 5. single-session: second spawn -> alreadyRunning, same id, no re-spawn.
-test('single-session policy: second spawn reuses the live session', async () => {
+test('same-slot policy: second spawn on the default slot reuses the live session', async () => {
   const { service, spawns } = createFixture();
   const first = await service.spawn({ cols: 80, rows: 24 });
   const again = await service.spawn({ cols: 80, rows: 24 });
@@ -280,7 +281,7 @@ test('onExit forwards payload, clears the registry, and lets a new session start
   const first = await service.spawn({ cols: 80, rows: 24 });
   lastPty()._fireExit({ exitCode: 0, signal: null });
   const exitEvents = events.filter((e) => e.key === 'workspacePty.onExit');
-  assert.deepEqual(exitEvents[0].payload, { sessionId: first.sessionId, exitCode: 0, signal: '' });
+  assert.deepEqual(exitEvents[0].payload, { sessionId: first.sessionId, slot: 1, exitCode: 0, signal: '' });
   assert.equal(service.hasSession(), false);
 
   const second = await service.spawn({ cols: 80, rows: 24 });

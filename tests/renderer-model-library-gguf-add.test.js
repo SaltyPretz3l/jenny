@@ -373,7 +373,7 @@ function sectionHarness(t, options = {}) {
   const windowRef = dom.window;
   const calls = [];
   const state = {
-    features: { featureFlags: { model_management_ui: true, llama_server_acceleration: true } },
+    features: { featureFlags: { llama_server_acceleration: true } },
     localEngines: normalizeLocalEngines({ openaiCompatible: { managed: {
       enabled: true, perModel: options.perModel || { [OWNER_KEY]: libraryEntry(OWNER_TAG, OWNER_FILE) },
     } } }),

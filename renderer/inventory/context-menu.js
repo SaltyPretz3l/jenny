@@ -68,6 +68,7 @@
     var menu = doc.createElement('div');
     menu.className = 'inv-context-menu';
     menu.setAttribute('role', 'menu');
+    if (opts.ariaLabel) menu.setAttribute('aria-label', String(opts.ariaLabel));
 
     for (var i = 0; i < opts.items.length; i++) {
       var item = opts.items[i];

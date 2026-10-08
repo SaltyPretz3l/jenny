@@ -55,6 +55,13 @@
       sectionId: 'tools',
       keywords: ['auto', 'approval', 'streak', 'cap', 'limit', jt('settings.fieldCopy.autoApproveStreakCapInput.keywords.turn', 'turn')],
     },
+    // The semantic catalog's toggle (renderer-knowledge-catalog.js TOGGLE_ID), inside Knowledge folders.
+    'knowledge-catalog-enabled': {
+      label: jt('catalog.title', 'Search by meaning'),
+      description: jt('catalog.description', 'Catalogs these folders while Jenny is idle, so searches also find passages that use different words.'),
+      sectionId: 'tools',
+      keywords: ['semantic', 'embedding', 'embeddings', 'vector', 'catalog', 'meaning', 'gguf'],
+    },
     // ── Context ──────────────────────────────────────────────────────────
     modelStartupLoadToggle: {
       label: jt('settings.models.startupLoad.label', 'Load model at startup'),
@@ -94,7 +101,7 @@
       sectionId: 'context',
       keywords: [jt('settings.fieldCopy.compactionPromptField.keywords.summaryPrompt', 'summary prompt'), jt('settings.fieldCopy.compactionPromptField.keywords.customSummarize', 'custom summarize'), jt('settings.fieldCopy.compactionPromptField.keywords.compactionPrompt', 'compaction prompt')],
     },
-    // ── Skills (merged into Plugins) ─────────────────────────────────────
+    // ── Skills (merged into Extensions) ──────────────────────────────────
     skillsUserToggle: {
       label: jt('settings.fieldCopy.skillsUserToggle.label', 'Enable user skills'),
       description: jt('settings.fieldCopy.skillsUserToggle.description', 'Include skills you keep in your personal skills folder.'),

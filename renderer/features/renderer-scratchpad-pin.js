@@ -10,7 +10,7 @@
  * pad uses), so the pin editor and the Home pad stay last-write-wins consistent.
  *
  * The controller is pure UI driven by getState() (reads homeConfig.scratchpad +
- * the scratchpad_pin flag). render() is idempotent — it skips when nothing it
+ * nothing else). render() is idempotent — it skips when nothing it
  * shows changed, and NEVER rebuilds while its editor is focused (so an incoming
  * config echo can't clobber mid-typing). It owns two DOM nodes (#pinnedNoteTabs
  * for the strip, #pinnedNoteLayer for the editor popover) and its delegated
@@ -104,11 +104,6 @@
         }
       }
       return out;
-    }
-
-    function flagOn(state) {
-      const flags = state && state.features && state.features.featureFlags;
-      return Boolean(flags && flags.scratchpad_pin === true);
     }
 
     function editorEl() {
@@ -245,14 +240,13 @@
         return;
       }
       const state = getState();
-      const on = flagOn(state);
       const scratchpad = state && state.homeConfig ? state.homeConfig.scratchpad : null;
-      const pinned = on ? resolvePinned(scratchpad) : [];
+      const pinned = resolvePinned(scratchpad);
       // Drop an expanded pin that was unpinned/deleted out from under us.
       if (expandedId && !pinned.some((note) => note.id === expandedId)) {
         expandedId = null;
       }
-      const sig = JSON.stringify([on, expandedId, pinned.map((note) => [note.id, note.title, note.text])]);
+      const sig = JSON.stringify([expandedId, pinned.map((note) => [note.id, note.title, note.text])]);
       if (sig === lastSig) {
         return;
       }
@@ -266,14 +260,14 @@
         return;
       }
       lastSig = sig;
-      if (!on || pinned.length === 0) {
+      if (pinned.length === 0) {
         tabsEl.innerHTML = '';
         tabsEl.hidden = true;
         layerEl.innerHTML = '';
         layerEl.hidden = true;
         return;
       }
-      // Bind only once we actually have pins to show — so a flag-OFF / zero-pin
+      // Bind only once we actually have pins to show — so a zero-pin
       // session never attaches the global document/view listeners.
       bind();
       // Tab strip — one pill per pin, in pin order (the strip is the index).

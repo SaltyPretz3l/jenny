@@ -18,7 +18,8 @@ function createConversationToolExecutor({ configService, logger, permissionStore
       readOnly: entry.read_only === true, sideEffecting: entry.side_effecting === true,
       toolFamily: entry.tool_family, sourceKind: entry.source_kind,
       workspaceRequired: entry.availability?.workspace_required !== false,
-      planModeOnly: entry.availability?.plan_mode_only === true });
+      planModeOnly: entry.availability?.plan_mode_only === true,
+      proposeModeOnly: entry.availability?.propose_mode_only === true });
   }
   return new ToolExecutor({ registry, configService, logger, permissionStore, pathPolicy: null });
 }

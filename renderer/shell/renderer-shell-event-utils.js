@@ -56,6 +56,7 @@
       navigateToDiagnosticsTrace,
       refreshPhasePercentiles,
       resetPhasePercentiles,
+      chooseWorkspaceRoot,
       handleWorkspaceShortcut,
     } = deps.callbacks;
 
@@ -235,6 +236,9 @@
             resetPhasePercentiles,
             scrollLogsToBottom,
             ensureLogRowMounted,
+            chooseWorkspaceRoot,
+            // The failed engine rides along so the retry does not land on the live engine pin.
+            retryModelLoad: (model, engine) => Promise.resolve(window.jennyShell?.models?.load?.(engine ? { model, engine_type: engine } : model) ?? null),
           },
         });
         logsV2Bindings.bind(listenerOptions);

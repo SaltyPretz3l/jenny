@@ -4,9 +4,10 @@ const assert = require('node:assert/strict');
 const {
   loadRendererApp,
   waitForUi,
+  openSettingsView,
 } = require('./helpers/renderer-shell-harness');
 
-test('renderer shows skills in Plugins & Extensions and retires the Tips settings section', async (t) => {
+test('renderer shows skills in Extensions and retires the Tips settings section', async (t) => {
   const { window } = await loadRendererApp({
     shell: {
       skills: {
@@ -31,7 +32,7 @@ test('renderer shows skills in Plugins & Extensions and retires the Tips setting
 
   await waitForUi(window, 40);
 
-  // Skills remains merged into Plugins & Extensions. Tips moved to one Home
+  // Skills remains merged into Extensions. Tips moved to one Home
   // preference and no longer owns a Settings section.
   assert.equal(window.document.getElementById('skillsSettingsNavItem'), null);
   assert.equal(window.document.getElementById('skillsSettingsSection').hidden, false);
@@ -113,6 +114,7 @@ test('renderer keeps Home navigation and skill actions available without tip chi
   t.after(async () => {
     await window.close();
   });
+  await openSettingsView(window);
 
   await waitForUi(window, 40);
 
@@ -125,7 +127,7 @@ test('renderer keeps Home navigation and skill actions available without tip chi
 
   // Skills opens via its Plugins host (the standalone skills nav item is gone); its
   // disclosed folder actions still call through to the shell.
-  window.document.querySelector('nav.settings-nav [data-settings-section="plugins"]').click();
+  window.document.querySelector('nav.settings-nav [data-settings-section="extensions"]').click();
   await waitForUi(window, 30);
   window.document.querySelector('[data-skills-action="toggle-folders"]').click();
   window.document.querySelector('[data-skills-action="open-folder"][data-skills-scope="user"]').click();
@@ -170,6 +172,7 @@ test('renderer shows an error toast when opening a skill folder fails', async (t
   t.after(async () => {
     await window.close();
   });
+  await openSettingsView(window);
 
   await waitForUi(window, 40);
   // Skills opens via its Tools host now (the standalone skills nav item is gone).
@@ -206,6 +209,7 @@ test('renderer refreshes skills without rendering tip chips', async (t) => {
   t.after(async () => {
     await window.close();
   });
+  await openSettingsView(window);
 
   await waitForUi(window, 40);
   assert.equal(window.document.getElementById('promptGrid'), null);
@@ -333,6 +337,7 @@ test('renderer exposes consolidated salvage feature controls in settings', async
   t.after(async () => {
     await window.close();
   });
+  await openSettingsView(window);
 
   await waitForUi(window, 50);
 
@@ -398,6 +403,7 @@ test('renderer tools settings shows a workspace-root CTA when workspace-aware to
   t.after(async () => {
     await window.close();
   });
+  await openSettingsView(window);
 
   await waitForUi(window, 40);
 
@@ -530,6 +536,7 @@ test('profile and setup card wraps the local profile editor in a labelled group'
   t.after(async () => {
     await window.close();
   });
+  await openSettingsView(window);
   await waitForUi(window, 40);
   const doc = window.document;
   const card = doc.querySelector('section.settings-card[data-settings-section="account"]');

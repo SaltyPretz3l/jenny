@@ -8,6 +8,8 @@ async function loadRendererTestApp(t, options) {
   t.after(async () => {
     await app.dispose();
   });
+  app.window.document.querySelector('[data-tab-id="settings"]').click();
+  await waitForUi(app.window, 100);
   return app;
 }
 

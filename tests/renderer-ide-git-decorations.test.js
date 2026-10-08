@@ -12,8 +12,8 @@ const settle = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
 // ── Tree git decorations ──────────────────────────────────────────────────
 
 function buildTree(getGitDecoration) {
-  const dom = new JSDOM('<!doctype html><body><div id="ideRailPanel"></div></body>');
-  const panelEl = dom.window.document.getElementById('ideRailPanel');
+  const dom = new JSDOM('<!doctype html><body><div id="wbView-source-control"></div></body>');
+  const panelEl = dom.window.document.getElementById('wbView-source-control');
   const entries = [
     { name: 'src', relPath: 'src', kind: 'directory' },
     { name: 'a.js', relPath: 'a.js', kind: 'file' },
@@ -25,7 +25,7 @@ function buildTree(getGitDecoration) {
     listDirectory: async ({ path }) => ({ entries: path === '' ? entries : [], truncated: false }),
   };
   const tree = createIdeTree({
-    getDom: () => ({ ideRailPanel: panelEl }),
+    getDom: () => ({}), getMountEl: () => panelEl,
     getIde: () => ({ railPanel: 'explorer', expandedDirs: new Set(), activeTabPath: '' }),
     getWorkspaceFsApi: () => fakeFs,
     getGitDecoration,

@@ -43,14 +43,7 @@
     return String(session?.title || '').trim() || jt('ide.chipPicker.newChat', 'New Chat');
   }
 
-  function defaultEscape(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const defaultEscape = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function createIdeChipPicker(deps) {
     const options = deps || {};
@@ -204,7 +197,7 @@
     // opened file; called by the controller after the doc is activated.
     function applyDefaults(path) {
       if (sessionTabSize !== null) {
-        editorHost?.setTabSize?.(sessionTabSize);
+        editorHost?.setTabSize?.(sessionTabSize, path);
       }
       if (sessionEol !== null) {
         editorHost?.setEol?.(path, sessionEol);

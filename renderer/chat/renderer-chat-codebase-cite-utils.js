@@ -434,6 +434,12 @@
       }
     }
 
+    // The split-view pane of the link (W7c: a bound Workspace chat opens in its group).
+    function citeTargetPane(anchor) {
+      var pane = anchor && typeof anchor.closest === 'function' ? anchor.closest('.chat-pane[data-pane-id]') : null;
+      return pane && pane.getAttribute('data-pane-id') === '1' ? 1 : 0;
+    }
+
     function openCitation(citation, anchor) {
       if (!citation) {
         return;
@@ -447,7 +453,7 @@
       try {
         if (win && typeof win.CustomEvent === 'function' && typeof win.dispatchEvent === 'function') {
           var event = new win.CustomEvent('ide:open-file-at-line', {
-            detail: { path: citation.path, line: citation.line, column: citation.column || null },
+            detail: { path: citation.path, line: citation.line, column: citation.column || null, pane: citeTargetPane(anchor) },
             bubbles: true,
             cancelable: true,
           });

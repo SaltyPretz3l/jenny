@@ -151,6 +151,7 @@ const { createHostPorts } = require('../host/host-ports');
 const {
   initializeConversationStorage,
 } = require('./backend-conversation-storage');
+const { backfillTaskBoardProjects } = require('./task-board-project-backfill');
 const MAX_DISMISSED_MEMORY_FINGERPRINTS = 1000;
 class BackendService extends EventEmitter {
   constructor(options) {
@@ -242,6 +243,9 @@ class BackendService extends EventEmitter {
     this.systemStatsProvider = typeof options.systemStatsProvider === 'function'
       ? options.systemStatsProvider
       : null;
+    this.appMemoryProvider = typeof options.appMemoryProvider === 'function'
+      ? options.appMemoryProvider
+      : null;
     this.attachmentAssetStore = options.attachmentAssetStore || null;
     // Read by cleanupDeletedSession's ipc_payloads step. Without this the
     // whole reference-counted payload cleanup is dead code in production.
@@ -260,6 +264,9 @@ class BackendService extends EventEmitter {
     // event loop and freeze the UI; bursts now collapse to one async write per
     // debounce window, and dispose/stop drains pending writes explicitly.
     initializeConversationStorage(this, options);
+    if (typeof this.configService?.stampFollowUpProjects === 'function') {
+      backfillTaskBoardProjects({ configService: this.configService, sessionStore: this.sessionStore, logger: emitLog });
+    }
     const codexCheckSetup = typeof options.checkCodexDiagnosticSetup === 'function'
       ? options.checkCodexDiagnosticSetup
       : checkCodexDiagnosticSetup;

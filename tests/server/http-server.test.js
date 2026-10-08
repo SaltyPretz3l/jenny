@@ -151,6 +151,25 @@ test('bodyless mutation routes reject framed request bodies', async (t) => {
   assert.equal((await f.request('POST', '/api/v1/auth/logout', undefined, headers)).status, 200);
 });
 
+test('revoke rejects non-string session ids before calling auth', async (t) => {
+  const { hostFailure } = require('../../server/api-contract');
+  const f = await fixture(t);
+  const login = await f.request('POST', '/api/v1/auth/login', { password: 'test-password-strong' });
+  const headers = { Cookie: login.headers['set-cookie'][0].split(';', 1)[0],
+    'X-CSRF-Token': login.body.csrf_token };
+  const revoke = t.mock.method(f.auth, 'revokeSession');
+  for (const [name, sessionId] of [['number', 123], ['array', ['a']], ['object', {}], ['null', null]]) {
+    await t.test(name, async () => {
+      revoke.mock.resetCalls();
+      const response = await f.request('POST', '/api/v1/auth/revoke', { session_id: sessionId }, headers);
+      assert.equal(response.status, 400);
+      assert.deepEqual(response.body.error, { ...hostFailure('invalid', 'invalid_session_reference').error,
+        request_id: response.body.error.request_id });
+      assert.equal(revoke.mock.calls.length, 0);
+    });
+  }
+});
+
 
 test('HTTP command failures preserve the canonical error status and retry contract', async (t) => {
   const { hostFailure } = require('../../server/api-contract');

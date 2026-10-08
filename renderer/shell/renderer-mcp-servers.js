@@ -70,7 +70,6 @@
 
   function createMcpServersController(deps) {
     var options = deps || {};
-    var state = options.state || {};
     var windowRef = options.windowRef || root;
     var documentRef = options.documentRef || windowRef.document;
     var actionButton = root.inventoryActionButton;
@@ -89,7 +88,6 @@
       overlayManager: options.overlayManager, id: 'mcpServerDetailsDrawer' });
     function bridge() { return windowRef.jennyShell?.mcpDiscovery || null; }
     function authBridge() { return windowRef.jennyShell?.mcpAuth || null; }
-    function enabled() { return state.features?.featureFlags?.mcp_management_ui === true; }
     function host() { return documentRef?.getElementById(HOST_ID) || null; }
     function serverByName(name) { return discovery.servers.find(function (row) { return row.name === name; }) || null; }
     function reportBridgeFailure(event, name, message) {
@@ -141,7 +139,7 @@
         focus: function () { resolveFocusTarget(identity)?.focus?.(); } };
     }
     function drawerActiveFor(name, kind) {
-      return !disposed && enabled() && drawer.isOpen() && drawerState
+      return !disposed && drawer.isOpen() && drawerState
         && (name === undefined || drawerState.name === name)
         && (kind === undefined || drawerState.kind === kind);
     }
@@ -167,20 +165,25 @@
       if (!textField || !selectField) return '<div class="settings-note">' + escapeHtml(jt('mcp.servers.editorUnavailable', 'Connection editor is unavailable.')) + '</div>';
       var row = server || {};
       var authKind = String(row.auth?.kind || 'none');
+      var remote = row.transport === 'sse';
       return '<div class="mcp-server-editor" data-mcp-editor data-mcp-original-name="' + escapeHtml(name) + '">'
         + textField({ id: 'mcpServerName', label: jt('mcp.servers.connectionName', 'Connection name'), value: row.name || '', maxLength: 64 })
         + selectField({ id: 'mcpServerTransport', label: jt('mcp.servers.transport', 'Transport'), value: row.transport || 'stdio',
           options: [{ value: 'stdio', label: jt('mcp.servers.localStdio', 'Local stdio') }, { value: 'sse', label: jt('mcp.servers.remoteSse', 'Remote SSE') }] })
         + textField({ id: 'mcpServerTarget', label: row.transport === 'sse' ? jt('mcp.servers.httpsUrl', 'HTTPS URL') : jt('mcp.servers.command', 'Command'),
           value: row.transport === 'sse' ? row.url || '' : row.command || '', maxLength: 2048 })
+        + '<div class="mcp-editor-group" data-mcp-field-group="stdio"' + (remote ? ' hidden' : '') + '>'
         + textField({ id: 'mcpServerArgs', label: jt('mcp.servers.arguments', 'Arguments (one per line)'),
           value: Array.isArray(row.args) ? row.args.join('\n') : '', maxLength: 4096, multiline: true })
+        + '</div><div class="mcp-editor-group" data-mcp-field-group="remote"' + (remote ? '' : ' hidden') + '>'
         + selectField({ id: 'mcpServerAuthKind', label: jt('mcp.servers.authentication', 'Authentication'), value: authKind,
           options: [{ value: 'none', label: jt('common.none', 'None') }, { value: 'bearer', label: jt('mcp.servers.bearerToken', 'Bearer token') },
             { value: 'oauth_client_credentials', label: jt('mcp.servers.oauthClientCredentials', 'OAuth client credentials') }] })
+        + '<div class="mcp-editor-group" data-mcp-field-group="oauth"' + (authKind === 'oauth_client_credentials' ? '' : ' hidden') + '>'
         + textField({ id: 'mcpServerTokenUrl', label: jt('mcp.servers.oauthTokenUrl', 'OAuth token URL'), value: row.auth?.token_url || '', maxLength: 2048 })
         + textField({ id: 'mcpServerClientId', label: jt('mcp.servers.oauthClientId', 'OAuth client ID'), value: row.auth?.client_id || '', maxLength: 512 })
         + textField({ id: 'mcpServerScope', label: jt('mcp.servers.oauthScope', 'OAuth scope'), value: row.auth?.scope || '', maxLength: 1024 })
+        + '</div></div>'
         + '<div class="settings-actions">' + actionButton({ label: name ? jt('mcp.servers.saveChanges', 'Save changes') : jt('mcp.servers.createConnection', 'Create connection'), size: 'sm',
           dataset: { 'mcp-servers-action': 'save-editor', 'mcp-server-name': name } })
         + actionButton({ label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm', dataset: {
@@ -250,6 +253,27 @@
       drawer.open({ title: title, bodyHtml: body,
         restoreFocusTo: focusRestoreHandle(drawerState.restoreFocusIdentity) });
     }
+    // The editor shows only the fields its choices use: arguments for a local
+    // command, authentication for a remote URL, the OAuth fields for OAuth.
+    function syncEditorFields() {
+      var editor = documentRef.querySelector('[data-mcp-editor]');
+      if (!editor) return;
+      var remote = documentRef.getElementById('mcpServerTransport')?.value === 'sse';
+      var oauth = documentRef.getElementById('mcpServerAuthKind')?.value === 'oauth_client_credentials';
+      var shown = { stdio: !remote, remote: remote, oauth: oauth };
+      editor.querySelectorAll('[data-mcp-field-group]').forEach(function (group) {
+        group.hidden = !shown[group.getAttribute('data-mcp-field-group')];
+      });
+      var targetLabel = remote ? jt('mcp.servers.httpsUrl', 'HTTPS URL') : jt('mcp.servers.command', 'Command');
+      var target = documentRef.getElementById('mcpServerTarget');
+      var labelText = target?.closest('label')?.querySelector('.inv-text-field-label');
+      if (labelText) labelText.textContent = targetLabel;
+      target?.setAttribute('aria-label', targetLabel);
+    }
+    function handleChange(event) {
+      var id = event.target && event.target.id;
+      if (id === 'mcpServerTransport' || id === 'mcpServerAuthKind') syncEditorFields();
+    }
     function rowMarkup(server) {
       if (server.builtin) return '<div class="settings-field-row mcp-servers-row" data-mcp-server-row="'
         + escapeHtml(server.name) + '"><span class="settings-field-row-text"><strong>'
@@ -271,7 +295,7 @@
           checked: server.enabled, disabled: disabled, className: 'mcp-servers-row-toggle' }) || '') + '</span></div>';
     }
     function groupMarkup() {
-      var readonly = discovery.readOnly ? '<div class="settings-note plugins-settings-error" data-mcp-read-only>'
+      var readonly = discovery.readOnly ? '<div class="settings-note extensions-settings-error" data-mcp-read-only>'
         + escapeHtml(jt('mcp.servers.configurationPreserved', 'This MCP configuration was preserved unchanged.')) + ' ' + escapeHtml(discovery.remediationReason) + '.</div>' : '';
       var operation = busy ? '<p class="settings-note" role="status">Working…</p>' : '';
       return '<div class="settings-group settings-group--wide mcp-servers-group" role="group" '
@@ -287,12 +311,12 @@
       var target = host(); if (!target || disposed) return;
       var focus = captureFocus() || pendingFocusIdentity;
       if (focus) pendingFocusIdentity = focus;
-      target.innerHTML = enabled() && actionButton ? groupMarkup() : '';
+      target.innerHTML = actionButton ? groupMarkup() : '';
       restoreFocus(focus);
       if (!busy) pendingFocusIdentity = null;
     }
     async function load() {
-      if (disposed || !enabled()) return null;
+      if (disposed) return null;
       if (loadPromise) return loadPromise;
       loadPromise = Promise.allSettled([bridge()?.getState?.(), authBridge()?.getStatus?.()]).then(function (results) {
         if (disposed) return null;
@@ -374,7 +398,7 @@
           message: jt('mcp.servers.inspectConfirmMessage', 'Run this one-time MCP inspection?\n\n{command}', { command: exact }), confirmLabel: jt('mcp.servers.runInspection', 'Run inspection'), cancelLabel: jt('common.cancel', 'Cancel') });
         if (confirmed && drawerActiveFor(name)) result = await run('testServer', { name: name, confirmed: true });
       }
-      if (result?.ok && !disposed && enabled()) {
+      if (result?.ok && !disposed) {
         inspections.set(name, { toolCount: Number(result.tool_count) || 0,
           toolsDigest: String(result.tools_digest || ''), tools: Array.isArray(result.tools)
             ? result.tools.map(function (tool) { return { name: String(tool.name || ''),
@@ -391,7 +415,7 @@
       if (wasSaved(result) && drawerActiveFor(name)) { inspections.delete(name); drawerState = null; drawer.close(); }
     }
     function showDetails(name, target) {
-      if (disposed || !enabled()) return;
+      if (disposed) return;
       drawerState = { kind: 'details', name: name,
         restoreFocusIdentity: drawerState?.restoreFocusIdentity || focusIdentityFor(target) };
       drawDrawer();
@@ -439,20 +463,21 @@
       void run('setServerEnabled', { name: server.name, enabled: event.detail?.checked === true });
     }
     function syncFeatureState() {
-      if (enabled()) load();
-      else { pendingFocusIdentity = null; render(); drawerState = null; drawer.close(); }
+      load();
     }
     function bind() {
       if (disposed) return;
       root.inventoryToggleSwitch?.initToggleHandlers?.(documentRef);
       documentRef.addEventListener('click', handleClick);
       documentRef.addEventListener('inv-toggle-change', handleToggle);
+      documentRef.addEventListener('change', handleChange);
       syncFeatureState();
     }
     function dispose() {
       disposed = true;
       documentRef.removeEventListener('click', handleClick);
       documentRef.removeEventListener('inv-toggle-change', handleToggle);
+      documentRef.removeEventListener('change', handleChange);
       drawer.dispose(); confirmDialog?.dispose?.();
     }
     return { bind: bind, dispose: dispose, render: render, refresh: load, syncFeatureState: syncFeatureState,

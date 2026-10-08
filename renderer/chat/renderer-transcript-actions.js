@@ -91,9 +91,16 @@
                 ? jt('chat.transcript.branchFromHereShortcut', 'Branch from here (Ctrl+Shift+B)')
                 : description;
 
+      // Branch and Elaborate are not universal icons: they show their word
+      // (row 38 item 7, variant B); edit, regenerate and copy stay icon-only.
+      const word = action === 'branch'
+        ? jt('chat.transcript.branchShort', 'Branch')
+        : action === 'elaborate'
+          ? jt('chat.transcript.elaborateShort', 'Elaborate')
+          : '';
       return `
         <button
-          class="chat-hover-action"
+          class="chat-hover-action${word ? ' chat-hover-action--labeled' : ''}"
           type="button"
           data-message-action="${escapeHtml(action)}"
           data-message-id="${escapeHtml(message.id)}"
@@ -101,7 +108,7 @@
           title="${escapeHtml(tooltip)}"
           ${disabled ? 'disabled aria-disabled="true"' : ''}
         >
-          ${renderMessageActionIcon(action)}
+          ${renderMessageActionIcon(action)}${word ? `<span class="chat-hover-action-word">${escapeHtml(word)}</span>` : ''}
         </button>
       `;
     }

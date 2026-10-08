@@ -32,9 +32,7 @@
     return Object.freeze(value);
   }
 
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function assetPaths(attachments) {
     return [...new Set((Array.isArray(attachments) ? attachments : [])
@@ -45,6 +43,11 @@
   function createSendReceiptStore(deps) {
     const state = deps?.state || {};
     const chatInput = deps?.chatInput || null;
+    // The session this store's input shows: a second pane's own (its input is pane-scoped and,
+    // hosted in the Workspace, its session never becomes the current one), else the current one.
+    const getInputSessionId = typeof deps?.getInputSessionId === 'function'
+      ? deps.getInputSessionId
+      : () => state.currentSessionId;
     const getComposerController = typeof deps?.getComposerController === 'function'
       ? deps.getComposerController
       : () => null;
@@ -202,7 +205,7 @@
         record.attachments = [];
         record.touchedAtMs = Date.now();
       }
-      const liveSessionId = normalizeId(state.currentSessionId);
+      const liveSessionId = normalizeId(getInputSessionId());
       const generationCurrent = Number(record?.generation || 0) === receipt.rendererGeneration;
       if (receipt.consumeDraft && (!liveSessionId || liveSessionId === sessionId) && generationCurrent) {
         if (chatInput) chatInput.value = '';
@@ -284,7 +287,7 @@
       record.attachments = clone(receipt.payload.attachments) || [];
       record.sendReceiptId = '';
       record.touchedAtMs = Date.now();
-      const liveSessionId = normalizeId(state.currentSessionId);
+      const liveSessionId = normalizeId(getInputSessionId());
       if (!liveSessionId || liveSessionId === sessionId) {
         if (chatInput) chatInput.value = record.text;
       }

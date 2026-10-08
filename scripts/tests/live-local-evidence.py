@@ -532,7 +532,7 @@ def run_vision(
                             "sourceKind": "file",
                         }
                     ],
-                    mode="chat",
+                    mode="assist",
                 ),
                 timeout_seconds=REQUEST_TIMEOUT_SECONDS,
             )

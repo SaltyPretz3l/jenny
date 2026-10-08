@@ -209,7 +209,7 @@
   }
 
   // `stats` (optional): a plain { reused, cloned, removed } accumulator for
-  // the chat_timeline_render_telemetry diagnostics (Track A). Absent/undefined
+  // the render-path telemetry diagnostics (Track A). Absent/undefined
   // => zero behavior change, nothing is read or written on it.
   function morphChildren(target, source, stats) {
     let cursor = target.firstChild;
@@ -759,7 +759,7 @@
     };
   }
 
-  // Returns { outcome, stats } for chat_timeline_render_telemetry (Track A)
+  // Returns { outcome, stats } for the render-path telemetry (Track A)
   // diagnostics: `outcome` is one of 'morph_applied' | 'root_key_mismatch' |
   // 'parse_failed' | 'morph_threw'; `stats` is the accumulated
   // { reused, cloned, removed } morph counts, present only when the caller opts

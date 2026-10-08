@@ -53,7 +53,7 @@ test('the composer Tools row appears once the backend reports ready after a cold
   assert.match(chip.textContent, /2 tools/, 'both sidecar categories are counted');
 });
 
-test('chat panel keeps the project pill slot and Full settings works while composer preferences are locked', async (t) => {
+test('the composer settings group keeps the project pill and Full settings works while composer preferences are locked', async (t) => {
   const app = await loadRendererApp({ shell: { sessions: [{ id: 'chat-panel-test', title: 'Panel test', project_id: 'project_general' }], tools: { list: () => SIDECAR_TOOLS } } });
   t.after(async () => { await app.dispose(); });
   const { window } = app;
@@ -63,8 +63,8 @@ test('chat panel keeps the project pill slot and Full settings works while compo
   doc.querySelector('[data-session-id="chat-panel-test"]')?.click();
   await waitForUi(window, 30);
   const project = doc.getElementById('composerProjectPillSlot');
-  assert.equal(panel.contains(project), true);
-  assert.ok(project.querySelector('#composerProjectPill'), 'the real workspace nudge renders the moved project pill');
+  assert.equal(project.parentElement, doc.getElementById('composerSettingsGroup'));
+  assert.ok(doc.querySelector('#composerSettingsGroup #composerProjectPill'), 'the real workspace nudge renders the project pill in the settings group');
   const state = window.__rendererState;
   state.auth.authenticated = false;
   const slot = doc.getElementById('composerToolToggleSlot');

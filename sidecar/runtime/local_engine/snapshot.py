@@ -158,6 +158,7 @@ def build_local_runtime_payload(
     )
     return {
         "contract_version": LOCAL_RUNTIME_CONTRACT_VERSION,
+        "load_failure": getattr(engine, "last_load_failure", None),
         "engine": {
             "type": str(getattr(runtime_config, "engine_type", "") or "").strip(),
         },

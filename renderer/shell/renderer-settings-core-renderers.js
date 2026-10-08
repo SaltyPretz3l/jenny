@@ -91,11 +91,7 @@
     projects: [], reviewExpanded: false, reviewPage: 0 };
   const pendingReviewContainers = new WeakSet();
 
-  function defaultEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  }
+  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function buildApprovalRuleRows(saved) {
     const source = saved && typeof saved === 'object' ? saved : {};

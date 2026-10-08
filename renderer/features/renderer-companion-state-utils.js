@@ -103,6 +103,8 @@
       followUpId: String(source.followUpId || '').trim(),
       sessionId: String(source.sessionId || '').trim(),
       sessionTitle: String(source.sessionTitle || '').trim(),
+      // Agent tasks carry their project (FG-002 B); the rail scopes on it.
+      projectId: String(source.projectId || '').trim(),
       sessionBadge: String(source.sessionBadge || '').trim(),
       sessionState: String(source.sessionState || '').trim(),
       sourceBadge: String(source.sourceBadge || '').trim(),

@@ -24,14 +24,7 @@
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var escapeHtml = stringUtils && typeof stringUtils.escapeHtml === 'function'
     ? stringUtils.escapeHtml
-    : function fallbackEscapeHtml(value) {
-      return String(value == null ? '' : value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    };
+    : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   /**
    * Build the markup for an inline user-message editor.
@@ -94,7 +87,44 @@
     ].join('');
   }
 
+  /**
+   * A bare note field (row 35: the comment / reject-reason box under the
+   * suggested-change bar). The caller owns the buttons and the key handling.
+   *
+   * @param {object} input
+   * @param {string} input.ariaLabel
+   * @param {string} [input.draftText]
+   * @param {string} [input.placeholder]
+   * @param {number} [input.rows] default 2
+   * @param {number} [input.maxLength] default 2000
+   * @param {string} [input.className]
+   * @param {Object<string,string>} [input.dataset] data-* attributes (keys without the prefix)
+   * @param {boolean} [input.disabled]
+   * @returns {string}
+   */
+  function buildInlineNoteFieldMarkup(input) {
+    var settings = input || {};
+    var dataset = settings.dataset && typeof settings.dataset === 'object' ? settings.dataset : {};
+    var dataAttrs = Object.keys(dataset)
+      .filter(function (key) { return /^[a-z][a-z0-9-]*$/.test(key); })
+      .map(function (key) { return ' data-' + key + '="' + escapeHtml(dataset[key]) + '"'; })
+      .join('');
+    var className = String(settings.className || '').split(/\s+/).filter(function (token) {
+      return /^[A-Za-z0-9_-]+$/.test(token);
+    }).join(' ');
+    return '<textarea class="inv-note-field' + (className ? ' ' + className : '') + '"'
+      + ' data-inline-note dir="auto" spellcheck="true"'
+      + ' rows="' + String(Number.isFinite(settings.rows) ? settings.rows : 2) + '"'
+      + ' maxlength="' + String(Number.isFinite(settings.maxLength) ? settings.maxLength : 2000) + '"'
+      + ' aria-label="' + escapeHtml(String(settings.ariaLabel || '')) + '"'
+      + (settings.placeholder ? ' placeholder="' + escapeHtml(settings.placeholder) + '"' : '')
+      + dataAttrs
+      + (settings.disabled ? ' disabled' : '')
+      + '>' + escapeHtml(String(settings.draftText == null ? '' : settings.draftText)) + '</textarea>';
+  }
+
   return {
+    buildInlineNoteFieldMarkup: buildInlineNoteFieldMarkup,
     buildInlineUserMessageEditorMarkup: buildInlineUserMessageEditorMarkup,
   };
 });

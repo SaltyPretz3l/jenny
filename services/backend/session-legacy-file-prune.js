@@ -4,6 +4,8 @@ const fs = require('fs');
 const path = require('path');
 
 const { deriveSessionsDirectory } = require('./session-storage-fs-utils');
+const { parseJournalFileName } = require('./session-journal');
+const { readBaseEpochOrThrow } = require('./journaled-json-files');
 const { LEGACY_MONOLITHIC_MAX_SCHEMA_VERSION } = require('./session-store-migrations');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -41,6 +43,38 @@ function classifySplitStoreTmp(name) {
   return tmp
     ? { kind: 'orphaned_tmp', stampMs: Number(tmp[1]), minAgeMs: ORPHANED_TMP_MIN_AGE_MS }
     : null;
+}
+
+// `<stem>.<epoch>.journal` that no read can reach any more: its `<stem>.json`
+// is gone (a chat deleted or quarantined while the journal could not be
+// removed), or was since rewritten without an epoch (the kill switch) or with
+// an epoch the journal does not belong to. A read replays journal E, then
+// E + 1, over a base of epoch E >= 1 and nothing else. The name carries no
+// timestamp (stampMs 0 leaves the mtime as the only age).
+function classifySplitStoreJournal(sessionsDir, name) {
+  const journal = parseJournalFileName(name);
+  return journal
+    ? {
+        kind: 'orphaned_journal',
+        stampMs: 0,
+        minAgeMs: ORPHANED_TMP_MIN_AGE_MS,
+        journalEpoch: journal.epoch,
+        journalBase: path.join(sessionsDir, `${journal.stem}.json`),
+      }
+    : null;
+}
+
+// Fails closed: a base that exists but cannot be read keeps its journals.
+function journalIsReachable(candidate) {
+  let baseEpoch;
+  try {
+    baseEpoch = readBaseEpochOrThrow(candidate.journalBase);
+  } catch (error) {
+    return error?.code !== 'ENOENT';
+  }
+  // Epoch E-1 is the journal the store keeps for one generation: if the rename
+  // that produced base E is lost to a power failure, base E-1 needs it.
+  return baseEpoch >= 1 && Math.abs(candidate.journalEpoch - baseEpoch) <= 1;
 }
 
 // A migration backup is only deletable while the split store it was migrated
@@ -81,6 +115,10 @@ async function pruneCandidate(filePath, name, candidate, { now, log, result, ses
     if (!stat.isFile() || !(ageMs >= candidate.minAgeMs)) {
       return;
     }
+    // Checked last, with no await before the unlink: a chat written meanwhile keeps its journal.
+    if (candidate.journalBase && journalIsReachable(candidate)) {
+      return;
+    }
     await fs.promises.unlink(filePath);
     const record = { file: name, kind: candidate.kind, bytes: stat.size, ageMs: Math.round(ageMs) };
     result.deleted.push(record);
@@ -95,8 +133,9 @@ async function pruneCandidate(filePath, name, candidate, { now, log, result, ses
   }
 }
 
-// Orphaned atomic-write temps directly inside the split sessions directory;
-// `corrupt/` and every other subdirectory are never entered.
+// Orphaned atomic-write temps and journals without a base file directly inside
+// the split sessions directory; `corrupt/` and every other subdirectory are
+// never entered.
 async function pruneSplitStoreTemps(sessionsDir, { now, log, result }) {
   let entries;
   try {
@@ -110,7 +149,9 @@ async function pruneSplitStoreTemps(sessionsDir, { now, log, result }) {
     return;
   }
   for (const entry of entries) {
-    const candidate = entry.isFile() ? classifySplitStoreTmp(entry.name) : null;
+    const candidate = entry.isFile()
+      ? classifySplitStoreTmp(entry.name) || classifySplitStoreJournal(sessionsDir, entry.name)
+      : null;
     if (candidate) {
       await pruneCandidate(path.join(sessionsDir, entry.name), entry.name, candidate, { now, log, result });
     }
@@ -125,7 +166,8 @@ async function pruneSplitStoreTemps(sessionsDir, { now, log, result }) {
 // direct children of the profile root and match the name contract are
 // candidates; links, directories, the live `<name>` file and the `<name>/`
 // store never are. Orphaned atomic-write temps in the split `sessions/`
-// directory follow the same age rule. One log entry per deletion.
+// directory follow the same age rule, as do journals whose chat file is gone.
+// One log entry per deletion.
 async function pruneLegacySessionFiles({ legacyFilePath, now = Date.now(), log = () => {} } = {}) {
   const result = { deleted: [], failed: [], skippedBackups: 0 };
   if (typeof legacyFilePath !== 'string' || !legacyFilePath) {

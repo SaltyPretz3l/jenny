@@ -247,6 +247,8 @@ test('production script graph loads controller-utils + scan-coordinator before t
   const dom = new JSDOM('', { runScripts: 'outside-only' });
   t.after(() => dom.window.close());
   const evalFile = (name) => dom.window.eval(fs.readFileSync(path.join(root, 'renderer', 'features', name), 'utf8'));
+  // Production loads string-utils (index.html) before the lazy IDE group.
+  dom.window.eval(fs.readFileSync(path.join(root, 'renderer', 'shared', 'string-utils.js'), 'utf8'));
   evalFile('renderer-ide-map-controller-utils.js');
   evalFile('renderer-ide-map-scan-coordinator.js');
   assert.equal(typeof dom.window.rendererIdeMapControllerUtils?.createFileMapBridge, 'function');
@@ -454,7 +456,6 @@ test('controller view/search/filter activity and stage re-entry make no bridge s
       getGraph: async () => { reads += 1; return GRAPH_A; },
       refresh: async () => { refreshes += 1; return GRAPH_A; },
     } } },
-    getFeatureFlags: () => ({ workspace_file_map: true }),
     getWorkspaceRootContext: () => ({ rootId: 'root_a', generation: 1 }),
     onOpenFile: () => {},
   });
@@ -493,7 +494,6 @@ test('controller persists partial-map disclosure until a complete refresh replac
     windowRef: { jennyShell: { workspaceFileMap: {
       getGraph: async () => partial, refresh: async () => GRAPH_A,
     } } },
-    getFeatureFlags: () => ({ workspace_file_map: true }),
     getWorkspaceRootContext: () => ({ rootId: 'root_a', generation: 1 }), onOpenFile: () => {},
   });
   t.after(() => ctrl.dispose());
@@ -525,7 +525,6 @@ test('controller: empty result PHYSICALLY clears graph DOM, bounds, findings, ov
     getDom: () => ({ ideMapHost: hostEl }),
     getIde: () => realIdeState.createIdeUiState(),
     windowRef: windowStub,
-    getFeatureFlags: () => ({ workspace_file_map: true }),
     getWorkspaceRootContext: () => ({ rootId: 'root_a', generation: 1 }),
     onOpenFile: () => {},
     timers: fake.timers,
@@ -571,7 +570,6 @@ test('controller: error and no-root results also physically clear every surface'
       windowRef: {
         jennyShell: { workspaceFileMap: { getGraph: async () => responses[Math.min(call++, 1)] } },
       },
-      getFeatureFlags: () => ({ workspace_file_map: true }),
       getWorkspaceRootContext: () => ({ rootId: 'root_a', generation: 1 }),
       onOpenFile: () => {},
     });
@@ -621,7 +619,6 @@ test('controller: root A->B tears the old root DOM down BEFORE the new root scan
         },
       },
     },
-    getFeatureFlags: () => ({ workspace_file_map: true }),
     getWorkspaceRootContext: () => rootCtx,
     onOpenFile: () => {},
   });
@@ -677,7 +674,6 @@ test('controller: mutation during scan drops the stale result; the debounced ref
         workspaceFs: { onChange: (fn) => { onChangeHandler = fn; return () => {}; } },
       },
     },
-    getFeatureFlags: () => ({ workspace_file_map: true }),
     getWorkspaceRootContext: () => ({ rootId: 'root_a', generation: 1 }),
     onOpenFile: () => {},
     timers: fake.timers,
@@ -727,7 +723,6 @@ test('controller ignores stale-root, empty, and malformed watcher events before 
       },
       workspaceFs: { onChange: (fn) => { onChangeHandler = fn; return () => {}; } },
     } },
-    getFeatureFlags: () => ({ workspace_file_map: true }),
     getWorkspaceRootContext: () => ({ rootId: 'root_a', generation: 4 }),
     onOpenFile: () => {},
     timers: fake.timers,
@@ -786,7 +781,6 @@ test('controller: a refresh latched during an in-flight scan, plus a root A->B s
         workspaceFs: { onChange: (fn) => { onChangeHandler = fn; return () => {}; } },
       },
     },
-    getFeatureFlags: () => ({ workspace_file_map: true }),
     getWorkspaceRootContext: () => rootCtx,
     onOpenFile: () => {},
     timers: fake.timers,
@@ -841,7 +835,6 @@ test('controller: dispose during an awaited scan — completion is a no-op, no t
     getDom: () => ({ ideMapHost: hostEl }),
     getIde: () => realIdeState.createIdeUiState(),
     windowRef: { jennyShell: { workspaceFileMap: { getGraph: () => gate.promise } } },
-    getFeatureFlags: () => ({ workspace_file_map: true }),
     getWorkspaceRootContext: () => ({ rootId: 'root_a', generation: 1 }),
     onOpenFile: () => {},
   });

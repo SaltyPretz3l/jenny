@@ -16,7 +16,7 @@ const {
   listLocalOllamaProcessesSync,
 } = require('./ollama-shutdown');
 const { probeOllamaHealth, probeOllamaRefused } = require('./ollama-health-probe');
-const { killOwnedChildRunners, snapshotOwnedChildPids } = require('./ollama-orphan-runners');
+const { killOwnedChildRunners, listWindowsOllamaRunnersSync, snapshotOwnedChildPids } = require('./ollama-orphan-runners');
 const { buildSanitizedOllamaEnv } = require('./ollama-env');
 const { classifyOllamaCrash } = require('./ollama-crash-diagnostics');
 const { resolveOllamaOutputLevel } = require('./ollama-stderr-level');
@@ -62,6 +62,7 @@ class OllamaProcessManager {
     isProcessAliveImpl,
     waitForProcessExitImpl,
     listLocalOllamaProcessesImpl,
+    listOllamaRunnerProcessesImpl,
     forceKillAnyRemainingLocalOllamaSyncImpl,
     clearOwnedOllamaStateImpl,
     getProcessCommandLineSyncImpl,
@@ -107,6 +108,11 @@ class OllamaProcessManager {
     this._waitForProcessExit = waitForProcessExitImpl || waitForProcessExit;
     this._listLocalOllamaProcesses =
       listLocalOllamaProcessesImpl || ((options = {}) => listLocalOllamaProcessesSync(options));
+    // Runner discovery: on Windows Ollama's runners include its bundled llama-server.exe,
+    // which the Ollama process listing does not name.
+    this._listOllamaRunners = listOllamaRunnerProcessesImpl || listLocalOllamaProcessesImpl
+      || ((options = {}) => (options.platform === 'win32'
+        ? listWindowsOllamaRunnersSync(options) : listLocalOllamaProcessesSync(options)));
     this._forceKillAnyRemainingLocalOllamaSync =
       forceKillAnyRemainingLocalOllamaSyncImpl || ((options = {}) =>
         forceKillAnyRemainingLocalOllamaVerifiedSync(options));
@@ -261,6 +267,7 @@ class OllamaProcessManager {
         this._clearOwnedState();
       }
     } else if (ownership) {
+      await this._killOrphanedRunners(ownership.pid).catch(() => null);
       this._clearOwnedState();
       this._log('INFO', 'ollama.stale_owned_process_state_cleared', { pid: ownership.pid });
     }
@@ -636,6 +643,8 @@ class OllamaProcessManager {
     }
 
     if (!this._isProcessAlive(ownedPid)) {
+      // The root died with the app (crash, End task, a cut-short shutdown): its runners outlive it.
+      await this._killOrphanedRunners(ownedPid).catch(() => null);
       this._clearOwnedState();
       this._resetLiveOwnership();
       this._log('INFO', 'ollama.stale_owned_process_state_cleared', { pid: ownedPid });
@@ -663,7 +672,7 @@ class OllamaProcessManager {
       ownedPid,
       platform: this._platform,
       logger: this._log,
-      listProcesses: this._listLocalOllamaProcesses,
+      listProcesses: this._listOllamaRunners,
     });
     await this._stopOwnedPid(ownedPid);
     await this._killOrphanedRunners(ownedPid, preStopChildPids).catch(() => null);
@@ -910,6 +919,7 @@ class OllamaProcessManager {
       return;
     }
     if (!this._isProcessAlive(ownedPid)) {
+      await this._killOrphanedRunners(ownedPid).catch(() => null);
       this._log('INFO', 'ollama.stale_owned_process_state_cleared', { pid: ownedPid });
       this._clearOwnedState();
       this._resetLiveOwnership();
@@ -957,7 +967,7 @@ class OllamaProcessManager {
       preStopChildPids,
       platform: this._platform,
       logger: this._log,
-      listProcesses: this._listLocalOllamaProcesses,
+      listProcesses: this._listOllamaRunners,
       killProcessTree: this._killProcessTree,
       getProcessCommandLineSync: this._getProcessCommandLineSync,
     });

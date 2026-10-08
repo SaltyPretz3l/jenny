@@ -8,7 +8,6 @@ import logging
 import os
 import re
 import shutil
-import stat
 import tempfile
 import time
 from contextlib import contextmanager
@@ -21,10 +20,12 @@ from filelock import FileLock, Timeout
 
 from sidecar.ai.error_codes import CMP_TOOL_DISABLED, CMP_TOOL_OUTSIDE_WORKSPACE
 from sidecar.ai.tools import workspace_mutation_checkpoint as checkpoints
+from sidecar.ai.tools.jenny_state_dir import ensure_jenny_dir_gitignore
 from sidecar.ai.tools.workspace_mutation_journal_contract import (
     MAX_JOURNAL_BYTES,
     ContractFailure,
     PathSignature,
+    _is_junction,
     canonical_json_bytes,
     parse_record_bytes,
     seal_record,
@@ -577,6 +578,7 @@ class WorkspaceMutationJournalStore:
         if len(data) > MAX_RECEIPT_BYTES:
             raise ValueError("workspace recovery receipt exceeds its byte cap")
         _write_bytes_durable(receipt_path, data, through_directory=workspace_root)
+        ensure_jenny_dir_gitignore(jenny_root)
 
     def _refresh_receipt_best_effort(self, workspace_root: Path, record: Mapping[str, Any]) -> None:
         try:
@@ -987,18 +989,6 @@ def _build_receipt(record: Mapping[str, Any]) -> dict[str, Any]:
             ),
         },
     }
-
-
-def _is_junction(path: Path) -> bool:
-    checker = getattr(os.path, "isjunction", None)
-    if checker is not None and checker(path):
-        return True
-    try:
-        path_stat = path.lstat()
-    except OSError:
-        return False
-    mount_point_tag = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
-    return getattr(path_stat, "st_reparse_tag", None) == mount_point_tag
 
 
 def _utc_now() -> str:

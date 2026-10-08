@@ -1,9 +1,0 @@
-{
-  "contract": "PluginRemoteMcpAuthorizationV1", "contract_version": 1, "frozen": true,
-  "root": {
-    "type": "object", "required": ["authorization_schema_version", "publisher_id", "plugin_id", "contribution_id", "resource_digest", "issuer_digest", "auth_profile_ref", "state", "granted_scopes", "credential_present", "expires_at", "updated_at"], "max_keys": 12, "additional_properties": "reject",
-    "properties": {
-      "authorization_schema_version": { "type": "const", "value": 1 }, "publisher_id": { "type": "ref", "ref": "publisher_id" }, "plugin_id": { "type": "ref", "ref": "plugin_id" }, "contribution_id": { "type": "ref", "ref": "contribution_id" }, "resource_digest": { "type": "ref", "ref": "sha256_hex" }, "issuer_digest": { "type": "ref", "ref": "sha256_hex" }, "auth_profile_ref": { "type": "ref", "ref": "sha256_hex" }, "state": { "type": "enum", "values": ["absent", "authorization_required", "authorizing", "authorized", "revoked", "failed"] }, "granted_scopes": { "type": "array", "max_items": 32, "unique_by": [], "items": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,128}$", "max_utf8_bytes": 128 } }, "credential_present": { "type": "boolean" }, "expires_at": { "type": "ref", "ref": "iso8601_utc" }, "updated_at": { "type": "ref", "ref": "iso8601_utc" }
-    }
-  }
-}

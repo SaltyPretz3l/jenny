@@ -82,6 +82,26 @@ function reconcileDirtyAfterFlush(self, flushedSessionIds, failedSessionIds) {
   }
 }
 
+// monolithic_readonly without a newer schema means the split migration failed
+// (or the legacy file could not be read): the legacy file stays the source of
+// truth and the next start retries the migration from it. Writes under the
+// sessions directory would only leave stale or orphaned copies beside it, so
+// mutations stay in memory and the caller skips its disk step. One WARN per
+// store name per process says changes are not being saved.
+const readonlyWriteWarnedStores = new Set();
+
+function skipsReadonlyModeWrite(self, method) {
+  if (self._mode !== 'monolithic_readonly') return false;
+  if (self._logger && !readonlyWriteWarnedStores.has(self._storeName)) {
+    readonlyWriteWarnedStores.add(self._storeName);
+    safeEmitLog(self._logger, 'WARN', `${self._storeName}.readonly_mode_write_skipped`, {
+      method,
+      changesSaved: false,
+    });
+  }
+  return true;
+}
+
 // After a split-index recovery pass froze the store on a future-schema file,
 // drop the partially recovered state and present an empty index rather than
 // rebuild a current-schema index over data a newer app owns. Writes are already
@@ -98,4 +118,5 @@ module.exports = {
   readsNewerSchema,
   enterNewerSchemaFreeze,
   freezeRecoveredIndex,
+  skipsReadonlyModeWrite,
 };

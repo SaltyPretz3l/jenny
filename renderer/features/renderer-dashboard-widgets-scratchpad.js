@@ -54,7 +54,7 @@
     // completely untouched.
     const markdownModule = deps.markdownModule || windowRef.rendererDashboardScratchpadMarkdown || null;
     const nowProvider = typeof deps.nowProvider === 'function' ? deps.nowProvider : () => new Date();
-    const escapeHtml = typeof textField?.escapeHtml === 'function' ? textField.escapeHtml : (value) => String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+    const escapeHtml = typeof textField?.escapeHtml === 'function' ? textField.escapeHtml : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     // Optimistic active note (lazily adopted from config), the last scratchpad
     // rendered (so delegated handlers can read note ids), the in-progress rename
     // target, a pending status-clear timer, and a one-shot "focus the textarea
@@ -78,9 +78,6 @@
     // writes when presentation changes from the widget menu.
     let appliedFont = null;
     let appliedRows = null;
-    // Whether the scratchpad_pin feature is on (captured each render from ctx), so
-    // the actions menu only offers Pin/Unpin when the overlay is enabled.
-    let pinFeatureOn = false;
     // One-shot: id of a just-added note so its tab plays the grow-in animation
     // exactly once (cleared the moment the strip is built).
     let newNoteId = null;
@@ -607,9 +604,9 @@
         : '';
       const active = getActiveNote(lastScratchpad);
       const documentRef = body.ownerDocument;
-      // Pin state for the active note (only surfaced when the overlay flag is on).
+      // Pin state for the active note.
       const pins = Array.isArray(lastScratchpad?.pins) ? lastScratchpad.pins : [];
-      const pinOpts = pinFeatureOn && active
+      const pinOpts = active
         ? { noteId: active.id, isPinned: pins.includes(active.id), pinsAtCap: pins.length >= MAX_PINS }
         : {};
       const present = (items) => contextMenu.show({
@@ -964,7 +961,6 @@
         bindBody(body);
         const scratchpad = ctx?.state?.homeConfig?.scratchpad;
         lastScratchpad = scratchpad;
-        pinFeatureOn = ctx?.state?.features?.featureFlags?.scratchpad_pin === true;
         if (getNotes(scratchpad).length > 0) {
           renderMulti(body, scratchpad);
         } else {

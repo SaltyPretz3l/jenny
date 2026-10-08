@@ -7,9 +7,7 @@ import logging
 from datetime import date
 from typing import Any
 
-from sidecar.ai.feature_flags import FEATURE_AGENT_EXECUTOR, is_feature_flag_enabled
 from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, MemoryPolicy
-from sidecar.runtime.chat_helpers import mode_from_params
 from sidecar.runtime.diagnostics import log_event
 from sidecar.runtime.vision_attachments import normalize_vision_attachments  # noqa: F401
 
@@ -49,6 +47,78 @@ def plan_mode_from_params(params: Any) -> bool:
     if not isinstance(value, bool):
         raise ValueError("chat.send params.plan_mode must be a boolean when provided")
     return value
+
+
+def propose_mode_from_params(params: Any) -> bool:
+    """Plan Plus Propose mode (``chat.send params.propose_mode``); absent means off."""
+    if not isinstance(params, dict) or "propose_mode" not in params:
+        return False
+    value = params.get("propose_mode")
+    if not isinstance(value, bool):
+        raise ValueError("chat.send params.propose_mode must be a boolean when provided")
+    return value
+
+
+_SUGGESTION_CONTEXT_LIMIT = 50
+_SUGGESTION_ID_LIMIT = 128
+_SUGGESTION_PATH_LIMIT = 4096
+_SUGGESTION_TEXT_LIMIT = 262_144
+
+
+def suggested_changes_context_from_params(params: Any) -> tuple[dict[str, str], ...]:
+    """The session's live suggestions Electron sends with a Propose request.
+
+    ``{schema_version: 1, live: [{id, path, kind, old_string}]}``. Only the overlap
+    rule reads it, so an unknown version or a malformed entry is dropped, never
+    fatal to the turn; at most 50 entries are kept.
+    """
+    raw = params.get("suggested_changes_context") if isinstance(params, dict) else None
+    if not isinstance(raw, dict) or raw.get("schema_version") != 1:
+        return ()
+    live = raw.get("live")
+    entries: list[dict[str, str]] = []
+    for item in live if isinstance(live, list) else []:
+        if len(entries) >= _SUGGESTION_CONTEXT_LIMIT:
+            break
+        if not isinstance(item, dict):
+            continue
+        entry_id, path, kind, old = (item.get(key) for key in ("id", "path", "kind", "old_string"))
+        if (
+            isinstance(entry_id, str) and 0 < len(entry_id) <= _SUGGESTION_ID_LIMIT
+            and isinstance(path, str) and 0 < len(path) <= _SUGGESTION_PATH_LIMIT
+            and kind in {"create", "replace"}
+            and isinstance(old, str) and len(old) <= _SUGGESTION_TEXT_LIMIT
+        ):
+            entries.append({"id": entry_id, "path": path, "kind": str(kind), "old_string": old})
+    return tuple(entries)
+
+
+_PROPOSE_EFFORT_CAP = "medium"
+_EFFORTS_ABOVE_PROPOSE_CAP = frozenset({"high", "xhigh", "max"})
+
+
+def cap_propose_reasoning_effort(reasoning_effort: str | None) -> str | None:
+    """Propose requests think at most at ``medium``; a lower or default choice stands."""
+    if reasoning_effort in _EFFORTS_ABOVE_PROPOSE_CAP:
+        return _PROPOSE_EFFORT_CAP
+    return reasoning_effort
+
+
+def propose_request_from_params(
+    params: Any,
+) -> tuple[bool, tuple[dict[str, str], ...], str | None]:
+    """``(propose_mode, suggested_changes_context, reasoning_effort)`` for chat.send.
+
+    Outside Propose mode the context is ignored and the effort is unchanged.
+    """
+    reasoning_effort = reasoning_effort_from_params(params)
+    if not propose_mode_from_params(params):
+        return False, (), reasoning_effort
+    return (
+        True,
+        suggested_changes_context_from_params(params),
+        cap_propose_reasoning_effort(reasoning_effort),
+    )
 
 
 def approved_plan_from_params(params: Any) -> dict[str, Any] | None:
@@ -340,7 +410,6 @@ def normalize_debug_options(value: Any) -> dict[str, bool] | None:
     normalized = {
         "disable_thinking": value.get("disable_thinking") is True,
         "lean_context": value.get("lean_context") is True,
-        "plain_chat_mode": value.get("plain_chat_mode") is True,
     }
     return normalized if any(normalized.values()) else None
 
@@ -351,9 +420,6 @@ def inference_budget_from_params(params, execution_context, config, streaming) -
         raise ValueError("inference_budget_required must be a boolean")
     if required and execution_context is None:
         raise ValueError("inference budget requires execution context")
-    if (required and streaming and mode_from_params(params, config.mode) == "chat"
-            and not is_feature_flag_enabled(config.feature_flags or {}, FEATURE_AGENT_EXECUTOR)):
-        raise ValueError("budgeted chat requires the admitted router")
     return required
 
 

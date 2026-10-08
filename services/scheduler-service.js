@@ -32,6 +32,7 @@ const {
   readScheduledTasksFileAsync,
   writeScheduledTasksFile,
 } = require('./scheduler-tasks-store');
+const { ensureJennyDirGitignoreSync } = require('./jenny-project-dir');
 
 // The scheduler also watches the tasks file (see _reconcileScheduledTasksLocation),
 // so edits are picked up promptly without a tight poll. A 1s poll caused constant
@@ -544,6 +545,7 @@ class SchedulerService extends EventEmitter {
 
     const watchDirectory = path.dirname(nextTasksPath);
     this.fs.mkdirSync(watchDirectory, { recursive: true });
+    ensureJennyDirGitignoreSync(watchDirectory, { fs: this.fs });
     try {
       this._watcher = this.watchImpl(watchDirectory, (_eventType, filename) => {
         // Zombie detection must run before every other filter: the spew

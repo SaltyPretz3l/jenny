@@ -51,14 +51,7 @@
   const CARET_DOWN = '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"'
     + ' focusable="false" fill="currentColor"><path d="M4 6l4 4 4-4z"/></svg>';
 
-  function defaultEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function firstLine(value) {
     return String(value == null ? '' : value).split('\n')[0].trim();

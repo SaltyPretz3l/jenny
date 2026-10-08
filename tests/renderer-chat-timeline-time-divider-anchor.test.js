@@ -36,14 +36,6 @@ function buildSession(sessionId) {
 
 function makeStartStreamShell(sessionId, streamId) {
   return {
-    // The harness's minimal bootstrap seed predates this production default.
-    // Supply the normal getState payload at boot; do not mutate flags through
-    // __emitFeaturesChanged after the renderer has initialized.
-    features: {
-      async getState() {
-        return { featureFlags: { turn_activity_envelope: true } };
-      },
-    },
     chat: {
       async startStream(_payload, { state }) {
         state.sessions = [buildSession(sessionId)];
@@ -221,12 +213,6 @@ test('live time-gap divider stays anchored before the post-gap continuation as t
   });
   await emitDeltas(12, 'seg1-');
   await waitForUi(window, 160);
-
-  assert.equal(
-    document.documentElement.dataset.turnActivityEnvelope,
-    'true',
-    'live repro requires turn_activity_envelope to be enabled'
-  );
 
   const firstToolMessage = (window.__rendererState.messagesBySession.get(sessionId) || [])
     .find((message) => message?.kind === 'tool_use' && message?.tool_call?.call_id === 'call-pause');
@@ -442,16 +428,7 @@ test('hydrated time-gap divider anchors before the persisted post-gap continuati
     },
   ];
 
-  const app = await loadRendererApp({
-    shell: {
-      // Match the production default at bootstrap for the cold-open path too.
-      features: {
-        async getState() {
-          return { featureFlags: { turn_activity_envelope: true } };
-        },
-      },
-    },
-  });
+  const app = await loadRendererApp();
   t.after(async () => {
     await app.dispose();
   });
@@ -484,11 +461,6 @@ test('hydrated time-gap divider anchors before the persisted post-gap continuati
   sessionOpenButton.click();
   await waitForUi(window, 180);
 
-  assert.equal(
-    window.document.documentElement.dataset.turnActivityEnvelope,
-    'true',
-    'hydration repro requires turn_activity_envelope to be enabled'
-  );
   assertDividerAnchored(
     window.document,
     window,

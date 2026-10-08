@@ -57,14 +57,7 @@
       || (typeof require === 'function' ? require('./renderer-knowledge-scope') : null);
   }
 
-  var escapeHtml = resolveStringUtils().escapeHtml || function fallbackEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  };
+  var escapeHtml = resolveStringUtils().escapeHtml || (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   // Human copy for the structured addFolder rejection reasons. Never leaks
   // the raw enum (the service's reason strings stay wire-only).
@@ -125,13 +118,19 @@
     return separatorIndex >= 0 ? normalized.slice(separatorIndex + 1) : normalized;
   }
 
-  function buildRowHtml(entry, pendingRemoveId) {
+  function resolveCatalog() {
+    return (root && root.rendererKnowledgeCatalog)
+      || (typeof require === 'function' ? require('./renderer-knowledge-catalog') : null);
+  }
+
+  function buildRowHtml(entry, pendingRemoveId, catalog) {
     var isPending = pendingRemoveId === entry.id;
     return ''
       + '<div class="settings-field-row knowledge-folders-row" data-root-id="' + escapeHtml(entry.id) + '">'
       + '<div class="settings-field-row-text">'
       + '<span class="settings-field-label">' + escapeHtml(rootDisplayLabel(entry)) + '</span>'
       + '<p class="settings-field-description knowledge-folders-row-path">' + escapeHtml(entry.path) + '</p>'
+      + (catalog ? catalog.rowSignalHtml(entry.path) : '')
       + '</div>'
       + '<div class="knowledge-folders-row-actions">'
       + resolveActionButton()({
@@ -162,11 +161,11 @@
     });
   }
 
-  function buildGroupHtml(view, hasPicker) {
+  function buildGroupHtml(view, hasPicker, catalog) {
     var actionButton = resolveActionButton();
     var rowsHtml = view.roots.length
       ? view.roots.map(function (entry) {
-        return buildRowHtml(entry, view.pendingRemoveId);
+        return buildRowHtml(entry, view.pendingRemoveId, catalog);
       }).join('')
       : '<p class="settings-note">' + escapeHtml(jt('knowledge.noFoldersRegistered', 'No folders registered yet. Registered folders become searchable by the assistant.')) + '</p>';
 
@@ -210,6 +209,7 @@
       + browseButtonHtml
       + '</div>'
       + '<div class="settings-note knowledge-folders-error" aria-live="polite">' + escapeHtml(view.errorMessage || '') + '</div>'
+      + (catalog ? catalog.blockHtml() : '')
       + '</div>';
   }
 
@@ -230,6 +230,16 @@
     var bound = false;
 
     var view = resolveKnowledgeScope().createKnowledgeView();
+    var catalogModule = resolveCatalog();
+    var catalog = catalogModule ? catalogModule.createKnowledgeCatalogController({
+      state: state,
+      windowRef: windowRef,
+      documentRef: documentRef,
+      stepModal: stepModal,
+      appendClientLog: appendClientLog,
+      requestRender: function () { render(); },
+      isHostEnabled: function () { return isFeatureEnabled(); },
+    }) : null;
 
     function isFeatureEnabled() {
       return Boolean(
@@ -313,13 +323,15 @@
       }
       var bridge = knowledgeBridge();
       var hasPicker = Boolean(bridge && typeof bridge.chooseFolder === 'function');
-      var html = buildGroupHtml(view, hasPicker);
+      var html = buildGroupHtml(view, hasPicker, catalog);
       var existing = card.querySelector('#' + GROUP_ID);
+      var focusKey = catalog ? catalog.captureFocus() : '';
       if (existing) {
         existing.outerHTML = html;
       } else {
         card.insertAdjacentHTML('beforeend', html);
       }
+      if (catalog) catalog.restoreFocus(focusKey);
       renderConfirmModalIfNeeded();
     }
 
@@ -538,8 +550,10 @@
           unsubscribeChanged = null;
         }
         removeExistingGroup();
+        if (catalog) catalog.syncFeatureState();
         return;
       }
+      if (catalog) catalog.syncFeatureState();
       var bridge = knowledgeBridge();
       if (!unsubscribeChanged && bridge && typeof bridge.onChanged === 'function') {
         // Changed pushes carry the snapshot — no getState round-trip needed.
@@ -557,12 +571,14 @@
       documentRef.addEventListener('click', handleClick);
       documentRef.addEventListener('keydown', handleKeydown);
       bound = true;
+      if (catalog) catalog.bind();
       syncFeatureState();
     }
 
     function dispose() {
       if (!disposalFence.dispose()) return;
       bound = false;
+      if (catalog) catalog.dispose();
       if (typeof unsubscribeChanged === 'function') {
         try {
           unsubscribeChanged();

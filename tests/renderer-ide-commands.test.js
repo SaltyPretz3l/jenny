@@ -70,6 +70,8 @@ test('getCommandItems lists the Workspace commands when on the IDE view', () => 
     'ide:open-file-map',
     'ide:reveal-in-map',
     'ide:show-blast-radius',
+    'ide:open-preview',
+    'ide:preview-active-file',
     'ide:toggle-exploded-view',
     'ide:toggle-minimap',
     'ide:reopen-closed-tab',
@@ -416,28 +418,21 @@ test('Escape with modifiers or off the IDE view does not exit Preview', () => {
   assert.equal(calls.exit, 0, 'off the IDE view the handler stands down');
 });
 
-// ── Preview stage-surface palette entries (isPreviewSurfaceEnabled) ──────────
+// ── Preview stage-surface palette entries ────────────────────────────────────
 
-test('ide:open-preview / ide:preview-active-file are present when isPreviewSurfaceEnabled is true, absent when false', () => {
+test('ide:open-preview / ide:preview-active-file are present and dispatch to their callbacks', () => {
   const calls = { open: 0, previewActive: 0 };
-  let previewOn = false;
   const commands = createIdeCommands({
     getActiveView: () => 'ide',
     editorHost: fakeEditorHost(),
-    isPreviewSurfaceEnabled: () => previewOn,
     openPreviewSurface: () => { calls.open += 1; },
     previewActiveFile: () => { calls.previewActive += 1; },
   });
 
-  const idsOff = commands.getCommandItems().map((c) => c.id);
-  assert.equal(idsOff.includes('ide:open-preview'), false, 'Open Preview absent when flag is off');
-  assert.equal(idsOff.includes('ide:preview-active-file'), false, 'Preview Active File absent when flag is off');
-
-  previewOn = true;
   const itemsOn = commands.getCommandItems();
   const byId = Object.fromEntries(itemsOn.map((i) => [i.id, i]));
-  assert.ok(byId['ide:open-preview'], 'Open Preview present when flag is on');
-  assert.ok(byId['ide:preview-active-file'], 'Preview Active File present when flag is on');
+  assert.ok(byId['ide:open-preview'], 'Open Preview present');
+  assert.ok(byId['ide:preview-active-file'], 'Preview Active File present');
   assert.equal(byId['ide:open-preview'].group, 'Workspace');
   assert.equal(byId['ide:preview-active-file'].group, 'Workspace');
 
@@ -466,17 +461,18 @@ test('bookmark palette commands run() dispatch to their callbacks', () => {
 
 // ── Ctrl+Shift+F / Find in Files (DOM-driven, controller-free) ────────────────
 
-// A minimal document stand-in: querySelector returns the Search rail button and
-// the search input, each a spy. The shared openSearchPanel() clicks the button
-// then focuses the input, so the spies record both halves of the open path.
+// A minimal document stand-in: querySelector returns the search input (a spy) and
+// showPanel records the views the workbench is asked to reveal. The shared
+// openSearchPanel() reveals Search, then focuses the input, so the spies record
+// both halves of the open path.
 function fakeSearchDoc() {
-  const railButton = { clicks: 0, click() { this.clicks += 1; } };
   const input = { focuses: 0, focus() { this.focuses += 1; } };
+  const shown = [];
   const doc = {
-    railButton,
+    shown,
+    showPanel: (id) => shown.push(id),
     input,
     querySelector(selector) {
-      if (selector === '[data-ide-rail-panel="search"]') return railButton;
       if (selector === '[data-ide-search-input]') return input;
       return null;
     },
@@ -484,37 +480,39 @@ function fakeSearchDoc() {
   return doc;
 }
 
-test('Ctrl+Shift+F opens the Search panel via the rail button + input focus', () => {
+test('Ctrl+Shift+F reveals the Search view and focuses the input', () => {
   const doc = fakeSearchDoc();
   const handler = createViewKeydownHandler({
     state: { ui: { activeView: 'ide' } },
     windowRef: { document: doc },
+    showPanel: doc.showPanel,
   });
 
   const ctrlShiftF = fakeKeyEvent('F', { ctrl: true, shift: true });
   handler(ctrlShiftF);
-  assert.equal(doc.railButton.clicks, 1, 'activates the Search rail button');
+  assert.deepEqual(doc.shown, ['search'], 'reveals the Search view');
   assert.equal(doc.input.focuses, 1, 'focuses the search input');
   assert.equal(ctrlShiftF.defaultPrevented, true, 'the binding consumes the event');
 
   // Modifier variants fall through: plain Ctrl+F (Monaco find), Ctrl+Shift+Alt+F.
   handler(fakeKeyEvent('f', { ctrl: true }));
   handler(fakeKeyEvent('f', { ctrl: true, shift: true, alt: true }));
-  assert.equal(doc.railButton.clicks, 1, 'only plain Ctrl+Shift+F is bound');
+  assert.deepEqual(doc.shown, ['search'], 'only plain Ctrl+Shift+F is bound');
 
   // Off the IDE view the handler stands down entirely.
   const offDoc = fakeSearchDoc();
   const offView = createViewKeydownHandler({
     state: { ui: { activeView: 'chat' } },
     windowRef: { document: offDoc },
+    showPanel: offDoc.showPanel,
   });
   offView(fakeKeyEvent('F', { ctrl: true, shift: true }));
-  assert.equal(offDoc.railButton.clicks, 0, 'no Find in Files off the IDE view');
+  assert.deepEqual(offDoc.shown, [], 'no Find in Files off the IDE view');
 });
 
 test('Ctrl+Shift+F degrades gracefully when the Search input is not mounted', () => {
-  // Search moved to a closed secondary sidebar: no rail button, no input. The
-  // open path must not throw - it is a best-effort no-op.
+  // Search is not mounted (no showPanel, no input). The open path must not
+  // throw - it is a best-effort no-op.
   const doc = { querySelector: () => null };
   const handler = createViewKeydownHandler({
     state: { ui: { activeView: 'ide' } },
@@ -525,16 +523,16 @@ test('Ctrl+Shift+F degrades gracefully when the Search input is not mounted', ()
   assert.equal(evt.defaultPrevented, true, 'the Ctrl+Shift+F branch consumed the event even with no DOM elements');
 });
 
-test('the Find in Files palette command opens Search through the same DOM path', () => {
+test('the Find in Files palette command opens Search through the same path', () => {
   const doc = fakeSearchDoc();
-  const { commands } = buildCommands({ document: doc });
+  const { commands } = buildCommands({ document: doc, showPanel: doc.showPanel });
   const byId = Object.fromEntries(commands.getCommandItems().map((i) => [i.id, i]));
   const find = byId['ide:find-in-files'];
   assert.ok(find, 'the palette lists Find in Files');
   assert.equal(find.hint, 'Ctrl+Shift+F', 'the row advertises the shortcut');
 
   find.run();
-  assert.equal(doc.railButton.clicks, 1, 'palette run() activates the Search rail button');
+  assert.deepEqual(doc.shown, ['search'], 'palette run() reveals the Search view');
   assert.equal(doc.input.focuses, 1, 'palette run() focuses the search input');
 });
 
@@ -580,20 +578,20 @@ test('"?" opens the IDE shortcuts overlay; a focused editor still types it', asy
   assert.match(host.textContent, /Reopen the last closed tab/);
 });
 
-test('Ctrl+Shift+F switches the rail to Search and focuses the input (end-to-end)', async (t) => {
+test('Ctrl+Shift+F reveals Search in its stack and focuses the input (end-to-end)', async (t) => {
   const harness = createHarness({ bridgeOptions: { files: { 'a.js': 'x' } } });
   t.after(() => harness.dispose());
   await harness.controller.activateIde();
   await settle();
   const doc = harness.dom.window.document;
 
-  assert.notEqual(harness.state.ui.ide.railPanel, 'search', 'starts off the Search panel');
+  assert.equal(doc.querySelector('[data-wb-tab="search"]').getAttribute('aria-selected'), 'false', 'starts off the Search view');
   harness.getDom().ideView.dispatchEvent(new harness.dom.window.KeyboardEvent('keydown', {
     key: 'F', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true,
   }));
   await settle();
 
-  assert.equal(harness.state.ui.ide.railPanel, 'search', 'the rail switches to the Search panel');
+  assert.equal(doc.querySelector('[data-wb-tab="search"]').getAttribute('aria-selected'), 'true', 'the stack switches to the Search view');
   const input = doc.querySelector('[data-ide-search-input]');
   assert.ok(input, 'the Search input is rendered');
   assert.equal(doc.activeElement, input, 'focus lands in the Search input');

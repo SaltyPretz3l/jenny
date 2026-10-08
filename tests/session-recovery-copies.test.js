@@ -156,7 +156,8 @@ test('an index rebuild keeps a damaged chat listed and quarantines its bytes on 
   const stub = second.getSession(damagedId);
   assert.ok(stub, 'the damaged chat is readable as an empty stub');
   assert.deepEqual(stub.messages, []);
-  const quarantined = fs.readdirSync(path.join(sessionsDir, 'corrupt'));
+  // The chat's journals move along with the base file; this pins the base copy.
+  const quarantined = fs.readdirSync(path.join(sessionsDir, 'corrupt')).filter((name) => name.endsWith('.json'));
   assert.equal(quarantined.length, 1);
   assert.equal(fs.readFileSync(path.join(sessionsDir, 'corrupt', quarantined[0]), 'utf8'), DAMAGED_BYTES);
   assert.equal(second.getSession(ids[0]).messages.length, 1);

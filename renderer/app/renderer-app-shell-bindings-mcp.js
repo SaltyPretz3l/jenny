@@ -18,36 +18,11 @@
       (windowRef.rendererMcpServers || {}).createMcpServersController,
       (windowRef.rendererKnowledgeFolders || {}).createKnowledgeFoldersController,
       (windowRef.rendererOllamaHealth || {}).createOllamaHealthController,
-      (windowRef.rendererPluginsSettingsUtils || {}).createPluginsSettingsController,
     ];
     const controllers = [];
-    const pluginViewController = windowRef.rendererPluginViewHost?.createPluginViewHostController?.({
-      state,
-      windowRef,
-      documentRef,
-      setActiveView: (...a) => callbacks?.setActiveView?.(...a),
-      openSettingsSection: (...a) => callbacks?.openSettingsSection?.(...a),
-      appendClientLog: (...a) => callbacks?.appendClientLog?.(...a),
-    }) || null;
-    pluginViewController?.bind?.();
-    if (pluginViewController) {
-      controllers.push(pluginViewController);
-      registerCleanup?.(() => pluginViewController.dispose?.());
-    }
+    // Old image chats are read-only plugin sessions; this only shows their notice.
     const pluginSessionController = windowRef.rendererPluginSessionController
-      ?.createPluginSessionController?.({
-        state,
-        windowRef,
-        documentRef,
-        viewHost: pluginViewController,
-        callbacks: {
-          handleCreateSession: (...a) => callbacks?.handleCreateSessionWithWorkspace?.(...a),
-          setActiveView: (...a) => callbacks?.setActiveView?.(...a),
-          showToastMessage: (...a) => callbacks?.showToastMessage?.(...a),
-          openSettingsSection: (...a) => callbacks?.openSettingsSection?.(...a),
-          appendClientLog: (...a) => callbacks?.appendClientLog?.(...a),
-        },
-      }) || null;
+      ?.createPluginSessionController?.({ state, windowRef, documentRef }) || null;
     pluginSessionController?.bind?.();
     if (pluginSessionController) {
       controllers.push(pluginSessionController);
@@ -70,7 +45,6 @@
         openSettingsSection: (...a) => callbacks?.openSettingsSection?.(...a),
         setActiveView: (...a) => callbacks?.setActiveView?.(...a),
         constants: { TOAST_SOURCE: constants?.TOAST_SOURCE },
-        openPluginView: (...a) => pluginViewController?.open?.(...a),
         overlayManager: appControllers?.overlayManager || null,
       }) || null;
       if (!controller) {

@@ -147,6 +147,8 @@ class WorkspaceGitService {
       execFailure: (op, result) => this._execFailure(op, result),
       probeHeadState,
       log: (level, event, details) => this._log(level, event, details),
+      resolveInsideRoot: (relPath, root) => this._resolveInsideRoot(relPath, root),
+      trashItem: this._trashItemImpl,
     });
   }
 
@@ -941,6 +943,10 @@ class WorkspaceGitService {
   restoreCheckpoint(options = {}) { return this._checkpoints.restoreCheckpoint(options); }
 
   deleteCheckpoint(options = {}) { return this._checkpoints.deleteCheckpoint(options); }
+
+  preflightCheckpointFiles(options = {}) { return this._checkpoints.preflightCheckpointFiles(options); }
+
+  restoreCheckpointFiles(options = {}) { return this._checkpoints.restoreCheckpointFiles(options); }
 }
 
 module.exports = {

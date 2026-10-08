@@ -301,3 +301,106 @@ test('a picker open re-reads an unavailable list at once and skips an available 
   assert.equal(calls.list, 2);
   refresher.dispose();
 });
+
+// Live gate 2026-10-05 (1 of 3 cold launches, managed llama-server): after
+// model_loading -> ready the composer kept "Use default" + "<model> (selected)"
+// until a reload. The model-inclusive refresh landed after the ready handler's
+// full render had already run, and its snapshot render does not rebuild the
+// composer's model carrier (renderSettings runs there only on the Settings view).
+const ORNITH = 'ornith-1.5-9b-q6_k';
+const ORNITH_CATALOG = {
+  available: true,
+  engine_type: 'openai-compatible',
+  active_model: ORNITH,
+  data: [
+    { id: ORNITH, engine_type: 'openai-compatible', capabilities: { reasoning_efforts: ['none', 'low', 'medium', 'high'] } },
+    { id: 'qwen3.5:4b', engine_type: 'ollama', capabilities: null },
+  ],
+};
+
+test('the first available catalog after model_loading renders in full; an unchanged re-read does not', async (t) => {
+  const state = { backend: { phase: 'model_loading' }, auth: { authenticated: true }, ui: { activeView: 'chat' } };
+  let reads = 0;
+  let renders = 0;
+  let fullRenders = 0;
+  const refresher = createSnapshotRefresh({
+    state,
+    render() { renders += 1; },
+    onModelCatalogRecovered() { fullRenders += 1; },
+    getShell: () => ({
+      engines: { getSettings: async () => ({ preferredEngineType: 'openai-compatible' }) },
+      status: { get: async () => ({ model: ORNITH }) },
+      models: { list: async () => { reads += 1; return ORNITH_CATALOG; } },
+    }),
+  });
+  t.after(() => refresher.dispose());
+
+  await refresher.refreshSnapshots();
+  assert.equal(reads, 0, 'no catalog read while the model loads');
+  state.backend = { phase: 'ready' };
+  await refresher.refreshSnapshots();
+  assert.equal(state.modelList, ORNITH_CATALOG);
+  assert.equal(fullRenders, 1, 'a changed catalog rebuilds every model carrier');
+  assert.equal(renders, 0);
+
+  await refresher.refreshSnapshots();
+  assert.equal(fullRenders, 1, 'the same catalog again keeps the cheap snapshot render');
+  assert.equal(renders, 1);
+});
+
+test('a runtime-only poll that overtakes a slow catalog read does not drop the catalog', async (t) => {
+  const state = { backend: { phase: 'ready' }, auth: { authenticated: true }, ui: { activeView: 'chat' } };
+  const listRequest = deferred();
+  const statusReads = [];
+  const catalogUpdates = [];
+  let fullRenders = 0;
+  const refresher = createSnapshotRefresh({
+    state,
+    onModelsUpdated: (models) => { catalogUpdates.push(models); },
+    onModelCatalogRecovered() { fullRenders += 1; },
+    getShell: () => ({
+      engines: { getSettings: async () => ({ preferredEngineType: 'openai-compatible' }) },
+      status: { get: async () => { statusReads.push(statusReads.length); return { model: ORNITH, read: statusReads.length }; } },
+      models: { list: () => listRequest.promise },
+    }),
+  });
+  t.after(() => refresher.dispose());
+
+  const modelRefresh = refresher.refreshSnapshots();
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  // The 15 s poller ticks while models.list is still in flight (~4.5 s on the gate).
+  await refresher.refreshSnapshots({ includeModels: false });
+  assert.deepEqual(state.status, { model: ORNITH, read: 2 });
+  listRequest.resolve(ORNITH_CATALOG);
+  await modelRefresh;
+
+  assert.equal(state.modelList, ORNITH_CATALOG, 'the catalog read still commits');
+  assert.deepEqual(catalogUpdates, [ORNITH_CATALOG]);
+  assert.equal(fullRenders, 1);
+  assert.deepEqual(state.status, { model: ORNITH, read: 2 }, 'the newer poll keeps the status it read');
+});
+
+test('a newer model-inclusive refresh still wins over an older slow catalog read', async (t) => {
+  const state = { backend: { phase: 'ready' }, auth: { authenticated: true } };
+  const requests = [];
+  const refresher = createSnapshotRefresh({
+    state,
+    getShell: () => ({
+      engines: { getSettings: async () => ({}) },
+      status: { get: async () => ({ model: ORNITH }) },
+      models: { list: () => { const request = deferred(); requests.push(request); return request.promise; } },
+    }),
+  });
+  t.after(() => refresher.dispose());
+
+  const older = refresher.refreshSnapshots();
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  const newer = refresher.refreshSnapshots();
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  assert.equal(requests.length, 2);
+  requests[1].resolve(ORNITH_CATALOG);
+  await newer;
+  requests[0].resolve({ available: true, data: [] });
+  await older;
+  assert.equal(state.modelList, ORNITH_CATALOG, 'the late, older read cannot overwrite the newer catalog');
+});

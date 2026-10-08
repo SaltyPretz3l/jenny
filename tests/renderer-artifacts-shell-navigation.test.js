@@ -256,12 +256,9 @@ test('artifact jump failures roll the current session off the live row-model pat
   }
 });
 
-// Hydrated (persisted-history) twin of the live-stream jump test above. The
-// segmented contract settled (tests/renderer-turn-compat.test.js "completed
-// segmented turns render source-owned articles"): the tool_use message owns its
-// own article, so its generated-artifact card and the jump highlight land on
-// that article, not on a coalesced assistant article. Un-skipped 2026-09-25.
-test('artifact jumps for hydrated tool results highlight the source-owned tool article', async (t) => {
+// Hydrated twin of the live-stream jump test: source identity selects the tool
+// row's turn envelope, which contains its generated-artifact card.
+test('artifact jumps for hydrated tool results highlight the turn containing the source row', async (t) => {
   const app = await loadRendererApp();
   t.after(async () => {
     await app.dispose();
@@ -352,14 +349,15 @@ test('artifact jumps for hydrated tool results highlight the source-owned tool a
   });
   await waitForUi(window, 80);
 
-  const toolArticle = doc.querySelector('article[data-message-id="tool_use_artifact_turn"]');
-  assert.ok(toolArticle, 'the tool_use message renders its own article');
+  const toolArticle = doc.querySelector('article[data-message-id="assistant_artifact_turn"]');
+  assert.ok(toolArticle, 'the turn article contains the tool row');
+  assert.ok(doc.querySelector('.thread-compat-anchor[data-message-id="tool_use_artifact_turn"]'));
   assert.ok(
     toolArticle.querySelector('[data-row-kind="tool_call"] [data-inv-artifact-action="panel"][data-artifact-id="artifact_file_session-1_app-js"]'),
     'the generated-artifact card rides the tool call row'
   );
   const assistantArticle = doc.querySelector('article[data-message-id="assistant_artifact_turn"]');
-  assert.equal(assistantArticle?.querySelector('[data-inv-artifact-action]') ?? null, null);
+  assert.equal(assistantArticle?.querySelector('[data-row-kind="assistant_text"] [data-inv-artifact-action]') ?? null, null);
 
   // W1-5: the studio view is gone — open the split review panel instead.
   doc.getElementById('artifactSplitViewToggle').click();
@@ -375,7 +373,8 @@ test('artifact jumps for hydrated tool results highlight the source-owned tool a
   const chatTab = doc.getElementById('chatTopRailTab');
   assert.equal(chatTab.getAttribute('aria-selected'), 'true');
   const highlighted = Array.from(doc.querySelectorAll('.artifact-source-highlight'));
-  assert.deepEqual(highlighted.map((el) => el.getAttribute('data-message-id')), ['tool_use_artifact_turn']);
+  assert.deepEqual(highlighted.map((el) => el.getAttribute('data-message-id')), ['assistant_artifact_turn']);
+  assert.ok(highlighted[0].querySelector('[data-row-kind="tool_call"][data-source-message-id="tool_use_artifact_turn"]'));
   assert.ok(highlighted[0].classList.contains('message-shell'));
 });
 

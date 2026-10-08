@@ -29,113 +29,6 @@ def _write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def test_plugin_boundary_resolves_relative_core_imports(tmp_path, monkeypatch) -> None:
-    module = _load_script_module("check_plugin_boundary.py")
-    _write_text(
-        tmp_path / "services" / "backend" / "unexpected-core-seam.js",
-        "const inode = 0n;\nconst plugin = require('../plugins/example');\n",
-    )
-    _write_text(
-        tmp_path / "services" / "plugins" / "example.js",
-        "module.exports = {};\n",
-    )
-    monkeypatch.setattr(module, "ROOT", tmp_path)
-
-    violations = module._check_js_core_references()
-
-    assert violations == [
-        "services/backend/unexpected-core-seam.js references services/plugins/ "
-        "(core seam not allowlisted; see JS_CORE_ALLOWLIST)"
-    ]
-
-
-def test_plugin_ast_preserves_bigint_values_without_coercing_budget_numbers(tmp_path) -> None:
-    module = _load_script_module("check_plugin_boundary.py")
-    source = tmp_path / "bigint.js"
-    _write_text(source, """
-const inode = 9007199254740993n;
-const limits = Object.freeze({ numeric: 64, bigint: 64n, nested: [0n, '64'] });
-inspect(9007199254740993n, 64, { nested: [0n] });
-""")
-
-    facts = module.inspect_javascript(tmp_path, [source])[str(source.resolve())]
-    large = {"$bigint": "9007199254740993"}
-    zero = {"$bigint": "0"}
-    assert facts["declarations"]["inode"] == large
-    assert facts["declarations"]["limits"] == {
-        "numeric": 64, "bigint": {"$bigint": "64"}, "nested": [zero, "64"],
-    }
-    call = next(item for item in facts["calls"] if item["callee"] == "inspect")
-    assert call["args"] == [large, 64, {"nested": [zero]}]
-    assert {"function": None, "value": large} in facts["literals"]
-    assert {"function": None, "key": "bigint", "value": {"$bigint": "64"}} in facts["properties"]
-    budgets = _load_script_module("check_plugin_stage5_budgets.py")
-    assert budgets._contains_expected(facts["declarations"]["limits"], {"numeric": 64})
-    assert not budgets._contains_expected(facts["declarations"]["limits"], {"bigint": 64})
-
-
-def test_plugin_boundary_python_reference_self_test_is_non_vacuous(monkeypatch) -> None:
-    module = _load_script_module("check_plugin_boundary.py")
-
-    assert module._self_test() == []
-
-    monkeypatch.setattr(
-        module,
-        "PY_REFERENCE",
-        module.re.compile(
-            r"(?:from\s+sidecar\.ai\.plugins|import\s+sidecar\.ai\.plugins)"
-        ),
-    )
-
-    failures = module._self_test()
-
-    assert failures
-    assert any(
-        "wrongly matched '# see from sidecar.ai.plugins import policy'" in failure
-        for failure in failures
-    )
-
-
-def test_stage5_budget_ownership_requires_executable_declarations(
-    tmp_path, monkeypatch
-) -> None:
-    module = _load_script_module("check_plugin_stage5_budgets.py")
-    ledger = {
-        "budgets_schema_version": 1,
-        "stage": 5,
-        "status": "frozen",
-        "frozen": True,
-        "approved_packet": "stage5d_activation",
-        "activation_stage": 5,
-        **module.EXPECTED,
-    }
-    ledger_path = tmp_path / "config" / "plugins" / "stage5-budgets.json"
-    _write_text(ledger_path, json.dumps(ledger))
-    comment_markers = {
-        "services/plugins/distribution/distribution-limits.js": (
-            "solverNodes: 64",
-            "solverDecisions: 4096",
-            "solverIncompatibilities: 8192",
-            "cacheBytes: 512 * 1024 * 1024",
-            "retainedGenerations: 3",
-        ),
-    }
-    for relative, markers in comment_markers.items():
-        _write_text(
-            tmp_path / relative,
-            "\n".join(f"// {marker}" for marker in markers) + "\n",
-        )
-    monkeypatch.setattr(module, "ROOT", tmp_path)
-    monkeypatch.setattr(module, "LEDGER", ledger_path)
-
-    failures = module.violations()
-
-    assert (
-        "services/plugins/distribution/distribution-limits.js runtime budget "
-        "declarations do not match the frozen ledger"
-    ) in failures
-
-
 def test_check_protocol_contract_passes_for_current_protocol(capsys) -> None:
     module = _load_script_module("check_protocol_contract.py")
 
@@ -887,7 +780,7 @@ def test_run_all_includes_every_active_policy_check() -> None:
         path.name
         for path in checks_dir.glob("check_*.py")
         if path.name not in lane_scoped_checks
-    ] + ["measure_plugin_budgets.py"])
+    ])
 
     assert sorted(module.CHECKS) == active_checks
     assert module.CHECKS.index("check_no_port_bundle_runtime_imports.py") < module.CHECKS.index(
@@ -1000,23 +893,6 @@ def test_test_coverage_allowlist_rejects_malformed_entry_shapes(
             assert expected in str(error)
         else:
             raise AssertionError(f"malformed allowlist was accepted: {document!r}")
-
-
-def test_plugin_parity_corpus_rejects_case_without_string_id(
-    tmp_path, monkeypatch
-) -> None:
-    module = _load_script_module("plugin_parity_corpus.py")
-    shard_path = tmp_path / "malformed.json"
-    shard_path.write_text('{"cases":[{}],"expectations":{}}', encoding="utf-8")
-    monkeypatch.setattr(module, "shard_paths", lambda: [shard_path])
-
-    try:
-        module.load_parity_corpus()
-    except module.ParityCorpusError as error:
-        assert "malformed.json: case 1" in str(error)
-        assert "non-empty string 'id'" in str(error)
-    else:
-        raise AssertionError("malformed parity case was accepted")
 
 
 def test_provider_descriptor_fixture_rejects_non_string_binding() -> None:

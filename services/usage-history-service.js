@@ -372,7 +372,7 @@ class UsageHistoryService extends EventEmitter {
       return;
     }
     const status = this._store.readWithStatus(null);
-    if (status.corrupted) {
+    if (status.corrupted || status.unreadable) {
       this._readOnlyReason = 'corrupt_store';
       this._log('WARN', 'usage_history.load_failed', { reason: 'corrupt_store' });
       return;

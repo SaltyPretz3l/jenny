@@ -34,7 +34,6 @@
     const toggleDir = typeof deps?.toggleDir === 'function' ? deps.toggleDir : noop;
     const onOpenFile = typeof deps?.onOpenFile === 'function' ? deps.onOpenFile : noop;
     const selection = deps?.selection || {};
-    const isQolEnabled = typeof deps?.isQolEnabled === 'function' ? deps.isQolEnabled : () => false;
     const render = typeof deps?.render === 'function' ? deps.render : noop;
     const onBeginRename = typeof deps?.onBeginRename === 'function' ? deps.onBeginRename : noop;
     const onDeleteSelection = typeof deps?.onDeleteSelection === 'function'
@@ -140,16 +139,15 @@
       const path = row.dataset.ideTreePath;
       const isDir = row.dataset.ideTreeKind === 'directory';
       const expanded = isDir && getIde().expandedDirs?.has(path);
-      const qolEnabled = isQolEnabled();
       switch (event.key) {
         case 'ArrowDown':
           moveTreeFocus(rows, index + 1);
-          if (qolEnabled && event.shiftKey) {
+          if (event.shiftKey) {
             const target = rows[Math.min(rows.length - 1, index + 1)];
             if (selection.has(path) !== true) selection.replace([path], path);
             selection.extendRange(rows.map((item) => item.dataset.ideTreePath), target.dataset.ideTreePath);
             render();
-          } else if (qolEnabled && !event.ctrlKey && !event.metaKey) {
+          } else if (!event.ctrlKey && !event.metaKey) {
             const target = rows[Math.min(rows.length - 1, index + 1)];
             selection.replace([target.dataset.ideTreePath], target.dataset.ideTreePath);
             render();
@@ -157,12 +155,12 @@
           break;
         case 'ArrowUp':
           moveTreeFocus(rows, index - 1);
-          if (qolEnabled && event.shiftKey) {
+          if (event.shiftKey) {
             const target = rows[Math.max(0, index - 1)];
             if (selection.has(path) !== true) selection.replace([path], path);
             selection.extendRange(rows.map((item) => item.dataset.ideTreePath), target.dataset.ideTreePath);
             render();
-          } else if (qolEnabled && !event.ctrlKey && !event.metaKey) {
+          } else if (!event.ctrlKey && !event.metaKey) {
             const target = rows[Math.max(0, index - 1)];
             selection.replace([target.dataset.ideTreePath], target.dataset.ideTreePath);
             render();
@@ -170,14 +168,14 @@
           break;
         case 'Home':
           moveTreeFocus(rows, 0);
-          if (qolEnabled && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+          if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
             selection.replace([rows[0].dataset.ideTreePath], rows[0].dataset.ideTreePath);
             render();
           }
           break;
         case 'End':
           moveTreeFocus(rows, rows.length - 1);
-          if (qolEnabled && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+          if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
             const target = rows[rows.length - 1];
             selection.replace([target.dataset.ideTreePath], target.dataset.ideTreePath);
             render();
@@ -187,14 +185,14 @@
           if (isDir && !expanded) {
             setFocusedPath(path);
             setFocusAfterRender(true);
-            if (qolEnabled && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+            if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
               selection.replace([path], path);
               render();
             }
             toggleDir(path);
           } else if (isDir && expanded && rows[index + 1]?.dataset.ideTreePath.startsWith(`${path}/`)) {
             moveTreeFocus(rows, index + 1);
-            if (qolEnabled && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+            if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
               const target = rows[Math.min(rows.length - 1, index + 1)];
               selection.replace([target.dataset.ideTreePath], target.dataset.ideTreePath);
               render();
@@ -205,7 +203,7 @@
           if (isDir && expanded) {
             setFocusedPath(path);
             setFocusAfterRender(true);
-            if (qolEnabled && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+            if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
               selection.replace([path], path);
               render();
             }
@@ -216,7 +214,7 @@
             );
             if (parentIndex !== -1) {
               moveTreeFocus(rows, parentIndex);
-              if (qolEnabled && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+              if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
                 const target = rows[parentIndex];
                 selection.replace([target.dataset.ideTreePath], target.dataset.ideTreePath);
                 render();
@@ -235,7 +233,6 @@
           }
           break;
         case 'F2': {
-          if (!qolEnabled) return;
           const targets = selection.resolveTargets(getFocusedPath());
           if (targets.length === 1) {
             const targetRow = rows.find((candidate) => candidate.dataset.ideTreePath === targets[0]);
@@ -246,16 +243,15 @@
           break;
         }
         case 'Delete':
-          if (!qolEnabled) return;
           onDeleteSelection();
           break;
         case 'Escape':
-          if (!qolEnabled || selection.size() === 0) return;
+          if (selection.size() === 0) return;
           selection.replace(getFocusedPath() ? [getFocusedPath()] : [], getFocusedPath());
           render();
           break;
         default:
-          if (qolEnabled && (event.ctrlKey || event.metaKey)) {
+          if (event.ctrlKey || event.metaKey) {
             const shortcutKey = String(event.key || '').toLocaleLowerCase();
             if (shortcutKey === 'a') {
               selection.selectAll(rows.map((item) => item.dataset.ideTreePath));
@@ -268,7 +264,7 @@
               break;
             }
           }
-          if (qolEnabled && handleTypeAhead(event, rows, index)) {
+          if (handleTypeAhead(event, rows, index)) {
             break;
           }
           return;
@@ -285,7 +281,7 @@
       if (event.key === 'Enter') {
         event.preventDefault();
         event.stopPropagation();
-        if (isQolEnabled() && editSession.onInput?.(control)?.ok === false) {
+        if (editSession.onInput?.(control)?.ok === false) {
           return;
         }
         commitEdit(control.value);

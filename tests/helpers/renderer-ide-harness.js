@@ -10,39 +10,27 @@ const { createIdeController } = require('../../renderer/features/renderer-ide-co
 function buildIdeDom() {
   const dom = new JSDOM(`
     <div id="ideView">
-      <div id="ideShell" data-rail-side="right">
-        <div id="ideMain">
-          <div id="ideTabStrip"></div>
-          <nav id="ideBreadcrumbs" class="hidden"></nav>
-          <div id="ideDiffToolbar" class="hidden"></div>
-          <div id="ideEditorStage">
-            <div id="ideEditorHost"></div>
-            <textarea id="ideEditorFallback" class="hidden"></textarea>
-            <div id="idePreviewHost" class="hidden"></div>
-            <div id="ideEmptyState">
-              <p id="ideEmptyStateCopy"></p>
-              <div id="ideEmptyStateAction" class="hidden"></div>
+      <div id="ideShell">
+        <div id="ideWorkbench">
+          <div id="ideMain">
+            <div class="ide-tabbar">
+              <div id="ideTabStrip"></div>
+              <div id="ideStageSwitch"></div>
+            </div>
+            <nav id="ideBreadcrumbs" class="hidden"></nav>
+            <div id="ideDiffToolbar" class="hidden"></div>
+            <div id="ideEditorStage">
+              <div id="ideEditorHost"></div>
+              <textarea id="ideEditorFallback" class="hidden"></textarea>
+              <div id="idePreviewHost" class="hidden"></div>
+              <div id="ideEmptyState">
+                <p id="ideEmptyStateCopy"></p>
+                <div id="ideEmptyStateAction" class="hidden"></div>
+              </div>
             </div>
           </div>
-          <div id="ideBottomResizer" class="hidden" tabindex="0"></div>
-          <div id="ideBottomPanel" class="hidden" data-open="false">
-            <nav id="ideBottomTabs"></nav>
-            <div id="ideBottomTerminalHost" class="hidden"></div>
-            <div id="ideBottomPanelContent"></div>
-          </div>
-          <div id="ideBottomHandle" class="hidden"></div>
-          <div id="ideStatusBar" class="hidden"></div>
         </div>
-        <div id="ideRail">
-          <div id="ideRailResizer" tabindex="0"></div>
-          <nav id="ideActivityBar"></nav>
-          <div id="ideRailPanel"></div>
-        </div>
-        <aside id="ideSecondarySidebar" class="hidden">
-          <div id="ideSecondarySidebarResizer" class="hidden" tabindex="0"></div>
-          <nav id="ideSecondarySidebarHeader"></nav>
-          <div id="ideSecondarySidebarPanel"></div>
-        </aside>
+        <div id="ideStatusBar" class="hidden"></div>
       </div>
     </div>
   `);
@@ -65,20 +53,8 @@ function buildIdeDom() {
       ideEmptyState: byId('ideEmptyState'),
       ideEmptyStateCopy: byId('ideEmptyStateCopy'),
       ideEmptyStateAction: byId('ideEmptyStateAction'),
-      ideRail: byId('ideRail'),
-      ideRailResizer: byId('ideRailResizer'),
-      ideActivityBar: byId('ideActivityBar'),
-      ideRailPanel: byId('ideRailPanel'),
-      ideBottomResizer: byId('ideBottomResizer'),
-      ideBottomPanel: byId('ideBottomPanel'),
-      ideBottomTabs: byId('ideBottomTabs'),
-      ideBottomPanelContent: byId('ideBottomPanelContent'),
-      ideBottomTerminalHost: byId('ideBottomTerminalHost'),
-      ideBottomHandle: byId('ideBottomHandle'),
-      ideSecondarySidebar: byId('ideSecondarySidebar'),
-      ideSecondarySidebarResizer: byId('ideSecondarySidebarResizer'),
-      ideSecondarySidebarHeader: byId('ideSecondarySidebarHeader'),
-      ideSecondarySidebarPanel: byId('ideSecondarySidebarPanel'),
+      ideWorkbench: byId('ideWorkbench'),
+      ideStageSwitch: byId('ideStageSwitch'),
     }),
   };
 }
@@ -759,7 +735,7 @@ async function settle(ms = 10) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function createHarness({ bridgeOptions, turnViewModels = [], featureFlags, workspaceRootService, extraCallbacks = {} } = {}) {
+function createHarness({ bridgeOptions, turnViewModels = [], featureFlags, workspaceRootService, extraCallbacks = {}, beforeController } = {}) {
   const { dom, getDom } = buildIdeDom();
   const bridge = createBridgeStub(bridgeOptions);
   const previousWindow = globalThis.window;
@@ -799,6 +775,8 @@ function createHarness({ bridgeOptions, turnViewModels = [], featureFlags, works
   if (featureFlags) {
     state.features = { featureFlags: { ...featureFlags } };
   }
+  // Optional window setup the controller's lazily-resolved globals need (bridges, panel modules).
+  if (typeof beforeController === 'function') beforeController(dom.window, bridge);
   const controller = createIdeController({
     state,
     workspaceRootService: workspaceRootService || {
@@ -838,9 +816,12 @@ function createHarness({ bridgeOptions, turnViewModels = [], featureFlags, works
   return {
     dom,
     getDom,
+    // Row 40 W3: each panel mounts into its own persistent workbench host.
+    viewHost: (id) => dom.window.document.getElementById(`wbView-${id}`),
     bridge,
     controller,
     state,
+    turnViewModels,
     toasts,
     infoToasts,
     sentToJenny,

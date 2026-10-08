@@ -76,7 +76,8 @@ test('many media sessions are produced and consumed one at a time and restore id
   fs.writeFileSync(path.join(profile, 'sidecar-memory.db'), databaseBytes);
   fs.writeFileSync(path.join(runtime, 'jenny_memory.db'), databaseBytes);
   const media = path.join(root, 'media.webm');
-  const mediaBytes = Buffer.from('portable managed audio');
+  // EBML/WebM signature: audio intake sniffs the bytes and refuses non-audio.
+  const mediaBytes = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.from('portable managed audio')]);
   fs.writeFileSync(media, mediaBytes);
   const sessions = Array.from({ length: 24 }, (_, index) => ({
     id: `sess_stream_${index}`, title: `Chat ${index}`, created_at: '2026-10-01T00:00:00.000Z',

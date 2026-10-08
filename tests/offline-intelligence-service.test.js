@@ -635,35 +635,6 @@ test('getDiagnostics carries modelFitEstimates for a non-catalog installed model
   assert.ok(est.vramRequiredMb > 0);
 });
 
-test('getDiagnostics returns an empty modelFitEstimates when the flag is off', async () => {
-  const previous = process.env.JENNY_ENABLE_MODEL_FIT_ESTIMATES;
-  process.env.JENNY_ENABLE_MODEL_FIT_ESTIMATES = '0';
-  try {
-    const backend = createBackendService({
-      listModelsForEngine: async () => ({
-        object: 'list',
-        engine_type: 'ollama',
-        available: true,
-        reason: '',
-        data: [{ id: 'unknown-model:9b', available: true, size: 9_000_000_000, parameterSize: '9B' }],
-      }),
-    });
-    backend.sidecarManager = { getStatus: () => ({ phase: 'ready' }) };
-    backend.sidecarClient = { hardwareProfile: async () => ({ gpu: {}, memory: {}, model_recommendations: [] }) };
-
-    const service = new OfflineIntelligenceService({
-      configService: createConfigService({ mode: 'disabled' }),
-      backendService: backend,
-    });
-
-    const diagnostics = await service.getDiagnostics();
-    assert.deepEqual(diagnostics.modelFitEstimates, []);
-  } finally {
-    if (previous === undefined) delete process.env.JENNY_ENABLE_MODEL_FIT_ESTIMATES;
-    else process.env.JENNY_ENABLE_MODEL_FIT_ESTIMATES = previous;
-  }
-});
-
 test('getMode reads the configured mode without probing the model catalog', () => {
   let catalogProbes = 0;
   const service = new OfflineIntelligenceService({

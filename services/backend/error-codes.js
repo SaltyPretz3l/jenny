@@ -22,6 +22,12 @@ const SIDECAR_TERMINAL_SUBCODES = Object.freeze({
   RECONNECT_FAILED: 'sidecar_reconnect_failed',
   RECONNECT_IN_PROGRESS: 'sidecar_reconnect_in_progress',
   TURN_TIMEOUT: 'turn',
+  // Not a sidecar fault: Jenny itself closed (or was killed) mid-reply and the
+  // runtime paused the turn's work for an explicit Resume (gate F9).
+  APP_RESTART: 'app_restart',
+  // Same close, but the paused work saved no checkpoint for its attempt, so
+  // the runtime cannot resume it: the reply can only be run again.
+  APP_RESTART_UNRESUMABLE: 'app_restart_unresumable',
 });
 
 const INTERACTIVE_ERROR_CODES = Object.freeze({
@@ -267,8 +273,7 @@ const MCP_ERROR_CODES = Object.freeze({
   TOOL_SURFACE_CHANGED: 'CMP-MCP-0009',
 });
 
-// services/plugins/** must import these constants; inline CMP literals are
-// policy-banned.
+// Reserved: the plugin platform is retired and nothing emits these codes.
 // Range allocations live in docs/operations/error-codes.md.
 const PLUGIN_ERROR_CODES = Object.freeze({
   MANIFEST_INVALID: 'CMP-PLUGIN-0001',

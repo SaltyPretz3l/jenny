@@ -19,14 +19,12 @@ const {
 const { WorkspaceRootOperationManager } = require('./workspace-root-operation');
 
 const COPY_ERROR_CODES = Object.freeze({
-  FEATURE_DISABLED: 'feature_disabled',
   NAME_EXHAUSTED: 'name_exhausted',
   SYMLINK_SKIPPED: 'symlink_skipped',
   SYMLINK_UNSUPPORTED: 'symlink_unsupported',
   UNSUPPORTED_ENTRY: 'unsupported_entry',
 });
 const IMPORT_ERROR_CODES = Object.freeze({
-  FEATURE_DISABLED: 'feature_disabled',
   IMPORT_IN_PROGRESS: 'import_in_progress',
   IMPORT_TOO_LARGE: 'import_too_large',
   INSIDE_WORKSPACE: 'inside_workspace',
@@ -71,8 +69,6 @@ class WorkspaceImportService {
     path = nodePath,
     platform = process.platform,
     logger = null,
-    isQolEnabled = () => false,
-    isImportEnabled = () => false,
     sendProgress = () => {},
     limits = null,
     now = Date.now,
@@ -82,10 +78,6 @@ class WorkspaceImportService {
     this._path = path;
     this._platform = String(platform || process.platform);
     this._logger = typeof logger === 'function' ? logger : null;
-    this._isQolEnabled = typeof isQolEnabled === 'function' ? isQolEnabled : () => false;
-    this._isImportEnabled = typeof isImportEnabled === 'function'
-      ? isImportEnabled
-      : () => false;
     this._sendProgress = typeof sendProgress === 'function' ? sendProgress : () => {};
     this._now = typeof now === 'function' ? now : Date.now;
     this._limits = {
@@ -109,20 +101,6 @@ class WorkspaceImportService {
     } catch (_error) {
       /* logging must never break a copy */
     }
-  }
-
-  _featureDisabledError() {
-    return workspaceFsError(
-      COPY_ERROR_CODES.FEATURE_DISABLED,
-      'Workspace Explorer copy operations are disabled.'
-    );
-  }
-
-  _importFeatureDisabledError() {
-    return workspaceFsError(
-      IMPORT_ERROR_CODES.FEATURE_DISABLED,
-      'Workspace external import operations are disabled.'
-    );
   }
 
   _importError(code, message, details = {}) {
@@ -548,7 +526,6 @@ class WorkspaceImportService {
   }
 
   async previewImport(payload = {}) {
-    if (!this._isImportEnabled()) throw this._importFeatureDisabledError();
     const sources = this._normalizeExternalSources(payload?.sources);
     return this._withRead(async (operation) => {
       return previewExternalSources({
@@ -880,7 +857,6 @@ class WorkspaceImportService {
   }
 
   async importExternal(payload = {}) {
-    if (!this._isImportEnabled()) throw this._importFeatureDisabledError();
     const importId = this._validateImportId(payload?.importId);
     const sources = this._normalizeExternalSources(payload?.sources);
     const destination = this._validateDestination(payload?.destination);
@@ -916,7 +892,6 @@ class WorkspaceImportService {
   }
 
   async cancelImport(payload = {}) {
-    if (!this._isImportEnabled()) throw this._importFeatureDisabledError();
     const importId = this._validateImportId(payload?.importId);
     const controller = this._activeImports.get(importId);
     if (!controller) return { ok: true, cancelled: false };
@@ -925,7 +900,6 @@ class WorkspaceImportService {
   }
 
   async copyEntry(payload = {}) {
-    if (!this._isQolEnabled()) throw this._featureDisabledError();
     const from = normalizeWorkspaceRelPath(payload.from);
     const to = normalizeWorkspaceRelPath(payload.to, { strictName: true, relocationFrom: from });
     const collisionPolicy = this._validateCollisionPolicy(payload.onCollision ?? 'fail');

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { loadRendererApp, waitForUi, openSettingsView } = require('./helpers/renderer-shell-harness');
 const { segmentedGroup, segmentedValue, segmentedOptions } = require('./helpers/segmented-control');
 
 async function loadRendererTestApp(t, options) {
@@ -8,6 +8,7 @@ async function loadRendererTestApp(t, options) {
   t.after(async () => {
     await app.dispose();
   });
+  await openSettingsView(app.window);
   return app;
 }
 
@@ -448,6 +449,9 @@ test('retired chat zoom: a persisted value is ignored on boot and the Composer c
 
 test('Ctrl+wheel in chat and Ctrl +/-/0 drive the app zoom setting', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
+  // The wheel zoom is a chat-view gesture; the loader left the app on Settings.
+  window.document.querySelector('[data-tab-id="chat"]').click();
+  await waitForUi(window, 20);
   const chatView = window.document.getElementById('chatView');
   const tick = () => new Promise((resolve) => window.setTimeout(resolve, 0));
 
@@ -486,6 +490,8 @@ test('Ctrl+wheel in chat and Ctrl +/-/0 drive the app zoom setting', async (t) =
     await tick();
   }
   assert.equal(shell.__state.windowUiState.appZoomPercent, 80);
+  // The hidden Settings page repaints when the view activates (row 32 W1).
+  await openSettingsView(window, 20);
   assert.equal(window.document.getElementById('appearanceAppZoomSelect').value, '80');
 });
 

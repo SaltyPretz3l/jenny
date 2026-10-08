@@ -275,6 +275,27 @@ test('split view: a second pane\'s transcript and inspector chips open once thro
   assert.equal(calls.openIdeFileAtLine.length, 4, 'dispose detaches the pane host');
 });
 
+test('W7c: an open names the chat pane it came from; an event without one names none', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="chatView">'
+    + '<div class="chat-pane" data-pane-id="0"><div id="chatTimeline" data-chat-node="chatTimeline"><code>src/zero.js</code></div>'
+    + '<aside id="subagentInspector" data-chat-node="subagentInspector"></aside></div>'
+    + '<div class="chat-pane" data-pane-id="1"><div data-chat-node="chatTimeline"><span data-chat-path-open="src/one.js">one</span></div></div>'
+    + '</div></body></html>', { url: 'https://jenny.local/chat' });
+  const doc = dom.window.document;
+  const origins = [];
+  const { dispose } = makeHarness(dom, {
+    paneHost: doc,
+    openIdeFileAtLine(path, line, column, origin) { origins.push([path, origin]); return Promise.resolve(true); },
+  });
+  const click = (node) => node.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  click(doc.querySelector('#chatTimeline code'));
+  click(doc.querySelector('[data-chat-path-open="src/one.js"]'));
+  dispatchOpenEvent(dom, { path: 'src/rail.js', line: 3, preferIde: true });
+  await flush();
+  assert.deepEqual(origins, [['src/zero.js', { pane: 0 }], ['src/one.js', { pane: 1 }], ['src/rail.js', undefined]]);
+  dispose();
+});
+
 // ---------------------------------------------------------------------------
 // delegated context menu
 // ---------------------------------------------------------------------------

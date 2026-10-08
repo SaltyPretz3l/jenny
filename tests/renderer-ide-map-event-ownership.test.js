@@ -214,6 +214,8 @@ test('production script graph loads event-ownership before every File Map consum
   const dom = new JSDOM('', { runScripts: 'outside-only' });
   t.after(() => dom.window.close());
   const evalFile = (name) => dom.window.eval(fs.readFileSync(path.join(root, 'renderer', 'features', name), 'utf8'));
+  // Production loads string-utils (index.html) before the lazy IDE group.
+  dom.window.eval(fs.readFileSync(path.join(root, 'renderer', 'shared', 'string-utils.js'), 'utf8'));
   evalFile('renderer-ide-map-event-ownership.js');
   assert.equal(typeof dom.window.rendererIdeMapEventOwnership?.classifyMapEventTarget, 'function');
   for (const name of consumers) {

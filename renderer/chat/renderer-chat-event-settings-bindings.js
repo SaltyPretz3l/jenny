@@ -53,6 +53,7 @@
       ask: jt('composer.runMode.askToast', 'Run mode: Ask — Jenny asks before acting'),
       auto: jt('composer.runMode.autoToast', 'Run mode: Auto — tools run without asking'),
       plan: jt('composer.runMode.planToast', 'Run mode: Plan — read-only planning'),
+      propose: jt('composer.runMode.proposeToast', 'Run mode: Propose — Jenny suggests changes for you to review'),
     });
     let runModeControlRegistered = false;
     const autoRunConfirmedProjects = new Set();
@@ -413,8 +414,49 @@
       const activityToken = runModeActivityGate.capture();
       // Switching modes never asks: the first Auto send in each project does
       // (confirmAutoSend at the send boundary), so cycling Ask -> Auto ->
-      // Plan no longer stops on a dialog (owner, dogfood FG-003).
-      return persistRunMode(next, source, activityToken, sessionId);
+      // Plan no longer stops on a dialog (owner, dogfood FG-003). The one
+      // exception: leaving Propose with suggestions still waiting asks Keep or
+      // Discard (row 35); nothing is applied either way.
+      if (previousRunMode !== 'propose') return persistRunMode(next, source, activityToken, sessionId);
+      return resolveLeavePropose(sessionId).then((choice) => {
+        if (choice === 'cancel' || !runModeActivityGate.isCurrent(activityToken)) return false;
+        return persistRunMode(next, source, activityToken, sessionId);
+      });
+    }
+
+    let leaveProposeDialog = null;
+    // Resolves 'none' (nothing pending), 'keep', 'discard' (after the discard
+    // landed) or 'cancel'. A failed lookup keeps the suggestions and lets the
+    // switch go ahead: they stay reviewable in Changes.
+    async function resolveLeavePropose(sessionId) {
+      const api = globalThis.jennyShell?.suggestedChanges;
+      const id = String(sessionId || state?.currentSessionId || '').trim();
+      let pending;
+      try {
+        pending = Number((await api?.list?.({ sessionId: id }))?.pending_count) || 0;
+      } catch (_error) { return 'keep'; }
+      if (!id || pending <= 0) return 'none';
+      const factory = globalThis.rendererIdeConfirmDialog?.createIdeConfirmDialog;
+      const helpOverlayFactory = globalThis.inventoryHelpOverlay?.createHelpOverlay;
+      if (typeof factory !== 'function' || typeof helpOverlayFactory !== 'function') return 'keep';
+      leaveProposeDialog = leaveProposeDialog || factory({ document, actionButton: globalThis.inventoryActionButton,
+        helpOverlayFactory, hostId: 'composerLeaveProposeOverlay' });
+      const choice = await leaveProposeDialog.choose({
+        title: jt('runMode.leavePropose.title', 'Leave Propose?'),
+        message: jt('runMode.leavePropose.message', 'Some suggested changes are still waiting for your review. Nothing has been applied.'),
+        choices: [
+          { action: 'keep', label: jt('runMode.leavePropose.keep', 'Keep them'), variant: 'primary' },
+          { action: 'discard', label: jt('runMode.leavePropose.discard', 'Discard them'), variant: 'danger' },
+        ],
+      });
+      if (choice !== 'discard') return choice === 'keep' ? 'keep' : 'cancel';
+      const result = await api.discardPending({ sessionId: id }).catch(() => null);
+      if (result?.ok !== true) {
+        showComposerActionError(new Error(String(result?.error || 'discard_failed')),
+          jt('runMode.leavePropose.discardFailed', 'Could not discard the suggested changes'));
+        return 'cancel';
+      }
+      return 'discard';
     }
 
     function cycleRunMode(options = {}) {

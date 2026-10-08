@@ -85,7 +85,7 @@ class SessionRuntimeScheduler {
     if (!this.enabled) return Object.freeze({ status: 'rejected', reason: 'runtime_disabled' });
     const work = this.store.get(workId);
     if (!work || work.status !== 'paused') return Object.freeze({ status: 'rejected', reason: 'work_not_paused' });
-    if (!this._checkpointShapeValid(work)) {
+    if (!this.canResume(work)) {
       return Object.freeze({ status: 'rejected', reason: 'runtime_checkpoint_required' });
     }
     const route = this.resolveRoute(work);
@@ -573,6 +573,13 @@ class SessionRuntimeScheduler {
     if (!reference) return false;
     try { return this.validateCheckpoint(work, reference) === true; }
     catch (_error) { return false; }
+  }
+
+  // Whether resume() would move this paused work. The application service
+  // reads it onto every paused snapshot row so the queue strip and the Runs
+  // view never offer a Resume this scheduler would refuse (2026-10-05 recheck).
+  canResume(work) {
+    return this._checkpointShapeValid(work);
   }
 
   _checkpointShapeValid(work) {

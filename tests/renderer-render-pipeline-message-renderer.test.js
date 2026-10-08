@@ -725,7 +725,7 @@ test('a streaming-article rebuild replays the reasoning hand-off before re-stamp
 });
 
 
-// HB-006: under turn_activity_envelope one article hosts the whole turn's row
+// HB-006: under the turn-activity envelope one article hosts the whole turn's row
 // list. When the dispatcher answers the rebuild with a compat stub (the anchor
 // moved) the old legacy branch wrote ONLY the streaming segment's reasoning
 // into the host, collapsing the timeline until a later full render.

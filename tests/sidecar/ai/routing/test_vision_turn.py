@@ -10,17 +10,12 @@ from sidecar.ai.context.compaction_window import (
     MID_TURN_TASK_STUB,
 )
 from sidecar.ai.context.messages import compact_semantic_messages, sanitize_semantic_message
-from sidecar.ai.engines.base import BaseEngine, ModelModality
+from sidecar.ai.engines.base import ModelModality
 from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.ai.routing.vision_turn import (
-    VISION_ANCHOR_MESSAGE,
-    VisionAnchorError,
-    attach_vision_images,
     current_turn_anchor_index,
     engine_supports_vision,
-    legacy_vision_generation_supported,
     vision_token_surcharge,
-    vision_unified_turn_enabled,
 )
 
 
@@ -108,34 +103,6 @@ def test_current_turn_anchor_index_matches_the_answered_task_prefix() -> None:
     assert current_turn_anchor_index(messages, anchor_text="another prompt") is None
 
 
-def test_attach_vision_images_uses_last_live_lane_user_row() -> None:
-    image = _image()
-    messages = [
-        {"role": "system", "content": "system"},
-        {"role": "user", "content": "older"},
-        {"role": "assistant", "content": "answer"},
-        {"role": "user", "content": "current"},
-        {"role": "assistant", "content": "trailing"},
-    ]
-
-    result = attach_vision_images(
-        messages,
-        vision_images=(image,),
-    )
-
-    assert result is messages
-    assert result[3]["images"] == [image]
-    assert all("images" not in row for index, row in enumerate(result) if index != 3)
-
-
-def test_attach_vision_images_raises_without_live_lane_user_row() -> None:
-    with pytest.raises(VisionAnchorError, match=VISION_ANCHOR_MESSAGE):
-        attach_vision_images(
-            [{"role": "system", "content": "system"}],
-            vision_images=(_image(),),
-        )
-
-
 def test_semantic_compaction_drops_vision_images_and_image_bytes() -> None:
     image = _image()
     encoded = base64.b64encode(image.data).decode("ascii")
@@ -161,12 +128,6 @@ def test_vision_token_surcharge_is_zero_without_images() -> None:
     assert vision_token_surcharge(()) == 0
 
 
-def test_vision_unified_turn_enabled_defaults_true_and_honors_false() -> None:
-    assert vision_unified_turn_enabled(None) is True
-    assert vision_unified_turn_enabled({}) is True
-    assert vision_unified_turn_enabled({"vision_unified_turn": False}) is False
-
-
 def test_engine_supports_vision_via_modalities_or_capabilities() -> None:
     assert engine_supports_vision(
         SimpleNamespace(supported_modalities={ModelModality.VISION}, capabilities={})
@@ -177,33 +138,6 @@ def test_engine_supports_vision_via_modalities_or_capabilities() -> None:
     assert not engine_supports_vision(
         SimpleNamespace(supported_modalities={ModelModality.TEXT}, capabilities={"vision": False})
     )
-
-
-def test_legacy_vision_generation_supported_requires_an_override() -> None:
-    class _UnifiedOnly(BaseEngine):
-        supported_modalities = {ModelModality.TEXT, ModelModality.VISION}
-
-        def load_model(self, *args, **kwargs):  # type: ignore[override]
-            return None
-
-        def generate(self, *args, **kwargs):  # type: ignore[override]
-            return None
-
-        def stream(self, *args, **kwargs):  # type: ignore[override]
-            return iter(())
-
-    class _Legacy(_UnifiedOnly):
-        def generate_with_vision(self, prompt, images, max_tokens=256, temperature=0.7):  # type: ignore[override]
-            return SimpleNamespace(content="", finish_reason="stop")
-
-    class _DuckTyped:
-        def generate_with_vision(self, prompt, images, max_tokens=256, temperature=0.7):
-            return SimpleNamespace(content="", finish_reason="stop")
-
-    assert legacy_vision_generation_supported(_UnifiedOnly.__new__(_UnifiedOnly)) is False
-    assert legacy_vision_generation_supported(_Legacy.__new__(_Legacy)) is True
-    assert legacy_vision_generation_supported(_DuckTyped()) is True
-    assert legacy_vision_generation_supported(object()) is False
 
 
 # Astra B5 review: the anchor must survive a prefixed stub and a prefixed prompt.

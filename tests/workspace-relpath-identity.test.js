@@ -217,7 +217,7 @@ test('IDE-014: the editor open path reads the exact leading-space name', async (
 
 test('IDE-014: an import destination keeps the folder name Explorer listed', () => {
   const { WorkspaceImportService } = require('../services/workspace-import-service');
-  const service = new WorkspaceImportService({ rootContextProvider: () => null, isQolEnabled: () => true });
+  const service = new WorkspaceImportService({ rootContextProvider: () => null });
   assert.equal(service._validateDestination(' assets'), ' assets');
   assert.equal(service._validateDestination('   '), '');
 });

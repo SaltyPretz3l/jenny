@@ -222,9 +222,9 @@ test('disposing Source Control fences an in-flight History refresh and disposes 
   assert.equal(mount.innerHTML, 'TEARDOWN', 'the late refresh cannot repaint after disposal');
 
   let disposeCalls = 0;
-  const dom = new JSDOM('<!doctype html><body><div id="ideRailPanel"></div></body>');
+  const dom = new JSDOM('<!doctype html><body><div id="wbView-source-control"></div></body>');
   const panel = createIdeSourceControlPanel({
-    getDom: () => ({ ideRailPanel: dom.window.document.getElementById('ideRailPanel') }),
+    getDom: () => ({}), getMountEl: () => dom.window.document.getElementById('wbView-source-control'),
     getIde: () => ({ railPanel: 'source-control' }),
     store: { getSnapshot: () => ({ available: true, isRepo: true, files: [] }) },
     onGetLog: async () => ({ ok: true, available: true, isRepo: true, commits: [] }),
@@ -294,11 +294,11 @@ test('limit caps the number of cards rendered', async () => {
 // ── Panel integration (the real Source Control panel wiring) ───────────────
 
 function panelSetup(logResult) {
-  const dom = new JSDOM('<!doctype html><body><div id="ideRailPanel"></div></body>');
-  const panelEl = dom.window.document.getElementById('ideRailPanel');
+  const dom = new JSDOM('<!doctype html><body><div id="wbView-source-control"></div></body>');
+  const panelEl = dom.window.document.getElementById('wbView-source-control');
   const snapshot = { available: true, isRepo: true, branch: 'main', files: [] };
   const panel = createIdeSourceControlPanel({
-    getDom: () => ({ ideRailPanel: panelEl }),
+    getDom: () => ({}), getMountEl: () => panelEl,
     getIde: () => ({ railPanel: 'source-control' }),
     actionButton,
     store: { getSnapshot: () => snapshot },
@@ -339,15 +339,15 @@ test('clicking the History toggle collapses the cards through panel delegation',
 });
 
 test('a successful commit re-pulls the History so the new commit card appears', async () => {
-  const dom = new JSDOM('<!doctype html><body><div id="ideRailPanel"></div></body>');
-  const panelEl = dom.window.document.getElementById('ideRailPanel');
+  const dom = new JSDOM('<!doctype html><body><div id="wbView-source-control"></div></body>');
+  const panelEl = dom.window.document.getElementById('wbView-source-control');
   const snapshot = {
     available: true, isRepo: true, branch: 'main',
     files: [{ path: 'a.js', state: 'modified', staged: true, worktree: ' ', index: 'M' }],
   };
   let log = [commit({ subject: 'Old commit' })];
   const panel = createIdeSourceControlPanel({
-    getDom: () => ({ ideRailPanel: panelEl }),
+    getDom: () => ({}), getMountEl: () => panelEl,
     getIde: () => ({ railPanel: 'source-control' }),
     actionButton,
     textField,
@@ -382,11 +382,11 @@ test('a successful commit re-pulls the History so the new commit card appears', 
 
 test('clicking a commit card opens its diff through panel delegation -> onGetCommitDiff', async () => {
   const opened = [];
-  const dom = new JSDOM('<!doctype html><body><div id="ideRailPanel"></div></body>');
-  const panelEl = dom.window.document.getElementById('ideRailPanel');
+  const dom = new JSDOM('<!doctype html><body><div id="wbView-source-control"></div></body>');
+  const panelEl = dom.window.document.getElementById('wbView-source-control');
   const snapshot = { available: true, isRepo: true, branch: 'main', files: [] };
   const panel = createIdeSourceControlPanel({
-    getDom: () => ({ ideRailPanel: panelEl }),
+    getDom: () => ({}), getMountEl: () => panelEl,
     getIde: () => ({ railPanel: 'source-control' }),
     actionButton,
     store: { getSnapshot: () => snapshot },
@@ -411,11 +411,11 @@ test('clicking a commit card opens its diff through panel delegation -> onGetCom
 
 test('pressing Enter on a focused commit card opens its diff (keyboard activation)', async () => {
   const opened = [];
-  const dom = new JSDOM('<!doctype html><body><div id="ideRailPanel"></div></body>');
-  const panelEl = dom.window.document.getElementById('ideRailPanel');
+  const dom = new JSDOM('<!doctype html><body><div id="wbView-source-control"></div></body>');
+  const panelEl = dom.window.document.getElementById('wbView-source-control');
   const snapshot = { available: true, isRepo: true, branch: 'main', files: [] };
   const panel = createIdeSourceControlPanel({
-    getDom: () => ({ ideRailPanel: panelEl }),
+    getDom: () => ({}), getMountEl: () => panelEl,
     getIde: () => ({ railPanel: 'source-control' }),
     actionButton,
     store: { getSnapshot: () => snapshot },
@@ -440,10 +440,10 @@ test('pressing Enter on a focused commit card opens its diff (keyboard activatio
 });
 
 test('the panel has no History section when onGetLog is not wired (graceful degrade)', () => {
-  const dom = new JSDOM('<!doctype html><body><div id="ideRailPanel"></div></body>');
-  const panelEl = dom.window.document.getElementById('ideRailPanel');
+  const dom = new JSDOM('<!doctype html><body><div id="wbView-source-control"></div></body>');
+  const panelEl = dom.window.document.getElementById('wbView-source-control');
   const panel = createIdeSourceControlPanel({
-    getDom: () => ({ ideRailPanel: panelEl }),
+    getDom: () => ({}), getMountEl: () => panelEl,
     getIde: () => ({ railPanel: 'source-control' }),
     actionButton,
     store: { getSnapshot: () => ({ available: true, isRepo: true, branch: 'main', files: [] }) },

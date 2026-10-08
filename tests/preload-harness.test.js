@@ -45,20 +45,10 @@ function captureJennyShellPreload() {
   return captured;
 }
 
-test('preload forwards plugin session view authority without restoring image IPC', async () => {
+test('preload exposes neither the retired plugin bridge nor image IPC', () => {
   const captured = captureJennyShellPreload();
   assert.equal(captured.api.api.imageGen, undefined);
-  await captured.api.api.plugins.openView({
-    publisher_id: 'jenny-official', plugin_id: 'local-image-generation',
-    contribution_id: 'image_workspace', generation_id: 'generation-1',
-    sessionId: 'plugin-session',
-  });
-  assert.deepEqual(captured.invokeCalls, [{
-    channel: 'plugins:open-view',
-    args: [{ publisher_id: 'jenny-official', plugin_id: 'local-image-generation',
-      contribution_id: 'image_workspace', generation_id: 'generation-1',
-      sessionId: 'plugin-session' }],
-  }]);
+  assert.equal(captured.api.api.plugins, undefined);
 });
 
 test('preload exposes the bounded data lifecycle bridge and disposable progress subscription', async () => {

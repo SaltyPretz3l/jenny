@@ -159,7 +159,7 @@ test('CMP-LOOP-0001 max-iterations promotes into agent.stopped_due_to_loop (Find
 });
 
 test('canonical turn event collector stores bounded stream envelope replay metadata', () => {
-  const turnId = 'stream-envelope-metadata';
+  const turnId = 'turn-envelope-metadata';
   const collector = new CanonicalTurnEventCollector({ turnId });
 
   const captured = collector.noteEvent({

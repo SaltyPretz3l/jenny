@@ -29,6 +29,24 @@ test('wire projection never reflects arbitrary runtime metadata or raw provider 
   assert.equal(streamEventDto({ type: 'plugin_private', sessionId: 's' }), null);
 });
 
+test('wire projection validates reset discard fields and keeps them scoped to resets', () => {
+  const event = { type: 'stream_reset', sessionId: 's', streamId: 'turn', reason: 'model_winddown',
+    discard_scope: 'live_slice', preserve_prior_segments: true, next_assistant_message_id: 'assistant_turn_seg1' };
+  const base = { session_id: 's', stream_id: 'turn', type: 'stream_reset', reason: 'model_winddown' };
+  assert.deepEqual(streamEventDto(event), { ...base, discard_scope: 'live_slice', preserve_prior_segments: true,
+    next_assistant_message_id: 'assistant_turn_seg1' });
+  for (const discard_scope of ['all', 'none']) {
+    assert.deepEqual(streamEventDto({ ...event, discard_scope, preserve_prior_segments: false }), {
+      ...base, discard_scope, preserve_prior_segments: false, next_assistant_message_id: 'assistant_turn_seg1',
+    });
+  }
+  assert.deepEqual(streamEventDto({ ...event, discard_scope: 'bogus', preserve_prior_segments: 'yes',
+    next_assistant_message_id: 'invalid id' }), base);
+  assert.deepEqual(streamEventDto({ ...event, type: 'delta', content: 'Hi' }), {
+    ...base, type: 'delta', content: 'Hi',
+  });
+});
+
 test('approval wakeups, live output and reasoning edits retain bounded useful data', () => {
   const approval = streamEventDto({ type: 'tool_approval_needed', sessionId: 's', streamId: 't',
     approvalId: 'approval', callId: 'call', toolName: 'write_file', summary: 'Write', input: { secret: 'hidden' } });

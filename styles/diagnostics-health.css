@@ -1,79 +1,197 @@
-/* The issue table needs about 770px of its own width, and its column shrinks
- * with the overview's two-column layout, not with the window: the restack
- * below is a container query for that reason. */
+/* Recent issues (UX-007): an entry leads with a plain title, a cause and one
+ * action; the evidence waits under a closed fold. Entries are hairline-separated
+ * rows, never cards, with no side accent bar. The restack is a container query
+ * because the list sits in the overview's two-column layout and shrinks with
+ * its column, not with the window. */
 .diagnostics-issue-list {
   container: diagnostics-issues / inline-size;
-}
-
-.diagnostics-issue-header,
-.diagnostics-issue {
-  display: grid;
-  grid-template-columns: 4.5rem minmax(13rem, 1.5fr) minmax(8rem, 0.8fr) 6.5rem 3.5rem auto;
-  align-items: start;
-  column-gap: var(--space-6);
-}
-
-.diagnostics-issue-header {
-  min-height: 34px;
-  align-items: center;
-  padding: 0 var(--space-8);
-  border-bottom: 1px solid var(--border-default);
-  background: var(--surface-toolbar-background);
-  color: var(--text-muted);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
+  max-width: 1040px;
 }
 
 .diagnostics-issue {
-  min-height: 72px;
   padding: var(--space-7) var(--space-8);
-  border-bottom: 1px solid var(--border-subtle);
-  background: transparent;
+  border-top: 1px solid var(--border-subtle);
 }
 
-.diagnostics-issue:last-child {
-  border-bottom: 0;
+.diagnostics-issue:first-child {
+  border-top: 0;
 }
 
-.diagnostics-issue:hover {
-  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+.diagnostics-issue-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  flex-wrap: wrap;
 }
 
-.diagnostics-issue-level {
-  color: var(--state-warning);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
-}
-
-.diagnostics-issue[data-severity="ERROR"] .diagnostics-issue-level {
-  color: var(--state-danger);
-}
-
-.diagnostics-issue-copy,
-.diagnostics-issue-meta {
+.diagnostics-issue-title strong {
   min-width: 0;
-}
-
-.diagnostics-issue-copy strong,
-.diagnostics-issue-meta {
-  font-size: var(--font-size-sm);
-}
-
-.diagnostics-issue-copy strong code,
-.diagnostics-issue-meta code {
-  font-family: var(--font-family-mono);
+  font-size: var(--font-size-body);
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
-.diagnostics-issue-copy p {
-  margin: var(--space-2) 0 0;
+.diagnostics-issue-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--state-warning-border);
+  border-radius: var(--radius-sm);
+  background: var(--state-warning-bg);
+  color: var(--state-warning);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.diagnostics-issue-badge[data-tone="danger"] {
+  border-color: var(--state-danger-border);
+  background: var(--state-danger-bg);
+  color: var(--state-danger);
+}
+
+.diagnostics-issue-when {
+  margin-inline-start: auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.diagnostics-issue-cause {
+  max-width: 72ch;
+  margin: var(--space-2) 0 var(--space-5);
   color: var(--text-secondary);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-footnote);
   line-height: 1.45;
 }
 
-.diagnostics-issue-copy p.diagnostics-muted {
+.diagnostics-issue-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+
+.diagnostics-issue-tech {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.diagnostics-issue-tech > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 28px;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  list-style: none;
+  cursor: pointer;
+}
+
+.diagnostics-issue-tech > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The disclosure chevron is two rotated borders (top and right), so no issue
+ * rule ever carries a left or inline-start border. */
+.diagnostics-issue-tech > summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-inline-end: var(--space-1);
+  border-top: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor; /* rtl:physical: two sides of a rotated square; the [dir="rtl"] rule below turns it */
+  transform: rotate(45deg);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.diagnostics-issue-tech[open] > summary::before {
+  transform: rotate(135deg);
+}
+
+/* Right-to-left: the closed chevron points left; open points down in both directions. */
+[dir="rtl"] .diagnostics-issue-tech > summary::before {
+  transform: rotate(-135deg);
+}
+
+[dir="rtl"] .diagnostics-issue-tech[open] > summary::before {
+  transform: rotate(135deg);
+}
+
+.diagnostics-issue-tech > summary:hover,
+.diagnostics-issue-tech[open] > summary {
+  color: var(--text-secondary);
+}
+
+.diagnostics-issue-tech > summary:focus-visible,
+.diagnostics-issue-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.diagnostics-issue-tech-body {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-6);
+  max-width: 900px;
+  margin: var(--space-4) 0 0;
+  font-size: var(--font-size-footnote);
+}
+
+.diagnostics-issue-tech-body dt {
+  color: var(--text-muted);
+}
+
+.diagnostics-issue-tech-body dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.diagnostics-issue-tech-body code {
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-issue-event {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.diagnostics-issue-mono,
+.diagnostics-issue-raw {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+}
+
+.diagnostics-issue-raw {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diagnostics-issue-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.diagnostics-issue-link:hover {
+  text-decoration: underline;
+}
+
+.diagnostics-issue .diagnostics-muted {
   color: var(--text-muted);
 }
 
@@ -81,7 +199,6 @@
   display: flex;
   gap: var(--space-2) var(--space-5);
   flex-wrap: wrap;
-  margin-top: var(--space-3);
 }
 
 .diagnostics-issue-correlations > span {
@@ -99,53 +216,6 @@
   font-family: var(--font-family-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.diagnostics-issue-meta {
-  display: grid;
-  gap: var(--space-2);
-  color: var(--text-muted);
-}
-
-.diagnostics-issue-meta span {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-}
-
-.diagnostics-issue time,
-.diagnostics-issue-count {
-  color: var(--text-muted);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.diagnostics-issue-count {
-  text-align: end;
-}
-
-.diagnostics-issue-action {
-  margin-top: calc(var(--space-3) * -1);
-  white-space: nowrap;
-}
-
-.diagnostics-inspect-action.btn {
-  color: var(--text-secondary);
-}
-
-.diagnostics-remediation {
-  display: grid;
-  gap: var(--space-1);
-  margin-top: var(--space-5) !important;
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--border-subtle);
-}
-
-.diagnostics-remediation span {
-  color: var(--text-muted);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
 }
 
 .diagnostics-source-table-shell,
@@ -395,6 +465,41 @@
 
 .diagnostics-budget-list [data-tone="warn"] dd {
   color: var(--state-warning);
+}
+
+.diagnostics-budget-list [data-tone="error"] dd {
+  color: var(--state-danger);
+}
+
+.diagnostics-budget-list dt small {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.diagnostics-budget-list dd small {
+  margin-inline-start: var(--space-2);
+  color: var(--text-muted);
+  font-family: var(--font-family-body);
+  font-weight: 400;
+}
+
+/* A measurement this build does not take: the row stays, the value reads as a note. */
+.diagnostics-budget-list [data-state="unavailable"] dd {
+  color: var(--text-muted);
+  font-family: var(--font-family-body);
+  font-weight: 400;
+}
+
+/* The caption between the resource rows and the usage rows; not a dt/dd, so the dl stays valid. */
+.diagnostics-budget-list > .diagnostics-budget-group {
+  display: block;
+  grid-column: 1 / -1;
+  padding: var(--space-5) var(--space-5) var(--space-1);
+  border-inline-end: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
 }
 
 .phase-percentiles-table-shell {
@@ -769,6 +874,12 @@
   color: var(--text-muted);
 }
 
+/* Row 38 item 1: Retry load under the list while the model failed to load. */
+.diagnostics-inventory-actions {
+  padding: var(--space-4) var(--space-8);
+  border-top: 1px solid var(--border-subtle);
+}
+
 .diagnostics-inventory-stamp {
   margin: 0;
   padding: var(--space-4) var(--space-8) var(--space-6);
@@ -784,38 +895,19 @@
   border-bottom: 0;
 }
 
-@container diagnostics-issues (max-width: 800px) {
-  .diagnostics-issue-header {
-    display: none;
+@container diagnostics-issues (max-width: 560px) {
+  .diagnostics-issue-when {
+    width: 100%;
+    margin-inline-start: 0;
   }
 
-  .diagnostics-issue {
-    grid-template-columns: minmax(0, 1fr) auto;
-    row-gap: var(--space-6);
-  }
-
-  .diagnostics-issue [data-label] {
-    display: grid;
+  .diagnostics-issue-tech-body {
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-1);
   }
 
-  .diagnostics-issue [data-label]::before {
-    content: attr(data-label);
-    color: var(--text-muted);
-    font-family: var(--font-family-body);
-    font-size: var(--font-size-caption);
-    font-weight: 500;
-  }
-
-  .diagnostics-issue-copy,
-  .diagnostics-issue-meta {
-    grid-column: 1 / -1;
-  }
-
-  .diagnostics-issue-action {
-    align-self: end;
-    grid-column: 2;
-    grid-row: 1;
+  .diagnostics-issue-tech-body dd {
+    margin-bottom: var(--space-3);
   }
 }
 
@@ -838,7 +930,8 @@
     border-bottom: 1px solid var(--border-subtle);
   }
 
-  .diagnostics-budget-list > div:last-child {
+  .diagnostics-budget-list > div:last-child,
+  .diagnostics-budget-list > .diagnostics-budget-group {
     border-bottom: 0;
   }
 }
@@ -846,6 +939,10 @@
 @media (prefers-reduced-motion: reduce) {
   .diagnostics-shell * {
     scroll-behavior: auto !important;
+  }
+
+  .diagnostics-issue-tech > summary::before {
+    transition: none;
   }
 }
 
@@ -857,8 +954,7 @@
     border-color: CanvasText;
   }
 
-  .diagnostics-issue-level,
-  .diagnostics-issue[data-severity="ERROR"] .diagnostics-issue-level,
+  .diagnostics-issue-badge,
   .diagnostics-source-state,
   .diagnostics-integrity-summary strong,
   .diagnostics-inventory-list > div[data-tone="warn"] dd,

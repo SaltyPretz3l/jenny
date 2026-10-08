@@ -8,6 +8,8 @@ const {
 } = require('../services/backend/chat-stream-tool-handling');
 const {
   normalizePersistedToolResultMetadata,
+  normalizeScriptedChangeReview,
+  normalizeToolResultMetadataForStorage,
   normalizeToolResultDiffsMetadata,
   normalizeToolResultDiffMetadata,
 } = require('../services/backend/tool-result-diff-metadata');
@@ -399,4 +401,135 @@ test('persisted metadata keeps the shell tool exit status', () => {
   assert.deepEqual(normalizePersistedToolResultMetadata({ exit_code: 1, shell: 'cmd' }), { exit_code: 1 });
   assert.deepEqual(normalizePersistedToolResultMetadata({ exitCode: 0 }), { exit_code: 0 });
   assert.equal(normalizePersistedToolResultMetadata({ exit_code: '1', shell: 'cmd' }), null);
+});
+
+// Row 34 S5: the user-only scripted_change_review v1 record from run_command,
+// run_temp_script and python_execute results.
+function scriptedReview(overrides = {}) {
+  return {
+    schema_version: 1,
+    state: 'observed',
+    certainty: 'observed_during_call',
+    call_outcome: 'succeeded',
+    changed_paths: ['src/app.js'],
+    changed_path_count: 1,
+    diff_count: 1,
+    summary_only_count: 0,
+    omitted_count: 0,
+    coverage: 'git_status_paths',
+    ...overrides,
+  };
+}
+
+test('scripted change review keeps every known state and rejects anything else', () => {
+  for (const state of ['observed', 'partial', 'unavailable', 'unsupported']) {
+    assert.equal(normalizeScriptedChangeReview(scriptedReview({ state })).state, state);
+  }
+  for (const value of [
+    scriptedReview({ state: 'checking' }),
+    scriptedReview({ state: undefined }),
+    scriptedReview({ schema_version: 2 }),
+    scriptedReview({ schema_version: '1' }),
+    null,
+    [],
+    'observed',
+  ]) {
+    assert.equal(normalizeScriptedChangeReview(value), null);
+  }
+});
+
+test('scripted change review keeps known certainty, outcome and reason values', () => {
+  for (const certainty of ['observed_during_call', 'background_window']) {
+    assert.equal(normalizeScriptedChangeReview(scriptedReview({ certainty })).certainty, certainty);
+  }
+  assert.equal(
+    normalizeScriptedChangeReview(scriptedReview({ certainty: 'certain' })).certainty,
+    'background_window',
+    'an unknown certainty falls back to the weaker claim'
+  );
+  for (const outcome of ['succeeded', 'failed', 'cancelled', 'timed_out']) {
+    assert.equal(normalizeScriptedChangeReview(scriptedReview({ call_outcome: outcome })).call_outcome, outcome);
+  }
+  assert.equal(normalizeScriptedChangeReview(scriptedReview({ call_outcome: 'exploded' })).call_outcome, 'unknown');
+  for (const reason of [
+    'not_git', 'status_over_limit', 'probe_failed', 'disabled', 'no_workspace', 'background', 'payload_over_limit',
+  ]) {
+    assert.equal(normalizeScriptedChangeReview(scriptedReview({ state: 'unavailable', reason })).reason, reason);
+  }
+  const dropped = normalizeScriptedChangeReview(scriptedReview({ state: 'unavailable', reason: 'C:\\secret' }));
+  assert.equal(Object.hasOwn(dropped, 'reason'), false);
+  assert.equal(Object.hasOwn(normalizeScriptedChangeReview(scriptedReview()), 'reason'), false);
+});
+
+test('scripted change review bounds paths and counts', () => {
+  const paths = Array.from({ length: 51 }, (_, index) => `src/file-${index}.js`);
+  const review = normalizeScriptedChangeReview(scriptedReview({
+    changed_paths: [...paths.slice(0, 3), '../escape.js', 'C:\\abs.js', ...paths.slice(3)],
+    changed_path_count: 2,
+    diff_count: -4,
+    summary_only_count: 'many',
+    omitted_count: 10_000_000,
+    coverage: 'everything',
+    extra: 'dropped',
+  }));
+  assert.equal(review.changed_paths.length, 50);
+  assert.deepEqual(review.changed_paths.slice(0, 4), ['src/file-0.js', 'src/file-1.js', 'src/file-2.js', 'src/file-3.js']);
+  assert.equal(review.changed_path_count, 50, 'the count never reads lower than the kept paths');
+  assert.equal(review.diff_count, 0);
+  assert.equal(review.summary_only_count, 0);
+  assert.equal(review.omitted_count, 100000);
+  assert.equal(Object.hasOwn(review, 'coverage'), false);
+  assert.equal(Object.hasOwn(review, 'extra'), false);
+  assert.equal(normalizeScriptedChangeReview(scriptedReview()).coverage, 'git_status_paths');
+});
+
+test('scripted summary-only diff reasons survive normalization', () => {
+  for (const reason of ['preimage_unavailable', 'sensitive_path', 'time_limit']) {
+    const [diff] = normalizeToolResultDiffsMetadata([{
+      diff_id: `diff:${reason}`, path: '.env', status: 'modified', review_state: 'summary_only',
+      body_kind: 'summary_only', additions: 0, deletions: 0, truncated: true, truncation_reason: reason,
+      before_hash: null, after_hash: null, hunks: [],
+    }]);
+    assert.equal(diff.truncation_reason, reason);
+    assert.equal(diff.review_state, 'summary_only');
+  }
+});
+
+test('storage keeps only the normalized scripted change review', () => {
+  const metadata = {
+    stdout: 'ok',
+    exit_code: 1,
+    scripted_change_review: scriptedReview({ call_outcome: 'failed', secret: 'x', changed_paths: ['/etc/passwd', 'a.txt'] }),
+  };
+  const persisted = normalizePersistedToolResultMetadata(metadata);
+  assert.deepEqual(persisted.scripted_change_review.changed_paths, ['a.txt']);
+  const stored = normalizeToolResultMetadataForStorage(metadata);
+  assert.equal(stored.stdout, 'ok');
+  assert.deepEqual(stored.scripted_change_review, persisted.scripted_change_review);
+  assert.equal(Object.hasOwn(stored.scripted_change_review, 'secret'), false);
+  const invalid = normalizeToolResultMetadataForStorage({ scripted_change_review: { state: 'observed' } });
+  assert.equal(Object.hasOwn(invalid, 'scripted_change_review'), false);
+});
+
+test('scripted change review keeps a bounded restore point and drops a malformed one', () => {
+  const checkpoint = { kind: 'git_checkpoint', ref: 'refs/jenny/checkpoints/s1/3', created_at: '2026-10-05T12:00:00.000Z' };
+  assert.deepEqual(normalizeScriptedChangeReview(scriptedReview({ restore_point: { ...checkpoint, extra: 1 } })).restore_point, checkpoint);
+  assert.deepEqual(
+    normalizeScriptedChangeReview(scriptedReview({ restore_point: { kind: 'head', created_at: '2026-10-05T12:00:00Z' } })).restore_point,
+    { kind: 'head', created_at: '2026-10-05T12:00:00Z' }
+  );
+  assert.deepEqual(
+    normalizeScriptedChangeReview(scriptedReview({ restore_point: { kind: 'none', reason: 'not_git' } })).restore_point,
+    { kind: 'none', reason: 'not_git' }
+  );
+  for (const bad of [
+    { ...checkpoint, ref: 'refs/heads/main' },
+    { ...checkpoint, ref: 'refs/jenny/checkpoints/../x/1' },
+    { ...checkpoint, created_at: 'yesterday' },
+    { kind: 'none', reason: 'because' },
+    { kind: 'head' },
+    'refs/jenny/checkpoints/s1/3',
+  ]) {
+    assert.equal(Object.hasOwn(normalizeScriptedChangeReview(scriptedReview({ restore_point: bad })), 'restore_point'), false);
+  }
 });

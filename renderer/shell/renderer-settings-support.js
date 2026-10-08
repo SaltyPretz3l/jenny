@@ -259,7 +259,9 @@
   // Dependent row (or row set) -> the tool switch it follows. While the parent is
   // off the dependent row is marked parent-off and locked, and its stored value is kept.
   const TOOL_DEPENDENTS = Object.freeze({ richFiles: 'fileTools', commandSandbox: 'bash', webSearch: 'web' });
-  const RUN_MODES = Object.freeze(['ask', 'auto', 'plan']);
+  const RUN_MODES = Object.freeze(['ask', 'auto', 'plan', 'propose']);
+  // Propose (row 35) is chosen per chat, never as the new-chat default.
+  const DEFAULT_RUN_MODES = Object.freeze(['ask', 'auto', 'plan']);
   const UI_LANGUAGE_TAGS = Object.freeze(['en', 'es', 'fr', 'de', 'it', 'pt-BR', 'nl', 'pl', 'ru', 'uk', 'tr', 'ar', 'hi', 'id', 'vi', 'ja', 'ko', 'zh-CN', 'zh-TW']);
   const UI_LANGUAGE_LABELS = Object.freeze([
     jt('settings.language.option.en', 'English'), jt('settings.language.option.es', 'Español (Spanish)'), jt('settings.language.option.fr', 'Français (French)'), jt('settings.language.option.de', 'Deutsch (German)'),
@@ -359,14 +361,7 @@
     return typeof value === 'string' ? value.trim() : '';
   }
 
-  function defaultEscapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function readMetadataField(source, keys) {
     for (const key of keys) {
@@ -477,7 +472,10 @@
     return RUN_MODES.includes(token) ? token : (planModeFallback === true ? 'plan' : 'ask');
   }
 
-  const normalizeDefaultRunMode = normalizeRunMode;
+  function normalizeDefaultRunMode(value, options) {
+    const mode = normalizeRunMode(value, options);
+    return DEFAULT_RUN_MODES.includes(mode) ? mode : 'ask';
+  }
 
   function normalizeUiLanguageTag(value) {
     if (typeof value !== 'string') return 'en';

@@ -27,6 +27,7 @@ from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.resource_pressure import PressureBackoffDecision
 from sidecar.ai.routing.router import ToolExecutionOutcome
 from sidecar.ai.routing.tool_call_retry import (
+    RETRY_BUDGETS,
     collect_validation_errors,
     evaluate_reflexive_retry,
 )
@@ -799,7 +800,7 @@ def test_delegate_validation_contract_allows_exactly_one_corrective_retry() -> N
             validation_errors=errors,
             known_tool_names=frozenset({"delegate"}),
             tool_schemas={"delegate": {"type": "object"}},
-            already_retried=False,
+            retries_used={},
             native_tools_active=True,
         )
         second = evaluate_reflexive_retry(
@@ -808,7 +809,7 @@ def test_delegate_validation_contract_allows_exactly_one_corrective_retry() -> N
             validation_errors=errors,
             known_tool_names=frozenset({"delegate"}),
             tool_schemas={"delegate": {"type": "object"}},
-            already_retried=True,
+            retries_used=dict(RETRY_BUDGETS),
             native_tools_active=True,
         )
     finally:

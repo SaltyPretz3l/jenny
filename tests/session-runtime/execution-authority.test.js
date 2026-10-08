@@ -29,25 +29,8 @@ const ROOT_B = Object.freeze({ ...ROOT_A, root_path: 'G:\\projects\\beta',
   root_id: 'root-beta', root_revision: 4, inode: '12' });
 const PLUGIN_TOOL = 'plugin:acme-labs:widgets:compute';
 
-function pluginCapture(revision = 1, descriptorDigest = 'a'.repeat(64)) {
-  return Object.freeze({
-    authority: Object.freeze({ mode: 'plugin', registry_revision: revision,
-      dependency_graph_hash: 'b'.repeat(64), commit_epoch: revision,
-      active_generation_id: `generation-${revision}` }),
-    descriptor_digest: descriptorDigest,
-    descriptors: Object.freeze([Object.freeze({
-      name: PLUGIN_TOOL, side_effecting: true, read_only: false,
-      tool_family: 'other', source_kind: 'restricted',
-      server_name: 'electron_tool_bridge', plan_mode_only: false,
-      workspace_required: false,
-      capability_identity: Object.freeze({ runtime_kind: 'restricted',
-        component_digest: 'c'.repeat(64) }),
-    })]),
-  });
-}
-
 function createHarness({ decision = 'auto', mode = 'assist', readOnly = false,
-  resolvePluginToolAuthority = null, approvalMode = 'prompt' } = {}) {
+  approvalMode = 'prompt' } = {}) {
   let currentAuthority = ROOT_A;
   let currentDecision = decision;
   let currentRules = [];
@@ -103,7 +86,6 @@ function createHarness({ decision = 'auto', mode = 'assist', readOnly = false,
       return { workspaceGitService: scopedGit, artifactService: scopedArtifact,
         configService: { getToolsWorkspaceRoot: () => authority.root_path } };
     },
-    ...(resolvePluginToolAuthority ? { resolvePluginToolAuthority } : {}),
     randomUUID: () => '8f04ce56-3fd5-4f3f-907c-3a0a6ea83580',
   });
   const binding = authorityService.captureSession('session-alpha', {
@@ -539,50 +521,13 @@ test('ordinary automatic permission comes from captured request options, not too
   }
 });
 
-test('runtime operation admits only a Node-bound dynamic descriptor and seals its identity', () => {
-  let active = pluginCapture();
-  const harness = createHarness({
-    resolvePluginToolAuthority(expected) {
-      assert.deepEqual(expected, active.authority);
-      return active;
-    },
-  });
-  assert.equal(harness.authorityService.bindPluginTools(
-    harness.binding,
-    active.authority
-  ), true);
-  const dynamic = operation({ tool_name: PLUGIN_TOOL, arguments: { value: 21 } });
-  assert.equal(harness.authorityService.checkRuntimeOperation(harness.binding, dynamic).status,
-    'granted');
-  assert.equal(harness.authorityService.checkRuntimeOperation(harness.binding, {
-    ...dynamic,
-    descriptor: { side_effecting: false },
-  }).error.reason, 'invalid_schema');
-
-  active = pluginCapture(2, 'd'.repeat(64));
-  assert.throws(() => harness.authorityService.bindPluginTools(
-    harness.binding,
-    active.authority
-  ), /sealed/);
-});
-
-test('effect-free reconciliation can rebind, while descriptor drift revokes current authority', () => {
-  let active = pluginCapture();
-  const harness = createHarness({ resolvePluginToolAuthority: () => active });
-  harness.authorityService.bindPluginTools(harness.binding, active.authority);
-
-  active = pluginCapture(2, 'd'.repeat(64));
-  assert.equal(harness.authorityService.bindPluginTools(
-    harness.binding,
-    active.authority
-  ), true);
-  active = pluginCapture(2, 'e'.repeat(64));
-  const result = harness.authorityService.checkRuntimeOperation(harness.binding, operation({
-    tool_name: PLUGIN_TOOL,
-    arguments: { value: 21 },
-  }));
+test('runtime operation refuses a tool name that is not a built-in descriptor (no dynamic tool authority)', () => {
+  const harness = createHarness();
+  assert.equal(typeof harness.authorityService.bindPluginTools, 'undefined');
+  const unknown = operation({ tool_name: PLUGIN_TOOL, arguments: { value: 21 } });
+  const result = harness.authorityService.checkRuntimeOperation(harness.binding, unknown);
   assert.equal(result.status, 'rejected');
-  assert.equal(result.error.reason, 'project_authority_stale');
+  assert.equal(result.error.reason, 'tool_unavailable');
 });
 
 test('runtime operation never lets policy or approval override captured read-only mode', () => {

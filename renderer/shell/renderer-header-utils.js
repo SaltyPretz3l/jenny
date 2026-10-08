@@ -31,13 +31,6 @@
     } = deps.callbacks || {};
     const documentRef = deps.documentRef || metricList?.ownerDocument || (typeof document !== 'undefined' ? document : null);
     const shell = deps.shell || (typeof window !== 'undefined' ? window.jennyShell : null) || null;
-    // Read lazily: renderer feature flags hydrate asynchronously after
-    // controllers are constructed, so a construction-time capture would pin
-    // the flag to its pre-hydration value (usually off) for the whole session.
-    function isTelemetryFlagOn() {
-      return state.features?.featureFlags?.titlebar_gpu_telemetry === true;
-    }
-
     function isReadoutEnabled() {
       return state.ui?.appearance?.titlebarLoad === true;
     }
@@ -62,8 +55,8 @@
       return `${(usedMb / 1024).toFixed(1)} GB`;
     }
 
-    function resolveStaleTitle(telemetryFlagOn, gpuMemory) {
-      if (!telemetryFlagOn || !gpuMemory || gpuMemory.stale !== true) return '';
+    function resolveStaleTitle(gpuMemory) {
+      if (!gpuMemory || gpuMemory.stale !== true) return '';
       const staleAgeMs = Number(gpuMemory.ageMs);
       const staleAgeSeconds = Number.isFinite(staleAgeMs) ? Math.max(0, Math.round(staleAgeMs / 10000) * 10) : 0;
       // A 0s bucket means stale-by-failure (or an unparseable timestamp), not
@@ -75,17 +68,16 @@
 
     // The two slot values for the current stats: { label, value, gpuDerived }.
     function resolveReadout(stats) {
-      const telemetryFlagOn = isTelemetryFlagOn();
-      const blocked = isGpuTelemetryBlocked(stats.arch, telemetryFlagOn ? stats.platform : undefined);
+      const blocked = isGpuTelemetryBlocked(stats.arch, stats.platform);
       const gpuMemory = stats.gpuMemory && typeof stats.gpuMemory === 'object' ? stats.gpuMemory : null;
-      const load = telemetryFlagOn && !blocked && gpuMemory && gpuMemory.utilAvailable === true
+      const load = !blocked && gpuMemory && gpuMemory.utilAvailable === true
         ? { label: jt('titlebar.metrics.gpu', 'GPU'), value: formatPercent(gpuMemory.utilPercent), gpuDerived: true }
         : { label: jt('titlebar.metrics.cpu', 'CPU'), value: formatPercent(stats.cpuPercent), gpuDerived: false };
       const vram = !blocked && gpuMemory && gpuMemory.available === true ? formatVramUsed(gpuMemory) : '';
       const memory = vram
         ? { label: jt('titlebar.metrics.vram', 'VRAM'), value: vram, gpuDerived: true }
         : { label: jt('titlebar.metrics.ram', 'RAM'), value: formatPercent(stats.ramPercent), gpuDerived: false };
-      return { slots: [load, memory], staleTitle: resolveStaleTitle(telemetryFlagOn, gpuMemory) };
+      return { slots: [load, memory], staleTitle: resolveStaleTitle(gpuMemory) };
     }
 
     let disposed = false;

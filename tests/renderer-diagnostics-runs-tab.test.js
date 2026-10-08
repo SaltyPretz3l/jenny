@@ -46,7 +46,8 @@ test('Diagnostics › Runs: a third tab mounts the Runs board (owner, 2026-10-03
   assert.equal(panel.hidden, true);
   assert.equal(reads, 0, 'no runs poll before the tab is shown');
 
-  doc.querySelector('[data-tab="runs"]').click(); await waitForUi(window, 80);
+  // The board rides the runtime console the Settings page group publishes (lazy since row 32 W2), so the first show loads that group.
+  doc.querySelector('[data-tab="runs"]').click(); await waitForUi(window, 400);
   assert.equal(panel.hidden, false);
   assert.equal(doc.getElementById('diagnosticsOverview').hidden, true);
   assert.equal(doc.getElementById('diagnosticsActivity').hidden, true);
@@ -92,7 +93,7 @@ test('Diagnostics › Runs: the header evidence controls step away, and renderer
   doc.getElementById('logsTopRailTab').click(); await waitForUi(window, 40);
   const actions = doc.querySelector('#logsMasthead .diagnostics-header-actions');
   assert.equal(actions.hidden, false, 'Overview keeps the evidence window and report');
-  doc.querySelector('[data-tab="runs"]').click(); await waitForUi(window, 80);
+  doc.querySelector('[data-tab="runs"]').click(); await waitForUi(window, 400);
   assert.equal(actions.hidden, true, '"Current run" would read as part of the Runs board');
   assert.ok(reads >= 1);
   assert.ok(window.rendererRuntimeConsole, 'the console seam is published');

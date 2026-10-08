@@ -48,3 +48,29 @@
   font-size: var(--font-size-footnote);
   line-height: 1.5;
 }
+
+/* Row 38 item 5: the hero follows the model state. The actions row is created
+ * by renderHero like the Resume button; the stage keeps pointer-events: none. */
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 0;
+  pointer-events: auto;
+}
+
+.hero-actions:empty {
+  display: none;
+}
+
+.hero-stage[data-model-state="noModel"] .hero-title,
+.hero-stage[data-model-state="downloading"] .hero-title,
+.hero-stage[data-model-state="failed"] .hero-title {
+  font-size: var(--font-size-heading);
+  line-height: 1.3;
+}
+
+.hero-stage[data-model-state="failed"] .hero-subtitle {
+  color: var(--text-primary);
+}

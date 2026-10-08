@@ -118,9 +118,6 @@
     // diagnosed by elimination instead of by evidence. `lane` names which of
     // the four wrote; `outcome` uses the shared morph vocabulary.
     function recordTimelineDomWrite(lane, outcome, stats) {
-      if (state.features?.featureFlags?.chat_timeline_render_telemetry !== true) {
-        return;
-      }
       const describe = typeof streamRevealUtils?.describeDomWrite === 'function'
         ? streamRevealUtils.describeDomWrite
         : null;
@@ -151,7 +148,7 @@
         && typeof streamRevealUtils.setInnerHtmlPreservingCodeScroll === 'function'
       ) {
         const result = streamRevealUtils.setInnerHtmlPreservingCodeScroll(chatTimeline, html, {
-          collectStats: state.features?.featureFlags?.chat_timeline_render_telemetry === true,
+          collectStats: true,
           rowListSegments: rowList?.segments,
           rowListHostId: rowList?.hostId,
           onError(error) {
@@ -638,7 +635,7 @@
       decorateCodeAfterTimelinePatch(targetRoot);
     }
 
-    // KaTeX live-DOM typeset pass (katex_math): same post-insert seam as the
+    // KaTeX live-DOM typeset pass: same post-insert seam as the
     // Mermaid pass above. Idempotent — already-rendered wrappers are skipped.
     function renderMathAfterTimelinePatch(targetRoot = chatTimeline) {
       if (window.markdownMathUtils && typeof window.markdownMathUtils.renderMathInto === 'function') {

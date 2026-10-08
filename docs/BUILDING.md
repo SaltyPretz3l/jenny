@@ -314,9 +314,8 @@ CI then, per OS runner:
 1. Sets up Node (from `.nvmrc`) + Python 3.11.
 2. Builds the platform sidecar (`scripts/packaging/build_sidecar_artifact.py` →
    `sidecar.exe` on Windows, `sidecar` on macOS).
-3. Runs `electron-builder --win|--mac --publish never`. No legacy native plugin host
-   is built or shipped (the current plugin platform uses the application-owned JavaScript/Python host paths), so the release
-   workflow needs no Rust toolchain.
+3. Runs `electron-builder --win|--mac --publish never`. No native host is built or
+   shipped, so the release workflow needs no Rust toolchain.
 4. On `macos-15` ARM64, verifies DMG/ZIP integrity, app/sidecar architecture,
    bundled preload, runtime provenance, and framed initialize through
    `scripts/packaging/verify_macos_release.py` before upload.

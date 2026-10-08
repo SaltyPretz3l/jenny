@@ -180,6 +180,22 @@
     function isArtifactReviewMaximized() {
       return resolveArtifactReviewMaximized?.(getArtifactReviewState(), getActiveSessionIdForReview()) === true;
     }
+    // Split view (row 34 S5, v2 §6): when the two visible panes can't each
+    // keep about 40rem (text scale included) beside the panel, the review
+    // opens over the pane of the chat that owns it and the other chat stays
+    // usable. Returns that pane's id, or '' to sit beside both as before.
+    function resolveReviewPaneOverlay(stageWidth, width) {
+      const layout = state.panes;
+      if (chatView?.dataset?.paneCount !== '2' || getArtifactReviewWindowWidth() <= 1180 || !Array.isArray(layout?.panes)) return '';
+      const root = chatView.ownerDocument?.documentElement;
+      const rem = (root && Number.parseFloat(globalThis.getComputedStyle?.(root)?.fontSize)) || 16;
+      const ratio = Number.isFinite(layout.splitRatio) ? Math.min(Math.max(layout.splitRatio, 0), 1) : 0.5;
+      const narrowestPane = (stageWidth - 20 - width) * Math.min(ratio, 1 - ratio);
+      if (narrowestPane >= 40 * rem) return '';
+      const ownerSessionId = String((sidePanel ? sidePanel.getSessionId() : getActiveSessionIdForReview()) || '');
+      const index = layout.panes.findIndex((pane) => String(pane?.sessionId || '') === ownerSessionId);
+      return index >= 0 ? String(index) : '';
+    }
     function syncArtifactReviewLayout(options = {}) {
       const stageWidth = getArtifactReviewLayoutWidth();
       const prefs = getArtifactReviewState();
@@ -196,6 +212,13 @@
       // the resizer is parked (drawer width is fixed by CSS).
       const overlay = visible && stageWidth < ARTIFACT_REVIEW_MIN_STAGE_WIDTH;
       const maximized = visible && !overlay && isArtifactReviewMaximized();
+      const overPane = visible && !overlay && !maximized && mode === 'code_review' ? resolveReviewPaneOverlay(stageWidth, width) : '';
+      if (overPane) {
+        chatView.dataset.sidePanelPane = overPane;
+        artifactReviewPanel?.style?.removeProperty('width');
+      } else if (chatView?.dataset) {
+        delete chatView.dataset.sidePanelPane;
+      }
       artifactReviewPanel?.classList.toggle('artifact-review-overlay', overlay);
       if (artifactReviewPanel?.dataset) artifactReviewPanel.dataset.panelNarrow = width < 360 ? 'true' : 'false';
       artifactReviewPanel?.classList.toggle('code-review-mode', mode === 'code_review');
@@ -203,9 +226,9 @@
         artifactReviewPanel.dataset.artifactReviewMode = mode;
       }
       sidePanel?.syncOwnerLine?.(artifactReviewPanel, mode);
-      artifactReviewResizer?.classList.toggle('hidden', !visible || overlay || maximized);
+      artifactReviewResizer?.classList.toggle('hidden', !visible || overlay || maximized || Boolean(overPane));
       if (artifactReviewResizer) {
-        artifactReviewResizer.tabIndex = (visible && !overlay && !maximized) ? 0 : -1;
+        artifactReviewResizer.tabIndex = (visible && !overlay && !maximized && !overPane) ? 0 : -1;
         // role="separator" value range: the max is the RESOLVED 90% bound, so
         // assistive tech reports the same ceiling the End key lands on.
         artifactReviewResizer.setAttribute('aria-valuemin', String(ARTIFACT_REVIEW_MIN_WIDTH));
@@ -218,7 +241,7 @@
         artifactSplitViewToggle.setAttribute('aria-pressed', artifactsShowing ? 'true' : 'false');
         artifactSplitViewToggle.classList.toggle('active', artifactsShowing);
       }
-      chatView?.classList.toggle('artifact-review-open', visible && !overlay);
+      chatView?.classList.toggle('artifact-review-open', visible && !overlay && !overPane);
       chatView?.classList.toggle('artifact-review-mode', visible);
       chatView?.classList.toggle('code-review-open', visible && mode === 'code_review');
       chatView?.classList.toggle('artifact-review-maximized', maximized);

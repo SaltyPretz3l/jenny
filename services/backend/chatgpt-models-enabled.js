@@ -12,8 +12,8 @@ function chatgptModelsEnabled(configService) {
   }
 }
 
-// The retired ChatGPT plugin's on/off choice, read once before the plugin is
-// uninstalled: enabled -> true; removed by the user, or turned off after it was
+// The retired ChatGPT plugin's on/off choice, read once from its old store
+// files (left on disk): enabled -> true; removed by the user, or turned off after it was
 // on (the migration enabled it, or a retained generation shows it active) ->
 // false; anything else stays unset (counts as on). A null desiredState means
 // the plugin store could not be read: only the receipt's own "removed" counts.
@@ -25,22 +25,7 @@ function chatgptChoiceFromRetiredPlugin({ receipt = null, desiredState = '', eve
   return null;
 }
 
-// The bundled-install wiring's carryRetiredChoice for the ChatGPT plugin. A
-// choice already made in Settings > Models wins over the plugin's.
-function createChatgptRetiredChoiceCarrier({ configService, setChatgptModelsEnabled }) {
-  return async function carryRetiredChoice(identity, facts) {
-    if (identity?.publisher_id !== 'jenny-official'
-      || identity.plugin_id !== 'chatgpt-subscription') return;
-    const value = chatgptChoiceFromRetiredPlugin(facts);
-    if (value === null
-      || typeof configService?.getState?.()?.chatgptModelsEnabled === 'boolean') return;
-    const result = await setChatgptModelsEnabled(value);
-    if (result?.ok === false) throw new Error(result.reason || 'chatgpt_choice_not_saved');
-  };
-}
-
 module.exports = {
   chatgptModelsEnabled,
   chatgptChoiceFromRetiredPlugin,
-  createChatgptRetiredChoiceCarrier,
 };

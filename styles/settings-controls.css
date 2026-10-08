@@ -478,7 +478,6 @@
    needs an accessible name, so the built-in label is hidden visually rather than
    dropped. Same geometry as .sr-only (shell-chrome.css), which the toggle
    primitive cannot be given directly -- it hardcodes .inv-toggle-label. */
-.plugins-settings-row-toggle .inv-toggle-label,
 .mcp-servers-row-toggle .inv-toggle-label,
 .skills-settings-row-toggle .inv-toggle-label {
   position: absolute;
@@ -645,4 +644,76 @@
 .pdf-addon-facts dd {
   margin: 0;
   color: var(--text-primary);
+}
+
+/* Row 38 item 2 (variant A): the ChatGPT row's paste fallback. The browser
+   blocked the localhost callback; the user pastes the redirect address into
+   the same row. One field, one button, one help line; no modal. */
+.cloud-models-paste {
+  grid-column: 1 / -1;
+  margin-top: var(--space-5);
+}
+
+.cloud-models-paste-row {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+}
+
+/* The inventory text-field wrapper (a <label>) fills the row; the control inside it is the input. */
+.cloud-models-paste-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.cloud-models-paste-field .inv-text-field-control {
+  width: 100%;
+  min-height: 30px;
+  padding: var(--space-2) var(--space-5);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-input);
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-footnote);
+}
+
+.cloud-models-paste-field .inv-text-field-control::placeholder {
+  color: var(--text-muted);
+  font-family: var(--font-family-body);
+}
+
+.cloud-models-paste-field .inv-text-field-control:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.cloud-models-paste[data-state="error"] .cloud-models-paste-field .inv-text-field-control {
+  border-color: color-mix(in srgb, var(--error) 55%, var(--border-strong));
+}
+
+.cloud-models-paste-help {
+  margin: var(--space-3) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.cloud-models-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cloud-models-link:hover {
+  text-decoration: underline;
+}
+
+.cloud-models-link:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+  border-radius: 2px;
 }

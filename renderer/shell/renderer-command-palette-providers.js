@@ -28,7 +28,7 @@
     {
       id: 'commands',
       label: jt('commandPalette.scopes.commands', 'Commands'),
-      groups: ['Undo', 'Navigate', 'Actions', 'Workspace', 'Plugins', 'Skills', jt('commandPalette.groups.slashCommands', 'Slash commands'), 'Help'],
+      groups: ['Undo', 'Navigate', 'Actions', 'Workspace', 'Skills', jt('commandPalette.groups.slashCommands', 'Slash commands'), 'Help'],
     },
     { id: 'settings', label: jt('commandPalette.scopes.settings', 'Settings'), groups: ['Settings'] },
   ];
@@ -37,7 +37,7 @@
 
   // Empty-query display order. Also the group order for the grouped view.
   const GROUP_ORDER = [
-    'Undo', 'Navigate', 'Actions', 'Workspace', 'Plugins', 'Sessions', 'Settings', 'Skills', jt('commandPalette.groups.slashCommands', 'Slash commands'), 'Help',
+    'Undo', 'Navigate', 'Actions', 'Workspace', 'Sessions', 'Settings', 'Skills', jt('commandPalette.groups.slashCommands', 'Slash commands'), 'Help',
   ];
 
   // Row type word shown on the trailing edge. Sentence case, singular.
@@ -46,7 +46,6 @@
     Navigate: 'View',
     Actions: 'Action',
     Workspace: 'Command',
-    Plugins: 'Plugin',
     Sessions: 'Chat',
     Settings: 'Setting',
     Skills: 'Skill',
@@ -59,7 +58,6 @@
     Navigate: 'arrow',
     Actions: 'action',
     Workspace: 'code',
-    Plugins: 'plug',
     Sessions: 'chat',
     Settings: 'gear',
     Skills: 'action',
@@ -119,9 +117,9 @@
       sweepEmptyChats = function noop() {},
       listPendingUndos = function noop() { return []; },
       getIdeCommandItems = function noop() { return []; },
-      getPluginCommandItems = function noop() { return []; },
       openKeyboardShortcuts = function noop() {},
       openSettingsSection = function noop() {},
+      ensureSettingsPage = function noop() {},
     } = callbacks;
 
     // Built once on first use, then reused: the settings index is derived from
@@ -306,6 +304,10 @@
     function getSettingsItems() {
       if (settingsIndexCache === null) {
         const search = globalRef.rendererSettingsSearch || null;
+        if (!search) {
+          Promise.resolve(ensureSettingsPage()).catch(() => {});
+          return [];
+        }
         settingsIndexCache = (search && typeof search.buildSettingsSearchIndex === 'function')
           ? safeList(() => search.buildSettingsSearchIndex())
           : [];
@@ -328,7 +330,6 @@
         .concat(getNavigateItems())
         .concat(getActionItems())
         .concat(safeList(getIdeCommandItems))
-        .concat(safeList(getPluginCommandItems))
         .concat(getSessionItems())
         .concat(getSettingsItems())
         .concat(getSkillItems())

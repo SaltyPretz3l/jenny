@@ -184,6 +184,8 @@ class ProjectApplicationService {
     knowledgeService = null,
     moveProjectMemories = null,
     projectDeleteJournal = null,
+    onSessionProjectChanged = null,
+    onProjectDeleted = null,
     now = () => new Date().toISOString(),
   } = {}) {
     if (!projectService || typeof projectService.list !== 'function') {
@@ -223,6 +225,8 @@ class ProjectApplicationService {
       ? onPermissionChanged
       : () => {};
     this._now = typeof now === 'function' ? now : () => new Date().toISOString();
+    this._onSessionProjectChanged = typeof onSessionProjectChanged === 'function' ? onSessionProjectChanged : null;
+    this._onProjectDeleted = typeof onProjectDeleted === 'function' ? onProjectDeleted : null;
     this._folderStatus = folderStatus || new ProjectFolderStatus();
     this._choosingRoot = false;
     this._deleter = new ProjectDeleteOperation({
@@ -240,6 +244,8 @@ class ProjectApplicationService {
       isCurrentProject: (project) => this._isCurrentProject(project),
       now: this._now,
       fail: projectFailure,
+      onSessionProjectChanged: this._onSessionProjectChanged,
+      onProjectDeleted: this._onProjectDeleted,
     });
     this.reconcilePendingProjectDeletes = () => this._deleter.reconcile(); // after each sidecar initialize
   }
@@ -521,9 +527,20 @@ class ProjectApplicationService {
       projectId,
       updatedAt: this._now(),
     });
-    return updated.ok
-      ? { ok: true, session: updated.session, unchanged: false }
-      : projectFailure(updated.reason, { repair: updated.repair });
+    if (!updated.ok) return projectFailure(updated.reason, { repair: updated.repair });
+    this._notifySessionProjectChanged(sessionId, projectId);
+    return { ok: true, session: updated.session, unchanged: false };
+  }
+
+  // Tasks created by a chat follow it between projects. A hook failure never
+  // fails the (already durable) move.
+  _notifySessionProjectChanged(sessionId, projectId) {
+    if (!this._onSessionProjectChanged) return;
+    try {
+      this._onSessionProjectChanged({ sessionId, projectId });
+    } catch (_error) {
+      // Re-stamping is best-effort; the next startup backfill never moves a stamped row.
+    }
   }
 
   getPermissionReviewState(payload) {

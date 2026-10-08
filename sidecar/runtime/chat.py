@@ -11,7 +11,6 @@ import logging
 import re
 from typing import Any
 
-from sidecar.ai.config import resolve_effective_max_tokens
 from sidecar.ai.container import BrainContainer
 from sidecar.ai.context.builder import normalize_learned_lessons
 from sidecar.ai.context.messages import sanitize_semantic_message
@@ -34,9 +33,7 @@ from sidecar.runtime.chat_helpers import (  # noqa: F401
     _executor_runtime_enabled,
     _fallback_usage_payload,
     attach_context_window,
-    build_vision_prompt,
     chat_error_notification,
-    engine_supports_live_reasoning_stream,
     engine_supports_vision,
     estimate_text_tokens,
     extract_latest_user_content,
@@ -67,24 +64,16 @@ from sidecar.runtime.chat_normalization import (
     normalize_tool_preferences,
     normalize_vision_attachments,
     plan_mode_from_params,
-    reasoning_effort_from_params,
+    propose_request_from_params,
     runtime_policy_flags_from_params,
     session_start_date_from_params,
     tool_preferences_require_sub_agent_fail_closed,
 )
 from sidecar.runtime.chat_serialization import _serialize_loop_event  # noqa: F401
-from sidecar.runtime.chat_streaming import (  # noqa: F401
-    _build_live_stream_messages,
-    build_live_streaming_chat_response,
-)
 from sidecar.runtime.chat_tool_observations import (
     chat_response_with_tool_observations,
 )
-from sidecar.runtime.chat_vision import (
-    build_vision_chat_response,
-)
 from sidecar.runtime.diagnostics import log_event
-from sidecar.runtime.inference_admission import build_inference_admission_callback
 from sidecar.runtime.local_engine.request_context import (
     bind_chat_request_context,
     clear_chat_request_context,
@@ -262,7 +251,7 @@ def build_chat_send_response(
         )
         plan_mode = plan_mode_from_params(params)
         approved_plan = approved_plan_from_params(params)
-        reasoning_effort = reasoning_effort_from_params(params)
+        propose_mode, live_suggestions, reasoning_effort = propose_request_from_params(params)
         session_start_date = session_start_date_from_params(params)
         memory_policy = memory_policy_from_params(params)
         (
@@ -304,7 +293,6 @@ def build_chat_send_response(
     )
     debug_options = normalize_debug_options(params.get("debug_options"))
     turn_diagnostics = getattr(stack, "turn_diagnostics", None)
-    feature_flags = stack.config.feature_flags or {}
     vision_images: tuple[VisionImage, ...] = tuple(
         image for attachment in image_attachments
         if isinstance(image := attachment.get("_vision_image"), VisionImage)
@@ -320,7 +308,6 @@ def build_chat_send_response(
             code=CHAT_INVALID_PARAMS, message=_vision_turn.VISION_ANCHOR_MESSAGE,
             rpc_code=invalid_params_code, retryable=False,
         )
-    executor_runtime_enabled = _executor_runtime_enabled(feature_flags)
     agent_id = str(params.get("agent_id") or f"main@{request_id}").strip()
     parent_agent_id = str(params.get("parent_agent_id") or "").strip() or None
     try:
@@ -393,8 +380,8 @@ def build_chat_send_response(
         reasoning_effort=reasoning_effort,
         session_start_date=session_start_date,
         current_date=resolve_current_date(),
-        plan_mode=plan_mode,
-        read_only=plan_mode or runtime_child_read_only or agent_surface != "main",
+        plan_mode=plan_mode, propose_mode=propose_mode, suggested_changes_context=live_suggestions,
+        read_only=plan_mode or propose_mode or runtime_child_read_only or agent_surface != "main",
         approved_plan=approved_plan,
         tool_preferences=tool_preferences,
         approval_mode=approval_mode,
@@ -461,101 +448,12 @@ def build_chat_send_response(
                 code=CHAT_INVALID_PARAMS, message=_vision_turn.VISION_REFUSAL_MESSAGE,
                 rpc_code=invalid_params_code, retryable=False,
             )
-        if vision_images and not _vision_turn.vision_unified_turn_enabled(feature_flags):
-            if not _vision_turn.legacy_vision_generation_supported(stack.engine):
-                raise ChatRequestError(
-                    request_id=request_id,
-                    trace_id=trace_id,
-                    session_id=session_id,
-                    code=CHAT_INVALID_PARAMS, message=_vision_turn.VISION_REFUSAL_MESSAGE,
-                    rpc_code=invalid_params_code, retryable=False,
-                )
-            if mode != "chat":
-                raise ChatRequestError(
-                    request_id=request_id,
-                    trace_id=trace_id,
-                    session_id=session_id,
-                    code=CHAT_INVALID_PARAMS,
-                    message="Image attachments are only available in chat mode.",
-                    rpc_code=invalid_params_code,
-                    retryable=False,
-                )
-            return _finalize_response(
-                build_vision_chat_response(
-                    request_id=request_id,
-                    trace_id=trace_id,
-                    session_id=session_id,
-                    latest_user_content=latest_user_content,
-                    messages=messages,
-                    image_attachments=image_attachments,
-                    brain_container=brain_container,
-                    invalid_params_code=invalid_params_code,
-                    inference_admission=build_inference_admission_callback(
-                        request_id=request_id,
-                        session_id=session_id,
-                        execution_context=execution_context,
-                        require_budget=inference_budget_required,
-                        engine_type=stack.config.engine_type,
-                        write_message=approval_writer,
-                        response_reader_factory=approval_reader_factory,
-                        cancel_handle=cancel_handle,
-                    ),
-                    post_response_callback=lambda _response_text: _maybe_run_post_response_tasks(
-                        session_id=session_id,
-                        brain_container=brain_container,
-                        execution_context=execution_context,
-                    ),
-                ),
-            )
         learned_lessons = (
             None
             if memory_policy is not None
             else normalize_learned_lessons(params.get("learning_context"))
         )
 
-        if (
-            stream_notifications
-            and mode == "chat"
-            and not executor_runtime_enabled
-            and engine_supports_live_reasoning_stream(stack.engine)
-        ):
-            return _finalize_response(
-                build_live_streaming_chat_response(
-                    request_id=request_id,
-                    trace_id=trace_id,
-                    session_id=session_id,
-                    latest_user_content=latest_user_content,
-                    messages=messages,
-                    brain_container=brain_container,
-                    reasoning_effort=reasoning_effort,
-                    learned_lessons=learned_lessons,
-                    memory_policy=effective_memory_policy,
-                    context_blocks=context_blocks,
-                    skill_invocation=skill_invocation,
-                    vision_images=vision_images,
-                    vision_anchor_text=vision_anchor_text,
-                    execution_context=execution_context,
-                    max_tokens=resolve_effective_max_tokens(
-                        stack.config.max_tokens,
-                        stack.engine.get_model_max_output_tokens(),
-                        user_override=getattr(
-                            stack.config,
-                            "resolved_user_max_output_tokens",
-                            None,
-                        ),
-                    ),
-                    current_date=request_context.current_date,
-                    notification_writer=notification_writer,
-                    cancel_handle=cancel_handle,
-                    post_response_callback=lambda _response_text: (
-                        _maybe_run_post_response_tasks(
-                            session_id=session_id,
-                            brain_container=brain_container,
-                            execution_context=execution_context,
-                        )
-                    ),
-                ),
-            )
         return _finalize_response(
             _build_router_response(
                 request_context=request_context,

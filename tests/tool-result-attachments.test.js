@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 
 const { AttachmentAssetStore } = require('../services/attachment-asset-store');
+const { ElectronSessionStore } = require('../services/backend/electron-session-store');
 const {
   MAX_TOOL_RESULT_ATTACHMENT_TOTAL_BYTES,
   ingestToolResultAttachments,
@@ -161,6 +162,61 @@ test('bounded read resolves a persisted ref from only the requested canonical se
     ref.id,
     { sessionId: 'session-other' }
   ).ok, false);
+});
+
+test('tool.result attachment survives a real session store restart and index eviction', (t) => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-tool-result-restart-'));
+  const storePath = path.join(rootDir, 'sessions.json');
+  let sessionStore = new ElectronSessionStore(storePath, { logger() {} });
+  t.after(() => {
+    sessionStore.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+  const sessionId = sessionStore.createSession({ title: 'Tool attachment restart' }).id;
+  const turnEvents = [];
+  const service = {
+    sessionStore,
+    attachmentAssetStore: new AttachmentAssetStore({ rootDir, nativeImage: null }),
+    emit() {},
+    pendingToolApprovals: new Map(),
+    currentModel: 'mock-model',
+    options: { userDataPath: rootDir },
+  };
+  const context = {
+    seenToolCalls: new Set(),
+    toolSummaries: new Map(),
+    model: 'mock-model',
+    resolvedSessionId: sessionId,
+    streamId: 'stream-restart',
+    eventBase: { sessionId, streamId: 'stream-restart', model: 'mock-model' },
+    turnEventCollector: { noteEvent(event) { turnEvents.push(event); } },
+  };
+  const wire = wireAttachment({ kind: 'pdf_page', page_number: 2 });
+  handleToolNotification(service, context, {
+    method: 'tool.result',
+    params: {
+      tool_call_id: 'call-restart', tool_name: 'read_file', success: true,
+      output: 'Page image', tool_input: { path: 'document.pdf' }, trusted_attachments: [wire],
+    },
+  });
+  const ref = turnEvents.find((event) => event.kind === 'tool_result').payload.trusted_attachment_refs[0];
+  sessionStore.flush();
+  sessionStore.dispose();
+  sessionStore = new ElectronSessionStore(storePath, { logger() {} });
+  service.sessionStore = sessionStore;
+  service.attachmentAssetStore = new AttachmentAssetStore({ rootDir, nativeImage: null });
+  service._toolResultAttachmentIndex.clear();
+
+  const read = readToolResultAttachment(service, ref.id, { sessionId });
+  assert.equal(read.ok, true, read.reason);
+  assert.equal(read.dataBase64, wire.data_base64);
+  assert.equal(read.kind, 'pdf_page');
+  assert.equal(read.pageNumber, 2);
+  const messages = sessionStore.getSessionMessages(sessionId);
+  assert.deepEqual(messages.find((message) => message.kind === 'tool_result')
+    .tool_result.trusted_attachment_refs, [ref]);
+  assert.ok(!JSON.stringify(messages).includes(wire.data_base64));
+  assert.equal(readToolResultAttachment(service, ref.id, { sessionId: 'session-other' }).ok, false);
 });
 
 test('production cache reads reject a deleted or replaced owning session', (t) => {

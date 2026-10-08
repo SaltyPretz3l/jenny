@@ -18,6 +18,13 @@
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
   }
 
+  function capDiscardText(value) {
+    if (value.length <= 4000) return { text: value, trimmed: false };
+    const lastCode = value.charCodeAt(3999);
+    const end = lastCode >= 0xD800 && lastCode <= 0xDBFF ? 3999 : 4000;
+    return { text: value.slice(0, end), trimmed: true };
+  }
+
   class BrowserConversationController {
     constructor(options = {}) {
       this.bridge = options.bridge || null;
@@ -563,8 +570,21 @@
       if (text(event.turn_id)) current.turn_id = event.turn_id;
       if (event.runtime_admission) current.runtime_admission = { ...event.runtime_admission };
       if (event.type === 'stream_reset') {
-        current.assistant_text = '';
-        current.reasoning = [];
+        if (event.discard_scope !== 'none') {
+          const draftText = text(current.assistant_text);
+          const reasoningText = current.reasoning.map((entry) => text(entry.text, text(entry.content))).join('\n\n');
+          if (draftText.trim() || reasoningText.trim()) {
+            const draft = capDiscardText(draftText);
+            const reasoning = capDiscardText(reasoningText);
+            current.discarded_drafts = [...(current.discarded_drafts || []), {
+              reason: text(event.reason, 'unknown'), text: draft.text, text_trimmed: draft.trimmed,
+              reasoning_text: reasoning.text, reasoning_trimmed: reasoning.trimmed,
+            }].slice(-8);
+          }
+          current.assistant_text = '';
+          current.current_segment_text = '';
+          current.reasoning = [];
+        }
       } else if (event.type === 'thinking_status') {
         current.thinking_status = text(event.text || event.status);
       } else if (event.type === 'delta') {
@@ -574,7 +594,7 @@
         ).slice(0, 262144);
         current.current_segment_text = current.assistant_text;
       }
-      if (Array.isArray(event.reasoning)) {
+      if (event.type !== 'stream_reset' && Array.isArray(event.reasoning)) {
         current.reasoning = event.reasoning.filter((entry) => text(entry?.id)).map((entry) => ({ ...entry }));
       }
       current.phase = text(event.type);

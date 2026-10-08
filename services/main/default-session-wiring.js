@@ -17,7 +17,7 @@ const { createArtifactFrameProtocol } = require('../artifact-frame-protocol');
  * Returns the display-media handler so main.js can thread it into IPC
  * registration and the awaited shutdown disposal path.
  */
-function installDefaultSessionWiring({ session, desktopCapturer, ipcMain, sendBridgeEvent, log }) {
+function installDefaultSessionWiring({ session, desktopCapturer, ipcMain, sendBridgeEvent, log, authorization = {} }) {
   installDefaultSessionPermissionGuard({ session, log });
   const displayMediaSourceHandler = createDisplayMediaSourceHandler({
     desktopCapturer,
@@ -26,7 +26,7 @@ function installDefaultSessionWiring({ session, desktopCapturer, ipcMain, sendBr
     log,
   });
   displayMediaSourceHandler.installHandler(session);
-  createArtifactFrameProtocol({ log }).install({ sessionRef: session, ipcMainLike: ipcMain });
+  createArtifactFrameProtocol({ log }).install({ sessionRef: session, ipcMainLike: ipcMain, authorization });
   return { displayMediaSourceHandler };
 }
 

@@ -571,6 +571,19 @@
 
 .ide-map-controls-spacer { flex: 1; }
 
+/* The "Hide tests" switch and its hidden/total readout read as one control. */
+.ide-map-hide-tests {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ide-map-hide-tests-count {
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
 .ide-map-status-slot {
   display: inline-flex;
   align-items: center;

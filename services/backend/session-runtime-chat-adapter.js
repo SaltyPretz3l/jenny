@@ -109,7 +109,6 @@ class SessionRuntimeChatAdapter {
     const attachments = Array.isArray(copy.attachments) ? copy.attachments.map(entry => ({ ...entry })) : [];
     const preparedSession = prepareManagedSession(this.service, { ...copy, attachments });
     const sessionId = preparedSession.resolvedSessionId;
-    const images = preparedSession.imageAttachments;
     copy.sessionId = sessionId;
     copy.attachments = attachments;
     const engineType = selectedEngine(this.service, copy);
@@ -130,7 +129,7 @@ class SessionRuntimeChatAdapter {
     const chatUi = this.service.configService?.getChatUiState?.();
     if (chatUi) copy.safetyPolicy = { safety_mode: chatUi.safetyMode, auto_approve_streak_cap: chatUi.autoApproveStreakCap };
     const cancellation = options?.cancellation || null;
-    const executionOptions = executionOptionsFor(this.service, copy, images, cancellation);
+    const executionOptions = executionOptionsFor(copy, cancellation);
     const binding = this.service.sessionExecutionAuthority.captureSession(sessionId,
       { requestId: workId, ...executionOptions });
     const trusted = getTrustedExecutionBinding(binding);
@@ -239,10 +238,8 @@ class SessionRuntimeChatAdapter {
     copy.normalizedInteractiveResponse = null;
     copy.editedMessageId = '';
     copy.failureRetry = false;
-    const attachments = Array.isArray(copy.attachments) ? copy.attachments : [];
-    const images = attachments.filter(entry => entry?.kind === 'image');
     const cancellation = options.cancellation || null;
-    const executionOptions = executionOptionsFor(this.service, copy, images, cancellation);
+    const executionOptions = executionOptionsFor(copy, cancellation);
     const binding = this.service.sessionExecutionAuthority.captureSession(work.session_id,
       { requestId: work.work_id, ...executionOptions });
     const trusted = getTrustedExecutionBinding(binding);
@@ -316,17 +313,26 @@ class SessionRuntimeChatAdapter {
   }
 
   provePausedCleanup(work, { deletionHandle = null } = {}) {
+    // Work a restart paused before it published a checkpoint has nothing to
+    // release: the process tree of its attempt died with the restart (the
+    // store's HB-009 proof). Without this its Stop stayed "stop requested,
+    // cleaning up" across restarts (gate F1). A prepared mutation is still
+    // settled by mutation-preparation recovery, which reads cancelled work.
+    const restartPausedWithoutCheckpoint = Boolean(work && work.status === 'paused' && !work.checkpoint_ref
+      && work.recovery?.kind === 'restart_paused');
     const assertCleanup = () => {
       const actors = this.service.sessionTurnActors;
       const actorCleanupProven = deletionHandle
         ? actors?.provePausedRuntimeCleanup?.(work?.session_id, deletionHandle) === true
         : actors?.hasActiveLifecycle?.(work?.session_id) === false;
+      const checkpointProven = restartPausedWithoutCheckpoint
+        || (sameAttempt(work?.attempt, work?.checkpoint_ref?.source_attempt)
+          && this.checkpointStore?.validate?.(work, work.checkpoint_ref) === true);
       return Boolean(work && ['pending', 'paused'].includes(work.status) && work.attempt
-        && sameAttempt(work.attempt, work.checkpoint_ref?.source_attempt)
-        && this.checkpointStore?.validate?.(work, work.checkpoint_ref) === true
-        && actorCleanupProven && !this.service.sessionStore.getActiveTurn(work.session_id));
+        && checkpointProven && actorCleanupProven && !this.service.sessionStore.getActiveTurn(work.session_id));
     };
     if (!assertCleanup()) return false;
+    if (restartPausedWithoutCheckpoint) return true;
     const checkpoint = this.checkpointStore.read(work.checkpoint_ref, work);
     return checkpoint.mutation_ref
       ? releaseRuntimeMutation(this.service, work, checkpoint, assertCleanup) : true;
@@ -399,8 +405,7 @@ class SessionRuntimeChatAdapter {
       && this.service.sessionStore.getSessionSummary(work.session_id)?.plan_mode === false) {
       context.request.normalizedPreferences.plan_mode = false;
       context.request.approvalMode = 'prompt';
-      context.executionOptions = executionOptionsFor(this.service, context.request,
-        context.request.attachments || [], context.cancellation);
+      context.executionOptions = executionOptionsFor(context.request, context.cancellation);
     }
     const checkpointResume = resumeHydration.reserveIdentity(work);
     context.resumeHydration = resumeHydration;

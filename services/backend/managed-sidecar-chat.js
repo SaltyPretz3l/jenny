@@ -95,12 +95,8 @@ const {
 const { computeInterruptedTurnReceipts, acknowledgeInterruptedTurnReceipts } = require('./interrupted-turn-receipts');
 const { buildManagedStartResult, retainManagedRuntimeController } = require('./chat-lifecycle-contracts');
 const { ensureSessionTurnActorRegistry } = require('./session-turn-actor');
-const {
-  bindPluginExecutionAuthority,
-  getManagedPluginRuntime,
-  sendWithPluginRuntimeReconciliation,
-} = require('./managed-plugin-runtime');
 const { buildApprovedPlanSendFields } = require('./approved-plan-context');
+const { buildProposeSendFields, isProposeRunMode } = require('./propose-mode');
 const { activeUseRequestFields } = require('../workspace-active-use-tracker');
 const { retainRuntimeSettlementHandler } = require('./sidecar-client-request-rpc');
 const { assertRuntimeOperationsProtocol, assertRuntimeBudgetProtocol } = require('../session-runtime/inference-protocol');
@@ -152,7 +148,7 @@ async function startManagedSidecarChatStream(service, {
     store: service.sessionStore,
     activeStreams: service.activeStreams,
     interactiveResponse: normalizedInteractiveResponse,
-    editedMessageId, failureRetry: failureRetry === true, failureRetryReasoningCarry: service.featureFlags?.failure_retry_reasoning_carry === true,
+    editedMessageId,
     prompt: transcriptPrompt,
     path: 'managed',
     traceId,
@@ -417,15 +413,13 @@ async function startManagedSidecarChatStream(service, {
       runtimeAssertCurrent?.();
       require('../execution/execution-settlement').assertExecutionPolicy(service, engineType);
       turnDiagnosticState.engineType = engineType;
-      const visionUnifiedTurn = service.featureFlags?.vision_unified_turn !== false;
-      const effectiveMode = normalizedDebugOptions?.plain_chat_mode === true
-        || (!visionUnifiedTurn && imageAttachments.length) ? 'chat' : 'assist';
+      const effectiveMode = 'assist';
       turnDiagnosticState.effectiveMode = effectiveMode;
       executionAuthority = runtimeExecutionAuthority || captureManagedExecutionAuthority(service, resolvedSessionId, {
         requestId, signal: controller.signal,
         mode: normalizedPreferences.plan_mode === true ? 'plan' : effectiveMode,
         toolPreferences: requestToolPreferences,
-        approvalMode,
+        readOnly: isProposeRunMode(sessionSummary), approvalMode: isProposeRunMode(sessionSummary) ? 'prompt' : approvalMode,
       });
       // Cloud engines get wider stream ceilings (mirrors the sidecar's cloud loop profile); re-arm both timers now that the engine is known.
       streamWatchdog.applyEngineType(engineType);
@@ -585,7 +579,7 @@ async function startManagedSidecarChatStream(service, {
           return runtime.getEventBase();
         },
       };
-      const requestApprovalMode = String(approvalMode || '').trim() === 'auto_run' ? 'auto_run' : 'prompt';
+      const requestApprovalMode = !isProposeRunMode(sessionSummary) && String(approvalMode || '').trim() === 'auto_run' ? 'auto_run' : 'prompt';
       if (requestToolPreferences) {
         service._emitServiceLog('INFO', 'chat.tool_preferences_applied', {
           sessionId: resolvedSessionId,
@@ -660,8 +654,8 @@ async function startManagedSidecarChatStream(service, {
         generation: activeTurnLease.identity.generation,
         session_start_date: sessionStartDate,
         mode: effectiveMode,
-        ...buildApprovedPlanSendFields(normalizedPreferences.plan_mode, effectiveMode,
-          sessionMessages),
+        ...buildApprovedPlanSendFields(normalizedPreferences.plan_mode, sessionMessages),
+        ...buildProposeSendFields(service, resolvedSessionId, sessionSummary),
         interactive_response: normalizedInteractiveResponse,
         interactive_round_count: normalizedPreferences.interactive_round_count,
         messages: preparedMessages,
@@ -676,7 +670,6 @@ async function startManagedSidecarChatStream(service, {
         approval_mode: requestApprovalMode, ...safetyRequestFields(service, safetyPolicy),
         ...(normalizedDebugOptions ? { debug_options: normalizedDebugOptions } : {}),
         ...(skillInvocation ? { skill_invocation: skillInvocation } : {}),
-        plugin_runtime_authority: getManagedPluginRuntime(service)?.getChatAuthority?.() || { mode: 'core_only' },
         execution_context: service.sessionExecutionAuthority.toExecutionContext(executionAuthority),
       };
       await waitForManagedInitialization(service, controller.signal);
@@ -710,7 +703,7 @@ async function startManagedSidecarChatStream(service, {
       emitManagedHistoryScopeNarrowing(service, frameFit.outcome, runtime.getEventBase());
       // Request-time auth retry remains legal only before any turn effect.
       const turnEffectProbe = createTurnEffectProbe();
-      const chatSendOptions = (pluginRuntimeAuthority) => buildManagedSidecarChatSendOptions({
+      const chatSendOptions = () => buildManagedSidecarChatSendOptions({
           service, controller, streamId, resolvedSessionId, requestId, requestTraceId,
           runtime, toolContext, handleToolNotification, waitForToolApproval,
           turnEventCollector, normalizedPreferences,
@@ -718,7 +711,6 @@ async function startManagedSidecarChatStream(service, {
           pauseStreamIdleTimer: streamWatchdog.pauseForApproval,
           onNotificationObserved: turnEffectProbe.note,
           onApprovalObserved: turnEffectProbe.noteApproval,
-          pluginRuntimeAuthority,
           executionAuthority,
           // The idle watchdog handles progress; transport follows the absolute cap.
           timeoutMs: streamWatchdog.getCeilings().absoluteTimeoutMs
@@ -737,29 +729,21 @@ async function startManagedSidecarChatStream(service, {
           requestId, runtimeOperationHandler);
       }
       runtimeAssertCurrent?.();
-      const providerOptions = (pluginRuntimeAuthority) => ({
-        ...chatSendOptions(pluginRuntimeAuthority),
+      const providerOptions = () => ({
+        ...chatSendOptions(),
         onRuntimeOperation: runtimeOperationHandler,
       });
-      const result = await sendWithPluginRuntimeReconciliation(
-        service,
-        (pluginRuntimeAuthority) => sendManagedChatWithProviderAuthRetry({
-          service, engineType, runtime, controller, probe: turnEffectProbe,
-          params: {
-            ...boundedChatSendParams,
-            plugin_runtime_authority: pluginRuntimeAuthority,
-          },
-          options: providerOptions(pluginRuntimeAuthority),
-          assertBeforeSend: () => {
-            runtimeAssertCurrent?.(); continuationSend?.assertProtocol();
-            if (runtimeOperationGateway) (runtimeBudgetRequired ? assertRuntimeBudgetProtocol : assertRuntimeOperationsProtocol)(service.sidecarClient);
-          },
-          log: service._emitServiceLog.bind(service),
-          ids: { sessionId: resolvedSessionId, streamId, traceId: requestTraceId },
-        }),
-        { log: service._emitServiceLog.bind(service), bindAuthority: (authority) => (
-          bindPluginExecutionAuthority(service.sessionExecutionAuthority, executionAuthority, authority)) }
-      );
+      const result = await sendManagedChatWithProviderAuthRetry({
+        service, engineType, runtime, controller, probe: turnEffectProbe,
+        params: boundedChatSendParams,
+        options: providerOptions(),
+        assertBeforeSend: () => {
+          runtimeAssertCurrent?.(); continuationSend?.assertProtocol();
+          if (runtimeOperationGateway) (runtimeBudgetRequired ? assertRuntimeBudgetProtocol : assertRuntimeOperationsProtocol)(service.sidecarClient);
+        },
+        log: service._emitServiceLog.bind(service),
+        ids: { sessionId: resolvedSessionId, streamId, traceId: requestTraceId },
+      });
       recordTiming('chat.sidecar_request_settled', sidecarRequestStartedAt, 'sidecar_request_settled', {
         status: String(result?.status || ''),
       });

@@ -63,7 +63,7 @@ function harness(t, options = {}) {
   </body>`, { pretendToBeVisual: true, url: 'http://localhost/' });
   const windowRef = dom.window;
   const calls = [];
-  const featureFlags = { model_management_ui: true };
+  const featureFlags = {};
   if (options.flag !== false) featureFlags.llama_server_acceleration = true;
   const state = {
     features: { featureFlags },

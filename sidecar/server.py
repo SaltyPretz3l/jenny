@@ -127,14 +127,13 @@ def _batch4_transport_enabled() -> bool:
     )
 
 
-def _run_chat_send_with_optional_approval(  # noqa: PLR0913
+def _run_chat_send_with_optional_approval(
     message: dict[str, Any],
     *,
     write_frame: Callable[[dict[str, Any]], None] | None = None,
     approval_response_reader: Callable[[float], dict[str, Any]] | None = None,
     approval_response_waiter_factory: ApprovalResponseWaiterFactory | None = None,
     cancel_handle: Any | None = None,
-    plugin_runtime_admission: Any | None = None,
 ) -> ProcessOutcome:
     """Run chat.send with blocking tool-approval flow enabled."""
     frame_writer = write_frame or write_message
@@ -152,7 +151,6 @@ def _run_chat_send_with_optional_approval(  # noqa: PLR0913
         approval_timeout_seconds=TOOL_APPROVAL_TIMEOUT_SECONDS,
         stream_notifications=True,
         cancel_handle=cancel_handle,
-        plugin_runtime_admission=plugin_runtime_admission,
     )
 
 
@@ -180,10 +178,6 @@ def _start_chat_send_worker_if_allowed(
         chat_send_runner=_run_chat_send_with_optional_approval,
         logger=logger,
         max_active_workers=max_active_workers,
-        plugin_admission_resolver=lambda request: _BRAIN_CONTAINER.admit_plugin_runtime(
-            request.get("params", {}).get("plugin_runtime_authority")
-            if isinstance(request.get("params"), dict) else None
-        ),
     )
 
 

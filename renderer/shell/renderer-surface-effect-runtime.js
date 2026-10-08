@@ -695,6 +695,36 @@
     return parseTokenValue(schema, computedStyle.getPropertyValue(name));
   }
 
+  // ── frame helpers shared by the surface-effect controllers ──────────────
+
+  function getNow() {
+    return typeof performance !== 'undefined' && performance && typeof performance.now === 'function'
+      ? performance.now() : Date.now();
+  }
+
+  function requestFrame(callback) {
+    return typeof requestAnimationFrame === 'function' ? requestAnimationFrame(callback) : 0;
+  }
+
+  function cancelFrame(handle) {
+    if (handle && typeof cancelAnimationFrame === 'function') { cancelAnimationFrame(handle); }
+  }
+
+  // Reveals an entry's canvas on the next frame (one pending handle per entry).
+  // `blocked` is the controller's own staged/disposed/hidden gate; `isLive`
+  // re-checks the controller is still alive when the frame fires.
+  function scheduleCanvasReady(entry, options) {
+    const opts = options || {};
+    if (opts.blocked || !entry.canvas || entry.readyShown || entry.markReadyHandle) { return; }
+    const canvas = entry.canvas;
+    entry.markReadyHandle = (opts.requestFrame || requestFrame)(function markCanvasReady() {
+      entry.markReadyHandle = 0;
+      if (!opts.isLive() || entry.canvas !== canvas) { return; }
+      entry.readyShown = true;
+      if (canvas.classList) { canvas.classList.add('surface-canvas-ready'); }
+    });
+  }
+
   return {
     MAX_DT_MS,
     LONG_GAP_MS,
@@ -727,5 +757,9 @@
     projectClientRectsToHost,
     scenePointInClientRects,
     clearCanvasOcclusions,
+    getNow,
+    requestFrame,
+    cancelFrame,
+    scheduleCanvasReady,
   };
 });

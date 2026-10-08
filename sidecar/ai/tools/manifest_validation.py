@@ -17,6 +17,7 @@ _AVAILABILITY_BOOL_FIELDS = frozenset(
         "always_available",
         "plan_mode_only",
         "plan_mode_artifact_write",
+        "propose_mode_only",
     }
 )
 

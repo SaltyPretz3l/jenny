@@ -19,13 +19,66 @@ test.afterEach(async () => {
   await cleanupTrackedResources();
 });
 
+function wavBytes() {
+  return Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVE'), Buffer.alloc(4)]);
+}
+
+test('audio intake rejects unsupported bytes without creating an asset file', () => {
+  const rootDir = createTrackedTempDir('jenny-attachment-audio-invalid-');
+  const store = new AttachmentAssetStore({ rootDir });
+  const audioDir = store.ensureKindDir('audio');
+  for (const bytes of [Buffer.from('not audio at all'), Buffer.from('RIFF'),
+    Buffer.from('RIFF0000WEBP'), Buffer.from([0xff]), Buffer.from('Ogg'),
+    Buffer.from('xxxxID3'), Buffer.from('ftyp'), Buffer.from('0000ftyp'),
+    Buffer.from('0000ftypavif'), Buffer.from('0000ftypheic')]) {
+    assert.throws(() => store.saveAudioBufferSync(bytes, { mimeType: 'audio/wav' }),
+      /^Error: Attachment is not a supported audio clip\.$/);
+    assert.deepEqual(fs.readdirSync(audioDir), []);
+  }
+});
+
+for (const [label, bytes, mimeType, extension] of [
+  ['WAV', wavBytes(), 'audio/wav', '.wav'],
+  ['EBML', Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), 'audio/webm', '.webm'],
+  ['Ogg', Buffer.from('OggS'), 'audio/ogg', '.ogg'],
+  ['ID3', Buffer.from('ID3'), 'audio/mpeg', '.mp3'],
+  ['MPEG frame', Buffer.from([0xff, 0xe0]), 'audio/mpeg', '.mp3'],
+  ['MP4', Buffer.from('0000ftypM4A '), 'audio/mp4', '.m4a'],
+  ['MP4 (isom)', Buffer.from('0000ftypisom'), 'audio/mp4', '.m4a'],
+  ['FLAC', Buffer.from('fLaC'), 'audio/flac', '.flac'],
+]) {
+  test(`audio intake derives ${label} MIME and extension from bytes`, () => {
+    const rootDir = createTrackedTempDir('jenny-attachment-audio-mime-');
+    const store = new AttachmentAssetStore({ rootDir });
+    const saved = store.saveAudioBufferSync(bytes, {
+      mimeType: mimeType === 'audio/wav' ? 'audio/mpeg' : 'audio/wav',
+      displayName: 'Claimed.mp3',
+      durationMs: 1200,
+      transcriptText: ' spoken words ',
+      transcriptStatus: 'COMPLETE',
+      transcriptLanguage: 'EN',
+      sourceKind: 'import',
+    });
+    assert.equal(saved.mimeType, mimeType);
+    assert.equal(path.extname(saved.assetPath), extension);
+    assert.deepEqual(fs.readFileSync(saved.assetPath), bytes);
+    assert.equal(saved.sizeBytes, bytes.length);
+    assert.equal(saved.displayName, 'Claimed.mp3');
+    assert.equal(saved.durationMs, 1200);
+    assert.equal(saved.transcriptText, 'spoken words');
+    assert.equal(saved.transcriptStatus, 'complete');
+    assert.equal(saved.transcriptLanguage, 'en');
+    assert.equal(saved.sourceKind, 'import');
+  });
+}
+
 test('AttachmentAssetStore leaves an empty root unconfigured instead of resolving to the current working directory', () => {
   const store = new AttachmentAssetStore({ rootDir: '' });
 
   assert.equal(store.rootDir, '');
   assert.equal(store.isManagedAssetPath(process.cwd()), false);
   assert.throws(
-    () => store.saveAudioBufferSync(Buffer.from('RIFF'), { mimeType: 'audio/wav' }),
+    () => store.saveAudioBufferSync(wavBytes(), { mimeType: 'audio/wav' }),
     /not configured/i
   );
 });
@@ -61,7 +114,7 @@ test('AttachmentAssetStore writes managed audio assets under the configured root
   const rootDir = createTrackedTempDir('jenny-attachment-assets-');
   const store = new AttachmentAssetStore({ rootDir });
 
-  const saved = store.saveAudioBufferSync(Buffer.from('voice-bytes'), {
+  const saved = store.saveAudioBufferSync(wavBytes(), {
     displayName: 'Voice Clip',
     mimeType: 'audio/wav',
   });
@@ -137,7 +190,7 @@ test('AttachmentAssetStore deleteAssets ignores paths outside the managed root',
   const rootDir = createTrackedTempDir('jenny-attachment-assets-delete-');
   const outsideDir = createTrackedTempDir('jenny-attachment-assets-delete-outside-');
   const store = new AttachmentAssetStore({ rootDir });
-  const saved = store.saveAudioBufferSync(Buffer.from('voice-bytes'), {
+  const saved = store.saveAudioBufferSync(wavBytes(), {
     displayName: 'Voice Clip',
     mimeType: 'audio/wav',
   });
@@ -182,11 +235,11 @@ test('AttachmentAssetStore deleteAssets separates removed, already-absent and fa
 test('AttachmentAssetStore prunes unreferenced managed assets from disk', () => {
   const rootDir = createTrackedTempDir('jenny-attachment-assets-prune-');
   const store = new AttachmentAssetStore({ rootDir });
-  const referenced = store.saveAudioBufferSync(Buffer.from('keep'), {
+  const referenced = store.saveAudioBufferSync(wavBytes(), {
     displayName: 'Keep.wav',
     mimeType: 'audio/wav',
   });
-  const orphaned = store.saveAudioBufferSync(Buffer.from('remove'), {
+  const orphaned = store.saveAudioBufferSync(wavBytes(), {
     displayName: 'Remove.wav',
     mimeType: 'audio/wav',
   });
@@ -202,7 +255,7 @@ test('AttachmentAssetStore resolves only managed asset paths for export', () => 
   const rootDir = createTrackedTempDir('jenny-attachment-assets-safe-');
   const outsideDir = createTrackedTempDir('jenny-attachment-assets-outside-');
   const store = new AttachmentAssetStore({ rootDir });
-  const saved = store.saveAudioBufferSync(Buffer.from('voice-bytes'), {
+  const saved = store.saveAudioBufferSync(wavBytes(), {
     displayName: 'Voice Clip',
     mimeType: 'audio/wav',
   });

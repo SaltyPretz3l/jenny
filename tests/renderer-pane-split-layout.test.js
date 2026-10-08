@@ -64,7 +64,7 @@ const PRE_W1_CHAT_VIEW_IDS = Object.freeze([
   // 2026-09-27: contextPulse + contextPulseSection dropped (Session Pulse removed from the context rail).
   'contextSessionLogs', 'heroAvatar', 'heroRuntimeHint', 'heroStack',
   'heroStage', 'heroSubtitle', 'heroTitle', 'jumpToBottomButton', 'jumpToLastPromptButton',
-  'jumpToTopButton', 'pluginSessionFallback', 'pluginSessionFallbackAction', 'runtimeQueue',
+  'jumpToTopButton', 'pluginSessionFallback', 'runtimeQueue',
   'sendButton', 'sendOutbox', 'stopStreamButton', 'subagentInspector',
 ]);
 
@@ -167,7 +167,7 @@ test('one-pane identity: #chatView ids are the pre-W1 set plus exactly the four 
   const chatView = documentRef.getElementById('chatView');
   const ids = [...chatView.querySelectorAll('[id]')].map((node) => node.id).sort();
 
-  assert.equal(PRE_W1_CHAT_VIEW_IDS.length, 99); // 107 less the two Session Pulse ids (2026-09-27), less timelineCollapseExpandToggle (transcript views, 2026-09-29), less the four remote banner ids (Remote Control removed, 2026-10-02), less chatSpriteHolo (sprite holo retired, 2026-10-02)
+  assert.equal(PRE_W1_CHAT_VIEW_IDS.length, 98); // 107 less the two Session Pulse ids (2026-09-27), less timelineCollapseExpandToggle (transcript views, 2026-09-29), less the four remote banner ids (Remote Control removed, 2026-10-02), less chatSpriteHolo (sprite holo retired, 2026-10-02), less pluginSessionFallbackAction (plugin platform retired, 2026-10-05)
   assert.deepEqual(
     ids,
     [...PRE_W1_CHAT_VIEW_IDS.filter((id) => !REMOVED_LEGACY_ARTIFACT_PANEL_IDS.includes(id) && !REMOVED_GEAR_IDS.includes(id)), ...W1_ADDED_IDS, ...W3_ADDED_IDS, ...CHAT_PANEL_IDS].sort(),

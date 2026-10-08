@@ -232,3 +232,20 @@
     transform: translateY(-1px) scale(0.985);
   }
 }
+
+/* Row 38 item 7: Branch and Elaborate show their word on the hover row (the
+   row itself appears only on hover); universal icons stay icon-only. */
+.chat-hover-action--labeled {
+  width: auto;
+  grid-auto-flow: column;
+  gap: var(--space-2);
+  padding-inline: var(--space-3) var(--space-4);
+}
+
+.chat-hover-action-word {
+  font-size: var(--tl-font-ui);
+  font-weight: var(--tl-weight-label);
+  letter-spacing: var(--tracking-ui);
+  line-height: 1;
+  white-space: nowrap;
+}

@@ -66,7 +66,7 @@ class _FinalResponseMixin:
     thinking_budget_checkpoints: int
     last_checkpoint_carry: str | None
     prompt_cache_enabled: bool
-    reflexive_retry_attempted: bool
+    reflexive_retries_used: dict[str, int]
     pending_retry_response_format: Any | None
     post_tool_continuation_attempted: bool
     sub_agent_report_finalization_requested: bool
@@ -332,9 +332,8 @@ class _FinalResponseMixin:
 
         import sidecar.ai.routing.tool_loop as _tl_hub
 
-        response_text = _tl_hub.sanitize_assistant_output(
-            str(result.content or ""),
-            max_chars=_tl_hub.MAX_RESPONSE_CHARS,
+        response_text = _tl_hub.finalize_visible_reply(
+            result.content, request_id=self.request_id, session_id=self.session_id
         )
         cut_off = self._finish_stream_cut_off(result, response_text, iteration)
         if cut_off is not None:
@@ -462,9 +461,8 @@ class _FinalResponseMixin:
 
         # -- No tool calls: process final response text -------------------
         raw_content = str(result.content or "")
-        response_text = _tl_hub.sanitize_assistant_output(
-            raw_content,
-            max_chars=_tl_hub.MAX_RESPONSE_CHARS,
+        response_text = _tl_hub.finalize_visible_reply(
+            raw_content, request_id=request_id, session_id=session_id
         )
         if result.inband_tool_call_parse_failed:
             from sidecar.ai.routing import tool_call_retry as _reflexive
@@ -474,10 +472,10 @@ class _FinalResponseMixin:
                 inband_tool_call_parse_failed=True,
                 surviving_calls=(), validation_errors=(),
                 tool_payload=self.tool_payload, working_messages=self.working_messages,
-                already_retried=self.reflexive_retry_attempted, request_id=request_id,
-                session_id=session_id)
+                retries_used=self.reflexive_retries_used, request_id=request_id,
+                session_id=session_id,
+                parse_diagnostics=getattr(result, "tool_call_parse_diagnostics", None))
             if _did_retry:
-                self.reflexive_retry_attempted = True
                 _tl_hub.loop_event_emit.emit_stream_reset_for_retry(
                     runtime, self.streamed_event_types, reason="reflexive_retry")
                 return None
@@ -613,19 +611,6 @@ class _FinalResponseMixin:
         cut_off = self._finish_stream_cut_off(result, response_text, _iteration)
         if cut_off is not None:
             return cut_off
-        if len(raw_content) > _tl_hub.MAX_RESPONSE_CHARS:
-            _tl_hub.log_event(
-                logger,
-                logging.INFO,
-                component="ai.router",
-                event="ai.router.response_truncated",
-                message="Final response text was truncated",
-                status="truncated",
-                data={
-                    "original_length": len(raw_content),
-                    "truncated_to": _tl_hub.MAX_RESPONSE_CHARS,
-                },
-            )
         response_looks_like_fake_tool_use = kernel._should_nudge_tool_use(
             response_text,
             raw_content,

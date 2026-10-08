@@ -35,18 +35,16 @@ function pressKey(harness, target, key, options = {}) {
   }));
 }
 
-async function createWiringHarness({ files = {}, qol = true } = {}) {
+async function createWiringHarness({ files = {} } = {}) {
   const domHarness = buildIdeDom();
   const bridge = createBridgeStub({ files });
   const ide = ideStateUtils.createIdeUiState();
   const toasts = [];
-  const previousToastUtils = global.rendererToastUtils;
-  global.rendererToastUtils = {
-    showToastMessage(message, options) {
-      const toast = { message, options, onUndo: options.actions?.[0]?.onClick };
-      toasts.push(toast);
-      return toast;
-    },
+  // Production hands the shell's toast controller in through the wiring context.
+  const showToastMessage = (message, options) => {
+    const toast = { message, options, onUndo: options.actions?.[0]?.onClick };
+    toasts.push(toast);
+    return toast;
   };
   const wiring = createIdeExplorerWiring({
     getDom: domHarness.getDom,
@@ -70,9 +68,9 @@ async function createWiringHarness({ files = {}, qol = true } = {}) {
       captureContext: async () => ({ rootId: 'root-test', generation: 1, phase: 'ready' }),
     }),
     showShellErrorToast() {},
+    showToastMessage,
     appendClientLog() {},
     getGitFeature: () => null,
-    getFeatureFlags: () => ({ workspace_explorer_qol: qol }),
     panelDeps: () => ({
       getMountEl: () => domHarness.getDom().ideRailPanel,
       isActivePanel: () => true,
@@ -91,8 +89,6 @@ async function createWiringHarness({ files = {}, qol = true } = {}) {
     dispose() {
       wiring.disposeAll();
       domHarness.dom.window.close();
-      if (previousToastUtils === undefined) delete global.rendererToastUtils;
-      else global.rendererToastUtils = previousToastUtils;
     },
   };
 }
@@ -133,7 +129,6 @@ function createClipboardHarness({
     showUndoToast: (message, onUndo) => toasts.push({ message, onUndo }),
     parentDirOf: treeMarkup.parentDirOf,
     nameOf: treeMarkup.nameOf,
-    isQolEnabled: () => true,
   });
   clipboard[mode]();
   return {
@@ -174,7 +169,6 @@ test('duplicate undo trashes the auto-renamed landed path and makes no other mut
     getIde: () => ideStateUtils.createIdeUiState(),
     getMountEl: () => domHarness.getDom().ideRailPanel,
     isActivePanel: () => true,
-    isQolEnabled: () => true,
     getWorkspaceFsApi: () => bridge.jennyShell.workspaceFs,
     getMutationContext: async () => ({ rootId: 'root-test', generation: 1, phase: 'ready' }),
     preflightMutation: async () => ({ ready: true, paths: [] }),
@@ -253,17 +247,5 @@ test('zero-success copy shows no undo toast', async () => {
 
   await harness.clipboard.paste('dst');
 
-  assert.deepEqual(harness.toasts, []);
-});
-
-test('flag-off rename preserves current behavior with no toast', async (t) => {
-  const harness = await createWiringHarness({ files: { 'alpha.js': 'a' }, qol: false });
-  t.after(() => harness.dispose());
-  const input = beginRename(harness, 'alpha.js');
-  input.value = 'beta.js';
-  pressKey(harness, input, 'Enter');
-  await settle(60);
-
-  assert.equal(harness.bridge.calls.rename.length, 1);
   assert.deepEqual(harness.toasts, []);
 });

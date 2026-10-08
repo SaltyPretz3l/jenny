@@ -693,12 +693,7 @@ def test_normalize_debug_options_non_dict_returns_none() -> None:
 def test_normalize_debug_options_all_false_returns_none() -> None:
     # Line 251: any(normalized.values()) is False -> return None
     assert normalize_debug_options({}) is None
-    assert (
-        normalize_debug_options(
-            {"disable_thinking": False, "lean_context": False, "plain_chat_mode": False}
-        )
-        is None
-    )
+    assert normalize_debug_options({"disable_thinking": False, "lean_context": False}) is None
 
 
 def test_normalize_debug_options_disable_thinking() -> None:
@@ -706,7 +701,6 @@ def test_normalize_debug_options_disable_thinking() -> None:
     assert result is not None
     assert result["disable_thinking"] is True
     assert result["lean_context"] is False
-    assert result["plain_chat_mode"] is False
 
 
 def test_normalize_debug_options_lean_context() -> None:
@@ -716,17 +710,15 @@ def test_normalize_debug_options_lean_context() -> None:
     assert result["disable_thinking"] is False
 
 
-def test_normalize_debug_options_plain_chat_mode() -> None:
-    result = normalize_debug_options({"plain_chat_mode": True})
-    assert result is not None
-    assert result["plain_chat_mode"] is True
+def test_normalize_debug_options_ignores_the_retired_plain_chat_mode_key() -> None:
+    assert normalize_debug_options({"plain_chat_mode": True}) is None
+    result = normalize_debug_options({"lean_context": True, "plain_chat_mode": True})
+    assert result == {"disable_thinking": False, "lean_context": True}
 
 
 def test_normalize_debug_options_all_true() -> None:
-    result = normalize_debug_options(
-        {"disable_thinking": True, "lean_context": True, "plain_chat_mode": True}
-    )
-    assert result == {"disable_thinking": True, "lean_context": True, "plain_chat_mode": True}
+    result = normalize_debug_options({"disable_thinking": True, "lean_context": True})
+    assert result == {"disable_thinking": True, "lean_context": True}
 
 
 def test_normalize_debug_options_only_true_values_activate() -> None:

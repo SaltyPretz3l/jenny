@@ -57,14 +57,7 @@
     return !['chatgpt', 'codex-cli'].includes(String(engine || '').trim().toLowerCase());
   }
 
-  function defaultEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function formatMs(value) {
     if (value == null || String(value).trim() === '') return 'TBD';
@@ -176,7 +169,8 @@
     return Object.assign({}, summary, {
       badge,
       summary: phase7Summary
-        ? `${phase7Summary}. ${summary.summary || ''}`.trim()
+        // The override text may already end its sentence (".", "?", "。").
+        ? `${phase7Summary}${/[.!?…。！？؟]$/.test(phase7Summary) ? '' : '.'} ${summary.summary || ''}`.trim()
         : summary.summary,
     });
   }
@@ -266,7 +260,7 @@
             ? jt('diagnostics.phases.snapshotSummary', 'Snapshot {generatedAt}. Provider start to first chunk P50 {providerP50}; first chunk to first visible token P50 {visibleP50}.', { generatedAt, providerP50, visibleP50 })
             : backendUnavailable
               ? jt('diagnostics.phases.latencyUnavailableUntilRecovery', 'Latency evidence is unavailable until the backend recovers.')
-              : jt('diagnostics.phases.noSamplesRecorded', 'No latency samples recorded for this run.'),
+              : jt('diagnostics.phases.noSamplesRecordedLaunch', 'No timings recorded in this app launch yet.'),
       sampleHint: modelUnavailable
         ? jt('diagnostics.phases.modelSamplingUnavailable', 'Model {model} is unavailable. Load an available model before collecting latency samples.', { model })
         : backendUnavailable
@@ -274,8 +268,8 @@
           : !backendReady
             ? jt('diagnostics.phases.samplingWaitForReady', 'Latency sampling will resume when the backend is ready.')
             : isLocalEngine(engine)
-              ? jt('diagnostics.phases.sendLocalChatHint', 'Send a local chat to populate the live ring buffers.')
-              : jt('diagnostics.phases.sendChatHint', 'Send a chat to populate the live ring buffers.'),
+              ? jt('diagnostics.phases.sendLocalChatHintPlain', 'Send a local chat to start collecting timings.')
+              : jt('diagnostics.phases.sendChatHintPlain', 'Send a chat to start collecting timings.'),
       recoveryLabel: degraded ? jt('diagnostics.phases.retryBackendStatus', 'Retry backend status') : jt('diagnostics.phases.openModels', 'Open Models'),
       recoverySection: 'models',
     };

@@ -1,7 +1,7 @@
 /**
  * renderer/features/renderer-html-artifact-frame-utils.js — sandboxed
- * executable-HTML artifact frame factory (HTML Artifact Preview,
- * artifact_html_preview; also the workspace Preview stage). Clones
+ * executable-HTML artifact frame factory (HTML Artifact Preview;
+ * also the workspace Preview stage). Clones
  * createMermaidFrame (renderer-mermaid-utils.js): the assembled document is
  * staged in the main process (artifactFrame.stage ->
  * services/artifact-frame-protocol.js) and loaded via a single-use

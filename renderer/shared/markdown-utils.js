@@ -492,7 +492,7 @@
       && mathUtils.isMathRenderingEnabled()
       && typeof mathUtils.protectMath === 'function'
       && typeof mathUtils.restoreMathPlaceholders === 'function');
-    // A math-mode render is keyed apart the same way (a katex_math flip
+    // A math-mode render is keyed apart the same way (a math toggle flip
     // mid-session can never serve stale HTML from the other namespace).
     const cacheParts = [1, mermaidMode, escapeRawHtml, mathEnabled ? 'math' : 'no-math', frontmatterMode, breaksMode, imagesMode, escapesMode, contentKey];
 

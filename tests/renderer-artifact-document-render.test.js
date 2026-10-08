@@ -317,9 +317,9 @@ test('decorateMarkdownArtifactDocument upgrades portable callouts and code copy 
   assert.match(copyButton.getAttribute('aria-label'), /Copy code/);
 });
 
-/* ── KaTeX math in .md artifact documents (katex_math) ── */
+/* ── KaTeX math in .md artifact documents ── */
 
-test('.md artifact document renders KaTeX markup when katex_math is on, raw $ text when off', () => {
+test('.md artifact document renders KaTeX markup when math rendering is on', () => {
   const markdownUtils = require('../renderer/shared/markdown-utils.js');
   const markdownMathUtils = require('../renderer/shared/markdown-math-utils.js');
   const katex = require('katex');
@@ -334,7 +334,7 @@ test('.md artifact document renders KaTeX markup when katex_math is on, raw $ te
       renderMarkdown: markdownUtils.renderMarkdown,
     });
 
-    // Flag ON: same sequence the artifacts surface controller runs —
+    // Math rendering on: same sequence the artifacts surface controller runs —
     // build → insert → decorate → renderMathInto on the live preview node.
     markdownMathUtils.setMathRenderingEnabled(true);
     markdownUtils.clearMarkdownRenderCache();
@@ -345,14 +345,6 @@ test('.md artifact document renders KaTeX markup when katex_math is on, raw $ te
     assert.equal(result.rendered, 2, `expected inline + display typeset, got ${JSON.stringify(result)}`);
     assert.ok(preview.querySelector('.markdown-math .katex'), 'inline .katex markup missing');
     assert.ok(preview.querySelector('.markdown-math .katex-display'), 'display .katex-display markup missing');
-
-    // Flag OFF: byte-level parity — raw delimiters survive, no wrappers.
-    markdownMathUtils.setMathRenderingEnabled(false);
-    markdownUtils.clearMarkdownRenderCache();
-    const offHtml = buildDocument();
-    assert.ok(offHtml.includes('$a^2 + b^2 = c^2$'), `raw inline math lost: ${offHtml}`);
-    assert.ok(offHtml.includes('$$c = \\sqrt{a^2 + b^2}$$'), `raw display math lost: ${offHtml}`);
-    assert.ok(!offHtml.includes('markdown-math'), 'flag-off artifact must not emit math wrappers');
   } finally {
     markdownMathUtils.setMathRenderingEnabled(previous);
   }

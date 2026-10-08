@@ -57,8 +57,7 @@
       return id;
     }
     function description(row) {
-      const base = row.kind === 'mcp' ? jt('composer.chatPanel.mcp', 'MCP · {total} tools', { total: row.total })
-        : row.kind ? jt('composer.chatPanel.plugin', 'Plugin · {total} tools', { total: row.total }) : row.description || '';
+      const base = row.kind === 'mcp' ? jt('composer.chatPanel.mcp', 'MCP · {total} tools', { total: row.total }) : row.description || '';
       return base + (row.approval === 'some' && runMode() === 'ask' ? ' · ' + jt('composer.chatPanel.approval', 'Some actions ask first') : '');
     }
     function reasonFor(row, vm) {

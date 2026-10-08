@@ -814,7 +814,7 @@ test('reducer normalizes generated artifacts onto live tool rows', () => {
   }]);
 });
 
-test('reducer marks stream-reset rows truncated and restarts segment numbering on a discarding reset', () => {
+test('reducer folds stream-reset rows and restarts segment numbering on a discarding reset', () => {
   const state = createTurnReducerState();
 
   applyPayload(state, { type: 'started', streamId: 'stream-batch5' });
@@ -845,14 +845,14 @@ test('reducer marks stream-reset rows truncated and restarts segment numbering o
     segmentIndex: 1,
   });
 
-  assert.equal(turn.rows[0].payload.truncated, true);
+  assert.equal(turn.rows[0].payload.discard_anchor, true);
   assert.equal(turn.rows[1].primary_message_id, 'assistant_stream-batch5_seg1');
   assert.equal(turn.rows[1].segment_group_index, 0);
   assert.equal(turn.rows[1].payload.segment_group_index, 0);
   assert.equal(turn.rows[1].payload.text, 'After reset.');
 });
 
-test('reducer skips the truncation stamp for a preserved tool_continuation reset', () => {
+test('reducer skips the discarded-draft fold for a preserved tool_continuation reset', () => {
   const state = createTurnReducerState();
 
   applyPayload(state, { type: 'started', streamId: 'stream-batch5b' });
@@ -875,8 +875,8 @@ test('reducer skips the truncation stamp for a preserved tool_continuation reset
   });
 
   // The commentary was persisted at the tool boundary and survives the reset
-  // backend-side — no "restarted" hairline on genuine content.
-  assert.equal(turn.rows[0].payload.truncated, false);
+  // backend-side — no "Draft discarded" fold on genuine content.
+  assert.equal(turn.rows[0].payload.discard_anchor, undefined);
 });
 
 test('reconcileTurnRows preserves row ids for matched rows and favors hydrated content', () => {

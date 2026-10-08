@@ -4,6 +4,7 @@ const {
   buildManagedStatusSnapshot,
 } = require('./managed-sidecar-lifecycle');
 const { AI_ERROR_CODES, SIDECAR_ERROR_CODES } = require('./error-codes');
+const { buildLoadFailure, classifyLoadFailure } = require('./load-failure-classifier');
 const { resolveManagedConfiguredModel, resolveOpenAICompatibleApiUrl } = require('./managed-sidecar-config');
 const { sameLocalOrigin } = require('../local-origin');
 const { clearManagedInitializeStall, markManagedInitializeStalled } = require('./managed-sidecar-chat-reconnect');
@@ -133,6 +134,11 @@ function setModelLifecycle(service, patch = {}, { emit = true } = {}) {
       patch.total_bytes ?? previous.total_bytes ?? 0
     ) || 0), 0), MAX_SAFE_BYTES),
     error_code: String(patch.error_code ?? previous.error_code ?? '').trim() || null,
+    // The classified failure belongs to the unavailable state only: a new load
+    // or an explicit unload leaves nothing stale behind for the surfaces.
+    failure: state === 'unavailable'
+      ? buildLoadFailure(Object.prototype.hasOwnProperty.call(patch, 'failure') ? patch.failure : previous.failure)
+      : null,
     started_at: patch.started_at ?? (entersLoad ? now : previous.started_at ?? now),
     updated_at: now,
     ready_at: state === 'ready' ? (patch.ready_at ?? previous.ready_at ?? now) : null,
@@ -143,6 +149,39 @@ function setModelLifecycle(service, patch = {}, { emit = true } = {}) {
     service.emit('backend-status', buildObservedBackendStatus(service));
   }
   return next;
+}
+
+function applyRuntimeLoadFailure(service, message) {
+  if (message?.method !== 'runtime.load_failure') return;
+  const failure = buildLoadFailure(message.params);
+  const flight = service._managedInitializeFlight;
+  if (flight) {
+    // Ollama refuses an oversized model within the init flight, often before
+    // the initialize response is processed: keep it for the flight's end.
+    if (failure && failure.model === String(service._managedPendingModel || flight.requestedModel || '').trim()) {
+      flight.loadFailure = failure;
+    }
+    return;
+  }
+  const requestedModel = String(service._modelLifecycle?.requested_model || service.currentModel || '').trim();
+  if (!failure || !requestedModel || failure.model !== requestedModel) return;
+  // Nothing is loaded now: the next send (or Retry) loads instead of reusing the failed model.
+  service.currentModel = '';
+  setModelLifecycle(service, {
+    state: 'unavailable', requested_model: requestedModel, engine: failure.engine,
+    status: 'Model failed to load', error_code: AI_ERROR_CODES.ENGINE_CONNECTION, failure,
+  });
+  service.currentStatus = buildManagedStatusSnapshot(service, { model: '', model_loaded: false });
+}
+
+// The failure a successful initialize still carries: in the payload's runtime
+// snapshot, or pushed as a notification while the flight was open.
+function initializeLoadFailure(service, payload, requestedModel) {
+  const model = String(requestedModel || '').trim();
+  if (!model) return null;
+  const failure = buildLoadFailure(payload?.local_runtime?.load_failure)
+    || buildLoadFailure(service._managedInitializeFlight?.loadFailure);
+  return failure && failure.model === model ? failure : null;
 }
 
 // Remembers how long a pure model load took (loading -> ready in one flight)
@@ -503,6 +542,18 @@ async function initializeManagedSidecarWithTimeout(service, options = {}) {
         Number(service._publishedFeatureSettingsRevision) || 0,
         featureSettingsRevision
       );
+      const warmupFailure = initializeLoadFailure(service, payload, requestedModel);
+      if (warmupFailure) {
+        // The sidecar accepted the model but its warmup already failed: the
+        // runtime is up with nothing loaded, and the UI says why.
+        service.currentModel = '';
+        setModelLifecycle(service, {
+          state: 'unavailable', requested_model: lifecycleModel, engine: service.currentEngineType,
+          status: 'Model failed to load', error_code: AI_ERROR_CODES.ENGINE_CONNECTION, failure: warmupFailure,
+        });
+        service.currentStatus = buildManagedStatusSnapshot(service, { model: '', model_loaded: false });
+        return payload;
+      }
       setModelLifecycle(service, {
         state: requestedModel ? 'ready' : 'unloaded',
         requested_model: lifecycleModel,
@@ -531,6 +582,10 @@ async function initializeManagedSidecarWithTimeout(service, options = {}) {
           engine: requestedEngineType,
           status: 'Model unavailable',
           error_code: finalError?.error_code || AI_ERROR_CODES.ENGINE_CONNECTION,
+          failure: buildLoadFailure({
+            cause: classifyLoadFailure(finalError?.message, { timedOut: Boolean(timeoutError) }),
+            message: String(finalError?.message || finalError), engine: requestedEngineType, model: requestedModel,
+          }),
         });
         service.currentStatus = buildManagedStatusSnapshot(service, {
           model: '',
@@ -590,7 +645,9 @@ module.exports = {
   DEFAULT_ABSOLUTE_TIMEOUT_MS,
   DEFAULT_INACTIVITY_TIMEOUT_MS,
   abortManagedSidecarInitialization,
+  applyRuntimeLoadFailure,
   buildLocalEngineStatusSnapshot,
+  initializeLoadFailure,
   buildObservedBackendStatus,
   initializeManagedSidecarWithTimeout,
   initializeNeedsOllama,

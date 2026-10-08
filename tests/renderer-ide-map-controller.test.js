@@ -29,27 +29,26 @@ const {
   windowStubFor, makeController, mountAndScan, failingFitTransform,
 } = require('./helpers/ide-map-controller-harness');
 
-// ── 1. flag off ──────────────────────────────────────────────────────────────
+// ── 1. stage surface ─────────────────────────────────────────────────────────
 
-test('flag off: no DOM under ideMapHost, openFileMap/syncVisibility no-ops', (t) => {
+test('openFileMap activates the file_map stage surface, creates NO tab, and mounts the host', (t) => {
   const { hostEl } = setupDom();
   const spies = makeSpies();
   const restore = stubSiblings(globalThis, spies);
   t.after(() => restore());
 
-  const ctrl = createIdeMapController({
-    getDom: () => ({ ideMapHost: hostEl }),
-    getIde: () => makeIde(),
-    getFeatureFlags: () => ({ workspace_file_map: false }),
-    onOpenFile: () => {},
+  const ide = makeIde();
+  const stageActivations = [];
+  const ctrl = makeController(hostEl, {
+    getIde: () => ide,
+    activateStage: (surface) => stageActivations.push(surface),
   });
   t.after(() => ctrl.dispose());
 
-  ctrl.bindEvents();
-  ctrl.syncVisibility(realIdeState.MAP_TAB_ID);
-  assert.equal(hostEl.innerHTML, '', 'no DOM should be created when the flag is off');
   ctrl.openFileMap();
-  assert.equal(hostEl.innerHTML, '', 'openFileMap must also be a no-op when the flag is off');
+  assert.deepEqual(stageActivations, ['file_map'], 'opening the map activates the stage surface');
+  assert.equal(ide.openTabs.length, 0, 'NO tab is created: the map is a stage surface');
+  assert.equal(hostEl.innerHTML === '', false, 'the host mounts');
 });
 
 // ── 2. successful scan: layout + renderAtlas; fit ONCE, reclamp thereafter ──
@@ -360,25 +359,6 @@ test('layout freeze: a held result present at root commit is discarded, never ap
 });
 
 // ── 5. revealInMap ───────────────────────────────────────────────────────────
-
-test('revealInMap: unavailable when the flag is off', async (t) => {
-  const { hostEl } = setupDom();
-  const spies = makeSpies();
-  const restore = stubSiblings(globalThis, spies);
-  t.after(() => restore());
-
-  const ctrl = createIdeMapController({
-    getDom: () => ({ ideMapHost: hostEl }),
-    getIde: () => makeIde(),
-    getFeatureFlags: () => ({ workspace_file_map: false }),
-    windowRef: windowStubFor(graphA()),
-    onOpenFile: () => {},
-  });
-  t.after(() => ctrl.dispose());
-
-  assert.equal(await ctrl.revealInMap('a.js'), 'unavailable');
-  assert.equal(spies.panToCalls.length, 0);
-});
 
 test('revealInMap: not-in-map for an unknown path, with a status chip', async (t) => {
   const { hostEl } = setupDom();
@@ -714,7 +694,6 @@ test('root commit: full teardown (host emptied) then remount + rescan; prefs res
   const ctrl = createIdeMapController({
     getDom: () => ({ ideMapHost: hostEl }),
     getIde: () => makeIde(),
-    getFeatureFlags: () => ({ workspace_file_map: true }),
     getWorkspaceRootContext: () => rootCtx,
     windowRef: windowStubFor(graphA()),
     onOpenFile: () => {},

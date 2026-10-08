@@ -41,14 +41,7 @@
     return null;
   })();
 
-  function fallbackEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const fallbackEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
   const defaultEscapeHtml = stringUtils && typeof stringUtils.escapeHtml === 'function'
     ? stringUtils.escapeHtml
     : fallbackEscapeHtml;
@@ -149,8 +142,10 @@
   // Which card a pending approval row shows (A4, owner-approved 2026-09-22).
   // Live wins: Allow and Deny resolve by call id, so any approval the runtime
   // holds for the call is answerable. A paused reply for the turn offers its
-  // Resume; one being discarded, or a card whose answer was refused, folds to
-  // a receipt, as does a row the sealed fold marked interrupted (the turn is
+  // Resume, unless the runtime says the pause cannot continue (a restart left
+  // no checkpoint: the scheduler would refuse the Resume); then, like one
+  // being discarded or a card whose answer was refused, it folds to a
+  // receipt, as does a row the sealed fold marked interrupted (the turn is
   // over). Anything else keeps today's buttons: before the live approvals and
   // paused work load, a card must not claim it is dead.
   function resolveApprovalCardState(state, ref) {
@@ -166,7 +161,10 @@
     const rows = sessionId && turnId && typeof state.runtimeSendController?.listPending === 'function'
       ? state.runtimeSendController.listPending(sessionId) : [];
     const held = rows.find((row) => row.turnId === turnId && HELD_STATUSES.has(row.status));
-    if (held) return held.status === 'paused' ? { state: 'paused', resumeKey: held.key } : { state: 'inactive' };
+    if (held) {
+      return held.status === 'paused' && held.resumable !== false
+        ? { state: 'paused', resumeKey: held.key } : { state: 'inactive' };
+    }
     if (state.inactiveApprovalCallIds instanceof Set && state.inactiveApprovalCallIds.has(callId)) {
       return { state: 'inactive' };
     }
@@ -184,7 +182,7 @@
     const id = normalizeText(sessionId);
     const paused = id && typeof state.runtimeSendController?.listPending === 'function'
       ? state.runtimeSendController.listPending(id).filter((row) => HELD_STATUSES.has(row.status))
-        .map((row) => `${row.turnId}=${row.status}:${row.key}`).sort()
+        .map((row) => `${row.turnId}=${row.status}${row.resumable === false ? '!' : ''}:${row.key}`).sort()
       : [];
     const inactive = state.inactiveApprovalCallIds instanceof Set ? [...state.inactiveApprovalCallIds].sort() : [];
     return live.length || paused.length || inactive.length

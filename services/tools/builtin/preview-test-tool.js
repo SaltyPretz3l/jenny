@@ -4,7 +4,7 @@
  *
  * One-shot workspace HTML tester backed by BrowserSessionService. Validation
  * order is security-sensitive: service availability → workspace root realpath
- * → relative HTML path → viewport → bounded wait → bounded click/type events
+ * → relative HTML path → viewport → bounded wait → bounded click/type/hover/focus/press events
  * → real-path containment → regular-file/size gates → hidden strict-workspace
  * browser session → settle/events/inspect → exactly-one close. No caller script
  * is ever evaluated, and result text never includes resolved absolute paths. */
@@ -13,7 +13,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
-const { safeBrowserReason } = require('../../browser-interaction-utils');
+const { PRESS_KEY_SCHEMA_VALUES, safeBrowserReason } = require('../../browser-interaction-utils');
 const {
   formatRenderSummary,
   summarizeRenderBitmap,
@@ -33,7 +33,11 @@ const {
   redactKnownPaths,
   stripSensitiveValues,
 } = require('./preview-test-evidence');
-const { unknownArgumentFailure, unknownEventArgumentFailure } = require('./preview-test-arguments');
+const {
+  EVENT_ACTIONS,
+  normalizePreviewEvent,
+  unknownArgumentFailure,
+} = require('./preview-test-arguments');
 
 const PREVIEW_TEST_EXTENSIONS = new Set(['html', 'htm']);
 const MAX_PREVIEW_TEST_BYTES = 5_000_000;
@@ -179,7 +183,7 @@ function createPreviewTestTool({
 
   return {
     name: 'preview_test',
-    description: 'Load one workspace HTML file in a hidden, network-isolated sandbox and report what happened: render state, console errors, and page errors, optionally after bounded click/type interactions and at a chosen viewport. Each event outcome is listed; a "clicked" status only means the click was dispatched, so pass observe (CSS selectors) to read back match count, visibility and text after the events and verify the effect. The page loads real workspace files, but the in-app Preview is self-contained: external scripts and stylesheets do not load there, and the result warns when the page references any. Read-only and one-shot; it never navigates off the file, reaches the network, or evaluates caller scripts (observation uses a tool-owned read-only script).',
+    description: 'Load one workspace HTML file in a hidden, network-isolated sandbox and report what happened: render state, console errors, and page errors, optionally after bounded click/type/hover/focus/press interactions and at a chosen viewport. Each event outcome is listed; a "clicked", "hovered", "focused" or "pressed" status only means the input was dispatched, so pass observe (CSS selectors) to read back match count, visibility and text after the events and verify the effect. A screenshot is taken after a fresh frame is presented, so it reflects the post-event state. The page loads real workspace files, but the in-app Preview is self-contained: external scripts and stylesheets do not load there, and the result warns when the page references any. Read-only and one-shot; it never navigates off the file, reaches the network, or evaluates caller scripts (observation uses a tool-owned read-only script).',
     category: 'builtin',
     readOnly: true,
     workspaceRequired: true,
@@ -194,7 +198,7 @@ function createPreviewTestTool({
         viewport: {
           type: 'string',
           enum: ['desktop', 'mobile', 'tablet'],
-          description: 'Viewport preset for responsiveness checks. Default desktop (1280x800); mobile is 390x844, tablet 820x1180.',
+          description: 'Viewport preset name as a string, not an object (width/height are not supported). Default desktop (1280x800); mobile is 390x844, tablet 820x1180.',
         },
         wait_ms: {
           type: 'integer',
@@ -206,17 +210,19 @@ function createPreviewTestTool({
         },
         events: {
           type: 'array',
-          description: 'Up to 10 bounded interactions applied in order after load. Each item: {action: "click"|"type", selector, text?, press_enter?}. Selector misses are reported per event, not fatal.',
+          description: 'Up to 10 bounded interactions applied in order after load. Each item: {action: "click"|"type"|"hover"|"focus"|"press", selector, text?, press_enter?, key?}. selector is required except for press, which sends key (Enter, Space or a literal " " or Spacebar, Tab, Escape, ArrowUp, ArrowDown, ArrowLeft or ArrowRight) to the focused element or, with a selector, to that element after focusing it. hover moves the pointer over the element; focus focuses any focusable element. Selector misses are reported per event, not fatal. Events use "action" (not "type") to name the interaction, e.g. [{"action":"click","selector":"#start"},{"action":"press","key":"Enter"}].',
           items: {
             type: 'object',
             additionalProperties: false,
             properties: {
-              action: { type: 'string', enum: ['click', 'type'] },
+              action: { type: 'string', enum: [...EVENT_ACTIONS] },
               selector: { type: 'string' },
+              key: { type: 'string', enum: [...PRESS_KEY_SCHEMA_VALUES] },
               text: { type: 'string' },
               press_enter: { type: 'boolean' },
             },
-            required: ['action', 'selector'],
+            required: ['action'],
+            anyOf: [{ required: ['selector'] }, { required: ['key'] }],
           },
         },
         observe: {
@@ -295,7 +301,7 @@ function createPreviewTestTool({
         return failure({
           reason: 'invalid_viewport',
           errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
-          message: 'viewport must be "desktop", "mobile", or "tablet".',
+          message: 'viewport must be the string "desktop", "mobile", or "tablet"; width/height objects are not supported.',
           summary: 'Invalid preview viewport',
         });
       }
@@ -307,7 +313,7 @@ function createPreviewTestTool({
         return failure({
           reason: 'invalid_event',
           errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
-          message: 'events must be an array of click or type interactions.',
+          message: 'events must be an array of click, type, hover, focus or press interactions.',
           summary: 'Invalid preview event',
         });
       }
@@ -330,30 +336,10 @@ function createPreviewTestTool({
       }
       const observe = observeInput.observe;
       const events = [];
-      for (const event of rawEvents || []) {
-        const action = normalizeString(event?.action);
-        const selector = normalizeString(event?.selector);
-        if (
-          !event
-          || typeof event !== 'object'
-          || Array.isArray(event)
-          || !['click', 'type'].includes(action)
-          || !selector
-        ) {
-          return failure({
-            reason: 'invalid_event',
-            errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
-            message: 'Each event must provide action "click" or "type" and a non-empty selector.',
-            summary: 'Invalid preview event',
-          });
-        }
-        if (unknownEventArgumentFailure(event)) return failure({ ...unknownEventArgumentFailure(event), errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED });
-        events.push({
-          action,
-          selector,
-          text: String(event.text ?? ''),
-          press_enter: event.press_enter === true,
-        });
+      for (const rawEvent of rawEvents || []) {
+        const parsed = normalizePreviewEvent(rawEvent);
+        if (parsed.failure) return failure({ ...parsed.failure, errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED });
+        events.push(parsed.event);
       }
 
       let resolvedRealPath;
@@ -446,17 +432,16 @@ function createPreviewTestTool({
         const externalResources = await collectExternalResources(service, sessionId, sensitiveValues);
         const eventResults = [];
         for (const event of events) {
-          const result = event.action === 'click'
-            ? await service.click(sessionId, { selector: event.selector })
-            : await service.type(sessionId, {
-              selector: event.selector,
-              text: event.text,
-              press_enter: event.press_enter,
-            });
+          // click/hover/focus take a selector; press also carries its key.
+          let options = { selector: event.selector };
+          if (event.action === 'type') options = { ...options, text: event.text, press_enter: event.press_enter };
+          if (event.action === 'press') options = { key: event.key, selector: event.selector };
+          const result = await service[event.action](sessionId, options);
           eventResults.push({
             action: event.action,
             status: String(result?.status || ''),
             selector: boundedEventSelector(event.selector),
+            ...(event.action === 'press' ? { key: event.key } : {}),
           });
         }
         if (events.length) {

@@ -303,7 +303,7 @@ test('chat and dock share the one-line fit and natural slot widths', () => {
   assert.equal(/composer-settings-group|data-toolbar-compact/.test(dockCss), false, 'the dock never styles the group or the compact state');
 });
 
-test('the panel owns the project slot while the remaining rail slots stay siblings', async (t) => {
+test('the settings group owns the project slot while the remaining rail controls stay siblings', async (t) => {
   const { loadRendererApp } = require('./helpers/renderer-shell-harness');
   const app = await loadRendererApp();
   t.after(() => app.dispose());
@@ -311,9 +311,9 @@ test('the panel owns the project slot while the remaining rail slots stay siblin
   const group = doc.getElementById('composerSettingsGroup');
   assert.equal(group.parentElement.classList.contains('composer-toolbar-right'), true);
   assert.deepEqual([...group.children].map((child) => child.id), [
-    'composerContextUsageSlot', 'composerPlanUsageSlot', 'composerRunModeSlot', 'composerModelPillSlot',
+    'composerContextUsageSlot', 'composerPlanUsageSlot', 'composerRunModeSlot', 'composerModelPillSlot', 'composerProjectPillSlot',
   ]);
-  assert.equal(doc.getElementById('composerChatPanel').contains(doc.getElementById('composerProjectPillSlot')), true);
+  assert.equal(doc.getElementById('composerProjectPillSlot').parentElement, group);
   for (const id of ['stopStreamButton', 'sendButton', 'composerSendDisabledReason']) {
     assert.equal(doc.getElementById(id).parentElement, group.parentElement);
   }

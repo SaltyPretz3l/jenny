@@ -115,6 +115,10 @@ const REMAINING_LOOKUP_SITES = Object.freeze([
   'renderer/features/renderer-ide-chat-dock.js|chatView',
   'renderer/features/renderer-ide-chat-dock.js|composerWrap',
   'renderer/features/renderer-ide-mention-autocomplete.js|chatInput',
+  // Wave 2 -- project notes entry + rail (FG-002 C3; the task rail's shared chrome)
+  'renderer/features/renderer-project-notes-entry.js|artifactReviewPanel',
+  'renderer/features/renderer-project-notes-entry.js|chatTimelineUtilityCluster',
+  'renderer/features/renderer-project-notes-rail.js|artifactReviewPanel',
   // Wave 2 -- task rail + dashboard (focused-pane consumers)
   'renderer/features/renderer-dashboard-manager.js|chatInput',
   'renderer/features/renderer-task-rail.js|artifactReviewPanel',
@@ -333,15 +337,15 @@ test('the Wave 2 burn-down ledger of un-migrated getElementById lookups is exact
   );
   assert.equal(
     REMAINING_LOOKUP_SITES.length,
-    39,
+    42,
     'the ledger was pinned at 40 pairs on 2026-09-16 (26 plain-form, 14 optional-call-form); '
     + 'W3-2 (2026-09-26) added the subagentInspector name and its one un-migrated path-open lookup: 41; '
-    + 'Subagent Monitor v2 (2026-09-28) deleted the monitor controller chatView lookup: 40; transcript views (2026-09-29) retired the bulk toggle lookup in the transcript bindings: 39'
+    + 'Subagent Monitor v2 (2026-09-28) deleted the monitor controller chatView lookup: 40; transcript views (2026-09-29) retired the bulk toggle lookup in the transcript bindings: 39; FG-002 C3 project notes (2026-10-06) added the entry\'s utility-cluster and review-panel lookups and the rail\'s review-panel lookup, the same shared chrome the task rail resolves: 42'
   );
   assert.equal(
     new Set(REMAINING_LOOKUP_SITES.map((pair) => pair.split('|')[0])).size,
-    22,
-    'across 22 files, each named with the Wave 2 feature that owns its migration'
+    24,
+    'across 24 files (22 + the two project notes modules, 2026-10-06), each named with the Wave 2 feature that owns its migration'
   );
 
   // The constant-argument lookups the pattern cannot see: same equality, same

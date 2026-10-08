@@ -8,7 +8,7 @@ const { validateEntryName } = require('../renderer/features/renderer-ide-tree-ed
 const ideStateUtils = require('../renderer/features/renderer-ide-state');
 const { buildIdeDom, createBridgeStub, settle } = require('./helpers/ide-tree-harness');
 
-async function createHarness({ files = {}, dirs = [], failRename = false, qol = true } = {}) {
+async function createHarness({ files = {}, dirs = [], failRename = false } = {}) {
   const domHarness = buildIdeDom();
   const bridge = createBridgeStub({ files, dirs, failRename });
   const ide = ideStateUtils.createIdeUiState();
@@ -19,7 +19,6 @@ async function createHarness({ files = {}, dirs = [], failRename = false, qol = 
     getIde: () => ide,
     getMountEl: () => domHarness.getDom().ideRailPanel,
     isActivePanel: () => true,
-    isQolEnabled: () => qol,
     getWorkspaceFsApi: () => bridge.jennyShell.workspaceFs,
     getMutationContext: async () => ({ rootId: 'root-test', generation: 1, phase: 'ready' }),
     preflightMutation: async () => ({ ready: true, paths: [] }),
@@ -270,24 +269,6 @@ test('validateEntryName applies ordered platform and collision rules', () => {
   assert.deepEqual(validateEntryName('README.md', {
     siblings: ['README.md', 'other.js'], currentName: 'README.md', isWin32: true,
   }), { ok: true });
-});
-
-test('flag off keeps legacy blur cancellation and input-inert markup', async (t) => {
-  const harness = await createHarness({ files: { 'alpha.js': 'a', 'other.js': 'b' }, qol: false });
-  t.after(() => harness.dispose());
-  const input = beginRename(harness, 'alpha.js');
-  const legacyMarkup = harness.panel.innerHTML;
-  input.value = 'bad:name.js';
-  input.dispatchEvent(new harness.dom.window.Event('input', { bubbles: true }));
-
-  assert.equal(harness.panel.innerHTML, legacyMarkup);
-  assert.equal(harness.panel.querySelector('.ide-tree-edit-error'), null);
-  assert.equal(input.hasAttribute('aria-invalid'), false);
-  getRow(harness, 'other.js').focus();
-  await settle(20);
-
-  assert.equal(harness.panel.querySelector('[data-ide-tree-edit-control]'), null);
-  assert.deepEqual(harness.bridge.calls.rename, []);
 });
 
 test('a re-render while a blur-held invalid edit row is open does not steal focus', async (t) => {

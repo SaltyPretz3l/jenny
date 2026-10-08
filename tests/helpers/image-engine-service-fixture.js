@@ -8,7 +8,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { assembleZip } = require('./plugins/hostile-archive-builder');
+const { assembleZip } = require('./hostile-archive-builder');
 const { ImageEngineService, ENGINE_DIRECTORY } = require('../../services/image-engine-service');
 
 const TEMPLATE = require('../../config/sdcpp-engine-manifest.json');

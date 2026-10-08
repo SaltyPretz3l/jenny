@@ -26,21 +26,14 @@ from typing import Any, Callable
 
 import pytest
 
+from sidecar.ai.error_codes import CMP_APPROVAL_REJECTED
 from sidecar.ai.routing.generation_runtime import stream_generate_with_tools
 from sidecar.ai.routing.loop_events import (
     LoopEvent,
     StopEvent,
-    ThinkingEvent,
-    TokenDeltaEvent,
-    ToolExecutingEvent,
-)
-from sidecar.protocol import (
-    CHAT_ERROR_METHOD,
-    CHAT_THINKING_METHOD,
-    CHAT_TOKEN_METHOD,
-    TOOL_EXECUTING_METHOD,
 )
 from sidecar.runtime.chat_helpers import emit_approval_rejection
+from sidecar.runtime.chat_serialization import _serialize_loop_event
 from tests.sidecar.replay.assertions import (
     assert_engine_events_match,
     assert_generation_result_matches,
@@ -211,65 +204,22 @@ def _select_routing_driver(
     return _drive_routing
 
 
-_REASONING_ONLY_CODE = "CMP-STREAM-REASONING-ONLY"
+_REPLAY_REQUEST_ID = "req_replay"
 
 
 def _translate_loop_event_to_notification(event: LoopEvent) -> dict[str, Any] | None:
-    """Translate a routing-layer loop event to its wire-format notification dict.
+    """Serialize a routing-layer loop event through the production wire seam.
 
-    Mirrors the relevant emit points in ``sidecar/runtime/chat_streaming.py``
-    for the events emitted by ``stream_generate_with_tools``:
-
-    * ``ThinkingEvent`` → ``chat.thinking``
-    * ``TokenDeltaEvent`` → ``chat.token``
-    * ``StopEvent(code=CMP-STREAM-REASONING-ONLY)`` → ``chat.error``
-    * ``ToolExecutingEvent`` → ``tool.executing``
-
-    ``StopEvent(code=CMP-APPROVAL-REJECTED)`` is intentionally not
-    translated here — the production helper
-    :func:`sidecar.runtime.chat_helpers.emit_approval_rejection` builds
-    the matching ``chat.error`` notification dict directly and the
-    driver appends it to ``direct_notifications``.
-    Other events return ``None`` and are filtered out before comparison.
+    ``sidecar.runtime.chat_serialization._serialize_loop_event`` is what the
+    router uses to put loop events on the wire. ``StopEvent(CMP-APPROVAL-
+    REJECTED)`` is skipped: the production helper
+    :func:`sidecar.runtime.chat_helpers.emit_approval_rejection` builds the
+    matching ``chat.error`` directly and the driver appends it to
+    ``direct_notifications``. Events with no transport form return ``None``.
     """
-    if isinstance(event, ThinkingEvent):
-        return {
-            "method": CHAT_THINKING_METHOD,
-            "params": {
-                "delta": event.delta,
-                "thinking_id": event.thinking_id,
-                "kind": event.kind,
-                "persist": event.persist,
-            },
-        }
-    if isinstance(event, TokenDeltaEvent):
-        return {
-            "method": CHAT_TOKEN_METHOD,
-            "params": {
-                "delta": event.delta,
-                "role": "assistant",
-                "sequence": event.token_index,
-            },
-        }
-    if isinstance(event, StopEvent) and event.code == _REASONING_ONLY_CODE:
-        return {
-            "method": CHAT_ERROR_METHOD,
-            "params": {
-                "code": event.code,
-                "message": event.reason,
-                "retryable": False,
-            },
-        }
-    if isinstance(event, ToolExecutingEvent):
-        return {
-            "method": TOOL_EXECUTING_METHOD,
-            "params": {
-                "call_id": event.call_id,
-                "tool_name": event.tool_name,
-                "arguments": dict(event.arguments),
-            },
-        }
-    return None
+    if isinstance(event, StopEvent) and event.code == CMP_APPROVAL_REJECTED:
+        return None
+    return _serialize_loop_event(event, _REPLAY_REQUEST_ID, trace_id=None, session_id=None)
 
 
 @pytest.mark.parametrize("fixture_path", _ENGINE_PARAMS)

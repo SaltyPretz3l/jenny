@@ -146,7 +146,7 @@
       entry.container.setAttribute('data-armed', 'true');
       entry.trigger.hidden = true;
       var html = actionButton
-        ? '<span class="settings-reset-confirm-label">' + String(jt('settings.fieldReset.resetAll', 'Reset all?')).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') + '</span>'
+        ? '<span class="settings-reset-confirm-label">' + (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml(jt('settings.fieldReset.resetAll', 'Reset all?')) + '</span>'
           + actionButton({ id: 'confirm', label: jt('settings.fieldReset.confirm', 'Confirm'), variant: 'danger', size: 'sm', className: 'settings-reset-confirm-confirm' })
           + actionButton({ id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm', className: 'settings-reset-confirm-cancel' })
         : '';

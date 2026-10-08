@@ -29,6 +29,21 @@ DIFF_GENERATION_WARNING_CODE = "diff_generation_failed"
 DIFF_GENERATION_WARNING_MESSAGE = (
     "Structured diff metadata could not be generated; file mutation succeeded."
 )
+CAP_TRUNCATION_REASONS = ("hunk_limit", "line_limit", "byte_limit")
+# Every truncation reason a V1 diff may carry: the caps above, summary-only
+# entries for binary or undecodable content and failed generation, and the
+# scripted-change capture's unavailable preimage, sensitive path and wall
+# budget (row 34). Mirrors the Electron normalizer's DIFF_TRUNCATION_REASONS.
+TRUNCATION_REASONS = frozenset({
+    *CAP_TRUNCATION_REASONS,
+    "binary",
+    "decode_error",
+    DIFF_GENERATION_WARNING_CODE,
+    "unknown",
+    "preimage_unavailable",
+    "sensitive_path",
+    "time_limit",
+})
 Opcode = tuple[str, int, int, int, int]
 
 @dataclass(frozen=True)

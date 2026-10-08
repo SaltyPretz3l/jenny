@@ -75,7 +75,6 @@ async function bootHost() {
       normalizeEditorLanguage: () => 'javascript',
     },
     imageHostUtils: {},
-    previewHostUtils: {},
     onCursorActivity: () => { cursorActivityCalls += 1; },
   });
   // openDocument runs ensureEditor, which wires the cursor handlers.

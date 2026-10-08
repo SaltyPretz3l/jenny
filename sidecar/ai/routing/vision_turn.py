@@ -10,9 +10,8 @@ from sidecar.ai.context.compaction_window import (
     MID_TURN_ANSWERED_TASK_PREFIX,
     MID_TURN_TASK_STUB,
 )
-from sidecar.ai.engines.base import BaseEngine, ModelModality
+from sidecar.ai.engines.base import ModelModality
 from sidecar.ai.engines.vision_input import VisionImage
-from sidecar.ai.feature_flags import FEATURE_VISION_UNIFIED_TURN
 
 if TYPE_CHECKING:
     from sidecar.ai.engines.base import EngineMessage
@@ -34,15 +33,6 @@ def engine_supports_vision(engine: Any) -> bool:
         return True
     capabilities = getattr(engine, "capabilities", {})
     return isinstance(capabilities, dict) and capabilities.get("vision") is True
-
-
-def legacy_vision_generation_supported(engine: Any) -> bool:
-    """The flag-off fork calls ``generate_with_vision``; engines that only
-    speak the unified turn (ChatGPT) must refuse there instead of reaching the
-    base class's ``NotImplementedError``."""
-
-    method = getattr(type(engine), "generate_with_vision", None)
-    return method is not None and method is not BaseEngine.generate_with_vision
 
 
 def current_turn_anchor_index(
@@ -71,23 +61,6 @@ def current_turn_anchor_index(
         elif text:
             return index
     return None
-
-
-def attach_vision_images(
-    engine_messages: list[EngineMessage],
-    *,
-    vision_images: Sequence[VisionImage],
-    anchor_text: str = "",
-) -> list[EngineMessage]:
-    """Attach images to the current-turn user row used by the live lane."""
-
-    if not vision_images:
-        return engine_messages
-    anchor_index = current_turn_anchor_index(engine_messages, anchor_text=anchor_text)
-    if anchor_index is None:
-        raise VisionAnchorError(VISION_ANCHOR_MESSAGE)
-    engine_messages[anchor_index]["images"] = list(vision_images)
-    return engine_messages
 
 
 def engine_messages_with_vision_degradation(  # noqa: PLR0913
@@ -127,9 +100,3 @@ def vision_token_surcharge(vision_images: Sequence[VisionImage]) -> int:
         tiles = math.ceil(image.width / 512) * math.ceil(image.height / 512)
         total += min(85 + (170 * tiles), 4096)
     return total
-
-
-def vision_unified_turn_enabled(flags: Mapping[str, bool] | None) -> bool:
-    if not isinstance(flags, Mapping):
-        return True
-    return flags.get(FEATURE_VISION_UNIFIED_TURN, True)

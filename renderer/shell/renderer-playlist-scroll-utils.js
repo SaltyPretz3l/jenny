@@ -42,12 +42,6 @@
 
   function clamp(value, min, max) { return Math.min(Math.max(value, min), max); }
   function resolveSubdivisions(rawValue) { return moduleRuntime.parseTokenValue(SUBDIVISIONS_SCHEMA, rawValue); }
-  function getNow() {
-    return typeof performance !== 'undefined' && performance && typeof performance.now === 'function'
-      ? performance.now() : Date.now();
-  }
-  function requestFrame(callback) { return typeof requestAnimationFrame === 'function' ? requestAnimationFrame(callback) : 0; }
-  function cancelFrame(handle) { if (handle && typeof cancelAnimationFrame === 'function') { cancelAnimationFrame(handle); } }
   function withAlpha(color, alpha) {
     return color ? { r: color.r, g: color.g, b: color.b, a: clamp(alpha, 0, 1) } : null;
   }
@@ -161,7 +155,7 @@
     function scheduleMarkReady(entry) {
       if (!entry.canvas || entry.readyShown || entry.markReadyHandle || staged || disposed || documentHidden) { return; }
       var canvas = entry.canvas;
-      entry.markReadyHandle = requestFrame(function markReady() {
+      entry.markReadyHandle = runtime.requestFrame(function markReady() {
         entry.markReadyHandle = 0;
         if (disposed || entry.canvas !== canvas || staged || documentHidden) { return; }
         entry.readyShown = true;
@@ -190,7 +184,7 @@
       return true;
     }
     function removeEntryCanvas(entry) {
-      if (entry.markReadyHandle) { cancelFrame(entry.markReadyHandle); entry.markReadyHandle = 0; }
+      if (entry.markReadyHandle) { runtime.cancelFrame(entry.markReadyHandle); entry.markReadyHandle = 0; }
       if (entry.canvas && entry.canvas.parentNode) {
         if (typeof entry.canvas.parentNode.removeChild === 'function') { entry.canvas.parentNode.removeChild(entry.canvas); }
         else if (typeof entry.canvas.remove === 'function') { entry.canvas.remove(); }
@@ -278,15 +272,15 @@
     }
     function hasDrawableEntries() { return drawableEntryCount() > 0; }
     function shouldAnimate() { return bound && !disposed && !reducedMotion && !documentHidden && hasDrawableEntries(); }
-    function stopLoop() { if (frameHandle) { cancelFrame(frameHandle); frameHandle = 0; } }
-    function scheduleFrame() { if (shouldAnimate() && !frameHandle) { frameHandle = requestFrame(stepFrame); } }
+    function stopLoop() { if (frameHandle) { runtime.cancelFrame(frameHandle); frameHandle = 0; } }
+    function scheduleFrame() { if (shouldAnimate() && !frameHandle) { frameHandle = runtime.requestFrame(stepFrame); } }
     function stepFrame(timestamp) {
       frameHandle = 0;
       if (!shouldAnimate()) { return; }
-      var now = Number.isFinite(timestamp) ? timestamp : getNow();
+      var now = Number.isFinite(timestamp) ? timestamp : runtime.getNow();
       var fullRate = windowFocused && core.isResponding(scene, now);
       if (!fullRate && lastPaintAt && now >= lastPaintAt && now - lastPaintAt < IDLE_FRAME_MS - FRAME_SLACK_MS) {
-        frameHandle = requestFrame(stepFrame);
+        frameHandle = runtime.requestFrame(stepFrame);
         return;
       }
       lastPaintAt = now;
@@ -299,7 +293,7 @@
     function drawAllStatic() {
       if (disposed || documentHidden) { return; }
       refreshDeviceDpr();
-      drawScene(getNow(), STATIC_TIMING);
+      drawScene(runtime.getNow(), STATIC_TIMING);
     }
     function requestRedraw() { if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); } }
     function removeEntry(host) {
@@ -323,7 +317,7 @@
     function applyStagedState() {
       trackedHosts.forEach(function (entry) {
         if (staged) {
-          if (entry.markReadyHandle) { cancelFrame(entry.markReadyHandle); entry.markReadyHandle = 0; }
+          if (entry.markReadyHandle) { runtime.cancelFrame(entry.markReadyHandle); entry.markReadyHandle = 0; }
           entry.readyShown = false;
           if (entry.canvas && entry.canvas.classList) { entry.canvas.classList.remove('surface-canvas-ready'); }
         } else { scheduleMarkReady(entry); }
@@ -402,7 +396,7 @@
     }
     function pointerIdOf(payload) { return payload.pointerId == null ? 0 : payload.pointerId; }
     function inputTime(payload) {
-      var value = Number(payload.timeStamp); return Number.isFinite(value) ? value : getNow();
+      var value = Number(payload.timeStamp); return Number.isFinite(value) ? value : runtime.getNow();
     }
     function suppressesTrailingClick(payload) {
       if (!trailingClickGuard) { return false; }

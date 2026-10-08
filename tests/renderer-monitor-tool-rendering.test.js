@@ -117,3 +117,25 @@ test('MON-13 the dropped count includes lines Electron trimmed for retention', (
   assert.equal(monitor.droppedEventCount, 7);
   assert.equal(normalizeMonitorMetadata({ monitor_id: 'm', events: [] }).droppedEventCount, 0);
 });
+
+test('the monitor panel default escaper renders 0 and false as text and escapes markup', () => {
+  const { renderMonitorPanelHtml } = require('../renderer/chat/renderer-monitor-tool-utils');
+  const html = renderMonitorPanelHtml({
+    description: '<script>alert(1)</script>',
+    state: 'running',
+    timeoutMs: 0,
+    persistent: false,
+    eventCount: 2,
+    droppedEventCount: 0,
+    terminalReason: '',
+    exitCode: null,
+    events: [
+      { stream: 'stdout', text: 0 },
+      { stream: 'stderr', text: false },
+    ],
+  });
+  assert.match(html, /<span class="tool-monitor-event-text">0<\/span>/);
+  assert.match(html, /<span class="tool-monitor-event-text">false<\/span>/);
+  assert.ok(!html.includes('<script>'));
+  assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
+});

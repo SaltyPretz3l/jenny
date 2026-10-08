@@ -37,7 +37,7 @@ test('shell state runtime merges feature payloads and syncs pretext layout datas
   assert.equal(documentElement.dataset.pretextLayout, 'true');
 });
 
-test('shell state runtime syncs katex_math onto the markdown-math-utils toggle', () => {
+test('shell state runtime enables the markdown-math-utils toggle when feature state applies', () => {
   const markdownMathUtils = require('../renderer/shared/markdown-math-utils.js');
   const previous = markdownMathUtils.isMathRenderingEnabled();
   try {
@@ -49,16 +49,12 @@ test('shell state runtime syncs katex_math onto the markdown-math-utils toggle',
       windowRef: { document: { documentElement: { dataset: {} } } },
     });
 
-    runtime.applyFeatureStatePayload({ featureFlags: { katex_math: true } });
+    markdownMathUtils.setMathRenderingEnabled(false);
+    runtime.applyFeatureStatePayload({ featureFlags: {} });
     assert.equal(markdownMathUtils.isMathRenderingEnabled(), true);
 
-    runtime.applyFeatureStatePayload({ featureFlags: { katex_math: false } });
-    assert.equal(markdownMathUtils.isMathRenderingEnabled(), false);
-
-    // A payload that omits the key entirely resolves to disabled, never a
-    // stale carry-over of module state... but merge semantics keep the last
-    // merged flag value, so assert the merged-state read is what lands.
-    runtime.applyFeatureStatePayload({ featureFlags: { katex_math: true } });
+    // A payload without feature flags keeps math rendering enabled.
+    markdownMathUtils.setMathRenderingEnabled(false);
     runtime.applyFeatureStatePayload({ tools: {} });
     assert.equal(markdownMathUtils.isMathRenderingEnabled(), true);
   } finally {

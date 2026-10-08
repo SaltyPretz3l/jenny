@@ -146,10 +146,12 @@ for (const [kind, action] of [['user_questions', 'resume'], ['approval', 'resume
     assert.equal(record.extensions.runtime_checkpoint, undefined);
     assert.equal(fs.statSync(target).mtimeMs, modified, 'completed mutation was not replayed');
     const results = backend.sessionStore.getSession(sessionId).turn_events.filter(row => row.kind === 'tool_result');
-    assert.deepEqual(results.map(row => row.payload.tool_name), ['write_file',
-      ...(action === 'resume_bundle' ? ['list_dir'] : []), decision.tool_id,
+    // Approval resume re-checks the read-only calls trailing the approved one (5ce62386d): the bundled list_dir
+    // runs unprompted right after the approved read_file and succeeds, so it persists after it, in call order.
+    assert.deepEqual(results.map(row => row.payload.tool_name), ['write_file', decision.tool_id,
+      ...(action === 'resume_bundle' ? ['list_dir'] : []),
       ...(action === 'append_write' ? ['write_file', 'ask_user'] : [])]);
-    if (action === 'resume_bundle') assert.equal(results.find(row => row.payload.tool_name === 'list_dir').payload.success, false);
+    if (action === 'resume_bundle') assert.equal(results.find(row => row.payload.tool_name === 'list_dir').payload.success, true);
   } catch (error) {
     fs.writeFileSync(path.join(ROOT, 'artifacts', `mutation-pilot-${kind}.json`), JSON.stringify({
       error: error.message, logs, seen, work: backend.sessionRuntime?.store?._listRecords?.(),

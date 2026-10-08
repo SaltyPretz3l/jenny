@@ -28,8 +28,16 @@ from sidecar.ai.tools.workspace_mutation_journal_store import (
 )
 
 TYPED_MUTATION_TOOLS = frozenset({"write_file", "edit_file", "delete_file", "move_file"})
+# Tools that may change workspace files outside the journal. They get turn/call
+# attribution, and a call marks the turn partially undoable after it ran unless
+# its change evidence says nothing changed. They never open a change set: the
+# pre-turn git checkpoint is a scripted-only turn's restore point.
+SCRIPTED_MUTATION_TOOLS = frozenset({"run_command", "run_temp_script", "python_execute"})
 ATTRIBUTION_KEYS = ("_jenny_turn_id", "_jenny_tool_call_id", "_jenny_change_set_id")
-_WARNING = "Shell mutations are not journaled. Explorer rename is not journaled until WO-27 item 2."
+_WARNING = (
+    "Shell and script mutations are not journaled. "
+    "Explorer rename is not journaled until WO-27 item 2."
+)
 _EMPTY_DIRECTORY_SHA256 = hashlib.sha256(b"jenny-directory-signature-v1\0").hexdigest()
 _SHA256_HEX_LENGTH = 64
 _MAX_COVERAGE_EVENTS = 10_000
@@ -106,7 +114,7 @@ def inject_tool_attribution(  # noqa: C901, PLR0912 - ordered trust and context 
 ) -> dict[str, str]:
     """Return private attribution without exposing it to public tool schemas."""
 
-    if tool_name not in TYPED_MUTATION_TOOLS and tool_name != "run_command":
+    if tool_name not in TYPED_MUTATION_TOOLS and tool_name not in SCRIPTED_MUTATION_TOOLS:
         return {}
     supplied = existing or {}
     supplied_change_set = _bounded_id(supplied.get("_jenny_change_set_id"))
@@ -253,20 +261,33 @@ class MutationChangeSetLifecycle:
         self.workspace_root = Path(workspace_root)
         self._pending_uncovered: dict[tuple[str, str], list[str]] = {}
 
-    def observe_tool_call(self, tool_name: str, arguments: Mapping[str, object]) -> None:
-        if tool_name != "run_command":
+    def observe_tool_call(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, object],
+        changed: bool | None = None,
+    ) -> None:
+        """Record a finished scripted call the journal cannot undo.
+
+        ``changed`` is the call's workspace-change evidence: ``False`` (nothing
+        changed) leaves coverage intact; ``True`` or ``None`` (unknown) marks the
+        call as an unjournaled event. Without an open change set the mark waits
+        for the turn's first typed edit; no change set is opened here.
+        """
+
+        if tool_name not in SCRIPTED_MUTATION_TOOLS or changed is False:
             return
         attribution = self._attribution(arguments, require_change_set=False)
         if attribution is None:
             return
         session_id, turn_id, tool_call_id, change_set_id = attribution
         key = (session_id, turn_id)
-        if not change_set_id:
-            pending = self._pending_uncovered.setdefault(key, [])
-            if tool_call_id not in pending:
-                pending.append(tool_call_id)
-            return
-        loaded = self._load_by_id(change_set_id)
+        try:
+            loaded = self._load_by_id(change_set_id) if change_set_id else None
+        except ToolExecutionFailure:
+            # The call already ran: an unreadable journal must not turn its
+            # outcome into a failure. Keep the mark for the turn's next typed set.
+            loaded = None
         if loaded is None:
             pending = self._pending_uncovered.setdefault(key, [])
             if tool_call_id not in pending:

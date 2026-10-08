@@ -1,17 +1,14 @@
-/* renderer/features/renderer-ide-layout.js - Workspace IDE layout orchestration,
- * extracted from the controller's renderIde() to keep it under the file-size cap
- * and to give the multi-container workbench (rail + secondary sidebar + bottom
- * panel) one home.
+/* renderer/features/renderer-ide-layout.js - Workspace IDE render fan-out, kept out
+ * of the controller's renderIde() for the file-size cap.
  *
- * render() applies the rail side/width, repaints the activity bar, then renders
- * all four panels (explorer / search / changes / source-control - Terminal +
- * Problems moved to the bottom panel). Each panel is a SINGLE instance that
- * self-targets its host from its location (the "Move View" model) and self-gates
- * on isActivePanel, so at most one paints the rail host and at most one the
- * secondary host. It then renders the secondary-sidebar chrome + the bottom
- * panel. It owns no state and no events; the controller injects every panel's
- * render fn + the bottom-panel + secondary-sidebar instances, and still owns
- * renderTabs() (which touches the tree / tab strip / statusbar). */
+ * render() first reconciles the workbench (renderer-ide-workbench-wiring.js: the
+ * layout tree of splits and stacks, row 40 W3), so every view host and visibility
+ * gate is current, then renders each panel. Every panel is a single instance that
+ * self-targets its own persistent host (getMountEl) and self-gates on its view
+ * being visible (isActivePanel), so all of them are called on every pass. Last,
+ * the chat dock reconciles where the transcript lives. Widths, heights and the
+ * narrow-window fold order are the workbench solver's (workbench-layout-model.js);
+ * this module owns no state and no events. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -21,160 +18,33 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   function noop() {}
 
-  // ── Viewport-aware width budget (WORKSPACE_PREVIEW_AND_MAP_PANELS_PLAN.md
-  // Phase 5) ── The persisted rail/secondary maxima widened to 600, so a small
-  // monitor (or a shrunk window) needs a live clamp: rail + secondary + chat
-  // dock must always leave a usable editor column. The editor floor scales
-  // with the root font size (font/surface scaling users still get a readable
-  // editor). Returns Infinity maxima when the viewport is unknown (jsdom,
-  // pre-layout) so the static clamps stay the only bound.
-  const VIEWPORT_MIN_EDITOR_WIDTH = 360;
-  const RAIL_WIDTH_FLOOR = 200;
-  const SECONDARY_WIDTH_FLOOR = 160;
-  const CHAT_DOCK_WIDTH_FLOOR = 320;
-  const CHAT_DOCK_VIEWPORT_RATIO = 0.65;
-
-  function computeViewportWidthLimits(ide, viewportWidth, { fontScale = 1 } = {}) {
-    const vw = Number(viewportWidth);
-    if (!Number.isFinite(vw) || vw <= 0) {
-      return { railMax: Infinity, secondaryMax: Infinity, chatDockMax: Infinity };
-    }
-    const scale = Number.isFinite(Number(fontScale)) && Number(fontScale) > 0 ? Number(fontScale) : 1;
-    const editorMin = Math.round(VIEWPORT_MIN_EDITOR_WIDTH * scale);
-    const railRequested = Math.max(RAIL_WIDTH_FLOOR, Number(ide?.railWidth) || RAIL_WIDTH_FLOOR);
-    const secondaryOpen = ide?.secondaryPanelOpen === true;
-    const secondaryRequested = secondaryOpen
-      ? Math.max(SECONDARY_WIDTH_FLOOR, Number(ide?.secondaryWidth) || SECONDARY_WIDTH_FLOOR)
-      : 0;
-    // The chat dock yields to the side panels (its max below is whatever they
-    // leave), so their budget reserves only the dock's floor. Reserving the
-    // dock's CLAMPED width was circular: a dock wider than its clamp filled
-    // exactly what the rail left, so railMax always equalled the rail's current
-    // width and the rail could shrink but never grow back.
-    const dockReserve = ide?.chatDockOpen === true ? CHAT_DOCK_WIDTH_FLOOR : 0;
-    const budget = Math.max(0, vw - editorMin - dockReserve);
-    const secondaryCurrent = secondaryOpen ? (Number(ide.secondaryWidth) || SECONDARY_WIDTH_FLOOR) : 0;
-    // Deterministic order: the rail is clamped against the secondary's CURRENT
-    // width, then the secondary against the (already clamped) rail. Floors are
-    // never violated — when the budget is smaller than the floors, the editor
-    // column takes the squeeze (its grid track is minmax(0, 1fr)).
-    const railMax = Math.max(RAIL_WIDTH_FLOOR, budget - secondaryCurrent);
-    const railShown = Math.min(railRequested, railMax);
-    const secondaryMax = Math.max(SECONDARY_WIDTH_FLOOR, budget - railShown);
-    const secondaryShown = Math.min(secondaryRequested, secondaryMax);
-    // The dock takes what the SHOWN side panels leave (a saved width above its
-    // viewport clamp is display-only and must not starve the dock).
-    const chatDockMax = Math.max(
-      CHAT_DOCK_WIDTH_FLOOR,
-      Math.min(
-        Math.floor(vw * CHAT_DOCK_VIEWPORT_RATIO),
-        Math.max(0, vw - editorMin - railShown - secondaryShown)
-      )
-    );
-    return { railMax, secondaryMax, chatDockMax };
-  }
-
-  // The Text size multiplier (--font-scale on the root) — the font-scale
-  // signal for the editor floor. Guarded for jsdom/absent computed styles.
-  function resolveFontScale(shellEl) {
-    try {
-      const doc = shellEl?.ownerDocument;
-      const view = doc?.defaultView;
-      const root = doc?.documentElement;
-      const raw = root?.style?.getPropertyValue?.('--font-scale')
-        || view?.getComputedStyle?.(root)?.getPropertyValue?.('--font-scale');
-      const scale = parseFloat(String(raw || '').trim());
-      return Number.isFinite(scale) && scale > 0 ? scale : 1;
-    } catch (_error) {
-      return 1;
-    }
-  }
+  const PANEL_RENDERERS = Object.freeze([
+    'renderExplorer',
+    'renderSearch',
+    'renderSourceControl',
+    'renderTerminal',
+    'renderProblems',
+    'renderRun',
+    'renderTestRunner',
+    'renderTestOutput',
+  ]);
 
   function createIdeLayout(deps) {
-    const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
-    const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
-    const renderActivityBar = typeof deps?.renderActivityBar === 'function' ? deps.renderActivityBar : noop;
-    const renderExplorer = typeof deps?.renderExplorer === 'function' ? deps.renderExplorer : noop;
-    const renderSearch = typeof deps?.renderSearch === 'function' ? deps.renderSearch : noop;
-    const renderChanges = typeof deps?.renderChanges === 'function' ? deps.renderChanges : noop;
-    const renderSourceControl = typeof deps?.renderSourceControl === 'function' ? deps.renderSourceControl : noop;
-    const bottomPanel = deps?.bottomPanel || null;
-    const secondarySidebar = deps?.secondarySidebar || null;
+    const workbenchWiring = deps?.workbenchWiring || null;
     const chatDock = deps?.chatDock || null;
-
-    // Current viewport limits for the shell (Infinity when unmeasurable). The
-    // controller threads maxRailWidth()/maxSecondaryWidth() into the rail +
-    // secondary-sidebar drag/keyboard clamps so a widened persisted width can
-    // never be dragged past what the viewport affords.
-    function currentLimits(dom, ide) {
-      const shell = dom?.ideShell || null;
-      const view = shell?.ownerDocument?.defaultView || null;
-      return computeViewportWidthLimits(ide, view?.innerWidth, {
-        fontScale: resolveFontScale(shell),
-      });
-    }
-
-    function maxRailWidth() {
-      return currentLimits(getDom(), getIde()).railMax;
-    }
-
-    function maxSecondaryWidth() {
-      return currentLimits(getDom(), getIde()).secondaryMax;
-    }
-
-    function maxChatDockWidth() {
-      return currentLimits(getDom(), getIde()).chatDockMax;
-    }
-
-    function applyRailGeometry(dom, ide) {
-      if (!dom.ideShell) {
-        return;
-      }
-      const railSide = ide.railSide === 'right' ? 'right' : 'left';
-      if (dom.ideShell.dataset.railSide !== railSide) {
-        dom.ideShell.dataset.railSide = railSide;
-      }
-      // Display-level viewport clamp (runs on hydration, persisted-config
-      // load, and every resize-driven render): the persisted preference is
-      // NOT mutated, so returning to a wider monitor restores it.
-      const limits = currentLimits(dom, ide);
-      const railPx = Math.min(Number(ide.railWidth) || 300, limits.railMax);
-      const railWidth = `${railPx}px`;
-      if (dom.ideShell.style.getPropertyValue('--ide-rail-width') !== railWidth) {
-        dom.ideShell.style.setProperty('--ide-rail-width', railWidth);
-      }
-    }
+    const renderers = PANEL_RENDERERS.map((name) => (typeof deps?.[name] === 'function' ? deps[name] : noop));
 
     function render() {
-      const dom = getDom();
-      const ide = getIde();
-      applyRailGeometry(dom, ide);
-      renderActivityBar();
-      // Each panel is a SINGLE instance that self-targets its host (getMountEl
-      // from its location) and self-gates (isActivePanel), so render all four:
-      // at most one paints the rail host and at most one the secondary host.
-      renderExplorer();
-      renderSearch();
-      renderChanges();
-      renderSourceControl();
-      // The sidebar module owns the secondary chrome (which panels live here +
-      // the visibility/width/resize/header); it self-guards when closed/empty.
-      secondarySidebar?.render();
-      bottomPanel?.render();
+      workbenchWiring?.render();
+      for (const renderPanel of renderers) {
+        renderPanel();
+      }
       // Chat-dock chrome + host reconcile (self-guards flag-off/closed).
       chatDock?.render();
     }
 
-    return { render, maxRailWidth, maxSecondaryWidth, maxChatDockWidth };
+    return { render };
   }
 
-  return {
-    RAIL_WIDTH_FLOOR,
-    SECONDARY_WIDTH_FLOOR,
-    CHAT_DOCK_WIDTH_FLOOR,
-    CHAT_DOCK_VIEWPORT_RATIO,
-    VIEWPORT_MIN_EDITOR_WIDTH,
-    computeViewportWidthLimits,
-    createIdeLayout,
-  };
+  return { PANEL_RENDERERS, createIdeLayout };
 });

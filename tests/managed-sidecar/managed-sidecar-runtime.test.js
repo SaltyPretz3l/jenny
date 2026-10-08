@@ -442,9 +442,7 @@ test('managed sidecar runtime routes image attachments through the vision chat p
   const result = await completed;
   assert.equal(result.streamId, stream.streamId);
   assert.match(result.content, /Vision analysis complete/i);
-  // vision_unified_turn (default-on) runs image turns through the normal tool loop,
-  // so plan mode stays on the wire; the flag-off legacy path is pinned in
-  // managed-sidecar-chat-image-attachments.test.js.
+  // Image turns run through the normal tool loop, so plan mode stays on the wire.
   assert.equal(capturedChatSend.plan_mode, true);
   assert.equal(service.sessionStore.getSession(stream.sessionId).plan_mode, true);
 

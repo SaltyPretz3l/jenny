@@ -78,10 +78,44 @@ test('an explicit editor size change retunes already-open editors (artifact edit
   assert.deepEqual(applied, [{ fontSize: 18 }, { fontSize: 13 }], 'only real changes are pushed');
 });
 
-test('the IDE host pushes the editor font size to the diff editor too', () => {
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'features', 'renderer-ide-editor-host.js'), 'utf8');
-  const body = source.slice(source.indexOf('function setEditorOptions('), source.indexOf('function getEol('));
-  assert.match(body, /diffEditor\?\.updateOptions\?\.\(\{ fontSize: next\.fontSize \}\)/);
+async function assertDiffFontSize(t, omitUpdate = false) {
+  const { window } = new JSDOM('<!doctype html><body><div id="ideEditorHost"></div></body>');
+  const applied = [];
+  const diffEditor = {
+    model: null,
+    setModel(model) { this.model = model; },
+    getModel() { return this.model; },
+    updateOptions: omitUpdate ? undefined : (options) => applied.push(options),
+    layout() {}, dispose() {},
+  };
+  const api = {
+    KeyMod: { CtrlCmd: 2048 }, KeyCode: { KeyS: 49 },
+    Uri: { parse: (value) => ({ toString: () => String(value) }) },
+    editor: {
+      create: () => ({ addCommand() {}, onDidChangeModelContent() {}, setModel() {}, updateOptions() {}, dispose() {} }),
+      createDiffEditor: () => diffEditor, getModel: () => null,
+      createModel: (text) => ({ getValue: () => text, getAlternativeVersionId: () => 1, getLanguageId: () => 'javascript', dispose() {} }),
+      onDidChangeMarkers: () => ({ dispose() {} }),
+    },
+  };
+  const { createIdeEditorHost } = require('../renderer/features/renderer-ide-editor-host');
+  const host = createIdeEditorHost({
+    getDom: () => ({ ideEditorHost: window.document.getElementById('ideEditorHost') }),
+    monacoUtils: { ...require('../renderer/features/renderer-monaco-editor-utils'), ensureMonacoEditorApi: async () => api, normalizeEditorLanguage: () => 'javascript' },
+    imageHostUtils: {},
+  });
+  t.after(() => { host.dispose(); window.close(); });
+  await host.openDiffDocument({ id: 'diff://a.js', languagePath: 'a.js', original: 'old', modified: 'new' });
+  host.activateDocument('diff://a.js');
+  assert.ok(diffEditor.model, 'activate the actual Monaco diff before changing preferences');
+  applied.length = 0;
+  host.setEditorOptions({ fontSize: 18 });
+  assert.deepEqual(applied, [{ fontSize: 18 }], 'the active diff must receive the font-size update');
+}
+
+test('the IDE host pushes the editor font size to the diff editor too', async (t) => {
+  await assertDiffFontSize(t);
+  await assert.rejects(() => assertDiffFontSize(t, true), {
+    code: 'ERR_ASSERTION', message: /the active diff must receive the font-size update/,
+  });
 });

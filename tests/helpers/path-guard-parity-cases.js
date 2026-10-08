@@ -207,7 +207,6 @@ function buildAdapters({ rootDir }) {
           rootContextProvider: () => rootContext,
           fs: fsp,
           path,
-          isQolEnabled: () => true,
           hooks: {
             async beforeLeafMutation() {
               if (mutated || typeof mutate !== 'function') return;

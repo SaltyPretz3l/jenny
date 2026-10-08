@@ -69,7 +69,7 @@ test('editUserMessageAndTruncate keeps an asset referenced by a surviving messag
   const attachmentAssetStore = new AttachmentAssetStore({
     rootDir: path.join(userDataPath, 'attachments'),
   });
-  const attachment = attachmentAssetStore.saveAudioBufferSync(Buffer.from('shared-audio'), {
+  const attachment = attachmentAssetStore.saveAudioBufferSync(Buffer.from('524946460c0000005741564500000000', 'hex'), {
     displayName: 'Shared.wav',
     mimeType: 'audio/wav',
   });
@@ -93,7 +93,7 @@ test('editUserMessageAndTruncate does not prune assets when journal purge rolls 
   const realAssetStore = new AttachmentAssetStore({
     rootDir: path.join(userDataPath, 'attachments'),
   });
-  const attachment = realAssetStore.saveAudioBufferSync(Buffer.from('rollback-audio'), {
+  const attachment = realAssetStore.saveAudioBufferSync(Buffer.from('524946460c0000005741564500000000', 'hex'), {
     displayName: 'Rollback.wav',
     mimeType: 'audio/wav',
   });
@@ -161,7 +161,7 @@ test('editUserMessageAndTruncate keeps an asset the mirror store still reference
   const attachmentAssetStore = new AttachmentAssetStore({
     rootDir: path.join(userDataPath, 'attachments'),
   });
-  const attachment = attachmentAssetStore.saveAudioBufferSync(Buffer.from('mirror-audio'), {
+  const attachment = attachmentAssetStore.saveAudioBufferSync(Buffer.from('524946460c0000005741564500000000', 'hex'), {
     displayName: 'Mirror.wav',
     mimeType: 'audio/wav',
   });

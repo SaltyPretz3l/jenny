@@ -79,14 +79,20 @@
       : jt('chat.runtimeQueue.modelBusyUntitled', 'Starts when another chat finishes its reply on this model.');
   }
 
-  function statusLabel(status) {
+  function statusLabel(row) {
+    const status = row.status;
     if (status === 'running') return jt('chat.runtimeQueue.running', 'Running');
     if (status === 'withdrawing') return jt('chat.runtimeQueue.withdrawing', 'Withdrawing…');
     // The runtime never acknowledged this send; the poller is re-asking it.
     if (status === 'unconfirmed') return jt('chat.runtimeQueue.confirming', 'Confirming…');
     // The snapshot row cannot say why work is paused (restart, user pause,
-    // runtime off), so the label states only the status the runtime reports.
-    if (status === 'paused') return jt('runtime.ui.paused', 'Paused');
+    // runtime off), only whether the runtime can continue it, so the label
+    // states the status the runtime reports and, when it cannot, says so.
+    if (status === 'paused') {
+      return row.resumable === false
+        ? jt('chat.runtimeQueue.pausedUnresumable', 'Paused, cannot continue')
+        : jt('runtime.ui.paused', 'Paused');
+    }
     return '';
   }
 
@@ -110,7 +116,7 @@
     const sessionId = String(state.currentSessionId || '').trim();
     const session = (Array.isArray(state.sessions) ? state.sessions : []).find((entry) => entry?.id === sessionId);
     const signature = JSON.stringify([sessionId, session?.title, view.collapsed, closing,
-      rows.map((row) => [row.key, row.workId, row.prompt, row.position, row.status, row.wait?.blockingSessionId, waitStatus(state, row)])]);
+      rows.map((row) => [row.key, row.workId, row.prompt, row.position, row.status, row.resumable, row.wait?.blockingSessionId, waitStatus(state, row)])]);
     const sameActions = ['withdraw', 'resume', 'restartEngine', 'openChat'].every((name) => view.actions?.[name] === actions[name]);
     // Streaming chrome refreshes must not rebuild an unchanged strip (focus, hover).
     if (view.signature === signature && sameActions) return rows.length;
@@ -171,8 +177,19 @@
     const preview = element(doc, 'div', 'runtime-queue__preview', prompt.slice(0, PREVIEW_CHARS));
     preview.title = prompt;
     content.appendChild(preview);
-    const status = waitStatus(state, row) || statusLabel(row.status);
-    if (status) content.appendChild(element(doc, 'div', 'runtime-queue__status', status));
+    // The runtime has no checkpoint it can continue this reply from: a Resume
+    // would only be refused (runtime_checkpoint_required), so the row says so
+    // with the refusal map's own hint and offers Discard alone.
+    const unresumable = row.status === 'paused' && row.resumable === false;
+    const status = waitStatus(state, row) || statusLabel(row);
+    if (status) {
+      const line = element(doc, 'div', 'runtime-queue__status', status);
+      if (unresumable) {
+        line.title = jt('chat.runtimeRefusal.checkpointRequired.hint',
+          'There is no saved checkpoint to continue from. Discard this reply and send the message again.');
+      }
+      content.appendChild(line);
+    }
     if (stuck && actions.restartEngine) {
       const restart = button(doc, content, `runtime-queue-restart-${key}`, jt('chat.stuckSend.restartEngine', 'Restart engine'),
         'runtime-queue__action--restart', () => actions.restartEngine(row), view.cleanup);
@@ -184,7 +201,7 @@
     // A detached row is a paused reply the composer never queued: it is
     // discarded rather than withdrawn, and its copy says reply, not message.
     const detached = row.detached === true;
-    if (row.status === 'paused') {
+    if (row.status === 'paused' && !unresumable) {
       // Paused work never auto-resumes: the only honest affordance is Resume.
       // Nothing new can start while the runtime closes, so Resume says why.
       const resume = button(doc, content, `runtime-queue-resume-${key}`, jt('chat.runtimeQueue.resume', 'Resume'),

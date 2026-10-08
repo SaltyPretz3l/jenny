@@ -410,6 +410,12 @@ function createRuntimeShutdownController({
     } catch (_error) {
       // runShutdownStage already logged the failure; llama-server still stops
     }
+    // Row 41: stop the catalog scheduler and its embedding server first.
+    try {
+      await runShutdownStage('semantic_catalog', async () => getBackendService()?.semanticCatalogService?.dispose?.(), signal);
+    } catch (_error) {
+      // runShutdownStage already logged the failure
+    }
     try {
       await runShutdownStage('llama_server', () => stopLlamaServerOnShutdown(), signal);
     } catch (_error) {
@@ -513,6 +519,11 @@ function createRuntimeShutdownController({
       // re-park the chat engine's identity behind the synchronous stop below.
       getBackendService()?.chatGpuHandoff?.markClosing?.();
       if (typeof killImageEngineSync === 'function') killImageEngineSync();
+    } catch (_error) {
+      // best effort only
+    }
+    try {
+      getBackendService()?.semanticCatalogService?.dispose?.();
     } catch (_error) {
       // best effort only
     }

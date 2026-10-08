@@ -2,7 +2,7 @@
 
 // Projects v2 (2026-09-20): the composer's project pill, beside the run-mode
 // and model pills. It names the current chat's project (General included),
-// is not gated by the nudge flag, and opens the shared "Move this chat to"
+// and opens the shared "Move this chat to"
 // menu (the switcher's move engine, idle-only). It never switches the
 // Workspace. Names come from the switcher's one project cache.
 
@@ -50,7 +50,6 @@ function makeHarness(t, { state, openMoveMenu } = {}) {
 
 function boundState(extra) {
   return {
-    features: { featureFlags: { workspace_root_nudge: true } },
     workspaceRoot: { path: 'D:\\Projects\\Ascend', status: { state: 'ready', message: '' } },
     currentSessionId: 'sess_a',
     sessions: [{ id: 'sess_a', title: 'Intake', project_id: 'project_ascend' }],
@@ -72,7 +71,61 @@ test('the pill names the chat\'s project with its folder in the title, is a menu
   assert.equal(chip(), null, 'a bound chat shows no hint above the composer');
 });
 
-test('a General chat gets a muted "General" pill (and, under a folder, still the amber "Use <folder>" hint); the pill survives the nudge flag being off', async (t) => {
+test('the pill renders in and the chat project without an accent when the Chats filter includes it', async (t) => {
+  const state = boundState({ ui: { chatsProjectFilter: '' } });
+  const { controller, pill } = makeHarness(t, { state });
+  controller.render();
+  await settle();
+  for (const filter of ['', 'project_ascend']) {
+    state.ui.chatsProjectFilter = filter;
+    controller.render();
+    assert.equal(pill().querySelector('.composer-project-pill-prefix').textContent, 'in');
+    assert.equal(pill().querySelector('.inv-chip-label').textContent, 'Ascend');
+    assert.equal(pill().classList.contains('composer-project-pill--filtered'), false);
+    assert.match(pill().title, /D:\\Projects\\Ascend/);
+  }
+});
+
+test('a hidden chat gets the filtered title and follows non-bubbling sidebar renders', async (t) => {
+  const state = boundState({ ui: { chatsProjectFilter: 'project_loose' } });
+  const { dom, controller, pill } = makeHarness(t, { state });
+  controller.render();
+  await settle();
+  assert.equal(pill().classList.contains('composer-project-pill--filtered'), true);
+  assert.equal(pill().title, 'This chat is in Ascend. The Chats list is showing another project; your next message still goes here. Click to move it.');
+  assert.equal(pill().getAttribute('aria-label'), 'Project: Ascend. Move this chat to another project.');
+  const sidebar = dom.window.document.createElement('div');
+  dom.window.document.body.appendChild(sidebar);
+  state.ui.chatsProjectFilter = '';
+  const event = new dom.window.Event('sidebar-rendered');
+  assert.equal(event.bubbles, false);
+  sidebar.dispatchEvent(event);
+  assert.equal(pill().classList.contains('composer-project-pill--filtered'), false);
+  assert.match(pill().title, /D:\\Projects\\Ascend/);
+  state.ui.chatsProjectFilter = 'project_loose';
+  sidebar.dispatchEvent(new dom.window.Event('sidebar-rendered'));
+  assert.equal(pill().classList.contains('composer-project-pill--filtered'), true);
+  controller.dispose();
+  sidebar.dispatchEvent(new dom.window.Event('sidebar-rendered'));
+  assert.equal(pill(), null, 'sidebar renders cannot revive the disposed pill');
+});
+
+test('a chat without project_id follows General under the Chats project filter', async (t) => {
+  const state = boundState({ sessions: [{ id: 'sess_a', title: 'Intake' }], ui: { chatsProjectFilter: 'project_ascend' } });
+  const { dom, controller, pill, chip } = makeHarness(t, { state });
+  controller.render();
+  await settle();
+  assert.equal(pill().querySelector('.inv-chip-label').textContent, 'General');
+  assert.equal(pill().classList.contains('composer-project-pill--filtered'), true);
+  const hint = chip();
+  state.ui.chatsProjectFilter = 'project_general';
+  dom.window.document.getElementById('composerRoot').dispatchEvent(new dom.window.Event('sidebar-rendered'));
+  assert.equal(pill().classList.contains('composer-project-pill--filtered'), false);
+  assert.match(pill().title, /no folder/);
+  assert.equal(chip(), hint, 'a sidebar render preserves the Use folder hint');
+});
+
+test('a General chat gets a muted "General" pill (and, under a folder, still the amber "Use <folder>" hint)', async (t) => {
   const state = boundState({ sessions: [{ id: 'sess_a', title: 'Intake', project_id: 'project_general' }] });
   const { controller, pill, chip } = makeHarness(t, { state });
   controller.render();
@@ -81,12 +134,6 @@ test('a General chat gets a muted "General" pill (and, under a folder, still the
   assert.ok(pill().classList.contains('composer-project-pill--general'));
   assert.match(pill().title, /no folder/);
   assert.equal(chip().getAttribute('data-nudge-variant'), 'use-folder');
-
-  const off = makeHarness(t, { state: boundState({ features: { featureFlags: { workspace_root_nudge: false } } }) });
-  off.controller.render();
-  await settle();
-  assert.equal(off.pill().querySelector('.inv-chip-label').textContent, 'Ascend', 'the pill is not a nudge');
-  assert.equal(off.chip(), null);
 });
 
 test('clicking the pill opens the move menu for THIS chat through the one move engine; no current chat means no pill', async (t) => {
@@ -127,12 +174,12 @@ test('after a move the pill follows the chat; a rename elsewhere repaints from a
   assert.ok(calls.list > listed, 'a projects-changed event re-reads the list');
 });
 
-test('a rename elsewhere reaches the pill even with the nudge flag off (freshness is judged for every known project)', async (t) => {
+test('a rename elsewhere reaches the pill (freshness is judged for every known project)', async (t) => {
   const dom = makeDom();
   let name = 'Before';
   let listed = 0;
   const api = { async list() { listed += 1; return { ok: true, projects: [{ id: 'project_ascend', name, root_path: 'D:\\Projects\\Ascend' }] }; } };
-  const state = boundState({ features: { featureFlags: { workspace_root_nudge: false } } });
+  const state = boundState();
   const switcher = createProjectSwitcher({ state, windowRef: dom.window, documentRef: dom.window.document, menu: stubMenu, getProjectsApi: () => api });
   switcher.bind();
   const controller = createWorkspaceRootNudgeController({

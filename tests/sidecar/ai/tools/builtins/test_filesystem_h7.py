@@ -86,6 +86,54 @@ def test_read_file_refuses_malformed_utf8_without_changing_bytes(tmp_path: Path)
     assert target.read_bytes() == original
 
 
+def test_streaming_read_rejects_parent_swap_before_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    sub = root / "sub"
+    sub.mkdir(parents=True)
+    target = sub / "file.txt"
+    target.write_bytes(b"inside\n" + b"x" * MAX_READ_BYTES)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = "outside-streaming-marker"
+    (outside / "file.txt").write_text(marker + "\n", encoding="utf-8")
+    original_open = filesystem_module.open_regular_file
+    opened_paths: list[Path] = []
+
+    def swap_before_open(path: Path, *args, **kwargs):
+        assert path == target
+        assert path.resolve() == target
+        opened_paths.append(path)
+        target.unlink()
+        sub.rmdir()
+        try:
+            if os.name == "nt":
+                import _winapi
+
+                _winapi.CreateJunction(str(outside), str(sub))
+            else:
+                os.symlink(outside, sub, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            pytest.skip(f"directory link creation unsupported: {error}")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(filesystem_module, "open_regular_file", swap_before_open)
+    output = ""
+    try:
+        with pytest.raises(ToolExecutionFailure) as excinfo:
+            result = read_file_tool(
+                {"path": "sub/file.txt", "offset": 0, "limit": 1}, _guard(root),
+            )
+            output = result.output
+    finally:
+        assert marker not in output
+        assert opened_paths == [target]
+    assert excinfo.value.code == CMP_TOOL_OUTSIDE_WORKSPACE
+    assert excinfo.value.message == "resolved path escapes tools workspace root"
+    assert excinfo.value.retryable is False
+
+
 def test_read_file_preserves_crlf_line_endings(tmp_path: Path) -> None:
     target = tmp_path / "crlf.txt"
     target.write_bytes(b"line1\r\nline2\r\n")

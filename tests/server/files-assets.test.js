@@ -326,6 +326,62 @@ test('missing legacy text is explicit and original bytes remain the sole text so
   assert.throws(() => store.read(reference.id, reference.sizeBytes), /invalid_text_asset/);
 });
 
+test('text attachment sweep refuses a linked managed directory', (t) => {
+  const root = makeTemp(t);
+  const commands = createAssetCommands({ backend: makeBackend(root), userDataPath: root });
+  const directory = path.join(root, 'attachments', 'host-text');
+  fs.mkdirSync(directory, { recursive: true });
+  const target = path.join(root, 'elsewhere');
+  fs.mkdirSync(target);
+  const victim = path.join(target, 'victim.json');
+  fs.writeFileSync(victim, '{}');
+  const old = new Date(Date.now() - STAGED_TTL_MS - 60000);
+  fs.utimesSync(victim, old, old);
+  fs.rmdirSync(directory);
+  fs.symlinkSync(target, directory, process.platform === 'win32' ? 'junction' : 'dir');
+  commands.pruneExpired();
+  assert.equal(fs.existsSync(victim), true);
+});
+
+test('text attachment sweep refuses a linked attachments ancestor', (t) => {
+  const root = makeTemp(t);
+  const commands = createAssetCommands({ backend: makeBackend(root), userDataPath: root });
+  const target = path.join(root, 'elsewhere');
+  fs.mkdirSync(path.join(target, 'host-text'), { recursive: true });
+  const victim = path.join(target, 'host-text', 'victim.json');
+  fs.writeFileSync(victim, '{}');
+  const old = new Date(Date.now() - STAGED_TTL_MS - 60000);
+  fs.utimesSync(victim, old, old);
+  fs.symlinkSync(target, path.join(root, 'attachments'), process.platform === 'win32' ? 'junction' : 'dir');
+  commands.pruneExpired();
+  assert.equal(fs.existsSync(victim), true);
+});
+
+test('text attachment removal refuses a linked attachments ancestor', (t) => {
+  const { createAttachmentContentStore } = require('../../services/host/attachment-content-store');
+  const root = makeTemp(t);
+  const store = createAttachmentContentStore(root);
+  store.save({ id: 'victim' }, Buffer.from('keep'));
+  const target = path.join(root, 'elsewhere');
+  fs.renameSync(path.join(root, 'attachments'), target);
+  fs.symlinkSync(target, path.join(root, 'attachments'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => store.remove('victim'), /^Error: attachment_directory_unavailable$/);
+  assert.equal(fs.existsSync(path.join(target, 'host-text', 'victim.json')), true);
+});
+
+test('text attachment removal refuses a linked managed directory', (t) => {
+  const { createAttachmentContentStore } = require('../../services/host/attachment-content-store');
+  const root = makeTemp(t);
+  const store = createAttachmentContentStore(root);
+  store.save({ id: 'victim' }, Buffer.from('keep'));
+  const directory = path.join(root, 'attachments', 'host-text');
+  const target = path.join(root, 'elsewhere');
+  fs.renameSync(directory, target);
+  fs.symlinkSync(target, directory, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => store.remove('victim'), /^Error: attachment_directory_unavailable$/);
+  assert.equal(fs.existsSync(path.join(target, 'victim.json')), true);
+});
+
 test('canonical inline text reads prefer managed bytes and bound the legacy fallback', async (t) => {
   const { createAttachmentContentStore } = require('../../services/host/attachment-content-store');
   const root = makeTemp(t);

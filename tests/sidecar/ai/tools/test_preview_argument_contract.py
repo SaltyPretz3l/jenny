@@ -24,6 +24,24 @@ def test_preview_preserves_every_supported_parameter():
     arguments = {
         "path": "index.html", "viewport": "mobile", "wait_ms": 0, "screenshot": True,
         "events": [{"action": "type", "selector": "#name", "text": "night", "press_enter": False},
-                   {"action": "click", "selector": "#start"}],
+                   {"action": "click", "selector": "#start"},
+                   {"action": "hover", "selector": "#menu"},
+                   {"action": "focus", "selector": "#name"},
+                   {"action": "press", "key": "Enter"},
+                   {"action": "press", "key": " "},
+                   {"action": "press", "key": "Spacebar"},
+                   {"action": "press", "key": "ArrowDown", "selector": "#list"}],
     }
     assert validate_tool_arguments(tool_name="preview_test", arguments=arguments, input_schema=schema()) == arguments
+
+
+@pytest.mark.parametrize("event", [
+    {"action": "press", "key": "F5"},
+    {"action": "press", "key": "enter"},
+    {"action": "scroll", "selector": "#x"},
+])
+def test_preview_rejects_unsupported_event_actions_and_keys(event):
+    with pytest.raises(ToolExecutionFailure):
+        validate_tool_arguments(
+            tool_name="preview_test", arguments={"path": "index.html", "events": [event]}, input_schema=schema()
+        )

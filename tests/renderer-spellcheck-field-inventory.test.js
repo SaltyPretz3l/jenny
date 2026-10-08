@@ -74,6 +74,8 @@ const EXPECTED_TRUE_SPELLCHECK_IDENTITIES = Object.freeze({
   ],
   'renderer/inventory/inline-text-editor.js': [
     'markup:data-edit-target-message-id',
+    // The suggestion bar's comment and reject-reason note (row 35 Plan Plus): prose.
+    'markup:data-inline-note',
   ],
 });
 

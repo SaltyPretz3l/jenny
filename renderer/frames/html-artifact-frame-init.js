@@ -1,7 +1,6 @@
 /**
  * renderer/frames/html-artifact-frame-init.js — height/error relay for the
- * sandboxed executable-HTML artifact frame (HTML Artifact Preview,
- * artifact_html_preview).
+ * sandboxed executable-HTML artifact frame (HTML Artifact Preview).
  *
  * Unlike mermaid-frame-init.js (which receives its source over postMessage and
  * renders it), the executable artifact body IS the frame document (assembled

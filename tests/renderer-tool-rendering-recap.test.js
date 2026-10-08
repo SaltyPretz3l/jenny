@@ -130,9 +130,12 @@ test('renderer shows inline recap row collapsed by default and toggles by click 
 
   const timeline = window.document.querySelector('.chat-timeline');
   const articleIds = Array.from(timeline.querySelectorAll('article')).map((entry) => entry.dataset.messageId);
-  assert.deepEqual(articleIds, ['u1', 'a1', 'recap-1', 'a2']);
+  // The turn activity envelope coalesces the recap and the follow-up reply
+  // into the first assistant article of the turn.
+  assert.deepEqual(articleIds, ['u1', 'a1']);
 
-  const recapArticle = timeline.querySelector('[data-message-id="recap-1"]');
+  const recapArticle = timeline.querySelector('article[data-message-id="a1"]');
+  assert.match(recapArticle.textContent, /Thanks, I can proceed\./);
   const recapRow = recapArticle.querySelector('[data-interactive-recap-row]');
   const recapPanel = recapArticle.querySelector('.interactive-recap-panel');
 

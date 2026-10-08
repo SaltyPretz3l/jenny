@@ -1,5 +1,9 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { ElectronSessionStore } = require('../services/backend/electron-session-store');
 const {
   SESSION_IMPORT_ERROR_CODES,
   exportSession,
@@ -61,6 +65,77 @@ function createMockShadowStore(sessions = {}) {
 }
 
 describe('exportSession', () => {
+  for (const includeTurnEvents of [false, true]) {
+    it(`redacts every exported text surface and re-imports media (turn events: ${includeTurnEvents})`, (t) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-export-secrets-'));
+      t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+      const assetPath = path.join(directory, 'image.png');
+      const bytes = Buffer.from('synthetic media bytes');
+      fs.writeFileSync(assetPath, bytes);
+      const secrets = {
+        title: 'sk-proj-TESTsecretvalue1234',
+        content: 'Bearer abcdefghijklmnop1234',
+        reasoning: `ghp_${'R'.repeat(24)}`,
+        arguments: 'supersecretvalue',
+        result: 'tok_RESULTsecretvalue1234',
+        provenance: 'pk_PROVENANCEsecretvalue1234',
+        event: 'Bearer EVENTsecretvalue1234',
+      };
+      const session = {
+        id: 'sess_secrets', title: secrets.title,
+        created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T01:00:00Z',
+        messages: [
+          {
+            id: 'msg_user', role: 'user', content: secrets.content,
+            attachments: [{
+              id: 'image_1', kind: 'image', displayName: 'image.png', mimeType: 'image/png',
+              assetPath, provenance: { prompt: secrets.provenance },
+            }],
+          },
+          { id: 'msg_assistant', role: 'assistant', content: 'Done', reasoning: secrets.reasoning },
+          {
+            id: 'msg_call', role: 'assistant', kind: 'tool_use', content: '',
+            tool_call: { call_id: 'call_1', tool_name: 'example', arguments: `api_key=${secrets.arguments}` },
+          },
+          {
+            id: 'msg_result', role: 'tool', kind: 'tool_result', content: '',
+            tool_result: { call_id: 'call_1', tool_name: 'example', summary: secrets.result },
+          },
+        ],
+        turn_events: [{ kind: 'tool_result', payload: { summary: secrets.event } }],
+        turn_event_log_version: 1,
+      };
+      const original = JSON.stringify(session);
+      const store = createMockSessionStore({ sess_secrets: session });
+      const attachmentStore = {
+        resolveSafePath() { return assetPath; },
+        saveImageBufferSync(buffer) {
+          assert.deepEqual(buffer, bytes);
+          return { assetPath };
+        },
+      };
+      const json = includeTurnEvents
+        ? exportSession(store, session.id, attachmentStore, { includeTurnEvents: true })
+        : exportSession(store, session.id, attachmentStore);
+      const survivingSurfaces = Object.entries(secrets)
+        .filter(([, secret]) => json.includes(secret)).map(([surface]) => surface);
+      assert.deepEqual(survivingSurfaces, [], 'raw secrets must not survive export');
+      assert.ok(json.includes('api_key=[redacted:secret]'));
+      const exported = JSON.parse(json).session;
+      assert.equal(exported.title, '[redacted:secret]');
+      assert.equal(exported.messages[0].attachments[0].provenance.prompt, '[redacted:secret]');
+      assert.equal(exported.messages[0].attachments[0]._exportedData, bytes.toString('base64'));
+      assert.equal(Object.hasOwn(exported, 'turn_events'), includeTurnEvents);
+      if (includeTurnEvents) assert.equal(exported.turn_events[0].payload.summary, '[redacted:secret]');
+      assert.equal(JSON.stringify(session), original, 'export must not modify persisted state');
+      const result = importSession(store, json, attachmentStore);
+      const imported = store.getSession(result.id);
+      assert.equal(result.message_count, session.messages.length);
+      assert.equal(imported.messages[0].content, '[redacted:secret]');
+      assert.equal(imported.messages[0].attachments[0].assetPath, assetPath);
+    });
+  }
+
   it('returns null for nonexistent session', () => {
     const store = createMockSessionStore();
     assert.equal(exportSession(store, 'nonexistent'), null);
@@ -195,6 +270,70 @@ describe('exportSession', () => {
 });
 
 describe('importSession', () => {
+  it('rejects a failed canonical write before mirroring and removes restored attachment files', (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-import-write-failure-'));
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const store = new ElectronSessionStore(path.join(directory, 'sessions.json'), { writeDebounceMs: 0 });
+    t.after(() => store.dispose());
+    const shadowStore = createMockShadowStore();
+    const savedAssetPath = path.join(directory, 'restored.png');
+    let importedId;
+    const upsertSession = store._backend.upsertSession.bind(store._backend);
+    store._backend.upsertSession = (sessionId, session, options) => {
+      if (session.title === 'Failed Import (imported)') {
+        importedId = sessionId;
+        assert.equal(fs.existsSync(savedAssetPath), true);
+        return false;
+      }
+      return upsertSession(sessionId, session, options);
+    };
+    const attachmentStore = {
+      saveImageBufferSync(buffer) {
+        fs.writeFileSync(savedAssetPath, buffer);
+        return { assetPath: savedAssetPath };
+      },
+      deleteAssets(assetPaths) {
+        assert.deepEqual(assetPaths, [savedAssetPath]);
+        for (const assetPath of assetPaths) fs.unlinkSync(assetPath);
+      },
+    };
+    const payload = JSON.stringify({
+      format: 'jenny-session-export',
+      format_version: 1,
+      session: {
+        title: 'Failed Import',
+        messages: [{
+          role: 'user', content: 'image', attachments: [{
+            id: 'image', kind: 'image', displayName: 'restored.png',
+            _exportedData: Buffer.from('image').toString('base64'), _exportedMime: 'image/png',
+          }],
+        }],
+      },
+    });
+
+    assert.throws(() => importSession(store, payload, attachmentStore, { shadowStore }),
+      /^Error: session_persist_failed$/);
+    assert.ok(importedId);
+    assert.equal(store.getSession(importedId), null);
+    assert.equal(shadowStore.getSession(importedId), null);
+    assert.equal(fs.existsSync(savedAssetPath), false);
+  });
+
+  it('keeps a successful canonical import when the shadow write returns false', () => {
+    const store = createMockSessionStore();
+    const shadowStore = createMockShadowStore();
+    shadowStore._write = () => false;
+    const payload = JSON.stringify({
+      format: 'jenny-session-export',
+      format_version: 1,
+      session: { title: 'Shadow Failure', messages: [] },
+    });
+
+    const result = importSession(store, payload, null, { shadowStore });
+    assert.ok(store.getSession(result.id));
+    assert.equal(shadowStore.getSession(result.id), null);
+  });
+
   it('throws a structured parse error for invalid JSON', () => {
     const store = createMockSessionStore();
     assertSessionImportError(() => importSession(store, 'not json'), {
@@ -250,6 +389,64 @@ describe('importSession', () => {
     assert.equal(store.getSession(result.id).lockdown, true, 'an exported lockdown is imported');
     assert.ok(result.title.includes('imported'));
     assert.equal(result.message_count, 1);
+  });
+
+  it('rejects duplicate message ids before writing sessions or attachment assets', () => {
+    for (const ids of [['msg_duplicate', 'msg_duplicate'], [42, '42']]) {
+      const store = createMockSessionStore();
+      const shadowStore = createMockShadowStore();
+      let sessionWrites = 0;
+      let assetWrites = 0;
+      store._write = (payload) => {
+        sessionWrites += 1;
+        store._sessions = { ...payload.sessions };
+      };
+      const attachmentStore = {
+        saveImageBufferSync() {
+          assetWrites += 1;
+          return { assetPath: 'C:/managed/imported.png' };
+        },
+      };
+      const payload = JSON.stringify({
+        format: 'jenny-session-export',
+        format_version: 1,
+        session: {
+          messages: ids.map((id) => ({
+            id, role: 'user', content: 'image', attachments: [{
+              id: 'image', kind: 'image',
+              _exportedData: Buffer.from('image').toString('base64'),
+              _exportedMime: 'image/png',
+            }],
+          })),
+        },
+      });
+
+      assertSessionImportError(() => importSession(store, payload, attachmentStore, { shadowStore }), {
+        code: SESSION_IMPORT_ERROR_CODES.FORMAT_MISMATCH,
+        reason: 'format_mismatch',
+      });
+      assert.deepEqual(store._sessions, {});
+      assert.deepEqual(shadowStore._sessions, {});
+      assert.equal(sessionWrites, 0);
+      assert.equal(assetWrites, 0);
+    }
+  });
+
+  it('imports missing and unique message ids with the existing string normalization', () => {
+    const store = createMockSessionStore();
+    const ids = [undefined, undefined, '', '', null, 0, false, 'msg_1', 'msg_2', ' msg_1 ', 42];
+    const payload = JSON.stringify({
+      format: 'jenny-session-export',
+      format_version: 1,
+      session: { messages: ids.map((id) => ({ id, role: 'user', content: 'Hello' })) },
+    });
+
+    const result = importSession(store, payload);
+    const messages = store.getSession(result.id).messages;
+    assert.equal(messages.length, ids.length);
+    assert.equal(new Set(messages.map((message) => message.id)).size, ids.length);
+    assert.deepEqual(messages.slice(7).map((message) => message.id), ['msg_1', 'msg_2', ' msg_1 ', '42']);
+    assert.ok(messages.slice(0, 7).every((message) => message.id.startsWith('msg_')));
   });
 
   it('mirrors imported sessions into the shadow store', () => {

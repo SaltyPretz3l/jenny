@@ -37,14 +37,7 @@
 
   const TSJS_RE = /\.(tsx|ts|jsx|js|mjs|cjs)$/i;
 
-  function defaultEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function createIdeExplodeController(deps) {
     const d = deps || {};

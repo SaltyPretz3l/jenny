@@ -29,7 +29,7 @@ const {
   normalizePreferredModel,
   normalizeReasoningEffort,
   normalizeSessionProjectId,
-  normalizeSessionStartDate, normalizeToolCategoryOverrides,
+  normalizeComposerDraft, normalizeSessionStartDate, normalizeToolCategoryOverrides,
   normalizeToolConnectionOverrides,
 } = require('./session-normalizers');
 const { GENERAL_PROJECT_ID, normalizeProjectId } = require('../projects/project-schema');
@@ -69,12 +69,9 @@ const {
   normalizeLinkedSessionIds, normalizeLinkedTaskId,
   summarizeMessage,
 } = require('./session-store-migrations');
-const {
-  MAX_FOLLOW_UP_BODY_CHARS,
-  MAX_FOLLOW_UP_LABEL_CHARS,
-} = require('../shell-config-followups-schema');
 const { preserveRuntimeContinuations } = require('./runtime-continuation-records');
-const { captureFailureRetryReasoning, normalizeFailureRetryReasoningSnapshots } = require('./session-failure-retry-reasoning');
+const { normalizeFailureRetryReasoningSnapshots } = require('./session-failure-retry-reasoning');
+const { normalizeSuggestedChanges, settleSuggestedChangesOnRead } = require('./suggested-changes-store');
 // TURN_EVENT_LOG_VERSION and the turn-event append/persist helpers now live in
 // ./session-turn-events (imported above and re-exported below); the constant is
 // still surfaced from this module for backward compatibility with importers.
@@ -84,15 +81,6 @@ const DEFAULT_TURN_EVENT_COMPACTION_KEEP = 4000;
 // layout keeps each write O(one session), while streaming bursts still benefit
 // from coalescing. Debounced callers must flush or dispose before shutdown.
 const DEFAULT_WRITE_DEBOUNCE_MS = 0;
-const COMPOSER_DRAFT_CLIP_MARKER = '\n\n[clipped]';
-const MAX_COMPOSER_DRAFT_CHARS = MAX_FOLLOW_UP_LABEL_CHARS + 2 + MAX_FOLLOW_UP_BODY_CHARS;
-
-function normalizeComposerDraft(value) {
-  const text = typeof value === 'string' ? value.replace(/\0/g, '').trim() : '';
-  return text.length > MAX_COMPOSER_DRAFT_CHARS
-    ? `${text.slice(0, MAX_COMPOSER_DRAFT_CHARS - COMPOSER_DRAFT_CLIP_MARKER.length).trimEnd()}${COMPOSER_DRAFT_CLIP_MARKER}`
-    : text;
-}
 
 function nowIso() {
   return new Date().toISOString();
@@ -212,6 +200,7 @@ function normalizeSession(sessionId, input = {}, { reuseTaggedMessages = false }
       : 0,
     active_turn: normalizeActiveTurn(input.active_turn),
     runtime_continuations: preserveRuntimeContinuations(input.runtime_continuations),
+    suggested_changes: normalizeSuggestedChanges(input.suggested_changes),
     failure_retry_reasoning_snapshots: normalizeFailureRetryReasoningSnapshots(input.failure_retry_reasoning_snapshots),
     compaction_snapshot: normalizeCompactionSnapshot(input.compaction_snapshot),
     context_usage: normalizeSessionContextUsage(input.context_usage),
@@ -242,6 +231,7 @@ class ElectronSessionStore {
     maxTurnEventsPerSession = DEFAULT_MAX_TURN_EVENTS_PER_SESSION,
     turnEventCompactionKeep = DEFAULT_TURN_EVENT_COMPACTION_KEEP,
     writeDebounceMs = DEFAULT_WRITE_DEBOUNCE_MS,
+    sessionJournal,
   } = {}) {
     this.filePath = filePath;
     this._logger = typeof logger === 'function' ? logger : null;
@@ -259,6 +249,7 @@ class ElectronSessionStore {
       migrateSummary: (summary, version) => ({ ...summary,
         project_id: normalizeSessionProjectId(summary?.project_id, { legacyFallback: version < 21 }) }),
       writeDebounceMs,
+      journal: { append: sessionJournal },
       logger: this._logger,
       storeName: 'session_store',
     });
@@ -308,14 +299,16 @@ class ElectronSessionStore {
         this._backend.deleteSession(currentId);
       }
     }
+    let success = true;
     for (const incomingId of Object.keys(incoming)) {
       const incomingValue = incoming[incomingId];
       const cachedValue = currentSessions[incomingId];
       if (incomingValue && cachedValue && incomingValue === cachedValue) {
         continue;
       }
-      this._backend.upsertSession(incomingId, incomingValue, { persist });
+      if (this._backend.upsertSession(incomingId, incomingValue, { persist }) === false) success = false;
     }
+    return success;
   }
 
   _withSessionMutation(sessionId, patch, { bumpUpdatedAt = true, persist = true } = {}) {
@@ -354,6 +347,10 @@ class ElectronSessionStore {
   // Force one session durable before its crash-recovery journal is cleared.
   flushSession(sessionId) {
     return this._backend.flushSession(sessionId);
+  }
+
+  logTurnWriteVolume(sessionId) {
+    return this._backend?.logTurnWriteVolume?.(sessionId) ?? null;
   }
 
   async flushAsync() {
@@ -492,7 +489,8 @@ class ElectronSessionStore {
 
   getSession(sessionId) {
     const planSettled = settleStalePlanDocumentsOnRead({ backend: this._backend, logger: this._logger, sessionId, session: this._backend.getSession(sessionId), normalizeSession });
-    const session = settleInterruptedPluginOperationOnRead({ backend: this._backend, logger: this._logger, sessionId, session: planSettled, normalizeSession });
+    const pluginSettled = settleInterruptedPluginOperationOnRead({ backend: this._backend, logger: this._logger, sessionId, session: planSettled, normalizeSession });
+    const session = settleSuggestedChangesOnRead({ backend: this._backend, logger: this._logger, sessionId, session: pluginSettled, normalizeSession });
     return session ? normalizeSession(sessionId, session) : null;
   }
 
@@ -516,10 +514,6 @@ class ElectronSessionStore {
   getSessionTurnEvents(sessionId) {
     const session = this.getSession(sessionId);
     return session ? [...session.turn_events] : [];
-  }
-
-  captureFailureRetryReasoning(sessionId, userMessageId) {
-    return captureFailureRetryReasoning(this, sessionId, userMessageId);
   }
 
   getActiveTurn(sessionId) {
@@ -930,6 +924,7 @@ class ElectronSessionStore {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return null;
     const safePatch = { ...patch };
     delete safePatch.runtime_continuations;
+    delete safePatch.suggested_changes;
     return this._updateSessionRecord(sessionId, safePatch, {
       bumpUpdatedAt: true,
     });

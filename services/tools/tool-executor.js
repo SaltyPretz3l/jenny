@@ -35,6 +35,7 @@ class ToolExecutor {
     workspacePresentationService,
     browserSessionService,
     homeAssistantService,
+    projectNotesService,
     configService,
     refreshManagedConfig,
   }) {
@@ -56,6 +57,11 @@ class ToolExecutor {
     this._homeAssistantService = typeof homeAssistantService === 'function'
       ? homeAssistantService
       : () => homeAssistantService || null;
+    // Same live-getter shape: the notes service is published on the backend
+    // service after this executor is constructed.
+    this._projectNotesService = typeof projectNotesService === 'function'
+      ? projectNotesService
+      : () => projectNotesService || null;
     this._configService = configService || null;
     this._refreshManagedConfig = typeof refreshManagedConfig === 'function'
       ? refreshManagedConfig
@@ -174,6 +180,17 @@ class ToolExecutor {
         callId,
         toolName,
         `Tool "${toolName}" is only available in Plan Mode.`,
+        startTime,
+        { errorCode: TOOL_ERROR_CODES.DISABLED }
+      );
+    }
+
+    if (tool.proposeModeOnly && context.proposeMode !== true) {
+      this._logger('INFO', 'tool.propose_mode_only_rejected', { callId, toolName });
+      return this._errorResult(
+        callId,
+        toolName,
+        `Tool "${toolName}" is only available in Propose mode.`,
         startTime,
         { errorCode: TOOL_ERROR_CODES.DISABLED }
       );

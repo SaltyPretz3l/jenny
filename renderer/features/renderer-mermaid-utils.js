@@ -586,6 +586,7 @@
     zoomOutBtn.type = 'button';
     zoomOutBtn.textContent = '\u2212'; // minus
     zoomOutBtn.title = jt('mermaid.controls.zoomOut', 'Zoom out');
+    zoomOutBtn.setAttribute('aria-label', jt('mermaid.controls.zoomOut', 'Zoom out'));
     zoomOutBtn.addEventListener('click', function () { setZoom(zoom - ZOOM_STEP); });
 
     var zoomLabel = doc.createElement('span');
@@ -600,6 +601,7 @@
     zoomInBtn.type = 'button';
     zoomInBtn.textContent = '+';
     zoomInBtn.title = jt('mermaid.controls.zoomIn', 'Zoom in');
+    zoomInBtn.setAttribute('aria-label', jt('mermaid.controls.zoomIn', 'Zoom in'));
     zoomInBtn.addEventListener('click', function () { setZoom(zoom + ZOOM_STEP); });
 
     var resetBtn = doc.createElement('button');
@@ -607,6 +609,7 @@
     resetBtn.type = 'button';
     resetBtn.textContent = '\u21BA'; // reset arrow
     resetBtn.title = jt('mermaid.controls.resetView', 'Reset view');
+    resetBtn.setAttribute('aria-label', jt('mermaid.controls.resetView', 'Reset view'));
     resetBtn.addEventListener('click', resetView);
 
     var fullscreenBtn = doc.createElement('button');

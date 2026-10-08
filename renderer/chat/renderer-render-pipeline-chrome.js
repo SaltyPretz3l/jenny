@@ -3,16 +3,16 @@
     module.exports = factory(
       require('./renderer-composer-v2-state'),
       require('./renderer-composer-v2-render'),
-      require('./renderer-turn-elapsed-clock')
+      require('./renderer-turn-elapsed-clock'), require('./renderer-hero-model-state')
     );
     return;
   }
   root.rendererRenderPipelineChromeUtils = factory(
     root.rendererComposerV2State,
     root.rendererComposerV2Render,
-    root.rendererTurnElapsedClock
+    root.rendererTurnElapsedClock, root.rendererHeroModelState
   );
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (composerState, composerV2Render, turnElapsedClock) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (composerState, composerV2Render, turnElapsedClock, heroModelState) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const { resolveDefaultTitle } = globalRef.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : {});
@@ -83,6 +83,7 @@
       applySurfaceEffect = () => {},
       syncBackendNotice = () => {},
       renderSettings = () => {},
+      renderComposerCarriers = () => {},
       renderIde = () => {},
       layoutIdeEditor = () => {},
       renderAttachmentTray = () => {},
@@ -379,11 +380,14 @@
 
     let resumeSetupButton = null;
     let setupFootnote = null;
+    let heroActions = null;
+    let heroActionsHtml = '';
+    const setHeroText = (node, text) => { if (node && node.textContent !== text) node.textContent = text; };
     function handleResumeSetup() {
       if (typeof globalRef.jennySetupResume === 'function') globalRef.jennySetupResume();
     }
 
-    function syncHeroSetupAction(show, canChat) {
+    function syncHeroSetupAction(show, footnote) {
       const canResume = show && typeof globalRef.jennySetupResume === 'function';
       const actionButton = globalRef.inventoryActionButton;
       const ownerDocument = heroSubtitle?.ownerDocument;
@@ -400,11 +404,11 @@
       if (show && !setupFootnote && ownerDocument) {
         setupFootnote = ownerDocument.createElement('p');
         setupFootnote.className = 'hero-setup-footnote';
-        setupFootnote.textContent = jt('chat.pipelineChrome.chatDuringSetup', 'You can also start chatting now.');
         (resumeSetupButton || heroSubtitle).after(setupFootnote);
       }
       resumeSetupButton?.classList.toggle('hidden', !canResume);
-      setupFootnote?.classList.toggle('hidden', !show || !canChat);
+      setHeroText(setupFootnote, footnote);
+      setupFootnote?.classList.toggle('hidden', !show || !footnote);
     }
 
     function setupHeroSubtitle(snapshot) {
@@ -434,48 +438,53 @@
       const setupIncomplete = setupSnapshot.loaded === true && setupSnapshot.setupComplete === false;
       const showSetup = !pluginSession && !hasMessages && setupIncomplete;
       heroStage?.classList.toggle('hero-setup-incomplete', showSetup);
-      const setupSteps = setupSnapshot.steps || {};
-      syncHeroSetupAction(showSetup, setupSteps.localModel === 'done' || setupSteps.endpoint === 'done');
+      const view = !pluginSession && !hasMessages ? heroModelState.deriveHeroView(state) : null;
+      syncHeroSetupAction(showSetup, showSetup ? heroModelState.setupFootnote(view) : '');
+      const copy = view && !showSetup ? heroModelState.heroCopy(view) : null;
+      if (copy?.actionsHtml && !heroActions && heroSubtitle) {
+        heroActions = heroSubtitle.ownerDocument.createElement('div');
+        heroActions.className = 'hero-actions';
+        heroSubtitle.after(heroActions);
+      }
+      const actionsHtml = copy?.actionsHtml || '';
+      if (heroActions && heroActionsHtml !== actionsHtml) {
+        heroActions.innerHTML = actionsHtml;
+        heroActionsHtml = actionsHtml;
+      }
+      heroActions?.classList.toggle('hidden', !actionsHtml);
+      if (heroStage && copy) setDatasetIfChanged(heroStage, 'modelState', view.kind);
+      else if (heroStage?.hasAttribute('data-model-state')) heroStage.removeAttribute('data-model-state');
       if (heroStage) heroStage.classList.toggle('hero-plugin-session', pluginSession);
       if (pluginSession) {
-        if (heroStage) heroStage.classList.remove('hidden');
-        heroAvatar.textContent = 'J';
+        if (heroStage) heroStage.classList.toggle('hidden', false);
+        setHeroText(heroAvatar, 'J');
         heroAvatar.classList.toggle('hidden', !hasMessages);
-      heroTitle.textContent = activeSession?.title || jt('chat.chrome.pluginSession', 'Plugin session');
-        heroSubtitle.textContent = hasMessages
+        setHeroText(heroTitle, activeSession?.title || jt('chat.chrome.pluginSession', 'Plugin session'));
+        setHeroText(heroSubtitle, hasMessages
           ? jt('chat.pipelineChrome.pluginTranscriptReadOnly', 'This saved plugin transcript is read-only in Jenny.')
-          : jt('chat.pipelineChrome.openProviderWorkspace', 'Open the provider workspace to begin.');
+          : jt('chat.pipelineChrome.openProviderWorkspace', 'Open the provider workspace to begin.'));
         if (heroRuntimeHint) {
-          heroRuntimeHint.textContent = '';
-          heroRuntimeHint.classList.add('hidden');
+          setHeroText(heroRuntimeHint, '');
+          heroRuntimeHint.classList.toggle('hidden', true);
         }
         return;
       }
-      if (heroStage) heroStage.classList.remove('hidden');
-      heroAvatar.textContent = 'J';
+      if (heroStage) heroStage.classList.toggle('hidden', false);
+      setHeroText(heroAvatar, 'J');
       heroAvatar.classList.toggle('hidden', !hasMessages);
-      let showRuntimeHint = false;
       if (hasMessages) {
-        heroTitle.textContent = resolveDefaultTitle(activeSession?.title);
-        heroSubtitle.textContent = jt('chat.pipelineChrome.continueOrBranch', 'Continue the active conversation or begin a fresh branch.');
+        setHeroText(heroTitle, resolveDefaultTitle(activeSession?.title));
+        setHeroText(heroSubtitle, jt('chat.pipelineChrome.continueOrBranch', 'Continue the active conversation or begin a fresh branch.'));
       } else if (setupIncomplete) {
-        heroTitle.textContent = jt('chat.pipelineChrome.finishSetup', "Let's finish setting up Jenny");
-        heroSubtitle.textContent = setupHeroSubtitle(setupSnapshot);
+        setHeroText(heroTitle, jt('chat.pipelineChrome.finishSetup', "Let's finish setting up Jenny"));
+        setHeroText(heroSubtitle, setupHeroSubtitle(setupSnapshot));
       } else {
-        heroTitle.textContent = jt('chat.pipelineChrome.newSession', 'New session');
-        heroSubtitle.textContent = jt('chat.pipelineChrome.askToBegin', 'Ask Jenny anything to begin');
-        /* The lazy state only: backend ready, no model warmed and none
-         * loading. A load in flight is the composer line's to tell. */
-        showRuntimeHint = state.backend?.phase === 'ready' && state.status?.model_loaded === false;
+        setHeroText(heroTitle, copy.title);
+        setHeroText(heroSubtitle, copy.subtitle);
       }
       if (heroRuntimeHint) {
-        if (showRuntimeHint) {
-          heroRuntimeHint.textContent = jt('chat.pipelineChrome.modelLoadsOnFirstMessage', 'Model loads with your first message');
-          heroRuntimeHint.classList.remove('hidden');
-        } else {
-          heroRuntimeHint.textContent = '';
-          heroRuntimeHint.classList.add('hidden');
-        }
+        setHeroText(heroRuntimeHint, copy?.hint || '');
+        heroRuntimeHint.classList.toggle('hidden', !copy?.hint);
       }
     }
 
@@ -534,13 +543,6 @@
       if (!timer) return;
       const currentSessionId = getPaneSessionId();
       const entry = state.turnClockBySession?.get(currentSessionId) || null;
-      if (state.features?.featureFlags?.composer_turn_timer === false) {
-        timer.removeAttribute('data-turn-elapsed');
-        timer.removeAttribute('data-elapsed-started-at');
-        timer.dataset.turnTimerState = 'idle';
-        timer.textContent = '';
-        return;
-      }
       const sendBusy = isSendBusy();
       if (entry && entry.endedAt == null && !sendBusy) entry.endedAt = Date.now();
       if (entry && entry.endedAt == null && sendBusy) {
@@ -678,6 +680,20 @@
         'sidecar_spawned', 'model_acquiring', 'model_loading', 'starting', 'retrying',
       ].includes(state.backend.phase);
       const backendComposerOffline = !backendComposerUsable && !backendComposerPreparing;
+      const view = heroModelState.deriveHeroView(state);
+      const copy = heroModelState.heroCopy(view);
+      // The hero shows in a pane whose conversation is empty; a split pane may hold a
+      // populated chat while pane 0's is empty, so each pane decides for itself.
+      const setupBlocksHero = state.setup?.loaded === true && state.setup.setupComplete === false;
+      const heroShowingFor = (sessionId) => {
+        const id = String(sessionId || '');
+        const session = (state.sessions || []).find((entry) => entry.id === id);
+        return session?.session_type !== 'plugin' && !setupBlocksHero && getVisibleSessionMessages(id).length === 0;
+      };
+      const paneVisibility = globalRef.rendererPaneVisibilityUtils
+        || (typeof require === 'function' ? require('./renderer-pane-visibility-utils') : null);
+      const paneSession = (paneId) => paneVisibility?.resolvePaneSessionId?.(state, paneId) ?? (paneId === 0 ? state.currentSessionId : '');
+      const modelLoadingLine = composerV2Render?.describeModelLoading?.(state.backend) || '';
       chatInput.disabled =
         interactiveBatchActive
         || isSendPreflightPending()
@@ -692,13 +708,18 @@
         || pluginSessionReadOnly
         || !state.auth.authenticated
         || !backendComposerUsable
+        || (!modelLoadingLine && (view.kind === 'noModel' || view.kind === 'downloading'))
         || (sendBusy && !queueEligible)
         || !hasComposerDraft;
       // Status loader F6: the load is told under the input; Send's tooltip
       // re-reads its reason when the flag flips.
       const composerRender = globalThis.rendererComposerV2Render;
-      const modelLoadingLine = composerRender?.describeModelLoading?.(state.backend) || '';
-      composerRender?.syncComposerLoadingLines?.(documentRef, modelLoadingLine); // every pane (the load is app-wide)
+      const failureLine = !modelLoadingLine && composerRender?.describeModelFailure?.(state.backend) || '';
+      const failureActions = failureLine ? composerRender?.buildModelFailureActions?.(state.backend) || '' : '';
+      composerRender?.syncComposerLoadingLines?.(documentRef, (paneId) => (
+        copy.composerLine && heroShowingFor(paneSession(paneId)) ? [copy.composerLine, '']
+          : failureLine ? [failureLine, failureActions]
+            : [modelLoadingLine, ''])); // the load is app-wide; the hero's words only where the hero shows
       setDatasetIfChanged(sendButton, 'modelLoading', modelLoadingLine ? 'true' : 'false');
       const visionGate = (globalThis.rendererComposerVisionGate || {}).syncComposerVisionGate?.({
         state, runtimePreferences, sendButton,
@@ -884,7 +905,9 @@
       if (state.ui.activeView === 'logs') {
         renderLogs();
       }
-      renderSettings();
+      // The Settings page (which rebuilds the carriers itself) paints only while it is the active view.
+      if (state.ui.activeView === 'settings') renderSettings();
+      else renderComposerCarriers();
       renderAttachmentTray();
       renderComposerStatusNotice();
       renderToastViewport();
@@ -897,6 +920,7 @@
       resumeSetupButton?.removeEventListener('click', handleResumeSetup);
       resumeSetupButton?.remove();
       setupFootnote?.remove();
+      heroActions?.remove();
     }
 
     return {

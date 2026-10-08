@@ -11,6 +11,7 @@ from sidecar.ai.routing.mutation_change_set_lifecycle import (
     _move_operation,
     _new_record,
 )
+from sidecar.ai.tools import workspace_reapply as reapply_module
 from sidecar.ai.tools import workspace_restore as restore_module
 from sidecar.ai.tools import workspace_restore_staging as staging_module
 from sidecar.ai.tools.builtins import delete_file, edit_file, filesystem, move_file
@@ -674,3 +675,99 @@ def test_completed_prefix_validation_skips_only_superseded_same_path_steps(
         undo_change_set(changed_store, changed_root, CHANGE_SET_ID)
     assert raised.value.reason == "restore_state_ambiguous"
     assert (changed_root / "item.txt").read_text(encoding="utf-8") == "user"
+
+
+def _journal_bytes(store: WorkspaceMutationJournalStore, root: Path) -> bytes:
+    return store.journal_path(workspace_identity(root).workspace_id, CHANGE_SET_ID).read_bytes()
+
+
+def _listed(store: WorkspaceMutationJournalStore, root: Path) -> dict[str, object]:
+    listed = restore_module.list_change_sets(store, root)["change_sets"]
+    return next(item for item in listed if item["change_set_id"] == CHANGE_SET_ID)
+
+
+def test_reapply_rearms_an_undone_change_set_whose_post_bytes_are_back(tmp_path: Path) -> None:
+    root, store = _three_operation_set(tmp_path)
+    post = {
+        "created.txt": (root / "created.txt").read_bytes(),
+        "edited.txt": (root / "edited.txt").read_bytes(),
+        "nested/moved.txt": (root / "nested" / "moved.txt").read_bytes(),
+    }
+    undo_change_set(store, root, CHANGE_SET_ID, [])
+    undone = _listed(store, root)
+    assert undone["state"] == "rolled_back"
+    assert undone["restore_status"] == "committed"
+    assert isinstance(undone["restore_completed_at"], str)
+
+    # What the renderer's Redo swap does: the post-apply bytes go back on disk.
+    (root / "nested").mkdir()
+    for relative, content in post.items():
+        (root / relative).write_bytes(content)
+    (root / "move.txt").unlink()
+
+    summary = reapply_module.reapply_change_set(store, root, CHANGE_SET_ID)
+
+    assert summary["state"] == "committed"
+    assert summary["restore_status"] == "not_requested"
+    listed = _listed(store, root)
+    assert listed["state"] == "committed"
+    assert listed["restore_status"] == "not_requested"
+    record = store.load(workspace_identity(root).workspace_id, CHANGE_SET_ID).record
+    assert record is not None
+    assert record["retention"]["protected"] is True
+    assert {item["status"] for item in record["operations"]} == {"applied"}
+    assert record["completed_sequences"] == [1, 2, 3]
+    assert record["restore"]["updated_at"] is not None
+    review = preflight_undo(store, root, CHANGE_SET_ID)
+    assert review["conflicts"] == []
+    receipt = undo_change_set(store, root, CHANGE_SET_ID, [])
+    assert receipt["status"] == "committed"
+    assert not (root / "created.txt").exists()
+    assert (root / "edited.txt").read_bytes() == b"before edit\n"
+    assert (root / "move.txt").read_bytes() == b"move bytes\x00\xff"
+
+
+@pytest.mark.parametrize("drift", ["changed", "missing"])
+def test_reapply_refuses_a_mismatched_file_and_writes_nothing(tmp_path: Path, drift: str) -> None:
+    root, store = _edited_set(tmp_path)
+    undo_change_set(store, root, CHANGE_SET_ID, [])
+    if drift == "changed":
+        (root / "item.txt").write_text("someone else\n", encoding="utf-8")
+    else:
+        (root / "item.txt").unlink()
+    before = _journal_bytes(store, root)
+
+    with pytest.raises(WorkspaceRestoreError) as raised:
+        reapply_module.reapply_change_set(store, root, CHANGE_SET_ID)
+
+    assert raised.value.reason == "reapply_state_mismatch"
+    assert raised.value.details["relative_paths"] == ["item.txt"]
+    assert _journal_bytes(store, root) == before
+    assert _listed(store, root)["restore_status"] == "committed"
+
+
+def test_reapply_refuses_a_change_set_that_was_not_undone(tmp_path: Path) -> None:
+    root, store = _edited_set(tmp_path)
+    before = _journal_bytes(store, root)
+
+    with pytest.raises(WorkspaceRestoreError) as raised:
+        reapply_module.reapply_change_set(store, root, CHANGE_SET_ID)
+
+    assert raised.value.reason == "change_set_not_reapplicable"
+    assert _journal_bytes(store, root) == before
+
+
+def test_reapply_refuses_an_undo_that_protected_an_occupant(tmp_path: Path) -> None:
+    root, store = _edited_set(tmp_path)
+    (root / "item.txt").write_text("external occupant\n", encoding="utf-8")
+    review = preflight_undo(store, root, CHANGE_SET_ID)
+    undo_change_set(store, root, CHANGE_SET_ID, _decisions(review, "protect_then_replace"))
+    # Even with Jenny's bytes back, re-arming would drop the protected copy.
+    (root / "item.txt").write_text("jenny\n", encoding="utf-8")
+    before = _journal_bytes(store, root)
+
+    with pytest.raises(WorkspaceRestoreError) as raised:
+        reapply_module.reapply_change_set(store, root, CHANGE_SET_ID)
+
+    assert raised.value.reason == "reapply_protected_occupants"
+    assert _journal_bytes(store, root) == before

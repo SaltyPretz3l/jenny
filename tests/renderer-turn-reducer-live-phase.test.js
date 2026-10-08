@@ -230,7 +230,7 @@ test('reducer settles a reasoning row when phase completion has no summary', () 
   assert.equal(row?.payload?.completed, true);
 });
 
-test('reducer marks reflexive_retry output as restarted', () => {
+test('reducer folds reflexive_retry output as a discarded draft', () => {
   const state = createTurnReducerState();
 
   applyPayload(state, { type: 'started', streamId: 'stream-live-phase' });
@@ -262,7 +262,7 @@ test('reducer marks reflexive_retry output as restarted', () => {
     segmentIndex: 1,
   });
 
-  assert.equal(turn.rows[0].payload.truncated, true);
+  assert.equal(turn.rows[0].payload.discard_anchor, true);
 });
 
 test('error translation carries the cancellation classification through to the reducer', () => {

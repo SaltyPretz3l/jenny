@@ -222,8 +222,10 @@ test('"Open project": heading, missing folder rows offer Locate…, folderless r
   const loose = rows.find((row) => row.id === 'project_loose');
   assert.equal(loose.disabled, true);
   assert.equal(loose.reason, 'no folder');
-  assert.equal(rows.find((row) => row.id === '__new').label, 'New project from folder');
-  assert.equal(rows.find((row) => row.id === '__manage').label, 'Manage projects');
+  assert.equal(rows.find((row) => row.id === '__new').label, 'Open folder…');
+  assert.equal(rows.find((row) => row.id === '__manage').label, 'Manage projects…');
+  assert.deepEqual(rows.slice(-3).map((row) => row.id), ['__clear', '__new', '__manage'], 'F9 order: No folder, Open folder, Manage');
+  assert.equal(rows.find((row) => row.id === '__clear').separatorBefore, true, 'one separator after the projects');
   assert.equal(rows.find((row) => row.id === '__clear').detail, 'closes the Workspace');
   assert.equal(rows.some((row) => row.id === 'project_general'), false, 'General is the No folder command');
 });

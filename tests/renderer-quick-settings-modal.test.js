@@ -66,7 +66,6 @@ function makeFakeAdapter(initialValue) {
 
 function buildState(overrides) {
   return Object.assign({
-    features: { featureFlags: { quick_settings: true } },
     modelList: { data: [{ id: 'modelA', available: true }, { id: 'modelB', available: true }, { id: 'modelC', available: true }] },
     offline: { resolved: false, mode: 'disabled', localChatReady: false, summary: '', unavailableReason: '' },
     ui: { activeSettingsSection: 'models' },
@@ -237,24 +236,6 @@ test('scrim click and close-button click both close the modal', () => {
   assert.equal(controller.isOpen(), false);
 });
 
-test('feature flag quick_settings === false blocks open()', () => {
-  const documentRef = buildDom();
-  const { deps } = buildDeps(documentRef, { stateOverrides: { features: { featureFlags: { quick_settings: false } } } });
-  const controller = createQuickSettingsModal(deps);
-
-  assert.equal(controller.open(), false);
-  assert.equal(controller.isOpen(), false);
-  assert.equal(documentRef.querySelector('.quick-settings-overlay'), null);
-});
-
-test('absent quick_settings flag defaults to enabled', () => {
-  const documentRef = buildDom();
-  const { deps } = buildDeps(documentRef, { stateOverrides: { features: { featureFlags: {} } } });
-  const controller = createQuickSettingsModal(deps);
-
-  assert.equal(controller.open(), true);
-});
-
 test('no overlayManager injected: local Escape fallback closes the modal', () => {
   const documentRef = buildDom();
   const { deps } = buildDeps(documentRef);
@@ -412,6 +393,19 @@ test('one local-only click fires exactly ONE offline write (no double-fire from 
     assert.deepEqual(harness.offlineAdapter._writeCalls[0], { mode: 'local_only', preferredLocalModel: '' });
     assert.equal(toggleTrack.getAttribute('aria-checked'), 'true');
   });
+});
+
+test('the local-only switch is named by its row label, shown once', () => {
+  const documentRef = buildDom();
+  const controller = createQuickSettingsModal(buildDeps(documentRef).deps);
+  controller.open();
+  const slot = documentRef.querySelector('[data-slot="model"]');
+  const shown = [...slot.querySelectorAll('.quick-settings-row-label, .inv-toggle-label')]
+    .filter((el) => /Force local inference/.test(el.textContent));
+  assert.equal(shown.length, 1, 'one visible "Force local inference"');
+  const track = slot.querySelector('[data-inv-toggle="quickSettingsLocalOnly"]');
+  const labelId = track.getAttribute('aria-labelledby');
+  assert.equal(documentRef.getElementById(labelId).textContent, 'Force local inference');
 });
 
 // ── separate-contracts lock (font-scale vs chat-zoom) ────────────────────
@@ -669,18 +663,6 @@ test('chord opens even when a text input is focused', () => {
 
   dispatchChord(win, documentRef, { ctrlKey: true });
   assert.equal(controller.isOpen(), true);
-});
-
-test('chord no-ops when the quick_settings flag is off', () => {
-  const documentRef = buildDom();
-  const win = documentRef.defaultView;
-  const bindQuickSettings = loadChordBinder(win);
-  const { ctx } = buildChordCtx(documentRef);
-  ctx.state.features.featureFlags.quick_settings = false;
-  const controller = bindQuickSettings(ctx);
-
-  dispatchChord(win, documentRef, { ctrlKey: true });
-  assert.equal(controller.isOpen(), false);
 });
 
 test('chord registers cleanup that removes the keydown listener', () => {

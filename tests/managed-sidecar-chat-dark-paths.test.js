@@ -26,7 +26,6 @@ const {
 const {
   SIDECAR_ERROR_CODES,
 } = require('../services/backend/error-codes');
-const { attachManagedPluginRuntime } = require('../services/backend/managed-plugin-runtime');
 const {
   buildManagedChatRequest,
   createManagedChatServiceStub,
@@ -73,51 +72,25 @@ async function waitForServiceLog(service, event, timeoutMs = 1000) {
   return null;
 }
 
-test('managed chat sends the committed plugin runtime authority', async () => {
-  const service = createManagedChatServiceStub({
-    resolvePluginToolAuthority: (expected) => adapter.captureExecutionToolAuthority(expected),
-  });
-  let capturedAuthority = null;
-  const adapter = attachManagedPluginRuntime(service, {
-    requestApply: async () => ({ ok: true, attestation: {} }),
-  });
-  adapter.commit({
-    envelope: {
-      mode: 'plugin_runtime',
-      plugin_runtime: {
-        snapshot: {
-          registry_revision: 4,
-          dependency_graph_hash: 'a'.repeat(64),
-          commit_epoch: 9,
-          active_generation_id: 'gen-chat-authority',
-          declarative_content: { skill_scopes: [{ contribution_id: 'main' }], prompts: [] },
-        },
-        declarative_content: [],
-      },
-    },
-  });
+test('managed chat never sends plugin runtime authority on chat.send (the plugin platform is retired)', async () => {
+  const service = createManagedChatServiceStub();
+  let capturedParams = null;
   service.sidecarClient = {
     async chatSend(params, options = {}) {
-      capturedAuthority = params.plugin_runtime_authority;
+      capturedParams = params;
       options.onNotification({ method: 'chat.done', params: { stop_reason: 'stop' } });
       return { status: 'completed' };
     },
   };
 
   const stream = await startManagedSidecarChatStream(service, buildManagedChatRequest({
-    sessionId: 'session_plugin_authority',
-    prompt: 'Use plugin context',
+    sessionId: 'session_no_plugin_authority',
+    prompt: 'Plain turn',
   }));
   await runToSettle(service, stream);
 
-  assert.deepEqual(capturedAuthority, {
-    mode: 'plugin',
-    registry_revision: 4,
-    dependency_graph_hash: 'a'.repeat(64),
-    commit_epoch: 9,
-    active_generation_id: 'gen-chat-authority',
-  });
-  adapter.detach();
+  assert.ok(capturedParams, 'chat.send must have been issued');
+  assert.equal('plugin_runtime_authority' in capturedParams, false);
 });
 
 test('managed chat normalizes the one-send approval mode onto chat.send', async () => {

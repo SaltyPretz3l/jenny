@@ -5,9 +5,7 @@
   }
   root.rendererThreadTreeUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function normalizeKind(message) {
     return normalizeId(message && message.kind || '').toLowerCase();

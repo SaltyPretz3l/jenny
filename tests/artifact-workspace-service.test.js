@@ -4,6 +4,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const { ARTIFACT_ERROR_CODES } = require('../services/artifact-workspace-errors');
+const { cloneSessionArtifactsForBranch } = require('../services/artifact-branch-workspace');
 
 const {
   cleanupTrackedResources,
@@ -84,6 +86,85 @@ function makePngBuffer(width = 2, height = 3) {
 
 test.afterEach(async () => {
   await cleanupTrackedResources();
+});
+
+for (const operation of ['read', 'save', 'delete', 'create', 'clone', 'cleanup', 'clone-target']) {
+  test(`ArtifactWorkspaceService refuses redirected session scratch for ${operation}`, async (t) => {
+    const workspaceRoot = createWorkspaceRoot();
+    const metadata = new Map();
+    const service = new ArtifactWorkspaceService({
+      configService: { getState: () => ({ toolsWorkspaceRoot: workspaceRoot }) },
+      sessionMessageReader: (id) => [{ tool_result: { generated_artifacts: [metadata.get(id)] } }],
+    });
+    for (const id of ['session-a', 'session-b']) {
+      const created = await service.createArtifact(id, {
+        file_name: 'report.md', content: `${id} report`, language: 'markdown',
+      });
+      metadata.set(id, created.metadata);
+    }
+    const scratchA = await service.getSessionScratchDir('session-a');
+    const scratchB = await service.getSessionScratchDir('session-b');
+    const reportB = path.join(scratchB, 'report.md');
+    const originalBytes = fs.readFileSync(reportB);
+    fs.rmSync(scratchA, { recursive: true });
+    try {
+      fs.symlinkSync(scratchB, scratchA, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      t.skip(`Platform refused directory link: ${error.code}`);
+      return;
+    }
+    const artifactId = metadata.get('session-a').artifact_id;
+    if (operation === 'clone' || operation === 'clone-target') {
+      const sourceId = operation === 'clone' ? 'session-a' : 'session-b';
+      const targetId = operation === 'clone' ? 'session-branch' : 'session-a';
+      const result = await cloneSessionArtifactsForBranch(service, sourceId, targetId, {}, null, {
+        maxTotalBytes: 128 * 1024 * 1024,
+        maxEntries: 5000,
+        sessionArtifactRoot: SESSION_ARTIFACT_ROOT,
+        sanitizeSessionId: (id) => id,
+        isRedactedArtifactPath: (value) => value === '[redacted:path]',
+      });
+      assert.deepEqual(result, { cloned: false, reason: 'scratch_redirected' });
+      assert.equal(fs.existsSync(path.join(workspaceRoot, SESSION_ARTIFACT_ROOT, 'session-branch')), false);
+    } else {
+      const actions = {
+        read: () => service.readArtifact('session-a', artifactId),
+        save: () => service.saveArtifact('session-a', artifactId, 'x'),
+        delete: () => service.deleteArtifact('session-a', artifactId),
+        create: () => service.createArtifact('session-a', { file_name: 'report.md', content: 'x' }),
+        cleanup: () => service.deleteSessionArtifacts('session-a'),
+      };
+      await assert.rejects(actions[operation], (error) => error.code === ARTIFACT_ERROR_CODES.REAL_PATH_ESCAPES);
+    }
+    assert.equal(fs.existsSync(reportB), true);
+    assert.deepEqual(fs.readFileSync(reportB), originalBytes);
+    assert.deepEqual(fs.readdirSync(scratchB), ['report.md']);
+  });
+}
+
+test('ArtifactWorkspaceService accepts a linked workspace root', async (t) => {
+  const actualRoot = createWorkspaceRoot();
+  const workspaceRoot = path.join(createWorkspaceRoot(), 'linked-root');
+  try {
+    fs.symlinkSync(actualRoot, workspaceRoot, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch (error) {
+    t.skip(`Platform refused directory link: ${error.code}`);
+    return;
+  }
+  let metadata;
+  const service = new ArtifactWorkspaceService({
+    configService: { getState: () => ({ toolsWorkspaceRoot: workspaceRoot }) },
+    sessionMessageReader: () => [{ tool_result: { generated_artifacts: [metadata] } }],
+  });
+  const created = await service.createArtifact('session-root-link', { file_name: 'report.md', content: 'original' });
+  metadata = { ...created.metadata, absolute_path: '[redacted:path]' };
+  assert.equal((await service.readArtifact('session-root-link', metadata.artifact_id)).content, 'original');
+  await service.saveArtifact('session-root-link', metadata.artifact_id, 'updated');
+  const clone = await service.cloneSessionArtifactsForBranch('session-root-link', 'session-root-branch');
+  assert.equal(clone.cloned, true);
+  assert.equal(fs.readFileSync(path.join(actualRoot, SESSION_ARTIFACT_ROOT, 'session-root-branch', 'report.md'), 'utf8'), 'updated');
+  await service.deleteArtifact('session-root-link', metadata.artifact_id);
+  assert.deepEqual(await service.deleteSessionArtifacts('session-root-branch'), { deleted: true });
 });
 
 test('ArtifactWorkspaceService creates session-scoped scratch artifacts with metadata', async () => {

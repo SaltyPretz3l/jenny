@@ -119,7 +119,7 @@ class CalendarService extends EventEmitter {
     this.setIntervalImpl = setIntervalImpl;
     this.clearIntervalImpl = clearIntervalImpl;
     const initial = this.store.readWithStatus?.({}) || { value: this.store.read({}) };
-    this._storageReadFailed = initial.corrupted === true
+    this._storageReadFailed = initial.corrupted === true || initial.unreadable === true
       || (initial.missing === false && !Array.isArray(initial.value?.events));
     this.events = normalizeCalendarEventList(initial.value?.events);
     /** @type {Map<string, Object>} feedId -> last fetch outcome (instances kept on failure) */
@@ -419,7 +419,7 @@ class CalendarService extends EventEmitter {
   _assertStorageReadable() {
     const status = this.store.readWithStatus?.({});
     if (!status) return;
-    if (status.corrupted || (!status.missing && !Array.isArray(status.value?.events))) {
+    if (status.corrupted || status.unreadable || (!status.missing && !Array.isArray(status.value?.events))) {
       this._storageReadFailed = true;
       throw new Error('Calendar storage is unreadable or malformed. Restore it before saving changes.');
     }

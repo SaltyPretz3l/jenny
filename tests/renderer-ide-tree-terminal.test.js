@@ -9,7 +9,7 @@ const {
   createIdeExplorerWiring,
 } = require('../renderer/features/renderer-ide-explorer-wiring');
 
-function createHarness({ qolEnabled = true, terminalAvailable = true, rootContext } = {}) {
+function createHarness({ terminalAvailable = true, rootContext } = {}) {
   const dom = new JSDOM('<div id="host"></div>');
   const host = dom.window.document.getElementById('host');
   const calls = [];
@@ -26,7 +26,7 @@ function createHarness({ qolEnabled = true, terminalAvailable = true, rootContex
     : rootContext;
   const ide = { openTabs: [], expandedDirs: new Set(), railPanel: 'explorer' };
   const wiring = createIdeExplorerWiring({
-    getDom: () => ({ ideRailPanel: host, ideSecondarySidebarPanel: null }),
+    getDom: () => ({ ideRailPanel: host }),
     getIde: () => ide,
     getWorkspaceFsApi: () => null,
     openFile() {},
@@ -45,7 +45,6 @@ function createHarness({ qolEnabled = true, terminalAvailable = true, rootContex
     getCloseOrchestrator: () => null,
     getConfirmDialog: () => null,
     getGitFeature: () => null,
-    getFeatureFlags: () => ({ workspace_explorer_qol: qolEnabled }),
     getTerminalPanel: () => terminalPanel,
     getBottomPanel: () => ({ open: (view) => calls.push(`open:${view}`) }),
   });
@@ -114,13 +113,11 @@ test('a transitioning or pathless root context sends no terminal command', async
   assert.deepEqual(harness.calls, []);
 });
 
-test('file rows, flag-off menus, and unavailable terminals omit Open in Terminal', (t) => {
+test('file rows and unavailable terminals omit Open in Terminal', (t) => {
   const fileHarness = createHarness();
-  const flagOffHarness = createHarness({ qolEnabled: false });
   const unavailableHarness = createHarness({ terminalAvailable: false });
-  t.after(() => { fileHarness.dispose(); flagOffHarness.dispose(); unavailableHarness.dispose(); });
+  t.after(() => { fileHarness.dispose(); unavailableHarness.dispose(); });
   assert.equal(fileHarness.menu('file').some((item) => item.label === 'Open in Terminal'), false);
-  assert.equal(flagOffHarness.menu('directory').some((item) => item.label === 'Open in Terminal'), false);
   assert.equal(unavailableHarness.menu('directory').some((item) => item.label === 'Open in Terminal'), false);
 });
 

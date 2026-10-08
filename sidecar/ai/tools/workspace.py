@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -20,6 +21,8 @@ from sidecar.ai.tools.workspace_path_identity import (
 
 if TYPE_CHECKING:
     from sidecar.ai.tools.workspace_store import GuardedWorkspaceStore
+
+logger = logging.getLogger(__name__)
 
 _WINDOWS_REPARSE_POINT_ATTRIBUTE = 0x400
 _PATH_REDACTION_PLACEHOLDERS = ("[redacted:path]", "[redacted]", "<path>")
@@ -98,10 +101,25 @@ class WorkspaceGuard:
         checker = getattr(self.mutation_journal, "is_recovery_object_pinned", None)
         return bool(checker(object_id)) if callable(checker) else False
 
-    def observe_mutation_tool_call(self, tool_name: str, arguments: dict[str, object]) -> None:
+    def observe_mutation_tool_result(
+        self, tool_name: str, arguments: dict[str, object], changed: bool | None
+    ) -> None:
+        """Tell the mutation journal what a finished call did to the workspace.
+
+        ``changed`` is ``True``/``False`` from the call's change evidence and
+        ``None`` when that evidence is unavailable. The journal decides which
+        tools count; reporting is best-effort because the call already ran.
+        """
         observer = getattr(self.mutation_journal, "observe_tool_call", None)
-        if callable(observer):
-            observer(tool_name, arguments)
+        if not callable(observer):
+            return
+        try:
+            observer(tool_name, arguments, changed)
+        except Exception as error:  # noqa: BLE001 - must not alter the finished call's outcome.
+            logger.warning(
+                "mutation journal result observation failed",
+                extra={"tool_name": tool_name, "error_type": type(error).__name__},
+            )
 
     def is_trash_entry_pinned(self, entry_name: str) -> bool:
         checker = getattr(self.mutation_journal, "is_trash_entry_pinned", None)

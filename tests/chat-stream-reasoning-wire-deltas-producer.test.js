@@ -154,10 +154,10 @@ function recordReasoningDelta(ctx, delta, nowMs, records, thinkingId) {
 test('reasoning wire producer keeps 400 ascii deltas exact and edit-dominant', (t) => {
   let nowMs = 100_000;
   t.mock.method(Date, 'now', () => nowMs);
-  assert.equal(buildFeatureFlags({}).reasoning_wire_deltas, false);
+  assert.equal(buildFeatureFlags({}).reasoning_wire_deltas, true);
   assert.equal(
-    buildFeatureFlags({ JENNY_ENABLE_REASONING_WIRE_DELTAS: '1' }).reasoning_wire_deltas,
-    true
+    buildFeatureFlags({ JENNY_ENABLE_REASONING_WIRE_DELTAS: '0' }).reasoning_wire_deltas,
+    false
   );
   assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('reasoning_wire_deltas'));
   assert.ok(!FEATURE_OVERRIDE_KEYS.includes('reasoning_wire_deltas'));
@@ -418,25 +418,6 @@ test('reasoning wire OFF to ON always resumes with a healing snapshot', (t) => {
     mergeProducerFrame(state, { payload });
   }
   assert.equal(state.message.reasoning.entries[0].text, 'abc');
-});
-
-test('reasoning wire stays snapshot-only while stream envelope v2 is enabled', (t) => {
-  let nowMs = 675_000;
-  t.mock.method(Date, 'now', () => nowMs);
-  const ctx = makeReasoningProducerCtx(true);
-  ctx.service.featureFlags.stream_envelope_v2 = true;
-
-  const entries = [];
-  for (const delta of ['a', 'b', 'c']) {
-    entries.push(emitProducerReasoning(ctx, delta).reasoning.entriesDelta[0]);
-    nowMs += 50;
-  }
-
-  assert.ok(entries.every((entry) => (
-    Object.hasOwn(entry, 'text')
-    && !Object.hasOwn(entry, 'baseLength')
-  )));
-  assert.equal(ctx.reasoningWireLast, undefined);
 });
 
 test('reasoning wire computes edits from receiver-visible trimmed text', (t) => {

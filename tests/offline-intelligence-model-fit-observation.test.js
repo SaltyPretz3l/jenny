@@ -114,7 +114,8 @@ test('getDiagnostics prefers an observed footprint over the pure estimate on a G
       sizeMb: 5000,
       vramMb: 5000,
       offloadedMb: 0,
-      contextLength: 8192,
+      // Recorded at the 32K window the managed shell loads with.
+      contextLength: 32768,
       observedAt: 1234,
     },
   });
@@ -193,13 +194,8 @@ test('getDiagnostics ignores an observation recorded under a different GPU', asy
   assert.equal(est.observedVramMb, undefined);
 });
 
-function configOn() {
-  return { getState: () => ({ featureOverrides: {} }) };
-}
-
 test('P2-2: a catalog-matched model with no observation resolves to fitSource catalog, not estimated', async () => {
   const results = await buildModelFitEstimates({
-    configService: configOn(),
     hardwareProfile: { gpu: { type: 'cuda', name: 'RTX 4080', vram_mb: 16000 } },
     memory: { totalMb: 32000, availableMb: 24000 },
     modelRecommendations: [{
@@ -240,7 +236,6 @@ test('P2-3: an observation with contextLength 0 falls back to the estimate conte
     }),
   };
   const results = await buildModelFitEstimates({
-    configService: configOn(),
     hardwareProfile: { gpu: { type: 'cuda', name: 'RTX 4080', vram_mb: 16000 } },
     memory: { totalMb: 32000, availableMb: 24000 },
     modelRecommendations: [],
@@ -266,7 +261,6 @@ test('P2-3: an observation with contextLength 0 falls back to the estimate conte
 
 test('catalog diagnostics publish catalog values with catalog provenance', async () => {
   const [fit] = await buildModelFitEstimates({
-    configService: configOn(),
     hardwareProfile: { gpu: { type: 'cuda', name: 'Small GPU', vram_mb: 4000 } },
     memory: { totalMb: 8000, availableMb: 6000 },
     installedModels: [{ id: 'private:model', size: 1024 * 1024 * 1024, parameterSize: '2B' }],

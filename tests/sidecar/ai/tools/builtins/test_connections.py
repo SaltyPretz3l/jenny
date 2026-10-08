@@ -22,8 +22,6 @@ def test_local_engine_and_web_off() -> None:
             "- Engine: ollama — local",
             "- Web tools: off",
             "- MCP servers: none",
-            "- Plugins with network access: not reported by the host "
-            "(needs connections_plugin_network_plugins)",
             "- Remote items above can receive what you type here.",
             "- Background traffic not carrying your messages: model catalog refresh; "
             "app auto-updater (when enabled)",

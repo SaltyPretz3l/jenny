@@ -66,6 +66,7 @@ test('only a fully proven checkpoint suspension durably pauses and releases the 
   assert.equal(setup.lanes.snapshot().active_leases, 0);
   assert.equal(setup.scheduler.active.size, 0);
   assert.equal(new RuntimeStore(setup.root).get(setup.work.work_id).status, 'paused');
+  assert.equal(setup.scheduler.canResume(paused), true, 'a checkpoint for this attempt: the row may offer Resume');
   setup.scheduler.validateCheckpoint = () => false;
   assert.equal(setup.scheduler.resume(paused.work_id, paused.revision).status, 'accepted');
   const validationFailed = setup.store.get(paused.work_id);
@@ -123,6 +124,7 @@ test('store rejects a reference from another attempt and restart cannot replay u
   setup.scheduler.store = recovered;
   const paused = recovered.get(running.work_id);
   assert.equal(paused.status, 'paused');
+  assert.equal(setup.scheduler.canResume(paused), false, 'the snapshot row says what resume() says');
   assert.equal(setup.scheduler.resume(paused.work_id, paused.revision).reason, 'runtime_checkpoint_required');
   assert.equal(setup.claims(), 0);
 });
@@ -140,6 +142,7 @@ test('restart after resume cannot replay the previous attempt checkpoint', async
   const interrupted = setup.scheduler.store.get(paused.work_id);
   assert.equal(interrupted.checkpoint_ref.source_attempt.attempt_id, paused.attempt.attempt_id);
   assert.equal(interrupted.attempt.attempt_id, 'attempt_B');
+  assert.equal(setup.scheduler.canResume(interrupted), false);
   assert.equal(setup.scheduler.resume(interrupted.work_id, interrupted.revision).reason, 'runtime_checkpoint_required');
   assert.equal(setup.claims(), 1);
 });

@@ -451,7 +451,30 @@
     }
     const reasoning = Array.isArray(projection.reasoning) ? projection.reasoning : [];
     const assistant = text(projection.assistant_text || projection.current_segment_text);
-    live.innerHTML = `<section class="browser-live-card"><div class="browser-live-kicker">${escapeHtml(jt('browserView.liveTurnPhase', 'Live turn · {phase}', { phase: text(projection.phase || projection.thinking_status || 'working') }))}</div>${reasoning.length ? `<details class="browser-live-reasoning" open><summary>${escapeHtml(jt("browserView.reasoningInProgress", "Reasoning in progress"))}</summary>${reasoning.map((entry) => `<p>${markdown(entry?.text, { mermaid: 'plain' })}</p>`).join('')}</details>` : ''}${assistant ? `<div class="browser-live-answer markdown-body">${markdown(assistant)}</div>` : `<p class="browser-live-placeholder">${escapeHtml(jt("app.jennyIsWorking", "Jenny is working…"))}</p>`}</section>`;
+    // Static keys so the i18n ledger counts each default; same keys as the desktop bubble.
+    function discardReason(reason) {
+      switch (reason) {
+        case 'provider_retry': return jt('chat.discardedDraft.reason.provider_retry', 'the engine dropped the reply, so Jenny asked again');
+        case 'nudge_retry': return jt('chat.discardedDraft.reason.nudge_retry', 'it skipped a tool it needed, so Jenny asked again');
+        case 'reflexive_retry': return jt('chat.discardedDraft.reason.reflexive_retry', 'the first answer missed, so Jenny asked again');
+        case 'post_tool_restart': return jt('chat.discardedDraft.reason.post_tool_restart', "the answer after the tools didn't hold up, so Jenny asked again");
+        case 'deterministic_replacement': return jt('chat.discardedDraft.reason.deterministic_replacement', "it made up a result Jenny couldn't get, so Jenny replaced it");
+        case 'verification_gate_retry': return jt('chat.discardedDraft.reason.verification_gate_retry', 'it failed a check, so Jenny asked again');
+        case 'model_winddown': return jt('chat.discardedDraft.reason.model_winddown', 'cut short so the reply could wrap up within limits');
+        default: return jt('chat.discardedDraft.reason.unknown', 'Jenny started this part over');
+      }
+    }
+    // A fold the reader expanded stays open across the streaming re-renders.
+    const openFolds = new Set(Array.from(live.querySelectorAll('.browser-live-discarded'))
+      .map((fold, index) => (fold.open ? index : -1)).filter((index) => index >= 0));
+    const discarded = (projection.discarded_drafts || []).map((draft, index) => {
+      const thinking = draft.reasoning_text
+        ? `<p><strong>${escapeHtml(jt('chat.discardedDraft.thinking', 'Thinking'))}</strong></p>${markdown(draft.reasoning_text, { mermaid: 'plain' })}` : '';
+      const trimmed = draft.text_trimmed || draft.reasoning_trimmed
+        ? `<p>${escapeHtml(jt('chat.discardedDraft.trimmed', 'Trimmed.'))}</p>` : '';
+      return `<details class="browser-live-discarded"${openFolds.has(index) ? ' open' : ''}><summary>${escapeHtml(jt('chat.discardedDraft.summary', 'Draft discarded'))} · ${escapeHtml(discardReason(draft.reason))}</summary><div class="browser-live-discarded-body">${thinking}${markdown(draft.text)}${trimmed}<p>${escapeHtml(jt('chat.discardedDraft.notSaved', 'Not saved. Shown only while this reply is streaming.'))}</p></div></details>`;
+    }).join('');
+    live.innerHTML = `<section class="browser-live-card"><div class="browser-live-kicker">${escapeHtml(jt('browserView.liveTurnPhase', 'Live turn · {phase}', { phase: text(projection.phase || projection.thinking_status || 'working') }))}</div>${reasoning.length ? `<details class="browser-live-reasoning" open><summary>${escapeHtml(jt("browserView.reasoningInProgress", "Reasoning in progress"))}</summary>${reasoning.map((entry) => `<p>${markdown(entry?.text, { mermaid: 'plain' })}</p>`).join('')}</details>` : ''}${discarded}${assistant ? `<div class="browser-live-answer markdown-body">${markdown(assistant)}</div>` : `<p class="browser-live-placeholder">${escapeHtml(jt("app.jennyIsWorking", "Jenny is working…"))}</p>`}</section>`;
   }
 
   function renderComposer(rootEl, state) {

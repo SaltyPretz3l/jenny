@@ -166,6 +166,16 @@ CMP_PLUGIN_HOST_FAILED = "CMP-PLUGIN-0036"
 
 CMP_BACKGROUND_INVALID_PARAMS = "CMP-BG-0001"
 
+# Semantic catalog (sidecar/ai/semantic/). Surfaced as structured
+# ``{available: false, reason}`` / step ``error.code`` results to Electron, which
+# owns the user-facing copy; they never reach a chat turn.
+CMP_CATALOG_EMBEDDER_UNAVAILABLE = "CMP-CAT-0001"
+CMP_CATALOG_NOT_CONFIGURED = "CMP-CAT-0002"
+CMP_CATALOG_INDEX_UNAVAILABLE = "CMP-CAT-0003"
+CMP_CATALOG_INVALID_PARAMS = "CMP-CAT-0004"
+CMP_CATALOG_CAPACITY_REACHED = "CMP-CAT-0005"
+CMP_CATALOG_EMBEDDER_INVALID_PAYLOAD = "CMP-CAT-0006"
+
 CMP_SRV_INITIALIZE_FAILED = "CMP-SRV-0001"
 
 # Shared runtime resource ceiling code for active-turn and worker caps.

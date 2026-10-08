@@ -282,6 +282,8 @@
           toErrorMessage: callbacks.toErrorMessage,
           setActiveView: (...args) => callbacks.setActiveView?.(...args),
           getTurnViewModelsForActiveSession: (...args) => callbacks.getTurnViewModelsForActiveSession?.(...args),
+          getSessionMessages: (...args) => callbacks.getSessionMessages?.(...args) || [],
+          getChangesUndoController: () => callbacks.getChangesUndoController?.() || null,
           onSendToJenny: (payload) => ideSendController?.handleSendToJenny?.(payload),
           activateWorkspaceSession: (...args) => callbacks.activateWorkspaceSession?.(...args),
           getProjectSwitcher, peekProjectSwitcher,
@@ -526,7 +528,59 @@
       });
     }
 
+    // Workspace presentation inbox (workspace_present). Main pushes each request
+    // ONCE and its policy owner (renderer-workspace-presentation-controller)
+    // ships in the lazy IDE bundle, so this always-loaded relay is the window's
+    // only subscriber: it forwards to the attached controller, and until one
+    // attaches holds the newest request (an older held one reports `superseded`)
+    // while the IDE loads and builds in the background, never switching the
+    // view. Nothing attached afterwards reports `rejected`: none is lost.
+    let presentationHandler = null;
+    let heldPresentation = null;
+    function reportPresentation(payload, decision) {
+      const requestId = String(payload?.request_id || '');
+      const reportOutcome = windowRef?.jennyShell?.workspacePresentation?.reportOutcome;
+      if (!/^[A-Za-z0-9._:-]{1,160}$/.test(requestId) || typeof reportOutcome !== 'function') return;
+      try { Promise.resolve(reportOutcome({ request_id: requestId, decision })).catch(noop); } catch (_error) { /* bridge gone */ }
+    }
+    function receivePresentation(payload) {
+      if (presentationHandler) { presentationHandler(payload); return; }
+      if (heldPresentation) reportPresentation(heldPresentation, 'superseded');
+      heldPresentation = payload;
+      Promise.resolve().then(() => ensureIdeController()).catch(noop).then(() => {
+        if (heldPresentation !== payload) return; // delivered, superseded or disposed
+        heldPresentation = null;
+        appendLog('WARN', 'workspace_presentation.undeliverable', { view: String(payload?.view || '').slice(0, 32) });
+        reportPresentation(payload, 'rejected');
+      });
+    }
+    // Same shape as the bridge's onRequest; the controller prefers this handle.
+    const presentationInbox = Object.freeze({
+      onRequest(handler) {
+        if (typeof handler !== 'function') return noop;
+        presentationHandler = handler;
+        const held = heldPresentation;
+        heldPresentation = null;
+        if (held) handler(held);
+        return () => { if (presentationHandler === handler) presentationHandler = null; };
+      },
+    });
+    function bindPresentationInbox() {
+      const bridge = windowRef?.jennyShell?.workspacePresentation;
+      if (typeof bridge?.onRequest !== 'function') return;
+      const unsubscribe = bridge.onRequest(receivePresentation);
+      windowRef.jennyWorkspacePresentationInbox = presentationInbox;
+      registerCleanup(() => {
+        try { if (typeof unsubscribe === 'function') unsubscribe(); } catch (_error) { /* already detached */ }
+        if (windowRef.jennyWorkspacePresentationInbox === presentationInbox) delete windowRef.jennyWorkspacePresentationInbox;
+        presentationHandler = null;
+        if (heldPresentation) reportPresentation(heldPresentation, 'dropped');
+        heldPresentation = null;
+      });
+    }
+
     bindExternalTransitionRequests();
+    bindPresentationInbox();
     if (state.ui?.activeView === 'ide') ensureIdeLoaded();
 
     return {

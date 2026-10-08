@@ -201,6 +201,8 @@
 
       const message = document.createElement('p');
       message.className = 'inv-toast__message';
+      // A message can quote user or model text (a memory suggestion) in another script.
+      message.dir = 'auto';
       message.textContent = resolveMessage(toast);
       body.appendChild(message);
 

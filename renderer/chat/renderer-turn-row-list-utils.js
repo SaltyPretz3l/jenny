@@ -70,19 +70,12 @@
   // in renderer-turn-row-render-utils.js. Consumes the body dispatch (buildRowBodyMarkup), identity
   // (buildRowId), and streaming detection (isStreamingRow) as injected deps so
   // the body/wrapper/list layering stays a one-directional dependency chain.
-  // Rows render as a flat sequence while turn_activity_envelope only controls upstream article coalescing.
+  // Rows render as a flat sequence while the turn-activity envelope only controls upstream article coalescing.
   function createTurnRowListUtils(deps) {
     const settings = deps || {};
     const escapeHtml = typeof settings.escapeHtml === 'function'
       ? settings.escapeHtml
-      : function fallbackEscapeHtml(value) {
-        return String(value || '')
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#39;');
-      };
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     const normalizeId = typeof settings.normalizeId === 'function'
       ? settings.normalizeId
       : function fallbackNormalizeId(value) { return String(value || '').trim(); };

@@ -44,7 +44,7 @@ function row(harness, path) {
 }
 
 async function createHarness({
-  files = {}, dirs = [], expanded = [], qol = true, showError, showUndoToast,
+  files = {}, dirs = [], expanded = [], showError, showUndoToast,
   preflightMutation = async () => ({ ready: true, paths: [] }),
 } = {}) {
   const domHarness = buildIdeDom();
@@ -64,7 +64,6 @@ async function createHarness({
     getIde: () => ide,
     getMountEl: () => domHarness.getDom().ideRailPanel,
     isActivePanel: () => true,
-    isQolEnabled: () => qol,
     getWorkspaceFsApi: () => bridge.jennyShell.workspaceFs,
     getMutationContext: async () => ({ rootId: 'root-test', generation: 1, phase: 'ready' }),
     preflightMutation,
@@ -83,7 +82,6 @@ async function createHarness({
     getIde: () => ide,
     getRootEpoch: tree.getRootEpoch,
     selection: tree.selection,
-    isQolEnabled: () => qol,
     moveEntry: tree.moveEntry,
     getApi: () => bridge.jennyShell.workspaceFs,
     getMutationContext: async () => ({ rootId: 'root-test', generation: 1, phase: 'ready' }),
@@ -115,18 +113,6 @@ async function createHarness({
     },
   };
 }
-
-test('flag off keeps directory markup legacy and binds no internal drop behavior', async (t) => {
-  const harness = await createHarness({ files: { 'a.js': 'a' }, dirs: ['dst'], qol: false });
-  t.after(() => harness.dispose());
-  const directory = row(harness, 'dst');
-  assert.equal(directory.hasAttribute('draggable'), false);
-
-  const transfer = createTransfer({ [SINGLE_MIME]: 'a.js' });
-  dispatchDrag(harness, directory, 'drop', transfer);
-  await settle(20);
-  assert.deepEqual(harness.bridge.calls.rename, []);
-});
 
 test('single selected file moves into a directory through the rename handshake', async (t) => {
   const harness = await createHarness({ files: { 'a.js': 'a' }, dirs: ['dst'] });
@@ -376,7 +362,6 @@ test('wiring supplies one multi-delete confirmation for three selected rows', as
     showShellErrorToast() {},
     appendClientLog() {},
     getGitFeature: () => null,
-    getFeatureFlags: () => ({ workspace_explorer_qol: true }),
     panelDeps: () => ({
       getMountEl: () => domHarness.getDom().ideRailPanel,
       isActivePanel: () => true,

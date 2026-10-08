@@ -28,9 +28,7 @@
     buildCarrySummary,
   } = sectionHelpers || {};
 
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function pushDistinct(list, value) {
     const normalized = normalizeId(value);

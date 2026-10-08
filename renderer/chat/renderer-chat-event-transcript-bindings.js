@@ -594,6 +594,7 @@
             changeId: codeReviewButton.dataset.changeId,
             turnId: codeReviewButton.dataset.turnId,
             fileKey: codeReviewButton.dataset.fileKey,
+            toolCallId: codeReviewButton.dataset.toolCallId,
             contextNode: codeReviewButton,
           })).catch((error) => {
             showComposerActionError(error, jt('chat.transcript.codeReviewFailedTitle', 'Code Review Failed'));

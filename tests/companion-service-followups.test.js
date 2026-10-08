@@ -879,3 +879,31 @@ test('trimSuggestedActions does not protect settings:tools when the workspace is
   assert.equal(trimmed.length, 6);
   assert.ok(!trimmed.some((action) => action.id === 'settings:tools'));
 });
+
+test('board items expose the follow-up projectId and normalize an invalid one to empty', () => {
+  const { build } = boardService();
+  const board = build([
+    { id: 'scoped', label: 'Scoped', sourceKind: 'agent_task', sessionId: 's1', projectId: 'project_abc' },
+    { id: 'legacy', label: 'Legacy', sourceKind: 'agent_task', sessionId: 's1' },
+    { id: 'bad', label: 'Bad', sourceKind: 'agent_task', sessionId: 's1', projectId: '../x' },
+    { id: 'done', label: 'Done', status: 'resolved', sourceKind: 'agent_task', projectId: 'project_abc' },
+  ]);
+  const byId = Object.fromEntries(everyBoardLoop(board).map((loop) => [loop.followUpId, loop.projectId]));
+  assert.deepEqual(byId, { scoped: 'project_abc', legacy: '', bad: '', done: 'project_abc' });
+});
+
+test('recentResolved is bounded per project, so one busy project cannot hide another\'s completed tasks', () => {
+  const service = boardService({ taskBoardEnabled: true });
+  const busy = Array.from({ length: 60 }, (_, index) => ({
+    id: `b-${index}`, label: `B ${index}`, status: 'resolved', sourceKind: 'agent_task', projectId: 'project_b',
+    resolvedAt: `2026-03-19T11:${String(index % 60).padStart(2, '0')}:00.000Z`,
+  }));
+  const quiet = {
+    id: 'a-1', label: 'A', status: 'resolved', sourceKind: 'agent_task', projectId: 'project_a', resolvedAt: '2026-03-18T09:00:00.000Z',
+  };
+  const board = service.build([...busy, quiet]);
+  const ids = board.recentResolved.map((loop) => loop.followUpId);
+  assert.equal(ids.filter((id) => id.startsWith('b-')).length, 50, 'the busy project keeps its newest 50');
+  assert.equal(ids.includes('a-1'), true, 'the quiet project is still represented');
+  assert.equal(board.counts.recentResolved, 61);
+});

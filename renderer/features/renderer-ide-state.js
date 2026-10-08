@@ -9,56 +9,48 @@
   root.rendererIdeState = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const MAX_OPEN_TABS = 64;
+  // A tab in a secondary editor group carries `group` (row 40 W5); absent = primary.
+  const GROUP_ID_RE = /^editor-[2-4]$/;
   // Cap on persisted expanded-dir entries. Mirrors the service's
   // WORKSPACE_IDE_MAX_EXPANDED_DIRS (this UMD module cannot import services,
   // same precedent as RAIL_PANELS); the service normalizer also slices to this
   // on read, so this clamps the write side to match.
   const MAX_EXPANDED_DIRS = 200;
-  // Terminal + Problems were re-homed out of the rail into the bottom panel
-  // (CONFIG_VERSION 26), so the rail whitelist drops them; BOTTOM_VIEWS is the
-  // bottom-panel tab whitelist that replaced them.
-  const RAIL_PANELS = ['explorer', 'search', 'changes', 'source-control'];
-  // Mirrors services/workspace-ide-config-schema.js WORKSPACE_IDE_BOTTOM_VIEWS
-  // (UMD can't import services). 'test-runner' added additively (no CONFIG_VERSION
-  // bump — the default 'terminal' stays valid, the accept-set only widened).
+  // Terminal + Problems moved to the bottom panel (CONFIG_VERSION 26); BOTTOM_VIEWS
+  // is its tab whitelist. Changes left the rail in row 34 S5 (it lives in the chat
+  // dock); a stale 'changes' id coerces like any unknown id.
+  const RAIL_PANELS = ['explorer', 'search', 'source-control'];
+  // Mirrors the service's WORKSPACE_IDE_BOTTOM_VIEWS ('test-runner' was added
+  // additively: no CONFIG_VERSION bump, the accept-set only widened).
   const BOTTOM_VIEWS = ['terminal', 'problems', 'run', 'test-runner'];
   const BOTTOM_HEIGHT_MIN = 80;
   const BOTTOM_HEIGHT_MAX = 600;
   const BOTTOM_HEIGHT_DEFAULT = 220;
-  // Secondary sidebar (a second static side container opposite the primary rail).
-  // It reuses RAIL_PANELS — no new panel id. Width bounds mirror the service
-  // (CONFIG_VERSION 27); same UMD-can't-import-services precedent as RAIL_PANELS.
+  // Secondary sidebar (a second static side container opposite the primary rail);
+  // reuses RAIL_PANELS. Width bounds mirror the service (CONFIG_VERSION 27; max
+  // widened 480 -> 600 in Phase 5, safe via the viewport-aware layout clamp).
   const SECONDARY_WIDTH_MIN = 160;
-  // Max widened 480 → 600 (WORKSPACE_PREVIEW_AND_MAP_PANELS_PLAN.md Phase 5;
-  // mirrors the service — the viewport-aware layout clamp makes it safe).
   const SECONDARY_WIDTH_MAX = 600;
   const SECONDARY_WIDTH_DEFAULT = 260;
-  // Workspace Chat Dock (ide_chat_dock): its own design bounds — deliberately
-  // NOT the secondary-sidebar values; the dock hosts the composer, which needs
-  // a wider floor. Mirrors services/workspace-ide-config-schema.js (UMD
-  // can't-import-services precedent, same as SECONDARY_WIDTH_*).
+  // Workspace Chat Dock (ide_chat_dock): its own bounds, NOT the secondary-sidebar
+  // values (the composer needs a wider floor). Mirrors the service schema.
   const CHAT_DOCK_WIDTH_MIN = 320;
   const CHAT_DOCK_WIDTH_MAX = 2400;
   const CHAT_DOCK_WIDTH_DEFAULT = 380;
   const CHAT_DOCK_SIDES = ['left', 'right'];
   // Per-panel side location (CONFIG_VERSION 28, the "Move View" model): each rail
-  // panel lives on exactly one side - the primary rail or the secondary sidebar.
-  // Mirrors the service whitelist (UMD can't import services, same precedent).
+  // panel lives on exactly one side. Mirrors the service whitelist.
   const PANEL_LOCATIONS = ['primary', 'secondary'];
-  // The fresh-profile home side for each panel. MUST match
-  // services/workspace-ide-config-schema.js DEFAULT_WORKSPACE_IDE.panelLocations:
-  // Explorer + Search dock in the primary rail (left), Changes + Source Control
-  // in the secondary sidebar (right). Used as the per-id fallback for an ABSENT
-  // key in coercePanelLocations (an explicit value is always preserved).
+  // The fresh-profile home side for each panel; MUST match the service's
+  // DEFAULT_WORKSPACE_IDE.panelLocations (Explorer + Search primary, Source Control
+  // secondary). The per-id fallback for an ABSENT key in coercePanelLocations.
   const DEFAULT_PANEL_LOCATIONS = {
     explorer: 'primary',
     search: 'primary',
-    changes: 'secondary',
     'source-control': 'secondary',
   };
-  // Editor preference bounds/whitelists. Duplicated from
-  // services/shell-config-state.js (this UMD module cannot import services),
-  // same precedent as RAIL_PANELS above. Defaults MUST match the service side.
+  // Editor preference bounds/whitelists, duplicated from services/shell-config-state.js
+  // (this UMD module cannot import services). Defaults MUST match the service side.
   const FONT_SIZE_MIN = 8;
   const FONT_SIZE_MAX = 40;
   // 0 = "Match text size" (code role, 13px x --font-scale). The pre-rebase
@@ -80,9 +72,7 @@
   const EXPLORER_SORT_MODES = ['name', 'type', 'modified'];
   const REPLACE_JOURNAL_MAX_APPLIED = 200;
   const REPLACE_JOURNAL_QUERY_MAX = 500;
-  // Editor column rulers (CONFIG_VERSION 34). Mirrors the service bounds in
-  // services/workspace-ide-config-schema.js (this UMD module cannot import
-  // services, same precedent as RAIL_PANELS). [] = off (default).
+  // Editor column rulers (CONFIG_VERSION 34); mirrors the service bounds. [] = off.
   const RULERS_MAX_COUNT = 8;
   const RULERS_MAX_COLUMN = 500;
   function normalizeRulers(value) {
@@ -96,25 +86,20 @@
     }
     return [...seen].sort((a, b) => a - b).slice(0, RULERS_MAX_COUNT);
   }
-  // Diff tabs (runtime-only review surfaces) share the tab strip with file
-  // tabs but use ids no file tab can collide with: normalizeIdeRelativePath
-  // collapses '//' runs, so an openTab() result never equals a 'diff://' id.
+  // Diff tabs (runtime-only review surfaces) use ids no file tab can collide
+  // with: normalizeIdeRelativePath collapses '//' runs, so never 'diff://'.
   const DIFF_TAB_PREFIX = 'diff://';
-  // Markdown/Mermaid preview tabs (W8): same non-colliding id scheme, source
-  // path encoded after the prefix so reopening the same file dedupes.
+  // Markdown/Mermaid preview tabs (W8): same id scheme, source path after the prefix.
   const PREVIEW_TAB_PREFIX = 'preview://';
-  // Workspace File Map tab (workspace_file_map): a single synthetic tab whose
-  // pane is a stage sibling of the editor (not an editor document). Same
-  // non-colliding id scheme as diff/preview; exactly one instance per IDE.
+  // Workspace File Map tab: one synthetic tab whose pane is a stage sibling of the
+  // editor. Same id scheme as diff/preview; one instance per IDE.
   const MAP_TAB_PREFIX = 'map://';
   const MAP_TAB_ID = 'map://workspace';
-  // Editor-stage surfaces (WORKSPACE_PREVIEW_AND_MAP_PANELS_PLAN.md): exactly
-  // one is visible in #ideEditorStage at a time. 'editor' covers the Monaco/
-  // diff/image/empty states; 'preview'/'file_map'/'exploded' are the stable
-  // keep-alive stage siblings. Mirrors the service whitelist
-  // WORKSPACE_IDE_STAGE_SURFACES (UMD can't import services, the RAIL_PANELS
-  // precedent). The stage-surface CONTROLLER owns flag gating and transition
-  // policy; these reducers stay pure enum/path validation.
+  // Editor-stage surfaces (WORKSPACE_PREVIEW_AND_MAP_PANELS_PLAN.md): exactly one is
+  // visible in #ideEditorStage at a time ('editor' covers Monaco/diff/image/empty;
+  // the rest are keep-alive stage siblings). Mirrors the service's
+  // WORKSPACE_IDE_STAGE_SURFACES; the stage-surface CONTROLLER owns flag gating and
+  // transitions, these reducers stay pure enum/path validation.
   const STAGE_SURFACES = ['editor', 'preview', 'file_map', 'exploded'];
 
   function coerceStageSurface(value) {
@@ -143,9 +128,8 @@
     return normalized.includes(':') ? '' : normalized;
   }
 
-  // Sets the Preview stage's source file. Anything that fails the source gate
-  // (absolute, escaping, legacy preview:///map:// ids, non-strings) clears the
-  // target rather than carrying an unusable value. Returns the applied path.
+  // Sets the Preview stage's source file; anything failing the source gate
+  // (absolute, escaping, legacy preview:///map:// ids, non-strings) clears it.
   function setPreviewPath(ide, path) {
     ide.previewPath = normalizePreviewSourcePath(path);
     return ide.previewPath;
@@ -184,8 +168,7 @@
     };
   }
 
-  // Bottom-panel height clamp (shared by create/persist/apply + the panel module
-  // mirrors these bounds, same UMD-can't-import-services precedent as RAIL_PANELS).
+  // Bottom-panel height clamp (shared by create/persist/apply; the panel module mirrors it).
   function clampBottomHeight(value) {
     const height = Number(value);
     return Number.isFinite(height)
@@ -193,8 +176,7 @@
       : BOTTOM_HEIGHT_DEFAULT;
   }
 
-  // Secondary-sidebar width clamp (shared by create/persist/apply; the sidebar
-  // module mirrors these bounds, same precedent as clampBottomHeight).
+  // Secondary-sidebar width clamp (the sidebar module mirrors these bounds).
   function clampSecondaryWidth(value) {
     const width = Number(value);
     return Number.isFinite(width)
@@ -202,8 +184,7 @@
       : SECONDARY_WIDTH_DEFAULT;
   }
 
-  // Chat-dock width clamp (shared by create/persist/apply; the dock module
-  // mirrors these bounds, same precedent as clampSecondaryWidth).
+  // Chat-dock width clamp (the dock module mirrors these bounds).
   function clampChatDockWidth(value) {
     const width = Number(value);
     return Number.isFinite(width)
@@ -215,16 +196,111 @@
     return CHAT_DOCK_SIDES.includes(value) ? value : 'right';
   }
 
-  // ---- Per-panel location (the "Move View" model) -------------------------
-  // A panel lives on exactly one side; these helpers are the single source of
-  // truth shared by the rail, the secondary sidebar, the layout, and the
-  // controller's per-panel mount/active wiring.
+  // ---- Workbench layout tree (row 40 W3) ----------------------------------
+  // ide.workbenchLayout (a normalized tree, renderer/shared/workbench-layout-*.js)
+  // is the source of truth for the arrangement; the legacy fields (railPanel,
+  // panelLocations, secondary*, bottomPanel*, chatDock*, railSide, sizes) stay on
+  // `ide` as a DERIVED mirror. The shared modules load lazily with the IDE manifest,
+  // after this eager script, so they resolve on first use; when absent every helper
+  // below keeps the legacy behaviour (the old code sits behind the `!mods` branches).
+  let resolvedLayoutModules = null;
+  let layoutModulesOverride; // undefined = resolve normally (test seam)
 
-  // Coerce any raw value into a full RAIL_PANELS-keyed map, guaranteeing >=1
-  // primary panel so the rail content area is never empty. An EXPLICIT
-  // 'primary'/'secondary' is preserved; only an ABSENT (or invalid) key falls
-  // back to that panel's DEFAULT_PANEL_LOCATIONS home, so the split default
-  // reaches fresh slices without flipping a persisted (fully explicit) one.
+  function layoutModules() {
+    if (layoutModulesOverride !== undefined) {
+      return layoutModulesOverride;
+    }
+    if (resolvedLayoutModules) {
+      return resolvedLayoutModules;
+    }
+    const scope = typeof globalThis !== 'undefined' ? globalThis : {};
+    let model = scope.jennyWorkbenchLayoutModel;
+    let legacy = scope.jennyWorkbenchLayoutLegacy;
+    let ops = scope.jennyWorkbenchLayoutOps;
+    try {
+      if ((!model || !legacy || !ops) && typeof require === 'function') {
+        model = model || require('../shared/workbench-layout-model');
+        legacy = legacy || require('../shared/workbench-layout-legacy');
+        ops = ops || require('../shared/workbench-layout-ops');
+      }
+    } catch (_error) {
+      return null;
+    }
+    resolvedLayoutModules = model && legacy && ops ? { model, legacy, ops } : null;
+    return resolvedLayoutModules;
+  }
+
+  // Test seam: undefined = normal resolution, null = force the legacy fallback
+  // path, an object = inject {model, legacy, ops}.
+  function __setLayoutModulesForTest(value) {
+    layoutModulesOverride = value;
+    resolvedLayoutModules = null;
+  }
+
+  // The tree for this slice (null when the modules are unavailable). A missing or
+  // corrupt tree heals: normalized when salvageable, else migrated from the legacy
+  // fields.
+  function getWorkbenchLayout(ide) {
+    const mods = layoutModules();
+    if (!mods) {
+      return null;
+    }
+    const current = ide.workbenchLayout;
+    const normalized = current ? mods.model.normalizeLayout(current) : null;
+    if (!normalized || !mods.ops.isLayoutEqual(normalized, current)) {
+      ide.workbenchLayout = normalized || mods.legacy.fromLegacy(ide);
+    }
+    return ide.workbenchLayout;
+  }
+
+  // Copies the legacy keys derived from the tree onto `ide` through the same
+  // clamps/coercions the legacy path uses, so the old invariants hold (>=1 primary
+  // panel; secondaryPanel '' + closed when the secondary side is empty).
+  function syncLegacyFromLayout(ide) {
+    const mods = layoutModules();
+    const layout = mods ? getWorkbenchLayout(ide) : null;
+    if (!layout) {
+      return ide;
+    }
+    const derived = mods.legacy.toLegacy(layout);
+    ide.railSide = derived.railSide === 'right' ? 'right' : 'left';
+    ide.railWidth = derived.railWidth;
+    ide.panelLocations = derived.panelLocations;
+    ide.railPanel = derived.railPanel;
+    ide.secondaryPanel = derived.secondaryPanel;
+    ide.secondaryPanelOpen = derived.secondaryPanelOpen === true;
+    normalizeLegacyPanelFields(ide);
+    ide.secondaryWidth = clampSecondaryWidth(derived.secondaryWidth);
+    ide.bottomPanelOpen = derived.bottomPanelOpen === true;
+    ide.bottomPanelHeight = clampBottomHeight(derived.bottomPanelHeight);
+    ide.bottomPanelActiveView = BOTTOM_VIEWS.includes(derived.bottomPanelActiveView)
+      ? derived.bottomPanelActiveView
+      : 'terminal';
+    ide.chatDockOpen = derived.chatDockOpen === true;
+    ide.chatDockSide = coerceChatDockSide(derived.chatDockSide);
+    ide.chatDockWidth = clampChatDockWidth(derived.chatDockWidth);
+    return ide;
+  }
+
+  // Installs `next` as the tree and refreshes the legacy mirror. False (and no
+  // change) for the same reference or an equal tree.
+  function commitWorkbenchLayout(ide, next) {
+    const mods = layoutModules();
+    if (!mods || !next || next === ide.workbenchLayout || mods.ops.isLayoutEqual(next, ide.workbenchLayout)) {
+      return false;
+    }
+    ide.workbenchLayout = next;
+    syncLegacyFromLayout(ide);
+    return true;
+  }
+
+  // ---- Per-panel location (the "Move View" model) -------------------------
+  // A panel lives on exactly one side. On the tree, "primary" is the stack holding
+  // Explorer and "secondary" is any other stack holding a rail panel.
+
+  // Coerce any raw value into a full RAIL_PANELS-keyed map with >=1 primary panel.
+  // An EXPLICIT 'primary'/'secondary' is preserved; only an ABSENT (or invalid) key
+  // falls back to that panel's DEFAULT_PANEL_LOCATIONS home.
   function coercePanelLocations(value) {
     const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
     const map = {};
@@ -240,6 +316,11 @@
   }
 
   function getPanelLocation(ide, id) {
+    const mods = layoutModules();
+    if (mods) {
+      const derived = mods.legacy.toLegacy(getWorkbenchLayout(ide));
+      return derived.panelLocations[id] === 'secondary' ? 'secondary' : 'primary';
+    }
     return ide.panelLocations && ide.panelLocations[id] === 'secondary' ? 'secondary' : 'primary';
   }
 
@@ -254,19 +335,31 @@
   // Which single panel is the active, visible one for its side - the gate each
   // panel module's isActivePanel() resolves to.
   function isPanelActive(ide, id) {
+    const mods = layoutModules();
+    if (mods) {
+      const found = mods.model.findView(getWorkbenchLayout(ide), id);
+      return found !== null && found.active === true && found.collapsed !== true;
+    }
     if (getPanelLocation(ide, id) === 'secondary') {
       return ide.secondaryPanelOpen === true && ide.secondaryPanel === id;
     }
     return ide.railPanel === id;
   }
 
-  // "Show panel X" routed to the side that hosts it: a secondary-located panel
-  // opens the secondary sidebar on its tab (hooks.openSecondary persists +
-  // renders); a primary one becomes the active rail panel. Setting railPanel to
-  // a secondary-located id would paint nothing and strand stale rail markup.
-  // Returns the resolved location so callers can find the panel's host.
+  // "Show panel X". Tree: reveal the view in its stack (active, un-collapsed);
+  // hooks.openSecondary is ignored. Legacy: a secondary-located panel opens the
+  // secondary sidebar via hooks.openSecondary, a primary one becomes the active rail
+  // panel. Returns the resolved location so callers can find the panel's host.
   function showPanel(ide, id, hooks) {
     const { openSecondary, schedulePersist, requestRender } = hooks || {};
+    const mods = layoutModules();
+    if (mods) {
+      if (commitWorkbenchLayout(ide, mods.model.revealView(getWorkbenchLayout(ide), id))) {
+        schedulePersist?.();
+      }
+      requestRender?.();
+      return getPanelLocation(ide, id);
+    }
     if (getPanelLocation(ide, id) === 'secondary') {
       openSecondary?.(id);
       return 'secondary';
@@ -279,10 +372,61 @@
     return 'primary';
   }
 
+  // A fresh single-view stack at a row edge. ops.moveView's {edge} would join the
+  // outermost stack, which is usually the chat dock, so the new stack is built here.
+  function moveToNewEdgeStack(mods, layout, viewId, side) {
+    const copy = mods.model.cloneLayout(layout);
+    const source = mods.model.findStack(copy, mods.model.findView(copy, viewId).stackId);
+    const at = source.views.indexOf(viewId);
+    source.views.splice(at, 1);
+    if (source.active === viewId) {
+      source.active = source.views[Math.min(at, source.views.length - 1)];
+    }
+    const row = copy.root.t === 'split' && copy.root.dir === 'row'
+      ? copy.root
+      : { t: 'split', id: null, dir: 'row', children: [{ node: copy.root, size: null }] };
+    const fresh = { t: 'stack', id: null, kind: 'views', views: [viewId], active: viewId, collapsed: false };
+    row.children[side === 'left' ? 'unshift' : 'push']({ node: fresh, size: SECONDARY_WIDTH_DEFAULT });
+    return mods.model.normalizeLayout({ v: 1, root: row }) || layout;
+  }
+
+  // Tree form of movePanelLocation: 'primary' joins the Explorer stack; 'secondary'
+  // joins the existing secondary stack (the first other stack holding a rail panel),
+  // else opens a fresh stack at the edge opposite the Explorer stack ('right' when
+  // undeterminable). The last view of the Explorer stack cannot leave it.
+  function moveOnTree(mods, ide, id, target) {
+    const layout = getWorkbenchLayout(ide);
+    const rail = mods.model.findView(layout, 'explorer');
+    const here = mods.model.findView(layout, id);
+    if (!here || getPanelLocation(ide, id) === target) {
+      return;
+    }
+    if (target === 'primary') {
+      if (rail) {
+        commitWorkbenchLayout(ide, mods.ops.moveView(layout, id, { stackId: rail.stackId }));
+      }
+      return;
+    }
+    if (rail && here.stackId === rail.stackId && mods.model.findStack(layout, rail.stackId).views.length <= 1) {
+      return;
+    }
+    const other = mods.model.listViews(layout).filter((view) => RAIL_PANELS.includes(view))
+      .map((view) => mods.model.findView(layout, view)).find((found) => !rail || found.stackId !== rail.stackId);
+    const side = rail && mods.legacy.toLegacy(layout).railSide === 'right' ? 'left' : 'right';
+    commitWorkbenchLayout(ide, other
+      ? mods.ops.moveView(layout, id, { stackId: other.stackId })
+      : moveToNewEdgeStack(mods, layout, id, side));
+  }
+
   // Re-home a panel to the other side, fixing the active-panel invariants. Keeps
   // >=1 panel in the primary rail (the last primary panel can't be moved out).
   function movePanelLocation(ide, id, target) {
     if (!RAIL_PANELS.includes(id) || !PANEL_LOCATIONS.includes(target)) {
+      return ide;
+    }
+    const mods = layoutModules();
+    if (mods) {
+      moveOnTree(mods, ide, id, target);
       return ide;
     }
     // Self-heal a missing/partial map to a full one before mutating.
@@ -313,13 +457,12 @@
     return ide;
   }
 
-  // Self-heal locations + active-panel fields after hydrate (or any external
-  // mutation): full map, >=1 primary, railPanel primary-located, secondaryPanel
-  // secondary-located ('' + closed when the secondary side is empty).
-  function normalizePanelLocations(ide) {
+  // Self-heal the LEGACY fields: full map, >=1 primary, railPanel primary-located,
+  // secondaryPanel secondary-located ('' + closed when the secondary side is empty).
+  function normalizeLegacyPanelFields(ide) {
     ide.panelLocations = coercePanelLocations(ide.panelLocations);
-    const primaries = primaryPanels(ide);
-    const secondaries = secondaryPanels(ide);
+    const primaries = RAIL_PANELS.filter((id) => ide.panelLocations[id] !== 'secondary');
+    const secondaries = RAIL_PANELS.filter((id) => ide.panelLocations[id] === 'secondary');
     if (!primaries.includes(ide.railPanel)) {
       ide.railPanel = primaries[0];
     }
@@ -332,25 +475,34 @@
     return ide;
   }
 
+  // Self-heal locations + active-panel fields after hydrate (or any external
+  // mutation); with the tree present, then build/heal it and re-derive the mirror.
+  function normalizePanelLocations(ide) {
+    normalizeLegacyPanelFields(ide);
+    if (layoutModules()) {
+      getWorkbenchLayout(ide);
+      syncLegacyFromLayout(ide);
+    }
+    return ide;
+  }
+
   function createIdeUiState() {
     return {
       openTabs: [],
       activeTabPath: '',
+      // Per secondary group's active path (runtime-only; activeTabPath stays primary).
+      groupActive: {},
       dirtyByPath: {},
-      // Dirty buffers whose file changed (or vanished) on disk underneath
-      // them; cleared on reload/close. Runtime-only, never persisted.
+      // Dirty buffers whose file changed (or vanished) on disk; runtime-only.
       staleByPath: {},
       expandedDirs: new Set(),
       treeRootLoaded: false,
       railPanel: 'explorer',
-      // Editor-stage surface: which stage sibling is visible in #ideEditorStage
-      // ('editor' | 'preview' | 'file_map' | 'exploded') + the Preview stage's
-      // source file ('' = none picked yet).
+      // Visible editor-stage sibling + the Preview stage's source file ('' = none).
       activeStageSurface: 'editor',
       previewPath: '',
       replaceJournal: null,
-      // The primary rail defaults left, matching the service schema; this renderer
-      // value is the pre-hydrate/getState-failure fallback.
+      // Primary rail defaults left (the service schema); pre-hydrate fallback.
       railSide: 'left',
       railWidth: 300,
       // Bottom panel (Terminal / Problems / Run output) — collapsed by default;
@@ -358,20 +510,20 @@
       bottomPanelOpen: false,
       bottomPanelHeight: BOTTOM_HEIGHT_DEFAULT,
       bottomPanelActiveView: 'terminal',
-      // Secondary sidebar (opposite the primary rail, so on the RIGHT). Changes +
-      // Source Control are homed here by default (see DEFAULT_PANEL_LOCATIONS),
-      // but it stays COLLAPSED until the user reveals it via the left rail toggle.
-      // secondaryPanel names the tab shown when it opens.
+      // Secondary sidebar (opposite the rail). Source Control is homed here by
+      // default (DEFAULT_PANEL_LOCATIONS) but stays COLLAPSED until revealed.
       secondaryPanelOpen: false,
-      secondaryPanel: 'changes',
+      secondaryPanel: 'source-control',
       secondaryWidth: SECONDARY_WIDTH_DEFAULT,
       // The chat dock defaults right so its wider composer remains beside the editor.
       chatDockOpen: false,
       chatDockSide: 'right',
       chatDockWidth: CHAT_DOCK_WIDTH_DEFAULT,
-      // Each rail panel's home side (the split default): Explorer/Search primary,
-      // Changes/Source Control secondary.
+      // Each rail panel's home side (the split default).
       panelLocations: coercePanelLocations(),
+      // Layout tree (row 40 W3): null until hydrate/first use builds it from the
+      // legacy fields above, which are then its derived mirror.
+      workbenchLayout: null,
       showGenerated: false,
       explorerSortMode: 'name',
       wordWrap: 'off',
@@ -399,6 +551,7 @@
   function resetIdeRootState(ide) {
     ide.openTabs = [];
     ide.activeTabPath = '';
+    ide.groupActive = {};
     ide.dirtyByPath = {};
     ide.staleByPath = {};
     ide.expandedDirs = new Set();
@@ -431,33 +584,11 @@
     return String(value || '').startsWith(MAP_TAB_PREFIX);
   }
 
-  // NOTE: the File Map is a stage SURFACE (activeStageSurface), not a tab —
-  // the old openMapTab reducer is gone. isMapTabId stays as the legacy-id
-  // cleanup guard (persistence filters + the file-lifecycle open guard).
+  // NOTE: the File Map is a stage SURFACE (activeStageSurface), not a tab; isMapTabId
+  // stays as the legacy-id cleanup guard (persistence filters + file-lifecycle open guard).
 
-  // Opens (or re-activates) a markdown/mermaid preview tab; mirrors
-  // openDiffTab - the preview content lives in the editor host by id.
-  function openPreviewTab(ide, { id, label = '' } = {}) {
-    const tabId = String(id || '');
-    if (!isPreviewTabId(tabId)) {
-      return ide;
-    }
-    const existing = getTab(ide, tabId);
-    if (existing) {
-      existing.label = String(label || existing.label || 'Preview');
-    } else {
-      if (ide.openTabs.length >= MAX_OPEN_TABS) {
-        return ide;
-      }
-      ide.openTabs.push({ path: tabId, kind: 'preview', label: String(label || 'Preview') });
-    }
-    ide.activeTabPath = tabId;
-    return ide;
-  }
-
-  // Opens (or re-activates) a diff review tab. Reopening the same id just
-  // refreshes its label - the controller owns the diff content separately
-  // in the editor host, keyed by the same id.
+  // Opens (or re-activates) a diff review tab; reopening refreshes its label (the
+  // controller owns the diff content in the editor host, keyed by the same id).
   function openDiffTab(ide, { id, label = '' } = {}) {
     const tabId = String(id || '');
     if (!isDiffTabId(tabId)) {
@@ -472,15 +603,14 @@
       }
       ide.openTabs.push({ path: tabId, kind: 'diff', label: String(label || 'Diff') });
     }
-    ide.activeTabPath = tabId;
+    if (existing?.group) (ide.groupActive || (ide.groupActive = {}))[existing.group] = tabId; else ide.activeTabPath = tabId;
     return ide;
   }
 
-  // WIDE-051: pure tab-capacity probe. openFile consults this BEFORE creating
-  // an editor document (and again after its awaited read, for a lost race), so
-  // openTab's silent MAX_OPEN_TABS refusal below can never strand a hidden,
-  // untabbed-but-activated model. An already-open path always fits (openTab
-  // re-activates it without pushing). Typed result:
+  // WIDE-051: pure tab-capacity probe. openFile consults this BEFORE creating an
+  // editor document (and after its awaited read), so openTab's silent MAX_OPEN_TABS
+  // refusal can never strand a hidden, untabbed model. An already-open path always
+  // fits. Typed result:
   //   { ok: true } | { ok: false, code: 'TAB_LIMIT', limit: MAX_OPEN_TABS }
   function checkTabCapacity(ide, path) {
     const normalized = normalizeIdeRelativePath(path);
@@ -498,6 +628,11 @@
       return ide;
     }
     const existing = getTab(ide, normalized);
+    if (existing?.group) {
+      // Opening a file moves it back to the primary group (activeTabPath stays primary).
+      if (ide.groupActive?.[existing.group] === normalized) delete ide.groupActive[existing.group];
+      delete existing.group;
+    }
     if (!existing) {
       if (ide.openTabs.length >= MAX_OPEN_TABS) {
         return ide;
@@ -521,7 +656,8 @@
     if (index === -1) {
       return ide.activeTabPath;
     }
-    ide.openTabs.splice(index, 1);
+    const closedGroup = ide.openTabs.splice(index, 1)[0].group;
+    if (closedGroup && ide.groupActive?.[closedGroup] === path) delete ide.groupActive[closedGroup];
     delete ide.dirtyByPath[path];
     if (ide.staleByPath) {
       delete ide.staleByPath[path];
@@ -529,7 +665,10 @@
     if (ide.activeTabPath !== path) {
       return ide.activeTabPath;
     }
-    const nextTab = ide.openTabs[index] || ide.openTabs[index - 1] || null;
+    // The next active tab is the right, else left, neighbour among PRIMARY tabs only.
+    const primary = (tab) => !tab.group;
+    const nextTab = ide.openTabs.slice(index).find(primary)
+      || ide.openTabs.slice(0, index).reverse().find(primary) || null;
     ide.activeTabPath = nextTab ? nextTab.path : '';
     return ide.activeTabPath;
   }
@@ -553,10 +692,8 @@
     return ide;
   }
 
-  // Pinned tabs always clamp to the left of the strip. This stable partition is
-  // the single source of truth for that ordering invariant: both the pin
-  // gesture (toggleTabPinned) and restore (applyPersistedState) route through
-  // it, so the two can never drift.
+  // Pinned tabs clamp to the left of the strip. This stable partition is the single
+  // source of truth for that invariant (the pin gesture and restore both use it).
   function sortTabsPinnedFirst(ide) {
     const tabs = ide.openTabs || [];
     ide.openTabs = [
@@ -567,9 +704,7 @@
   }
 
   // Toggles a file tab's pinned flag and re-clamps pinned-first. Diff/preview
-  // surfaces are session-scoped and never pin. Returns true only when a file
-  // tab's flag actually flipped (mirrors closeTab returning a useful value
-  // rather than the slice).
+  // surfaces never pin. Returns true only when a file tab's flag actually flipped.
   function toggleTabPinned(ide, path) {
     const tab = getTab(ide, path);
     if (!tab || tab.kind !== 'file') {
@@ -627,9 +762,13 @@
   // Subset persisted to shell config (workspaceIde slice). Runtime-only fields
   // (dirty map, monaco status, search results, view states) never persist.
   function toPersistedState(ide) {
-    return {
-      // POSITIVE kind filter: only real file tabs persist (diff/preview are
-      // session-scoped review surfaces).
+    const mods = layoutModules();
+    const layout = mods ? getWorkbenchLayout(ide) : null;
+    // The legacy fields written are DERIVED from the tree (ide merged with toLegacy)
+    // so the dual-written pair never disagrees and a rollback build reads a valid layout.
+    const view = layout ? { ...ide, ...mods.legacy.toLegacy(layout) } : ide;
+    const persisted = {
+      // Only file tabs persist, including the transient explorer preview.
       // `pinned` persists end-to-end: the main-side normalizer
       // (services/workspace-ide-config-schema.js) carries the flag through and
       // CONFIG_VERSION 32 re-normalizes old configs, so pins survive restart.
@@ -639,19 +778,22 @@
       // rides the same sparse-emit idiom: emit it ONLY when 'exploded' (never
       // the 'code' default), and it coexists independently of `pinned`.
       openTabs: ide.openTabs
-        .filter((tab) => tab.kind === 'file' && tab.transientPreview !== true)
+        .filter((tab) => tab.kind === 'file')
         .map((tab) => {
           const entry = { path: tab.path };
+          if (tab.transientPreview === true) entry.preview = true;
           if (tab.pinned === true) {
             entry.pinned = true;
           }
           if (tab.viewMode === 'exploded') {
             entry.viewMode = 'exploded';
           }
+          if (GROUP_ID_RE.test(tab.group)) {
+            entry.group = tab.group;
+          }
           return entry;
         }),
       activeTabPath: isDiffTabId(ide.activeTabPath) || isPreviewTabId(ide.activeTabPath) || isMapTabId(ide.activeTabPath)
-        || getTab(ide, ide.activeTabPath)?.transientPreview === true
         ? ''
         : normalizeIdeRelativePath(ide.activeTabPath),
       // Clamp to the same bound the service normalizer applies on read so the
@@ -662,21 +804,21 @@
       activeStageSurface: coerceStageSurface(ide.activeStageSurface),
       previewPath: normalizePreviewSourcePath(ide.previewPath),
       replaceJournal: normalizeReplaceJournal(ide.replaceJournal),
-      railPanel: ide.railPanel,
-      railSide: ide.railSide,
-      railWidth: ide.railWidth,
-      bottomPanelOpen: ide.bottomPanelOpen === true,
-      bottomPanelHeight: clampBottomHeight(ide.bottomPanelHeight),
-      bottomPanelActiveView: BOTTOM_VIEWS.includes(ide.bottomPanelActiveView)
-        ? ide.bottomPanelActiveView
+      railPanel: view.railPanel,
+      railSide: view.railSide,
+      railWidth: view.railWidth,
+      bottomPanelOpen: view.bottomPanelOpen === true,
+      bottomPanelHeight: clampBottomHeight(view.bottomPanelHeight),
+      bottomPanelActiveView: BOTTOM_VIEWS.includes(view.bottomPanelActiveView)
+        ? view.bottomPanelActiveView
         : 'terminal',
-      secondaryPanelOpen: ide.secondaryPanelOpen === true && secondaryPanels(ide).length > 0,
-      secondaryPanel: secondaryPanels(ide).includes(ide.secondaryPanel) ? ide.secondaryPanel : '',
-      secondaryWidth: clampSecondaryWidth(ide.secondaryWidth),
-      chatDockOpen: ide.chatDockOpen === true,
-      chatDockSide: coerceChatDockSide(ide.chatDockSide),
-      chatDockWidth: clampChatDockWidth(ide.chatDockWidth),
-      panelLocations: coercePanelLocations(ide.panelLocations),
+      secondaryPanelOpen: view.secondaryPanelOpen === true && secondaryPanels(view).length > 0,
+      secondaryPanel: secondaryPanels(view).includes(view.secondaryPanel) ? view.secondaryPanel : '',
+      secondaryWidth: clampSecondaryWidth(view.secondaryWidth),
+      chatDockOpen: view.chatDockOpen === true,
+      chatDockSide: coerceChatDockSide(view.chatDockSide),
+      chatDockWidth: clampChatDockWidth(view.chatDockWidth),
+      panelLocations: coercePanelLocations(view.panelLocations),
       showGenerated: ide.showGenerated === true,
       explorerSortMode: EXPLORER_SORT_MODES.includes(ide.explorerSortMode) ? ide.explorerSortMode : 'name',
       wordWrap: ide.wordWrap === 'on' ? 'on' : 'off',
@@ -694,16 +836,22 @@
       insertFinalNewline: ide.insertFinalNewline === true,
       rulers: normalizeRulers(ide.rulers),
     };
+    if (layout) {
+      persisted.workbenchLayout = mods.model.cloneLayout(layout);
+    }
+    return persisted;
   }
 
   function applyPersistedState(ide, persisted) {
     const source = persisted && typeof persisted === 'object' ? persisted : {};
+    // A stale tree must not overwrite the legacy fields applied below (rebuilt at the end).
+    ide.workbenchLayout = null;
     const rawTabs = Array.isArray(source.openTabs) ? source.openTabs : [];
     ide.openTabs = [];
     const seen = new Set();
     for (const entry of rawTabs) {
       const path = normalizeIdeRelativePath(typeof entry === 'string' ? entry : entry?.path);
-      if (!path || entry?.transientPreview === true || seen.has(path) || ide.openTabs.length >= MAX_OPEN_TABS) {
+      if (!path || seen.has(path) || ide.openTabs.length >= MAX_OPEN_TABS) {
         continue;
       }
       seen.add(path);
@@ -711,15 +859,19 @@
         path,
         kind: 'file',
         pinned: entry?.pinned === true,
-        // "Exploded View": absent/anything-but-'exploded' restores to 'code'.
         viewMode: entry?.viewMode === 'exploded' ? 'exploded' : 'code',
+        ...(entry?.preview === true ? { transientPreview: true } : {}),
+        ...(Number.isInteger(entry?.line) || Number.isInteger(entry?.top) ? { restore: { line: entry.line, top: entry.top } } : {}),
+        ...(GROUP_ID_RE.test(entry?.group) ? { group: entry.group } : {}),
       });
     }
     // Enforce the pinned-first clamp on restore (a hand-edited slice may
     // interleave the groups) - same helper the pin gesture uses.
     sortTabsPinnedFirst(ide);
     const activeTabPath = normalizeIdeRelativePath(source.activeTabPath);
-    ide.activeTabPath = seen.has(activeTabPath) ? activeTabPath : (ide.openTabs[0]?.path || '');
+    const primaryPaths = ide.openTabs.filter((tab) => !tab.group).map((tab) => tab.path);
+    ide.activeTabPath = primaryPaths.includes(activeTabPath) ? activeTabPath : (primaryPaths[0] || '');
+    ide.groupActive = {};
     ide.expandedDirs = new Set(
       (Array.isArray(source.expandedDirs) ? source.expandedDirs : [])
         .map((dir) => normalizeIdeRelativePath(dir))
@@ -755,7 +907,7 @@
       : 'name';
     // Cross-validate the active railPanel/secondaryPanel against the locations
     // (and force the secondary closed when it ends up empty).
-    normalizePanelLocations(ide);
+    normalizeLegacyPanelFields(ide);
     ide.wordWrap = source.wordWrap === 'on' ? 'on' : 'off';
     ide.fontSize = normalizeEditorFontSize(source.fontSize);
     ide.tabSize = TAB_SIZES.includes(Number(source.tabSize)) ? Number(source.tabSize) : TAB_SIZE_DEFAULT;
@@ -768,6 +920,13 @@
     ide.trimTrailingWhitespace = source.trimTrailingWhitespace === true;
     ide.insertFinalNewline = source.insertFinalNewline === true;
     ide.rulers = normalizeRulers(source.rulers);
+    // A saved tree wins over the legacy keys just applied; with none (or a corrupt
+    // one) the legacy keys migrate. The mirror is then re-derived.
+    const mods = layoutModules();
+    if (mods) {
+      ide.workbenchLayout = mods.model.normalizeLayout(source.workbenchLayout) || mods.legacy.fromLegacy(ide);
+      syncLegacyFromLayout(ide);
+    }
     return ide;
   }
 
@@ -811,8 +970,10 @@
     CHAT_DOCK_WIDTH_MIN,
     clampChatDockWidth,
     TAB_SIZES,
+    __setLayoutModulesForTest,
     applyPersistedState,
     checkTabCapacity,
+    commitWorkbenchLayout,
     clampBottomHeight,
     clampSecondaryWidth,
     closeTab,
@@ -821,6 +982,7 @@
     fileExtensionOf,
     fileNameOf,
     getPanelLocation,
+    getWorkbenchLayout,
     getTab,
     getTabViewMode,
     isDiffTabId,
@@ -833,7 +995,6 @@
     normalizePreviewSourcePath,
     normalizeRulers,
     openDiffTab,
-    openPreviewTab,
     openTab,
     primaryPanels,
     resetIdeRootState,
@@ -846,6 +1007,7 @@
     setTabViewMode,
     showPanel,
     sortTabsPinnedFirst,
+    syncLegacyFromLayout,
     toPersistedState,
     toggleTabPinned,
     toggleTabViewMode,

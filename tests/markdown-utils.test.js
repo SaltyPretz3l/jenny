@@ -925,7 +925,7 @@ test('bare graph assignments are not misclassified as Mermaid diagrams', () => {
   assert.match(html, /markdown-code-block/);
 });
 
-/* ── KaTeX math pipeline integration (katex_math, protect-then-render) ── */
+/* ── KaTeX math pipeline integration (protect-then-render) ── */
 
 const markdownMathUtils = require('../renderer/shared/markdown-math-utils');
 

@@ -429,6 +429,7 @@ test('ollama manager clears stale ownership state before treating a running serv
     userDataPath,
     logger: (level, event, details) => logs.push({ level, event, details }),
     isProcessAliveImpl: () => false,
+    listOllamaRunnerProcessesImpl: () => [], // a dead root's runner reap never lists the host
   });
   manager._isRunning = async () => true;
 
@@ -557,6 +558,7 @@ test('ollama manager any_local stop skips cleanup when only historical ownership
     userDataPath,
     logger: (level, event, details) => logs.push({ level, event, details }),
     isProcessAliveImpl: () => false,
+    listOllamaRunnerProcessesImpl: () => [], // a dead root's runner reap never lists the host
     forceKillAnyRemainingLocalOllamaSyncImpl: (options = {}) => {
       forceKillCalls.push(options);
       return { discoveredPids: [80123], killedPids: [80123] };
@@ -597,6 +599,7 @@ test('ollama manager any_local stop clears dead owned state without discovering 
     userDataPath,
     logger: (level, event, details) => logs.push({ level, event, details }),
     isProcessAliveImpl: () => false,
+    listOllamaRunnerProcessesImpl: () => [], // a dead root's runner reap never lists the host
     forceKillAnyRemainingLocalOllamaSyncImpl: () => {
       sweepCalls += 1;
       return { discoveredPids: [], killedPids: [] };

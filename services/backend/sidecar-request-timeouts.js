@@ -35,8 +35,11 @@ const REQUEST_TIMEOUT_MS_BY_METHOD = Object.freeze({
   'workspace.list_change_sets': 60_000,
   'workspace.preflight_undo': 300_000,
   'workspace.undo_change_set': 300_000,
+  'workspace.reapply_change_set': 300_000,
   'workspace.restore_trash_entry': 300_000,
   'workspace.abandon_restore': 60_000,
+  // Plan Plus C4: up to 20 journaled edits, plus a full undo on a mid-call failure.
+  'workspace.apply_suggested_changes': 120_000,
   'chat.send': 360_000,
   shutdown: SHUTDOWN_TIMEOUT_MS,
 });

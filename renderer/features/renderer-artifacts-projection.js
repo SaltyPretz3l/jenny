@@ -87,9 +87,8 @@
     return pathToken.endsWith('.vl.json') || pathToken.endsWith('.vega.json') || pathToken.endsWith('.chart.json');
   }
 
-  // HTML Artifact Preview (artifact_html_preview) routing predicate. Behavior-
-  // preserving on its own: the flag gates RENDERING (renderer-artifact-html-
-  // preview-render.js), not this classification. `source` is the artifact's
+  // HTML Artifact Preview routing predicate. Behavior-preserving on its own:
+  // it classifies only; rendering lives in renderer-artifact-html-preview-render.js. `source` is the artifact's
   // loaded content — needed because an svg's executability is a content
   // property (an svg carrying <script> executes; inert svg markup stays on the
   // WS2 strict-DOMPurify inline path).

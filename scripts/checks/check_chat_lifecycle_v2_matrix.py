@@ -17,9 +17,6 @@ EVIDENCE_ANCHORS = {
     "tests/canonical-turn-event-contract.test.js": (
         "validateTurnEvent matches shared fixture cases"
     ),
-    "tests/chat-stream-bridge-v2.test.js": (
-        "refuses promotion for mismatched or stale terminal receipts"
-    ),
     "tests/chat-stream-managed-runtime-notifications.test.js": (
         "chat.token accrues visible text"
     ),
@@ -40,12 +37,11 @@ EVIDENCE_ANCHORS = {
     "tests/renderer-stream-continuation-guard.test.js": (
         "rejects a replaced session incarnation"
     ),
-    "tests/renderer-stream-envelope-v2.test.js": "poisons forward and per-channel gaps",
     "tests/renderer-stream-handler-phase-envelope.test.js": (
-        "sequence faults switch the live subscription"
+        "rehydrateSessionFromPersistedTurnEvents seeds live state"
     ),
     "tests/renderer-stream-handler-seams.test.js": (
-        "falls back to legacy stream events"
+        "logs unsubscribe failures and still re-subscribes"
     ),
     "tests/renderer-stream-handler-terminal-absorbing.test.js": (
         "late delta after complete"
@@ -74,10 +70,10 @@ EVIDENCE_ANCHORS = {
         "test_tool_bearing_generation_counts_parse_success"
     ),
     "tests/sidecar/runtime/test_multiplexer.py": "test_chat_cancel_tombstone_replays",
-    "tests/stream-envelope-receipt-gate.test.js": (
-        "rejects mismatches and immediately reopens legacy"
-    ),
 }
+# S24 covered the stream envelope v2 transport, deleted with it (owner, 2026-10-05).
+RETIRED_SCENARIOS = {"S24"}
+SCENARIO_COUNT = 37
 
 
 def _expected(prefix: str, count: int) -> set[str]:
@@ -141,13 +137,18 @@ def main() -> int:
         return 1
     errors = [
         *_validate_rows(payload.get("invariants"), _expected("I", 27), "invariants"),
-        *_validate_rows(payload.get("scenarios"), _expected("S", 37), "scenarios"),
+        *_validate_rows(
+            payload.get("scenarios"),
+            _expected("S", SCENARIO_COUNT) - RETIRED_SCENARIOS,
+            "scenarios",
+        ),
     ]
     if errors:
         for error in errors:
             print(f"FAIL: {error}")
         return 1
-    print("PASS: Chat Lifecycle v2 matrix covers 27 invariants and 37 scenarios")
+    scenario_total = SCENARIO_COUNT - len(RETIRED_SCENARIOS)
+    print(f"PASS: Chat Lifecycle v2 matrix covers 27 invariants and {scenario_total} scenarios")
     return 0
 
 

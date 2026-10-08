@@ -75,6 +75,9 @@ test('workspace chrome controller renders the rail with active, streaming, appro
   assert.equal(doc.querySelector('[data-workspace-close="session-2"]'), null, 'a busy tab renders no close button');
   assert.equal(doc.querySelector('[data-workspace-links]'), null, 'the per-tab link button is retired');
   assert.equal(doc.querySelector('.workspace-rail-link-button'), null);
+  const closeButton = doc.querySelector('[data-workspace-close="session-1"]');
+  assert.equal(closeButton.title, 'Close session');
+  assert.equal(closeButton.getAttribute('aria-label'), closeButton.title);
 
   firstButton.click();
   doc.querySelector('[data-workspace-close="session-1"]').click();

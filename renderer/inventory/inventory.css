@@ -941,6 +941,30 @@
   outline: none;
 }
 
+/* ══ Note field (short multi-line note: a comment or a reason) ══ */
+
+.inv-note-field {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 52px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-footnote);
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.inv-note-field:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 0;
+  border-color: transparent;
+}
+
 /* ══ Reduced motion: Phase B-D additions ══ */
 
 @media (prefers-reduced-motion: reduce) {

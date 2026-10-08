@@ -950,6 +950,8 @@ def _change_set_summary(record: Mapping[str, Any]) -> dict[str, object]:
         "restore_status": record["restore"]["status"],
         "operation_count": record["operation_count"],
         "updated_at": record["wall_time"]["updated_at"],
+        # When the undo finished; retention touches move updated_at.
+        "restore_completed_at": record["restore"]["completed_at"],
         "partially_undoable": record["coverage"]["partially_undoable"],
         "warning": record["coverage"]["warning"],
     }

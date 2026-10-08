@@ -225,6 +225,9 @@ describe('evaluatePolicy / legacy parity', () => {
     const cases = [
       ['exit_plan_mode', {}, 'ask', 'built-in default for exit_plan_mode'],
       ['task_board', { action: 'list' }, 'auto', 'read-only action defaults to auto'],
+      ['project_notes', { action: 'read' }, 'auto', 'read-only action defaults to auto'],
+      ['project_notes', { action: 'append' }, 'auto', 'built-in default for project_notes'],
+      ['project_notes', { action: 'replace' }, 'auto', 'built-in default for project_notes'],
       ['read_file', {}, 'auto', 'built-in default for read_file'],
     ];
 

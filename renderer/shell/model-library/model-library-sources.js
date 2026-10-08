@@ -423,7 +423,10 @@
     var disposed = false;
 
     function notify(key) {
-      if (!disposed) onChange(key);
+      if (disposed) return;
+      if (opts.state) opts.state.modelPulls = getPulls();
+      if (opts.state && opts.windowRef) opts.windowRef.dispatchEvent(new opts.windowRef.CustomEvent('jenny:model-state-changed'));
+      onChange(key);
     }
 
     function recordForRequest(requestId) {
@@ -475,6 +478,8 @@
       record.status = 'running';
       record.percent = Math.min(Math.max(Number(payload.percent) || 0, 0), 100);
       record.bytesText = pullBytesText(payload);
+      if (Number.isFinite(payload.bytes)) record.completedBytes = payload.bytes;
+      if (Number.isFinite(payload.totalBytes)) record.totalBytes = payload.totalBytes;
       notify(record.key);
     }
 
@@ -496,6 +501,7 @@
         requestId: createRequestId(),
         status: 'running',
         percent: 0,
+        startedAt: Date.now(),
         bytesText: '',
       };
       pulls[key] = record;

@@ -22,9 +22,7 @@
     error: 'errored',
   });
 
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function normalizeSubstatus(value) {
     return normalizeId(value).toLowerCase();

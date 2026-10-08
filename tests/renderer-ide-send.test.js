@@ -233,7 +233,7 @@ test('tree file rows offer Send to Jenny; directories do not', async (t) => {
   await harness.controller.activateIde();
   await settle();
   const doc = harness.dom.window.document;
-  const fileRow = harness.getDom().ideRailPanel
+  const fileRow = harness.viewHost('explorer')
     .querySelector('[data-ide-tree-path="README.md"]');
   openContextMenu(harness, fileRow);
   const sendItem = findMenuItem(doc, 'Send to Jenny — new chat');
@@ -243,7 +243,7 @@ test('tree file rows offer Send to Jenny; directories do not', async (t) => {
   assert.deepEqual(harness.sentToJenny, [
     { kind: 'file_path', target: 'new', path: 'README.md' },
   ]);
-  const dirRow = harness.getDom().ideRailPanel
+  const dirRow = harness.viewHost('explorer')
     .querySelector('[data-ide-tree-path="src"]');
   openContextMenu(harness, dirRow);
   assert.equal(findMenuItem(doc, 'Send to Jenny — current chat'), null, 'directories have no send item');

@@ -1,9 +1,9 @@
 // Exclusive GPU coordinator: one identity-fenced owner for local chat and
-// privileged plugin workloads. A lease is released only by the operation that
-// acquired it, and unproven native process cleanup deliberately keeps it held.
+// the image engine (via chat-gpu-handoff.js). A lease is released only by the
+// operation that acquired it, and unproven native process cleanup deliberately keeps it held.
 //
 // Ollama serializes models inside its own daemon only. This coordinator fences
-// local chat and privileged native plugins with one owner-bound global lease.
+// local chat and image-engine renders with one owner-bound global lease.
 
 const { EventEmitter } = require('events');
 const crypto = require('crypto');

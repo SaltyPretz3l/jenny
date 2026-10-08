@@ -7,8 +7,6 @@ const {
   RENDER_KINDS,
   resolveArtifactRenderKind,
   createArtifactRendererRegistry,
-  registerPluginRenderer,
-  clearPluginRenderers,
 } = require('../renderer/features/renderer-artifacts-renderer-registry');
 
 const projection = require('../renderer/features/renderer-artifacts-projection');
@@ -159,15 +157,12 @@ test('a renderer that throws is contained: render() returns false, does not thro
   assert.equal(result, false);
 });
 
-test('namespaced plugin renderers cannot override built-ins and fall back to standard text', () => {
-  clearPluginRenderers();
+test('namespaced artifact kinds are not a renderer extension point: they resolve to built-ins and render as text', () => {
   const calls = [];
-  assert.equal(registerPluginRenderer('sample:diagram', () => { throw new Error('isolated failure'); }), true);
-  assert.equal(registerPluginRenderer('html', () => {}), false);
-  assert.equal(registerPluginRenderer('bad namespace:kind', () => {}), false);
   const registry = createArtifactRendererRegistry({ text: () => calls.push('text') });
-  assert.equal(resolveArtifactRenderKind({ artifactKind: 'sample:diagram' }), 'sample:diagram');
+  assert.equal(resolveArtifactRenderKind({ artifactKind: 'sample:diagram' }), 'text');
+  assert.equal(registry.has('sample:diagram'), false);
   assert.equal(registry.render('sample:diagram', {}), true);
   assert.deepEqual(calls, ['text']);
-  clearPluginRenderers();
+  assert.equal(require('../renderer/features/renderer-artifacts-renderer-registry').registerPluginRenderer, undefined);
 });

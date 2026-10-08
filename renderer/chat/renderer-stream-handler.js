@@ -91,11 +91,6 @@
     throw new Error('renderer-stream-buffer-utils must load before renderer/chat/renderer-stream-handler.js');
   }
   const { createDegradedStreamRecovery } = _streamBufferUtils;
-  const _streamRecoveryUtils = resolveDependencyModule('rendererStreamRecovery', './renderer-stream-recovery');
-  if (!_streamRecoveryUtils || typeof _streamRecoveryUtils.createStreamRecoveryController !== 'function') {
-    throw new Error('renderer-stream-recovery must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const { createStreamRecoveryController } = _streamRecoveryUtils;
   const _reasoningMergeUtils = resolveDependencyModule('rendererStreamHandlerReasoningMerge', './renderer-stream-handler-reasoning-merge');
   if (!_reasoningMergeUtils
     || typeof _reasoningMergeUtils.createReasoningStreamMerger !== 'function') {
@@ -122,19 +117,6 @@
     throw new Error('renderer-stream-handler-live-events must load before renderer/chat/renderer-stream-handler.js');
   }
   const { createStreamLiveEventHandlers } = _liveEventsUtils;
-  const _streamEnvelopeV2Utils = resolveDependencyModule('rendererStreamEnvelopeV2', './renderer-stream-envelope-v2');
-  if (!_streamEnvelopeV2Utils
-    || typeof _streamEnvelopeV2Utils.streamEnvelopeToLegacyPayload !== 'function'
-    || typeof _streamEnvelopeV2Utils.createStreamEnvelopeSequenceGuard !== 'function'
-    || typeof _streamEnvelopeV2Utils.createStreamEnvelopeReceiptTracker !== 'function') {
-    throw new Error('renderer-stream-envelope-v2 must load before renderer/chat/renderer-stream-handler.js');
-  }
-  const {
-    STREAM_ENVELOPE_SCHEMA_VERSION,
-    createStreamEnvelopeReceiptTracker,
-    createStreamEnvelopeSequenceGuard,
-    streamEnvelopeToLegacyPayload,
-  } = _streamEnvelopeV2Utils;
   const streamHandlerRuntime = resolveDependencyModule('rendererStreamHandlerRuntime', './renderer-stream-handler-runtime');
   const createStreamHandlerRuntime = streamHandlerRuntime?.createStreamHandlerRuntime || function missingStreamHandlerRuntime() { return {}; };
   const streamRevealUtils = resolveDependencyModule('rendererStreamRevealUtils', './renderer-stream-reveal-utils');
@@ -268,30 +250,6 @@
     const BUFFER_EXPIRY_MS = 60000;
     const MAX_REASONING_MERGE_STREAMS = 128;
     const approvalToastSessionIds = new Set();
-    let fallbackEnvelopeToLegacy = () => null;
-    let rehydrateEnvelopeFault = () => null;
-    let recoverEnvelopeFault = () => Promise.resolve({ ok: false, reason: 'recovery_unavailable' });
-    const streamEnvelopeSequenceGuard = createStreamEnvelopeSequenceGuard({ appendClientLog });
-    const streamEnvelopeReceiptTracker = createStreamEnvelopeReceiptTracker({
-      appendClientLog,
-      sendAck: (record) => globalThis.window?.jennyShell?.chat?.ackEnvelopeReceipt?.(record) || null,
-      onRejected: (result, record) => {
-        if (normalizeString(record?.recordType || record?.record_type) === 'stream_fault') {
-          fallbackEnvelopeToLegacy(result?.reason || 'sequence_fault_rejected');
-          return;
-        }
-        if (result?.recovery_ticket_issued === true) {
-          fallbackEnvelopeToLegacy(result?.reason || 'receipt_rejected');
-          return;
-        }
-        recoverEnvelopeFault({
-          stream_id: record?.streamId || record?.stream_id,
-          session_id: record?.sessionId || record?.session_id,
-          turn_id: record?.turnId || record?.turn_id,
-          reason: result?.reason || 'receipt_rejected',
-        });
-      },
-    });
     let startupAuditFirstStreamEventMarked = false;
 
     function markStartupAudit(name, details = {}) {
@@ -354,13 +312,11 @@
       },
       isDeterministicRowIdEnabled,
       recordChatTimelineRolloutSignal,
-      // chat_timeline_render_telemetry (Track A): TEMPORARY render-path
-      // diagnostics for the streaming-flicker investigation. Same live-state
-      // read pattern as isCanonicalRendererProjectionEnabled above; absent
-      // state/flag-off = the affirmative "clean reconcile" signal never fires.
+      // Render-path telemetry (Track A): local-only diagnostics for the
+      // streaming-flicker investigation. The affirmative "clean reconcile"
+      // signal fires for row-model sessions.
       isRenderTelemetryEnabled(sessionId) {
-        return state?.features?.featureFlags?.chat_timeline_render_telemetry === true
-          && isRowModelEnabled(sessionId);
+        return isRowModelEnabled(sessionId);
       },
       appendClientLog,
     });
@@ -485,32 +441,6 @@
       )
       : function noopFinalizeTerminalStream() {};
     const resetLifecycleIfSettling = runtime.resetLifecycleIfSettling || function noopResetLifecycleIfSettling() {};
-    let recoveryRehydrateLiveTurnState = () => null;
-    let clearRecoveredTerminalState = (streamId) => clearTerminalStreamState(streamId);
-    const streamRecoveryController = createStreamRecoveryController({
-      // JCA-011: thread the controller's read options (abort signal) through to
-      // the bridge instead of dropping them, so disposal can cancel the read.
-      getPersistedSession: (sessionId, options) => globalThis.window?.jennyShell?.sessions?.getMessages?.(sessionId, options),
-      setSessionMessages,
-      setSessionTurnEventState,
-      clearRecoveredTerminalState: (streamId, sessionId) => clearRecoveredTerminalState(streamId, sessionId),
-      clearSessionLiveTurnState,
-      rehydrateLiveTurnState: (sessionId) => recoveryRehydrateLiveTurnState(sessionId),
-      clearChatSendLifecycle,
-      queueSessionRender,
-      setSessionComposerNotice,
-      fallbackToLegacy: (reason) => fallbackEnvelopeToLegacy(reason),
-      isStreamCurrentForSession: (sessionId, streamId) => (
-        multiStreamController?.isStreamCurrentForSession?.(sessionId, streamId) !== false
-      ),
-      hasSession: (sessionId) => (
-        Array.isArray(state.sessions)
-        && state.sessions.some((session) => normalizeId(session?.id) === normalizeId(sessionId))
-      ),
-      acknowledgeRecovery: (record) => globalThis.window?.jennyShell?.chat?.ackEnvelopeReceipt?.(record),
-      appendClientLog,
-    });
-    recoverEnvelopeFault = (request) => streamRecoveryController.recover(request);
     // UIUX-029: tool-activity terminal statuses route through the one shared
     // live-announcer channel. Injectable for tests (pass announcer: null to
     // disable); otherwise built once from the persistent #srAnnounce* regions
@@ -590,12 +520,6 @@
       bufferExpiryMs: BUFFER_EXPIRY_MS,
       maxStreams: MAX_REASONING_MERGE_STREAMS,
     });
-    clearRecoveredTerminalState = (streamId, sessionId) => {
-      pendingStreamCommitQueue.drop(streamId);
-      clearTerminalStreamState(streamId);
-      reasoningStreamMerger.drop(streamId);
-      multiStreamController?.finishStreamTerminalCommit?.(streamId, true, sessionId);
-    };
     const reasoningPhaseStatusHandlers = createStreamReasoningPhaseStatusHandlers({
       state,
       normalizeId,
@@ -790,7 +714,11 @@
       dropReasoningStream: (streamId) => reasoningStreamMerger.drop(streamId),
       rawHandleComplete,
       rawHandleError,
-      onTerminal: (event) => state.desktopNotificationsController?.onTerminal?.(event),
+      onTerminal: (event) => {
+        // The away digest goes first: it only arms a coalesced read and never throws.
+        state.awayDigestReader?.onRunSettled?.(event);
+        state.desktopNotificationsController?.onTerminal?.(event);
+      },
     });
 
     const liveEventHandlers = createStreamLiveEventHandlers({
@@ -882,13 +810,6 @@
         startupAuditFirstStreamEventMarked = true;
         return true;
       },
-      onBufferedStreamFlushed: (streamId, outcome = {}) => {
-        if (outcome.degraded === true || Number(outcome.discardedCount || 0) > 0) {
-          streamEnvelopeReceiptTracker.faultBufferedReceipts(streamId, 'buffer_replay_degraded');
-          return;
-        }
-        streamEnvelopeReceiptTracker.flushBufferedReceipts(streamId);
-      },
       // Terminal-absorbing gate (CTL-003): the multi-stream controller's
       // bounded finalized registry is the single source of truth for "this
       // stream is done"; dispatch consults it before any handler runs. The
@@ -919,56 +840,11 @@
       return dispatchStreamPayload(payload, callOptions);
     }
 
-    function isStreamEnvelopeV2Enabled() {
-      return state?.features?.featureFlags?.stream_envelope_v2 === true;
-    }
-
-    async function handleStreamEnvelope(envelope, callOptions = {}) {
-      const envelopeStreamId = normalizeString(envelope?.streamId);
-      const payload = streamEnvelopeToLegacyPayload(envelope);
-      if (!payload || typeof payload !== 'object') {
-        appendClientLog('WARN', 'stream.envelope_v2_invalid', {
-          streamId: String(envelope?.streamId || '').slice(0, 30),
-          channel: String(envelope?.channel || '').slice(0, 30),
-          eventKind: String(envelope?.eventKind || '').slice(0, 30),
-          schemaVersion: String(envelope?.schemaVersion ?? '').slice(0, 30),
-        });
-        // A version mismatch is permanent; other invalid envelopes may be transient,
-        // so the tolerant envelope seam deliberately stays live for those drops.
-        if (envelope?.schemaVersion != null && envelope.schemaVersion !== STREAM_ENVELOPE_SCHEMA_VERSION) {
-          fallbackEnvelopeToLegacy('envelope_schema_mismatch');
-        }
-        return { buffered: false, terminal: false };
-      }
-      if (!streamEnvelopeSequenceGuard.shouldAccept(envelope)) {
-        const faultReason = streamEnvelopeSequenceGuard.consumeFault(envelopeStreamId) || 'sequence_fault';
-        rehydrateEnvelopeFault(normalizeString(envelope?.sessionId));
-        streamEnvelopeReceiptTracker.noteFault(envelope, faultReason);
-        fallbackEnvelopeToLegacy(faultReason);
-        return { buffered: false, terminal: false };
-      }
-      const result = await handleStreamPayload(payload, callOptions); // count only after processing (#8)
-      if (result?.handlerError === true && normalizeString(envelope?.eventKind) === 'terminal') {
-        streamEnvelopeReceiptTracker.noteFault(envelope, 'terminal_handler_failed');
-        streamEnvelopeSequenceGuard.clear(envelopeStreamId);
-        fallbackEnvelopeToLegacy('terminal_handler_failed');
-        return result;
-      }
-      streamEnvelopeReceiptTracker.noteProcessed(envelope, result?.buffered === true);
-      if (result?.buffered !== true && normalizeString(envelope?.eventKind) === 'terminal' && envelopeStreamId) {
-        streamEnvelopeSequenceGuard.clear(envelopeStreamId);
-        streamEnvelopeReceiptTracker.flushAck(envelope);
-      }
-      return result;
-    }
-
     const lifecycle = createStreamHandlerLifecycle({
       state,
       normalizeId,
       appendClientLog,
       handleStreamPayload,
-      handleStreamEnvelope,
-      handleStreamRecovery: (ticket) => streamRecoveryController.recover(ticket),
       pendingStreamCommitQueue,
       runtime,
       approvalToastSessionIds,
@@ -976,21 +852,16 @@
       streamRehydrateUtils,
       isRowModelEnabled,
       getLiveStateStore,
-      isStreamEnvelopeV2Enabled,
-      streamEnvelopeReceiptTracker,
       clearBufferedStreamEvents,
     });
-    recoveryRehydrateLiveTurnState = lifecycle.rehydrateSessionFromPersistedTurnEvents;
-    rehydrateEnvelopeFault = lifecycle.rehydrateSessionFromPersistedTurnEvents;
-    fallbackEnvelopeToLegacy = lifecycle.fallbackToLegacy;
     const {
-      registerStreamHandler, resyncStreamSubscriptionMode,
+      registerStreamHandler,
       dispose: disposeLifecycle,
       rehydrateSessionFromPersistedTurnEvents,
     } = lifecycle;
 
     return {
-      registerStreamHandler, resyncStreamSubscriptionMode,
+      registerStreamHandler,
       optimisticAppend,
       ensurePendingStreamEntry,
       flushBufferedStreamEvents,
@@ -1002,7 +873,6 @@
         streamActivityRow.dispose?.();
         liveToolPatchController.dispose?.();
         toolLiveTail.dispose();
-        streamRecoveryController.dispose();
         disposeLifecycle();
       },
     };

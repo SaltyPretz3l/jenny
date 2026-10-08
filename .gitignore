@@ -38,7 +38,6 @@ dist/
 # every dev launch and before packaging; never hand-edited, never committed).
 preload.bundle.js
 uninstall-preload.bundle.js
-plugin-view-preload.bundle.js
 # The stamp records the bundle source-graph hash so an unchanged dev launch
 # can skip esbuild; it is regenerated, never committed.
 .preload-build-stamp.json
@@ -52,10 +51,6 @@ docs/plans/executor-handoffs/
 .jenny-diagnostics/
 .tmp/
 artifacts/
-!services/plugins/artifacts/
-!services/plugins/artifacts/**
-!tests/plugins/artifacts/
-!tests/plugins/artifacts/**
 prototypes/
 tests/orb-stream-demo.test.js
 tests/feature-lab-*.test.js
@@ -89,7 +84,6 @@ out/
 *.enc
 config.json
 .env
-scripts/plugins/*.pem
 
 # Logs
 *.log
@@ -110,6 +104,8 @@ docs/archive/*
 !docs/archive/JENNY_UNINSTALL_AND_DATA_PORTABILITY.md
 !docs/archive/PLUGIN_STAGE7_SANDBOXED_UI_AND_PROVIDER_RETROFIT.md
 !docs/archive/PLUGIN_STAGE8_PRIVILEGED_ADAPTERS.md
+!docs/archive/PLUGIN_SYSTEM_ARCHITECTURE_AND_ROADMAP.md
+!docs/archive/PLUGIN_SECURITY.md
 !docs/archive/JENNY_CHAT_RENDERER_REMEDIATION_PLAN_ARCHIVED_2026-08-10.md
 !docs/archive/TOOL_HARDENING_REMEDIATION_PLAN.md
 !docs/archive/TOOL_ROW_REDESIGN_SPEC.md

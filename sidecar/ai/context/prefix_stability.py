@@ -124,15 +124,15 @@ def request_layout(
 ) -> tuple[Segment, ...]:
     """Return the ordered segment layout of one model request.
 
-    Tools lead because the common local chat templates (Qwen, Hermes) render
-    the tool block inside the first system turn, so a tool-list change breaks
-    the cache from the top whichever way a template orders the two.
+    The tools segment is always present and leads because the common local
+    chat templates (Qwen, Hermes) render the tool block inside the first system
+    turn, so a tool-list change breaks the cache from the top whichever way a
+    template orders the two.
     """
     segments: list[Segment] = []
     schemas = [dict(schema) for schema in (tool_schemas or []) if isinstance(schema, Mapping)]
-    if schemas:
-        text = _canonical(schemas)
-        segments.append(Segment(label="tools", digest=_digest(text), chars=len(text)))
+    text = _canonical(schemas)
+    segments.append(Segment(label="tools", digest=_digest(text), chars=len(text) if schemas else 0))
     segments.extend(_system_segments(system_prompt))
     for index, message in enumerate(messages):
         if isinstance(message, Mapping):

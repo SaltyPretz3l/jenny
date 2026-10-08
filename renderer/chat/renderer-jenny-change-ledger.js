@@ -14,6 +14,12 @@
   const GET_FAILED = Symbol('get_failed');
   const UNKNOWN_WORKSPACE_ID = 'unknown';
   const MAX_SKIPPED_ITEMS = 100;
+  const MAX_NOTICES = 100;
+  // Row 34: scripted calls report what they changed through
+  // scripted_change_review v1 plus diffs[], including failed calls.
+  const SCRIPTED_TOOL_NAMES = new Set(['run_command', 'run_temp_script', 'python_execute']);
+  const SCRIPTED_REVIEW_STATES = new Set(['observed', 'partial', 'unavailable', 'unsupported']);
+  const CALL_OUTCOMES = new Set(['succeeded', 'failed', 'cancelled', 'timed_out']);
   const REVIEWABLE_STATES = new Set(['full', 'partial']);
   const REVIEW_STATES = new Set(['full', 'partial', 'summary_only', 'non_text', 'failed']);
   const BODY_KINDS = new Set(['inline_hunks', 'summary_only', 'lazy_ref', 'none']);
@@ -215,6 +221,57 @@
     };
   }
 
+  // The review record when it validates as v1, else null (never evidence).
+  function readScriptedReview(metadata) {
+    const review = safeGet(metadata, 'scripted_change_review');
+    if (!isPlainObject(review) || safeGet(review, 'schema_version') !== 1) return null;
+    return SCRIPTED_REVIEW_STATES.has(normalizeLower(safeGet(review, 'state'))) ? review : null;
+  }
+
+  // The run's restore point a scripted review names (row 34 S5), camel-cased,
+  // or null. The main process already bounded it; this re-checks the shape.
+  function readRestorePoint(metadata) {
+    const point = safeGet(readScriptedReview(metadata), 'restore_point');
+    if (!isPlainObject(point)) return null;
+    const kind = normalizeLower(safeGet(point, 'kind'));
+    const createdAt = normalizeId(safeGet(point, 'created_at'));
+    const ref = normalizeId(safeGet(point, 'ref'));
+    if (kind === 'git_checkpoint' && createdAt && ref.startsWith('refs/jenny/checkpoints/')) return { kind, ref, createdAt };
+    if (kind === 'head' && createdAt) return { kind, createdAt };
+    const reason = normalizeLower(safeGet(point, 'reason'));
+    return kind === 'none' && reason ? { kind, reason } : null;
+  }
+
+  function hasChangeEvidence(metadata) {
+    const diffs = safeGet(metadata, 'diffs');
+    return (Array.isArray(diffs) && diffs.length > 0)
+      || isPlainObject(safeGet(metadata, 'diff'))
+      || readScriptedReview(metadata) !== null;
+  }
+
+  function isScriptedCall(toolCall, metadata) {
+    return SCRIPTED_TOOL_NAMES.has(normalizeId(safeGet(toolCall, 'toolName'))) || readScriptedReview(metadata) !== null;
+  }
+
+  // A scripted call that did not complete cleanly is still read when it
+  // carries evidence of what it changed (row 34: a failed script can edit
+  // files). Other tools keep the completed-only rule.
+  function isUnsuccessfulWithoutEvidence(toolCall, metadata) {
+    const unsuccessful = normalizeLower(safeGet(toolCall, 'state')) !== 'completed'
+      || safeGet(toolCall, 'resultIsError') === true;
+    return unsuccessful && !(isScriptedCall(toolCall, metadata) && hasChangeEvidence(metadata));
+  }
+
+  function deriveCallOutcome(toolCall, metadata) {
+    const reviewOutcome = normalizeLower(safeGet(readScriptedReview(metadata), 'call_outcome'));
+    if (CALL_OUTCOMES.has(reviewOutcome)) return reviewOutcome;
+    const state = normalizeLower(safeGet(toolCall, 'state'));
+    if (state === 'timed_out' || safeGet(metadata, 'timed_out') === true) return 'timed_out';
+    if (state === 'cancelled') return 'cancelled';
+    if (state === 'errored' || safeGet(toolCall, 'resultIsError') === true) return 'failed';
+    return state === 'completed' ? 'succeeded' : 'unknown';
+  }
+
   function normalizeJennyChangeFromDiff(toolCall, metadata, diff, context = {}) {
     const pathResult = resolvePath(diff, metadata, safeGet(toolCall, 'input'));
     if (!pathResult.path) {
@@ -235,6 +292,8 @@
     const sourceMessageId = normalizeId(sourceMessageIds[sourceMessageIds.length - 1])
       || normalizeId(safeGet(toolCall, 'primaryMessageId'))
       || normalizeId(safeGet(context, 'sourceMessageId'));
+    const toolName = normalizeId(safeGet(toolCall, 'toolName'));
+    const truncationReason = normalizeLower(readFirst(diff, ['truncation_reason', 'truncationReason'])) || null;
 
     return {
       change: {
@@ -248,7 +307,7 @@
         turnId,
         sourceMessageId,
         toolCallId,
-        toolName: normalizeId(safeGet(toolCall, 'toolName')),
+        toolName,
         status: normalizeStatus(diff, metadata),
         reviewState,
         reviewable: REVIEWABLE_STATES.has(reviewState),
@@ -256,11 +315,15 @@
         additions: nonNegativeInt(safeGet(diff, 'additions'), 0),
         deletions: nonNegativeInt(safeGet(diff, 'deletions'), 0),
         truncated: safeGet(diff, 'truncated') === true,
-        truncationReason: normalizeLower(readFirst(diff, ['truncation_reason', 'truncationReason'])) || null,
+        truncationReason,
         beforeHash: normalizeHash(readFirst(diff, ['before_hash', 'beforeHash'])),
         afterHash: normalizeHash(readFirst(diff, ['after_hash', 'afterHash'])),
         hashKind: normalizeId(readFirst(diff, ['hash_kind', 'hashKind'])) || '',
         hunks,
+        callOutcome: deriveCallOutcome(toolCall, metadata),
+        scripted: isScriptedCall(toolCall, metadata),
+        restorePoint: readRestorePoint(metadata),
+        sensitive: truncationReason === 'sensitive_path',
       },
       skip: null,
     };
@@ -270,14 +333,14 @@
     if (!isPlainObject(toolCall)) {
       return { change: null, skip: makeSkip('invalid_tool_call', toolCall, context) };
     }
-    if (normalizeLower(safeGet(toolCall, 'state')) !== 'completed' || safeGet(toolCall, 'resultIsError') === true) {
+    const rawMetadata = safeGet(toolCall, 'resultMetadata');
+    const metadata = isPlainObject(rawMetadata) ? rawMetadata : {};
+    if (isUnsuccessfulWithoutEvidence(toolCall, metadata)) {
       return { change: null, skip: makeSkip('tool_not_successful', toolCall, context) };
     }
-    const rawMetadata = safeGet(toolCall, 'resultMetadata');
     if (rawMetadata === GET_FAILED) {
       return { change: null, skip: makeSkip('invalid_tool_call', toolCall, context) };
     }
-    const metadata = isPlainObject(rawMetadata) ? rawMetadata : {};
     const diff = safeGet(metadata, 'diff');
     if (diff === GET_FAILED || !isPlainObject(diff)) {
       return { change: null, skip: makeSkip('missing_diff', toolCall, context) };
@@ -289,14 +352,14 @@
     if (!isPlainObject(toolCall)) {
       return { changes: [], skipped: [makeSkip('invalid_tool_call', toolCall, context)] };
     }
-    if (normalizeLower(safeGet(toolCall, 'state')) !== 'completed' || safeGet(toolCall, 'resultIsError') === true) {
+    const rawMetadata = safeGet(toolCall, 'resultMetadata');
+    const metadata = isPlainObject(rawMetadata) ? rawMetadata : {};
+    if (isUnsuccessfulWithoutEvidence(toolCall, metadata)) {
       return { changes: [], skipped: [makeSkip('tool_not_successful', toolCall, context)] };
     }
-    const rawMetadata = safeGet(toolCall, 'resultMetadata');
     if (rawMetadata === GET_FAILED) {
       return { changes: [], skipped: [makeSkip('invalid_tool_call', toolCall, context)] };
     }
-    const metadata = isPlainObject(rawMetadata) ? rawMetadata : {};
     const rawDiffs = safeGet(metadata, 'diffs');
     if (rawDiffs === GET_FAILED) {
       return { changes: [], skipped: [makeSkip('missing_diff', toolCall, context)] };
@@ -336,12 +399,34 @@
     });
   }
 
+  // One History notice per call that carries a review; History reads it for
+  // the unavailable, needs-a-git-folder and over-cap lines.
+  function buildScriptedChangeNotice(toolCall, turnId) {
+    const metadata = safeGet(toolCall, 'resultMetadata');
+    const review = isPlainObject(metadata) ? readScriptedReview(metadata) : null;
+    if (!review) return null;
+    const certainty = normalizeLower(safeGet(review, 'certainty'));
+    return {
+      turnId,
+      toolCallId: normalizeId(safeGet(toolCall, 'toolCallId')),
+      toolName: normalizeId(safeGet(toolCall, 'toolName')),
+      state: normalizeLower(safeGet(review, 'state')),
+      reason: normalizeLower(safeGet(review, 'reason')) || null,
+      certainty: certainty === 'observed_during_call' ? certainty : 'background_window',
+      callOutcome: deriveCallOutcome(toolCall, metadata),
+      changedPathCount: nonNegativeInt(safeGet(review, 'changed_path_count'), 0),
+      omittedCount: nonNegativeInt(safeGet(review, 'omitted_count'), 0),
+      restorePoint: readRestorePoint(metadata),
+    };
+  }
+
   function buildJennyChangeLedgerFromTurnViewModels(turnViewModels, options = {}) {
     const turns = Array.isArray(turnViewModels) ? turnViewModels : [];
     const sessionId = normalizeId(options.sessionId);
     const workspaceId = normalizeId(options.workspaceId) || UNKNOWN_WORKSPACE_ID;
     const changes = [];
     const skipped = [];
+    const notices = [];
     for (const turnModel of turns) {
       if (!isPlainObject(turnModel)) {
         pushSkipped(skipped, { reason: 'invalid_turn', turnId: '', toolCallId: '', toolName: '' });
@@ -367,6 +452,8 @@
         for (const skip of result.skipped) {
           pushSkipped(skipped, skip);
         }
+        const notice = notices.length < MAX_NOTICES ? buildScriptedChangeNotice(toolCall, turnId) : null;
+        if (notice) notices.push(notice);
       }
     }
     return {
@@ -374,6 +461,7 @@
       workspaceId,
       changes,
       skipped,
+      notices,
     };
   }
 

@@ -61,11 +61,11 @@ test('handleStreamReset keys post-reset text by main authoritative next_assistan
     'segState follows the index the authoritative id names',
   );
   // The pre-reset row is a distinct row and still carries the discarded text,
-  // stamped restarted by the reducer's unchanged truncation semantics.
+  // stamped as the reset's discarded-draft fold anchor.
   const preResetRows = rows.filter((row) => String(row.payload?.text || '').includes('TEXT_A'));
   assert.equal(preResetRows.length, 1);
   assert.equal(preResetRows[0].primary_message_id, `assistant_${STREAM_ID}`);
-  assert.equal(preResetRows[0].payload.truncated, true, 'discarding resets still stamp "restarted"');
+  assert.equal(preResetRows[0].payload.discard_anchor, true, 'discarding resets fold the erased draft');
 });
 
 test('handleStreamReset honours a non-zero authoritative index instead of double-counting', async () => {
@@ -188,10 +188,10 @@ for (const deterministicRowId of [true, false]) {
     const discardedRow = rows[0];
     const liveRow = rows[1];
 
-    // (a) the pre-reset row keeps its "restarted" marker but leaves the
+    // (a) the pre-reset row keeps its discarded-draft fold but leaves the
     // canonical identity space; the post-reset row takes index 0.
     assert.equal(discardedRow.payload.text, 'TEXT_A');
-    assert.equal(discardedRow.payload.truncated, true, 'EH-W5 marker survives the tombstone');
+    assert.equal(discardedRow.payload.discard_anchor, true, 'the discard fold survives the tombstone');
     assert.equal(discardedRow.discarded, true);
     assert.notEqual(textRowGroupIndex(discardedRow), 0, 'the discarded row must not sit at index 0');
     assert.equal(textRowGroupIndex(discardedRow), -1);
@@ -263,7 +263,7 @@ test('tool_continuation reset keeps the existing segment numbering and tombstone
   assert.equal(rows[0].payload.text, 'TEXT_A');
   assert.equal(textRowGroupIndex(rows[0]), 0, 'preserved commentary keeps index 0');
   assert.equal(rows[0].discarded, undefined, 'a preserve reset tombstones nothing');
-  assert.notEqual(rows[0].payload.truncated, true, 'and carries no "restarted" marker');
+  assert.notEqual(rows[0].payload.discard_anchor, true, 'and carries no discard fold');
   assert.equal(rows[0].row_id, `row:assistant_text:${STREAM_ID}:0`);
   assert.equal(textRowGroupIndex(rows[1]), 1, 'the continuation segment is index 1');
   assert.equal(rows[1].row_id, `row:assistant_text:${STREAM_ID}:1`);

@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -15,8 +15,13 @@ from sidecar.ai.config import FallbackModelConfig, RuntimeConfig
 from sidecar.ai.context.request_fingerprint import PROMPT_VERSION
 from sidecar.ai.engines.engine_events import EngineEvent
 from sidecar.ai.engines.vision_input import VisionImage
-from sidecar.ai.error_codes import CMP_LOOP_ENGINE_STALLED, CMP_LOOP_INVALID_TOOL_CALL
+from sidecar.ai.error_codes import (
+    CMP_CLOUD_NETWORK_ERROR,
+    CMP_LOOP_ENGINE_STALLED,
+    CMP_LOOP_INVALID_TOOL_CALL,
+)
 from sidecar.ai.exceptions import EngineConnectionError
+from sidecar.ai.mcp.models import MCPToolDescriptor
 from sidecar.ai.routing import generation_runtime, generation_runtime_stream
 from sidecar.ai.routing.engine_messages import engine_messages
 from sidecar.ai.routing.generation_diagnostics import record_request_fingerprint_if_available
@@ -29,10 +34,13 @@ from sidecar.ai.routing.generation_runtime import (
 from sidecar.ai.routing.loop_events import (
     FallbackTriggeredEvent,
     StopEvent,
+    StreamResetEvent,
     ThinkingEvent,
     TokenDeltaEvent,
     ToolCallCompletedEvent,
     ToolCallDeltaEvent,
+    ToolExecutingEvent,
+    ToolResultEvent,
 )
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.vision_turn import VisionAnchorError
@@ -56,6 +64,12 @@ from sidecar.runtime.turn_state import (
     TERMINAL_SUBCODE_TIMEOUT_TURN,
     TURN_STATE_CANCELLED,
     TURN_STATE_TIMEOUT,
+)
+from tests.sidecar.ai.routing.test_tool_loop import (
+    _build_router,
+    _StubMCPClient,
+    _ToolLoopEngine,
+    _ToolPlan,
 )
 
 
@@ -1341,6 +1355,133 @@ def test_attempt_fallback_skips_init_failed_engine(monkeypatch, caplog) -> None:
     events = [getattr(record, "event", None) for record in caplog.records]
     assert "ai.router.fallback_engine_init_failed" in events
     assert "ai.router.fallback_failed" not in events
+
+
+def _fallback_tool_result(call_id: str, content: str) -> GenerationResult:
+    return GenerationResult(
+        content=content,
+        finish_reason="tool_calls",
+        tool_calls=(ToolCallRequest(
+            tool_id="read_file", arguments={"path": "README.md"}, call_id=call_id,
+        ),),
+    )
+
+
+@pytest.mark.parametrize(
+    ("stream_kind", "http_error", "fallback_succeeds", "previous_tool"),
+    [
+        pytest.param("content", False, True, False, id="text"),
+        pytest.param("thinking", False, True, False, id="reasoning"),
+        pytest.param(None, False, True, False, id="silent"),
+        pytest.param("content", True, True, False, id="provider-http"),
+        pytest.param("content", False, False, False, id="failed-fallback"),
+        pytest.param("content", False, True, True, id="previous-tool"),
+    ],
+)
+def test_successful_fallback_resets_failed_stream_before_tool_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    stream_kind: str | None,
+    http_error: bool,
+    fallback_succeeds: bool,
+    previous_tool: bool,
+) -> None:
+    primary_error = (
+        generation_runtime.ProviderHttpError(
+            provider="ollama", status_code=None, code=CMP_CLOUD_NETWORK_ERROR,
+            message="primary disconnected", retryable=True,
+            classification="connection_error",
+        ) if http_error else ConnectionError("primary disconnected")
+    )
+
+    class _PrimaryEngine(_ToolLoopEngine):
+        supports_tool_calling = True
+
+        def stream_with_tools(self, **_kwargs: Any):
+            self.call_count += 1
+            if previous_tool and self.call_count == 1:
+                yield StreamingEvent(kind="content", text="Earlier completed commentary.")
+                return _fallback_tool_result("call_previous", "Earlier completed commentary.")
+            if self.call_count == 1 + int(previous_tool):
+                if stream_kind is not None:
+                    yield StreamingEvent(kind=stream_kind, text="Failed primary draft.")
+                raise primary_error
+            return GenerationResult(content="Done.", finish_reason="stop")
+
+    class _FallbackEngine(_ToolLoopEngine):
+        def stream_with_tools(self, **kwargs: Any):
+            if not fallback_succeeds:
+                raise ConnectionError("fallback disconnected")
+            return (yield from super().stream_with_tools(**kwargs))
+
+    fallback_engine = _FallbackEngine([
+        _ToolPlan(result=_fallback_tool_result("call_fallback", "Fallback commentary.")),
+    ])
+    monkeypatch.setattr(
+        generation_runtime, "_create_engine",
+        lambda _config: SimpleNamespace(engine=fallback_engine, fallback_from=None),
+    )
+    mcp_client = _StubMCPClient((MCPToolDescriptor(
+        name="read_file", description="Read a file", side_effecting=False,
+        input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+        server_name="tools", tool_family="filesystem",
+    ),))
+    router = _build_router(engine=_PrimaryEngine([]), mcp_client=mcp_client)
+    router._config = replace(
+        router._config,
+        feature_flags={"api_retry": False},
+        fallback_models=(FallbackModelConfig(engine_type="ollama", model="fallback-model"),),
+    )
+    events: list[object] = []
+    runtime = LoopRuntime(
+        emit=events.append, request_id="req_fallback_reset", streaming=True,
+        max_iterations=4, chunk_inactivity_seconds=0.5,
+    )
+
+    def _run():
+        return router.build_chat_decision(
+            request_id=runtime.request_id,
+            messages=[{"role": "user", "content": "Read README."}],
+            latest_user_content="Read README.", mode="assist",
+            approvals_pre_granted=True, runtime=runtime,
+        )
+
+    if not fallback_succeeds:
+        with pytest.raises(ToolExecutionFailure):
+            _run()
+        assert not any(isinstance(event, StreamResetEvent) for event in events)
+        assert not any(isinstance(event, FallbackTriggeredEvent) for event in events)
+        assert mcp_client.executions == []
+        return
+
+    decision = _run()
+    assert decision.response_text == "Done."
+    assert len(mcp_client.executions) == 1 + int(previous_tool)
+    tool_event = next(
+        event for event in events
+        if isinstance(event, ToolExecutingEvent) and event.call_id == "call_fallback"
+    )
+    before_dispatch = events[:events.index(tool_event)]
+    resets = [event for event in before_dispatch if isinstance(event, StreamResetEvent)]
+    provider_resets = [event for event in resets if event.reason == "provider_retry"]
+    assert len(provider_resets) == int(stream_kind is not None)
+    if not previous_tool:
+        assert resets == provider_resets
+    if stream_kind is not None:
+        draft_event = next(
+            event for event in before_dispatch
+            if isinstance(event, (TokenDeltaEvent, ThinkingEvent))
+            and event.delta == "Failed primary draft."
+        )
+        assert events.index(draft_event) < events.index(provider_resets[0])
+    if previous_tool:
+        completed = next(
+            event for event in before_dispatch
+            if isinstance(event, ToolResultEvent) and event.call_id == "call_previous"
+        )
+        assert completed.success is True
+        assert events.index(completed) < events.index(provider_resets[0])
+        assert len(decision.tool_results) == 1 + int(previous_tool)
+    assert runtime.last_iteration_unflushed == []
 
 
 def test_attempt_fallback_succeeds_and_emits_fallback_triggered_event(monkeypatch) -> None:

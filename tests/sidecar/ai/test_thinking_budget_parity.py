@@ -15,14 +15,12 @@ from sidecar.ai.routing import generation_runtime_stream
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.thinking_guard import ThinkingRepetitionGuard
 from sidecar.ai.tools.models import GenerationResult, StreamingEvent, ThinkingDelta
-from sidecar.runtime import chat_streaming
 from tests.sidecar.ai.engines.test_ollama_runtime import FakeEngine
 from tests.sidecar.ai.engines.test_thinking_budget_abort import (
     _drain,
     _patch_stream,
     _patch_vllm_stream,
 )
-from tests.sidecar.runtime.test_chat_streaming_incomplete import _response_for
 
 
 class _BudgetTokensEngine:
@@ -175,7 +173,7 @@ def _capture_guard_max_chars(
 
 @pytest.mark.parametrize(
     "site",
-    ["generation_runtime", "chat_streaming", "ollama_plain", "ollama_tools", "vllm_plain", "vllm_tools"],
+    ["generation_runtime", "ollama_plain", "ollama_tools", "vllm_plain", "vllm_tools"],
 )
 def test_all_construction_sites_use_shared_derivation(
     monkeypatch: pytest.MonkeyPatch,
@@ -183,7 +181,6 @@ def test_all_construction_sites_use_shared_derivation(
 ) -> None:
     module = {
         "generation_runtime": generation_runtime_stream,
-        "chat_streaming": chat_streaming,
         "ollama_plain": ollama_runtime,
         "ollama_tools": ollama_runtime,
         "vllm_plain": vllm_engine_generation,
@@ -193,8 +190,6 @@ def test_all_construction_sites_use_shared_derivation(
 
     if site == "generation_runtime":
         _router_call(_TerminalToolEngine())
-    elif site == "chat_streaming":
-        _response_for("stop")
     elif site.startswith("ollama"):
         _patch_stream(monkeypatch)
         engine = FakeEngine(think_value=True)

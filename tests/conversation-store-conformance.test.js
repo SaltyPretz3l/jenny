@@ -7,6 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { ElectronSessionStore } = require('../services/backend/electron-session-store');
+const { JournaledJsonStore } = require('../services/backend/journaled-json-store');
 const { SessionShadowStore } = require('../services/backend/session-shadow-store');
 const { TURN_EVENT_LOG_VERSION } = require('../services/backend/session-turn-events');
 const { TurnEventJournal } = require('../services/backend/turn-event-journal');
@@ -210,7 +211,11 @@ test('commitTerminal durability failure compensates session/index and restores a
 
   const sessionsDir = path.join(path.dirname(filePath), path.basename(filePath, '.json'));
   const diskSession = JSON.parse(fs.readFileSync(path.join(sessionsDir, 'sess_terminal.json'), 'utf8'));
-  const diskIndex = JSON.parse(fs.readFileSync(path.join(sessionsDir, '_index.json'), 'utf8'));
+  // The index as a restart would see it: the base file with its journal replayed.
+  const diskIndex = JournaledJsonStore.readFile(
+    path.join(sessionsDir, '_index.json'),
+    { payloadKey: 'sessions' }
+  ).value;
   assert.deepEqual(diskSession.session, beforeSession);
   assert.deepEqual(diskIndex, beforeIndex);
 });

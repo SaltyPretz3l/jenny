@@ -5,27 +5,34 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import threading
 import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Callable, Iterable, TypeVar
 
 from sidecar.ai.config import read_environment_value
 from sidecar.ai.error_codes import (
+    CMP_TOOL_COMMAND_ABORTED,
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_PRECONDITION_UNMET,
     CMP_TOOL_WORKTREE_BASELINE_NOT_FOUND,
 )
+from sidecar.ai.tools.builtins import scripted_change_capture as scripted
 from sidecar.ai.tools.builtins.git_ops import (
     _find_git_root,
     _resolve_cwd,
     _run_git,
     _run_git_raw,
 )
-from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
+from sidecar.ai.tools.contracts import (
+    TOOL_FAILURE_RESULT_METADATA_KEYS,
+    ToolExecutionFailure,
+    ToolHandlerResult,
+)
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 BASELINE_TTL_SECONDS = 8 * 60 * 60
@@ -41,18 +48,16 @@ MIN_PORCELAIN_RECORD_CHARS = 4
 _DIRECT_SESSION_ID = "builtin-mcp"
 # TR-015: foreground shell tools report ``workspace_changed`` from a status diff
 # (``JENNY_ENABLE_SHELL_CHANGE_EVIDENCE=0`` disables the probe). Interpreter and
-# test caches are not the model's edits.
+# test caches are not the model's edits. Row 34: the same probe captures
+# user-only diffs and a ``scripted_change_review`` record for these tools.
 SHELL_CHANGE_EVIDENCE_FLAG = "JENNY_ENABLE_SHELL_CHANGE_EVIDENCE"
-_SHELL_EVIDENCE_TOOLS = frozenset({"run_command", "run_temp_script"})
+_SHELL_EVIDENCE_TOOLS = frozenset({"run_command", "run_temp_script", "python_execute"})
 _CACHE_PATH_SEGMENTS = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"})
 # ``source_changed`` narrows that to saved source: index-only transitions
 # (``git add``/``commit``) and untracked outputs without a source suffix (a stray
 # ``cfile=none``, a repo-root ``holdout/`` data folder) are not saves. New stray
 # outputs are named in the result so the model notices them (MQ-014/MQ-027).
-_SOURCE_SUFFIXES = frozenset({
-    ".py", ".pyi", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".json",
-    ".toml", ".cfg", ".ini", ".yaml", ".yml", ".md", ".rst", ".txt",
-})
+_SOURCE_SUFFIXES = scripted.SOURCE_SUFFIXES
 MAX_STRAY_NOTE_ENTRIES = 5
 MAX_STRAY_NOTE_CHARS = 400
 _STRAY_NOTE_PREFIX = "New untracked files outside ignored folders: "
@@ -91,10 +96,20 @@ class WorktreeBaseline:
 
 
 @dataclass(frozen=True)
-class ShellChangeEvidence:
-    workspace_changed: bool
-    source_changed: bool
-    created_untracked: tuple[str, ...] = ()
+class _ShellProbe:
+    """Pre-call state for one foreground shell call, or why it is not observed."""
+
+    before: WorktreeSnapshot | None
+    preimages: dict[str, scripted.FileContent] = field(default_factory=dict)
+    state: str = scripted.STATE_OBSERVED
+    reason: str | None = None
+    diff_id_prefix: str = "scripted:call"
+    # The turn's restore point routing handed this call (row 34 S5), if any.
+    restore_point: dict[str, str] | None = None
+
+
+class _StatusOverLimit(ToolExecutionFailure):
+    """Status exceeded ``MAX_STATUS_PATHS``; review evidence is unavailable."""
 
 
 @dataclass(frozen=True)
@@ -196,15 +211,14 @@ def run_with_worktree_observation(  # noqa: PLR0913 - dispatch context is explic
                 "worktree attribution pre-observation failed",
                 extra={"tool_name": tool_name, "error_type": type(error).__name__},
             )
-    # A live baseline already attributes changed paths; probe only without one.
-    shell_probe = (
-        _begin_shell_change_probe(tool_name, arguments, workspace)
-        if observation is None
-        else None
+    # A live baseline's pre-call snapshot doubles as the probe's before state.
+    shell_probe = _begin_shell_change_probe(
+        tool_name, arguments, workspace,
+        before=observation.before if isinstance(observation, MutationObservation) else None,
     )
     try:
         result = handler()
-    except BaseException:
+    except BaseException as error:
         _finish_observation_fail_soft(
             observation=observation,
             arguments=arguments,
@@ -213,6 +227,8 @@ def run_with_worktree_observation(  # noqa: PLR0913 - dispatch context is explic
             tool_name=tool_name,
             logger=logger,
         )
+        if shell_probe is not None and isinstance(error, ToolExecutionFailure):
+            _attach_failure_evidence(error, shell_probe, workspace)
         raise
     attribution = _finish_observation_fail_soft(
         observation=observation,
@@ -225,63 +241,215 @@ def run_with_worktree_observation(  # noqa: PLR0913 - dispatch context is explic
     evidence: dict[str, object] = {}
     if attribution is not None:
         evidence["worktree_observation"] = attribution
-    shell_change = _finish_shell_change_probe(shell_probe, workspace)
-    if shell_change is not None:
-        evidence["workspace_changed"] = shell_change.workspace_changed
-        evidence["source_changed"] = shell_change.source_changed
-    if not isinstance(result, ToolHandlerResult) or not evidence:
+    if not isinstance(result, ToolHandlerResult):
         return result
     output = result.output
-    if shell_change is not None and shell_change.created_untracked:
-        evidence["created_untracked_paths"] = list(
-            shell_change.created_untracked[:MAX_STRAY_NOTE_ENTRIES]
+    if shell_probe is not None:
+        shell_evidence, notes = _finish_shell_change_probe(
+            shell_probe, workspace, _call_outcome(result)
         )
-        output = _with_stray_note(output, _stray_note(shell_change.created_untracked))
+        evidence.update(shell_evidence)
+        output = _with_model_notes(output, notes)
+    if not evidence:
+        return result
     return replace(result, output=output, metadata={**result.metadata, **evidence})
 
 
 def _begin_shell_change_probe(
-    tool_name: str, arguments: dict[str, object], workspace: WorkspaceGuard
-) -> WorktreeSnapshot | None:
-    """Status snapshot before a foreground shell tool, for ``workspace_changed`` evidence.
+    tool_name: str,
+    arguments: dict[str, object],
+    workspace: WorkspaceGuard,
+    *,
+    before: WorktreeSnapshot | None = None,
+) -> _ShellProbe | None:
+    """Status snapshot and bounded preimages before a foreground shell tool.
 
     Consumers (the write-progress streak, the verification gate) treat a command
-    as a save only on this evidence. No git repository, a background job, or any
-    probe failure yields no evidence rather than a guess.
+    as a save only on ``workspace_changed`` evidence. No git repository, a
+    background job, or any probe failure yields no evidence rather than a
+    guess; the review record says which case applies.
     """
-    if (
-        tool_name not in _SHELL_EVIDENCE_TOOLS
-        or arguments.get("run_in_background") is True
-        or read_environment_value(SHELL_CHANGE_EVIDENCE_FLAG, "1") == "0"
-    ):
+    if tool_name not in _SHELL_EVIDENCE_TOOLS:
         return None
+    probe = _shell_probe_state(arguments, workspace, before)
+    return replace(probe, restore_point=scripted.restore_point_argument(arguments))
+
+
+def _shell_probe_state(
+    arguments: dict[str, object], workspace: WorkspaceGuard, before: WorktreeSnapshot | None
+) -> _ShellProbe:
+    if arguments.get("run_in_background") is True:
+        return _ShellProbe(None, state=scripted.STATE_UNAVAILABLE, reason="background")
+    if not shell_change_evidence_enabled():
+        return _ShellProbe(None, state=scripted.STATE_UNAVAILABLE, reason="disabled")
+    if workspace.root is None:
+        return _ShellProbe(None, state=scripted.STATE_UNSUPPORTED, reason="no_workspace")
     try:
-        return _status_snapshot(_repo_root_for(arguments, workspace), workspace=workspace)
-    except Exception:  # noqa: BLE001 - evidence is optional; the tool result is primary.
-        return None
+        if before is None:
+            before = _status_snapshot(_repo_root_for(arguments, workspace), workspace=workspace)
+    except Exception as error:  # noqa: BLE001 - evidence is optional; the tool result is primary.
+        state, reason = _probe_failure(error)
+        return _ShellProbe(None, state=state, reason=reason)
+    return _ShellProbe(
+        before,
+        preimages=_capture_preimages_fail_soft(before, workspace),
+        diff_id_prefix=diff_id_prefix_for(arguments),
+    )
+
+
+def shell_change_evidence_enabled() -> bool:
+    """False when ``JENNY_ENABLE_SHELL_CHANGE_EVIDENCE=0`` disables the probe."""
+    return read_environment_value(SHELL_CHANGE_EVIDENCE_FLAG, "1") != "0"
+
+
+def diff_id_prefix_for(arguments: dict[str, object]) -> str:
+    return scripted.diff_id_prefix(
+        arguments.get("_jenny_operation_id") or arguments.get("_jenny_tool_call_id")
+        or uuid.uuid4().hex[:12]
+    )
+
+
+def _probe_failure(error: Exception) -> tuple[str, str]:
+    if isinstance(error, _StatusOverLimit):
+        return scripted.STATE_UNAVAILABLE, "status_over_limit"
+    if getattr(error, "precondition_id", "") == "git_repo":
+        return scripted.STATE_UNSUPPORTED, "not_git"
+    return scripted.STATE_UNAVAILABLE, "probe_failed"
+
+
+def _capture_preimages_fail_soft(
+    before: WorktreeSnapshot, workspace: WorkspaceGuard
+) -> dict[str, scripted.FileContent]:
+    """In-memory preimages of paths dirty or untracked before the call."""
+    try:
+        return scripted.capture_preimages(
+            before.repo_root,
+            workspace.require_root().resolve(),
+            [path for path in before.status if not _is_cache_path(path)],
+        )
+    except Exception:  # noqa: BLE001 - missing preimages degrade to summary-only diffs.
+        return {}
+
+
+def _attach_failure_evidence(
+    error: ToolExecutionFailure, probe: _ShellProbe, workspace: WorkspaceGuard
+) -> None:
+    """Review evidence of a call that raised, on ``error.result_metadata``.
+
+    The model-facing message gains only the path-only scripted-edit line.
+    """
+    try:
+        evidence, notes = _finish_shell_change_probe(probe, workspace, _failure_outcome(error))
+    except Exception:  # noqa: BLE001 - the raised error stays the primary outcome.
+        return
+    carried = {key: evidence[key] for key in TOOL_FAILURE_RESULT_METADATA_KEYS if key in evidence}
+    error.result_metadata = {**getattr(error, "result_metadata", {}), **carried}
+    note = dict(notes).get("scripted_edit_note")
+    if note:
+        error.message = f"{error.message}\n{note}" if error.message else note
+
+
+def _failure_outcome(error: ToolExecutionFailure) -> str:
+    """``cancelled`` for a user stop (both handlers raise COMMAND_ABORTED)."""
+    if error.code == CMP_TOOL_COMMAND_ABORTED:
+        return "cancelled"
+    if isinstance(error.__cause__, subprocess.TimeoutExpired):
+        return "timed_out"
+    return "failed"
 
 
 def _finish_shell_change_probe(
-    before: WorktreeSnapshot | None, workspace: WorkspaceGuard
-) -> ShellChangeEvidence | None:
+    probe: _ShellProbe, workspace: WorkspaceGuard, outcome: str
+) -> tuple[dict[str, object], list[tuple[str, str]]]:
+    """Metadata evidence plus model notes (paths only) for one finished call."""
+    before, point = probe.before, probe.restore_point
     if before is None:
-        return None
+        review = scripted.build_review(
+            state=probe.state, reason=probe.reason, call_outcome=outcome, restore_point=point
+        )
+        return {"scripted_change_review": review}, []
     try:
         after = _status_snapshot(before.repo_root, workspace=workspace)
         changed = sorted(
             path for path in _changed_paths(before, after) if not _is_cache_path(path)
         )
-        return ShellChangeEvidence(
-            workspace_changed=bool(changed),
-            source_changed=any(_is_source_change(before, after, path) for path in changed),
-            created_untracked=_created_untracked_entries(before, after, changed),
+        source_paths = [path for path in changed if _is_source_change(before, after, path)]
+        created_untracked = _created_untracked_entries(before, after, changed)
+    except Exception as error:  # noqa: BLE001 - evidence is optional; the tool result is primary.
+        state, reason = _probe_failure(error)
+        review = scripted.build_review(
+            state=state, reason=reason, call_outcome=outcome, restore_point=point
         )
-    except Exception:  # noqa: BLE001 - evidence is optional; the tool result is primary.
-        return None
+        return {"scripted_change_review": review}, []
+    diffs = _scripted_diffs_fail_soft(probe, before, after, changed, workspace)
+    evidence: dict[str, object] = {
+        "workspace_changed": bool(changed),
+        "source_changed": bool(source_paths),
+    }
+    if diffs.diffs:
+        evidence["diffs"] = diffs.diffs
+    evidence["scripted_change_review"] = scripted.build_review(
+        state=scripted.observed_state(diffs), call_outcome=outcome,
+        changed_paths=changed, diffs=diffs, restore_point=point,
+    )
+    notes = _model_notes(before, after, source_paths, created_untracked)
+    if created_untracked:
+        evidence["created_untracked_paths"] = list(created_untracked[:MAX_STRAY_NOTE_ENTRIES])
+    return evidence, notes
+
+
+def _model_notes(
+    before: WorktreeSnapshot,
+    after: WorktreeSnapshot,
+    source_paths: list[str],
+    created_untracked: tuple[str, ...],
+) -> list[tuple[str, str]]:
+    """Path-only lines: source files the call rewrote, then new stray outputs."""
+    notes: list[tuple[str, str]] = []
+    rewritten = [path for path in source_paths if not _created_untracked(before, after, path)]
+    if rewritten:
+        notes.append(
+            ("scripted_edit_note", scripted.scripted_edit_note(scripted.order_paths(rewritten)))
+        )
+    if created_untracked:
+        notes.append(("new_untracked_files", _stray_note(created_untracked)))
+    return notes
+
+
+def _scripted_diffs_fail_soft(
+    probe: _ShellProbe,
+    before: WorktreeSnapshot,
+    after: WorktreeSnapshot,
+    changed: list[str],
+    workspace: WorkspaceGuard,
+) -> scripted.ScriptedDiffs:
+    try:
+        return scripted.build_scripted_diffs(
+            repo_root=before.repo_root,
+            workspace_root=workspace.require_root().resolve(),
+            changed=changed,
+            before_status=before.status,
+            after_status=after.status,
+            preimages=probe.preimages,
+            run_git=lambda args: _run_git_raw(args, cwd=before.repo_root, workspace=workspace),
+            diff_id_prefix=probe.diff_id_prefix,
+        )
+    except Exception:  # noqa: BLE001 - the changed paths are still reported.
+        return scripted.summary_only_diffs(changed, probe.diff_id_prefix, "unknown")
+
+
+def _call_outcome(result: ToolHandlerResult) -> str:
+    if result.metadata.get("timed_out") is True:
+        return "timed_out"
+    return "succeeded" if result.success else "failed"
+
+
+def _created_untracked(before: WorktreeSnapshot, after: WorktreeSnapshot, path: str) -> bool:
+    return after.status.get(path) == "??" and before.status.get(path) != "??"
 
 
 def _is_source_like(path: str) -> bool:
-    return PurePosixPath(path).suffix.lower() in _SOURCE_SUFFIXES
+    return scripted.is_source_like(path)
 
 
 def _is_source_change(before: WorktreeSnapshot, after: WorktreeSnapshot, path: str) -> bool:
@@ -310,9 +478,7 @@ def _created_untracked_entries(
     """New untracked, non-source outputs; 2+ under one top-level folder collapse."""
     strays = [
         path for path in changed
-        if after.status.get(path) == "??"
-        and before.status.get(path) != "??"
-        and not _is_source_like(path)
+        if _created_untracked(before, after, path) and not _is_source_like(path)
     ]
     by_folder: dict[str, list[str]] = {}
     for path in strays:
@@ -322,11 +488,7 @@ def _created_untracked_entries(
         f"{key} ({len(paths)} files)" if len(paths) > 1 else paths[0]
         for key, paths in sorted(by_folder.items())
     ]
-    return tuple(_printable(entry) for entry in entries)
-
-
-def _printable(text: str) -> str:
-    return "".join(char if char.isprintable() else "?" for char in text)
+    return tuple(scripted.printable(entry) for entry in entries)
 
 
 def _stray_note(entries: tuple[str, ...]) -> str:
@@ -340,15 +502,18 @@ def _stray_note(entries: tuple[str, ...]) -> str:
     return f"{_STRAY_NOTE_PREFIX}{body}{suffix}"
 
 
-def _with_stray_note(output: str, note: str) -> str:
-    """One more line for the model; a JSON object result gains a key instead."""
+def _with_model_notes(output: str, notes: list[tuple[str, str]]) -> str:
+    """One more line per note for the model; a JSON object result gains keys instead."""
+    if not notes:
+        return output
     try:
         payload = json.loads(output)
     except ValueError:
         payload = None
     if isinstance(payload, dict):
-        return json.dumps({**payload, "new_untracked_files": note}, ensure_ascii=False, indent=2)
-    return f"{output}\n{note}" if output else note
+        return json.dumps({**payload, **dict(notes)}, ensure_ascii=False, indent=2)
+    lines = [output] if output else []
+    return "\n".join([*lines, *(note for _key, note in notes)])
 
 
 def _is_cache_path(path: str) -> bool:
@@ -540,7 +705,7 @@ def _status_snapshot(
     )
     status = _parse_porcelain(raw_status)
     if len(status) > MAX_STATUS_PATHS:
-        raise ToolExecutionFailure(
+        raise _StatusOverLimit(
             code=CMP_TOOL_INVALID_PATH,
             message=f"worktree status exceeds {MAX_STATUS_PATHS} path limit",
             retryable=False,

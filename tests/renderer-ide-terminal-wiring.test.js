@@ -131,3 +131,23 @@ test('sendCommand is a false no-op when its API is unavailable', async () => {
     assert.equal(await panel.sendCommand('pwd'), false);
   });
 });
+
+test('createIdeTerminalSet passes the options through to the set module', () => {
+  const { createIdeTerminalSet } = require('../renderer/features/renderer-ide-terminal-wiring');
+  const seen = [];
+  const set = { set: true };
+  const opts = {
+    ptyTerminalPanelUtils: ptyUtils({}),
+    terminalSetUtils: { createIdeTerminalSet(o) { seen.push(o); return set; } },
+  };
+  assert.equal(createIdeTerminalSet(opts), set);
+  assert.equal(seen[0], opts, 'same options object');
+});
+
+test('createIdeTerminalSet resolves the real set module and refuses without the panel module', () => {
+  const { createIdeTerminalSet } = require('../renderer/features/renderer-ide-terminal-wiring');
+  const real = createIdeTerminalSet({ ptyTerminalPanelUtils: { createIdePtyTerminalPanel() { return {}; } } });
+  assert.equal(typeof real.newTerminal, 'function');
+  assert.equal(createIdeTerminalSet({}), null);
+  assert.equal(createIdeTerminalSet(), null);
+});

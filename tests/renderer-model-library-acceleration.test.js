@@ -32,7 +32,7 @@ function makeDom() {
 }
 
 function makeState({ accelerationFlag = false, mode = 'off', catalog, managed } = {}) {
-  const featureFlags = { model_management_ui: true };
+  const featureFlags = {};
   if (accelerationFlag) featureFlags.llama_server_acceleration = true;
   const openaiCompatible = { acceleration: { mode, draftNMax: 4 } };
   if (managed !== undefined) openaiCompatible.managed = managed;

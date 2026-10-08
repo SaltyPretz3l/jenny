@@ -6,6 +6,8 @@ so a third-party server's actual explanation never reached the raised error.
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any
 
 import pytest
@@ -63,3 +65,69 @@ def test_error_data_detail_serializes_non_json_values() -> None:
     assert mcp_error_data_detail({"when": object}).startswith('{"when": ')
     assert mcp_error_data_detail([1, 2]) == "[1, 2]"
     assert mcp_error_data_detail({}) == ""
+
+
+# Row 34 S2: the builtin server's ``observed_changes`` travels as a typed field,
+# never inside ``detail``, ``to_metadata()`` or a log line.
+def _review(**overrides: object) -> dict[str, object]:
+    return {
+        "schema_version": 1, "state": "observed", "certainty": "observed_during_call",
+        "call_outcome": "failed", "changed_paths": ["a.py"], "changed_path_count": 1,
+        "diff_count": 1, "summary_only_count": 0, "omitted_count": 0,
+        "coverage": "git_status_paths", **overrides,
+    }
+
+
+def test_observed_changes_map_to_a_typed_field_kept_out_of_metadata_and_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    diffs = [{"diff_id": "scripted:op:0", "path": "a.py", "hunks": [{"lines": ["+BODY_MARK"]}]}]
+    error = _raise({
+        "code": "CMP-TOOL-0001",
+        "observed_changes": {"diffs": diffs, "scripted_change_review": _review(), "extra": 1},
+    })
+
+    assert error.observed_changes == {"diffs": diffs, "scripted_change_review": _review()}
+    assert error.detail is None
+    assert "observed_changes" not in error.to_metadata()
+    assert "BODY_MARK" not in json.dumps(error.to_metadata())
+    assert "BODY_MARK" not in caplog.text
+
+
+def test_an_oversize_observed_changes_payload_degrades_to_an_unavailable_review() -> None:
+    body = "+" + "x" * (600 * 1024)
+    diffs = [{"diff_id": "scripted:op:0", "path": "a.py", "hunks": [{"lines": [body]}]}]
+
+    error = _raise({"observed_changes": {"diffs": diffs, "scripted_change_review": _review()}})
+
+    assert error.observed_changes is not None
+    assert "diffs" not in error.observed_changes
+    review = error.observed_changes["scripted_change_review"]
+    assert (review["state"], review["reason"]) == ("unavailable", "payload_over_limit")
+    assert review["call_outcome"] == "failed"
+    assert review["diff_count"] == 0
+    assert review["changed_paths"] == []
+    assert "restore_point" not in review
+
+
+def test_an_oversize_payload_keeps_the_reviews_restore_point_and_drops_a_bad_one() -> None:
+    body = "+" + "x" * (600 * 1024)
+    diffs = [{"diff_id": "scripted:op:0", "path": "a.py", "hunks": [{"lines": [body]}]}]
+    point = {"kind": "git_checkpoint", "ref": "refs/jenny/checkpoints/s1/2",
+             "created_at": "2026-10-05T12:00:00.000Z"}
+
+    kept = _raise({"observed_changes": {
+        "diffs": diffs, "scripted_change_review": _review(restore_point=point)}})
+    dropped = _raise({"observed_changes": {
+        "diffs": diffs, "scripted_change_review": _review(restore_point={"kind": "git_checkpoint", "ref": "../x"})}})
+
+    assert kept.observed_changes["scripted_change_review"]["restore_point"] == point
+    assert "restore_point" not in dropped.observed_changes["scripted_change_review"]
+
+
+def test_a_malformed_observed_changes_value_is_ignored() -> None:
+    for value in ("text", [1], 3, None, {"diffs": "no"}, {"scripted_change_review": []}):
+        error = _raise({"code": "CMP-TOOL-0001", "observed_changes": value})
+        assert error.observed_changes is None
+        assert error.detail is None

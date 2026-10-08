@@ -31,6 +31,7 @@ test('hosted managed config applies an explicit closed tool capability policy', 
       tools_home_enabled: true,
       tools_preview_test_enabled: true,
       tools_task_board_enabled: true,
+      tools_project_notes_enabled: true,
       tools_verify_enabled: true,
       tools_image_generate_enabled: true,
       tools_workspace_present_enabled: true,
@@ -73,12 +74,12 @@ test('hosted managed config applies an explicit closed tool capability policy', 
   assert.equal(config.tools_lsp_enabled, false);
   assert.equal(config.tools_web_enabled, false);
   assert.equal(config.tools_subagents_enabled, false);
-  assert.equal(config.tools_subagent_batch_enabled, false);
   assert.equal(config.tools_connections_enabled, false);
   assert.equal(config.tools_load_skill_enabled, false);
   assert.equal(config.tools_future_enabled, false);
   assert.equal(config.tools_verify_enabled, false);
   assert.equal(config.tools_image_generate_enabled, false);
+  assert.equal(config.tools_project_notes_enabled, false, 'hosted forces project notes off whatever the desktop flag says');
   assert.equal(config.electron_tool_bridge_enabled, true);
   assert.equal(config.repo_delta_resume_enabled, false);
 });

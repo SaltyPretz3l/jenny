@@ -11,7 +11,7 @@ const {
   buildFeatureFlags,
   INTERNAL_FEATURE_FLAG_KEYS,
 } = require('../services/feature-flags.js');
-const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { loadRendererApp, waitForUi, openSettingsView } = require('./helpers/renderer-shell-harness');
 
 function createStorage(initial = {}) {
   const values = new Map(Object.entries(initial));
@@ -86,6 +86,7 @@ test('startup_animation flag defaults on and rolls back with JENNY_ENABLE_STARTU
 test('Settings > Appearance offers the Startup animation toggle and persists it', async (t) => {
   const app = await loadRendererApp();
   t.after(async () => app.dispose());
+  await openSettingsView(app.window);
   const { window } = app;
   const list = window.document.getElementById('appearanceHoloList');
   const toggle = list.querySelector('[data-inv-toggle="appearanceStartupAnimationToggle"]');

@@ -154,3 +154,27 @@ test('falls back to the active path when onChange is called without one', () => 
   timers.flush();
   assert.deepEqual(saves, ['src/app.js']);
 });
+
+test('with saveFile, an edit in a secondary editor group saves that file, not the primary one', () => {
+  const ide = { staleByPath: {}, openTabs: [{ path: 'a.js' }, { path: 'b.js', group: 'editor-2' }] };
+  const saves = [];
+  const timers = makeTimers();
+  const autoSave = createIdeAutoSave({
+    editorHost: {
+      getActivePath: () => 'a.js', // the primary group's tab
+      getDocumentKind: () => 'file',
+      isDirty: (p) => p === 'b.js',
+    },
+    getIde: () => ide,
+    saveFile: (path) => { saves.push(path); return Promise.resolve(true); },
+    isEnabled: () => true,
+    timers,
+  });
+  autoSave.onChange('b.js');
+  timers.flush();
+  assert.deepEqual(saves, ['b.js']);
+  ide.openTabs = [{ path: 'a.js' }]; // b.js closed before the timer fired
+  autoSave.onChange('b.js');
+  timers.flush();
+  assert.deepEqual(saves, ['b.js'], 'a closed tab is never written');
+});

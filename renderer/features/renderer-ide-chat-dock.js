@@ -4,17 +4,17 @@
  * node with appendChild preserves listeners + JS references, so the one
  * always-alive chat controller keeps driving the moved subtree.
  *
- * This module owns the dock container chrome, modelled on
- * renderer-ide-secondary-sidebar.js: the open/close lifecycle (it drives
- * [data-chatdock-open]/[data-chatdock-side] on #ideShell, which the CSS grid
- * matrix reads), the persisted width + side-aware resize drag, the
- * featherweight header (session picker + new-chat + collapse), and the idempotent
- * host reconcile. The reconcile is DRIVEN from the top of the chat pipeline's
- * renderLayout so nodes are re-homed before any visibility toggle flips
- * calling it repeatedly is a no-op when hosts already match.
+ * This module owns the session row (picker + New chat) and the idempotent host
+ * reconcile. The Workspace (deps.workbench) places the chat view and owns its
+ * open/close, width and the Chat | Changes views; the dock reads the open state
+ * the workbench derives and mirrors it to state.ui.ideChatDockOpen. The reconcile
+ * is DRIVEN from the top of the chat pipeline's renderLayout so nodes are
+ * re-homed before any visibility toggle flips; calling it repeatedly is a no-op
+ * when hosts already match. It also keeps the chat's unread signal for the
+ * workbench (hasUnread).
  *
  * Flag-off (ide_chat_dock=false) is byte-identical: reconcile resolves the
- * desired host to #chatView and the toggle entry points are never wired. */
+ * desired host to #chatView and the open entry points are inert. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(require('./renderer-ide-chip-picker'), require('../chat/chat-scroll-utils'));
@@ -28,20 +28,11 @@
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
-  // Mirror the renderer-ide-state.js clamp bounds (UMD module can't import it,
-  // same precedent as the secondary sidebar's clamp mirror). These are the
-  // dock's OWN design bounds, not the secondary sidebar's.
-  const MIN_CHAT_DOCK_WIDTH = 320;
-  const MAX_CHAT_DOCK_WIDTH = 2400;
-  const KEYBOARD_RESIZE_STEP = 24;
-
-  // 15px Tabler glyphs, stroke 1.6, currentColor (featherweight header spec).
+  // 15px Tabler glyph, stroke 1.6, currentColor (featherweight header spec).
   const PLUS_GLYPH = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5l0 14"></path><path d="M5 12l14 0"></path></svg>';
-  const CHEVRON_LEFT_GLYPH = '<svg class="icon-mirror-rtl" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6l6 6"></path></svg>';
-  const CHEVRON_RIGHT_GLYPH = '<svg class="icon-mirror-rtl" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6l-6 6"></path></svg>';
 
-  function resolveInventoryPrimitive(globalName, requirePath) {
-    if (typeof globalRef[globalName] === 'function') {
+  function resolveModule(globalName, requirePath) {
+    if (globalRef[globalName]) {
       return globalRef[globalName];
     }
     if (typeof require === 'function') {
@@ -54,23 +45,10 @@
     return null;
   }
 
-  function clampWidth(value, maxWidth = MAX_CHAT_DOCK_WIDTH) {
-    const width = Number(value);
-    const dynamicMax = Number.isFinite(Number(maxWidth))
-      ? Math.min(MAX_CHAT_DOCK_WIDTH, Math.max(MIN_CHAT_DOCK_WIDTH, Math.trunc(Number(maxWidth))))
-      : MAX_CHAT_DOCK_WIDTH;
-    if (!Number.isFinite(width)) {
-      return MIN_CHAT_DOCK_WIDTH;
-    }
-    return Math.min(dynamicMax, Math.max(MIN_CHAT_DOCK_WIDTH, Math.trunc(width)));
-  }
-
   function createIdeChatDock(deps) {
     const state = deps?.state || {};
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
-    const requestRender = typeof deps?.requestRender === 'function' ? deps.requestRender : noop;
-    const schedulePersist = typeof deps?.schedulePersist === 'function' ? deps.schedulePersist : noop;
     // Monaco relayout after the grid gains/loses the dock column.
     const layoutIdeEditor = typeof deps?.layoutIdeEditor === 'function' ? deps.layoutIdeEditor : noop;
     // Chat-side effects that must follow a host move; the render pipeline owns
@@ -81,8 +59,12 @@
     const showShellErrorToast = typeof deps?.showShellErrorToast === 'function' ? deps.showShellErrorToast : noop;
     const appendClientLog = typeof deps?.appendClientLog === 'function' ? deps.appendClientLog : noop;
     const noteProgrammaticWrite = typeof deps?.noteProgrammaticWrite === 'function' ? deps.noteProgrammaticWrite : noop;
-    const getMaxWidth = typeof deps?.getMaxWidth === 'function' ? deps.getMaxWidth : () => Infinity;
-    const actionButton = resolveInventoryPrimitive('inventoryActionButton', '../inventory/action-button');
+    const focusEditor = typeof deps?.focusEditor === 'function' ? deps.focusEditor : noop;
+    // Row 40 W3: the chat is a workbench view. The workbench owns the open state
+    // (the chat stack), the Chat | Changes views, collapse and width; this module
+    // keeps the session row and the transcript relocation.
+    const workbench = deps?.workbench && typeof deps.workbench.setOpen === 'function' ? deps.workbench : null;
+    const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
     const windowRef = deps?.windowRef || globalRef.window || globalRef;
     const createSessionPicker = chatSessionPickerModule?.createIdeChatSessionPicker;
     const sessionPicker = typeof createSessionPicker === 'function'
@@ -94,13 +76,18 @@
         appendClientLog,
       })
       : null;
+    // The Changes view host and the chat unread signal; deps.changesView carries the view deps.
+    const changesTabsModule = deps?.changesView && workbench ? resolveModule('rendererIdeChatDockChanges', './renderer-ide-chat-dock-changes') : null;
+    const changesTabs = changesTabsModule?.createChatDockChanges?.({
+      getDom, appendClientLog, focusChatInput: () => resolveChatNodes().chatInput?.focus?.(), workbench, ...deps.changesView,
+      // Outside the Workspace the chat is on screen in the Chat view: nothing there is unread.
+      isChatOnScreen: () => state.ui?.activeView !== 'ide' || workbench?.isVisible('chat') === true,
+    }) || null;
     const anchorRegistry = typeof scrollUtils?.createLogicalScrollAnchorRegistry === 'function'
       ? scrollUtils.createLogicalScrollAnchorRegistry({ cap: 32 })
       : null;
 
     let boundHeader = null;
-    let boundResizer = null;
-    let dragState = null; // { startX, startWidth }
     let focusComposerOnDock = false;
     let anchorSessionId = '';
     let anchorSurface = '';
@@ -118,29 +105,6 @@
 
     function isDockOpen() {
       return isFlagOn() && getIde().chatDockOpen === true;
-    }
-
-    function dockSide() {
-      return getIde().chatDockSide === 'left' ? 'left' : 'right';
-    }
-
-    function dynamicMaxWidth() {
-      return clampWidth(MAX_CHAT_DOCK_WIDTH, getMaxWidth());
-    }
-
-    function effectiveWidth() {
-      return clampWidth(getIde().chatDockWidth, dynamicMaxWidth());
-    }
-
-    // The width a drag or keyboard step SAVES (the rail's rule): a request past
-    // the viewport ceiling keeps the saved preference (or raises it to the
-    // ceiling) instead of overwriting it with the clamp.
-    function resolveSavedWidth(requested) {
-      const bounded = clampWidth(requested);
-      const ceiling = dynamicMaxWidth();
-      const shown = clampWidth(bounded, ceiling);
-      // At the ceiling (past it, or exactly on it) the saved preference is kept.
-      return shown >= ceiling ? Math.max(clampWidth(getIde().chatDockWidth), shown) : shown;
     }
 
     function syncUiMirror() {
@@ -174,44 +138,10 @@
       };
     }
 
-    function applyWidthVar() {
-      const shell = getDom().ideShell || null;
-      if (!shell?.style) {
-        return;
-      }
-      const width = effectiveWidth();
-      const next = `${width}px`;
-      if (shell.style.getPropertyValue('--ide-chat-dock-width') !== next) {
-        shell.style.setProperty('--ide-chat-dock-width', next);
-      }
-      const resizer = getDom().ideChatDockResizer;
-      if (resizer) {
-        resizer.setAttribute('aria-valuemin', String(MIN_CHAT_DOCK_WIDTH));
-        resizer.setAttribute('aria-valuemax', String(dynamicMaxWidth()));
-        resizer.setAttribute('aria-valuenow', String(width));
-      }
-    }
-
-    // Drive [data-chatdock-open]/[data-chatdock-side] on #ideShell (the CSS
-    // grid matrix reads both) and hide the container + resizer while collapsed.
-    function applyOpenState() {
-      const dom = getDom();
+    // Hide the aside while the chat stack is closed (the workbench host hides it too).
+    function applyHidden() {
       const open = isDockOpen();
-      const openAttr = open ? 'true' : 'false';
-      const side = dockSide();
-      if (dom.ideShell) {
-        if (dom.ideShell.getAttribute('data-chatdock-open') !== openAttr) {
-          dom.ideShell.setAttribute('data-chatdock-open', openAttr);
-        }
-        if (dom.ideShell.getAttribute('data-chatdock-side') !== side) {
-          dom.ideShell.setAttribute('data-chatdock-side', side);
-        }
-      }
-      if (dom.ideChatDock && dom.ideChatDock.dataset.dockSide !== side) {
-        dom.ideChatDock.dataset.dockSide = side;
-      }
-      dom.ideChatDock?.classList.toggle('hidden', !open);
-      dom.ideChatDockResizer?.classList.toggle('hidden', !open);
+      getDom().ideChatDock?.classList.toggle('hidden', !open);
       return open;
     }
 
@@ -422,14 +352,11 @@
     function reconcile() {
       if (disposed) return false;
       syncUiMirror();
-      // Flag-off is byte-identical: no shell attributes, no chrome, no width
-      // var are ever written — only the (no-op) restore-path host check runs.
+      // Flag-off is byte-identical: no chrome is ever written; only the (no-op)
+      // restore-path host check runs.
       if (isFlagOn()) {
-        const open = applyOpenState();
-        if (open) {
-          applyWidthVar();
-          renderHeader();
-        }
+        if (applyHidden()) renderHeader();
+        changesTabs?.sync(); // open or not: Changes may sit in another, open stack
       }
       const dom = getDom();
       const nodes = resolveChatNodes();
@@ -509,7 +436,9 @@
       if (focusedBeforeMove?.isConnected) {
         focusedBeforeMove.focus?.();
       } else if (shouldRestoreEditorFocus) {
-        nodes.ideEditorHost?.focus?.();
+        focusEditor();
+        // Focus did not land (still on <body> or in the dock being closed): use the chat's strip button or tab.
+        if (!doc?.activeElement || doc.activeElement === doc.body || focusIsInside(dom.ideChatDock, doc)) doc?.querySelector?.('[data-wb-strip="chat"], [data-wb-tab="chat"]')?.focus?.();
       }
       // After the focus restore: split view hands pane focus back from here.
       onHostChanged(false);
@@ -540,16 +469,7 @@
         dataset: { 'ide-chatdock-new-chat': '1' },
         trustedHtml: PLUS_GLYPH,
       });
-      // Collapse chevron points toward the dock's own edge.
-      const collapse = actionButton({
-        plain: true,
-        className: 'ide-chat-dock-action ide-chat-dock-collapse',
-        ariaLabel: jt('ide.chatDock.collapse', 'Collapse chat dock'),
-        title: jt('ide.chatDock.collapse', 'Collapse chat dock'),
-        dataset: { 'ide-chatdock-collapse': '1' },
-        trustedHtml: dockSide() === 'left' ? CHEVRON_LEFT_GLYPH : CHEVRON_RIGHT_GLYPH,
-      });
-      return sessionControl + `<div class="ide-chat-dock-header-actions">${newChat}${collapse}</div>`;
+      return sessionControl + `<div class="ide-chat-dock-header-actions">${newChat}</div>`;
     }
 
     function renderHeader() {
@@ -557,16 +477,13 @@
       if (!header) {
         return;
       }
-      if (!header.querySelector?.('[data-ide-chatdock-collapse]')) {
+      // The header can join the DOM map after the controller's one bindEvents pass (row 40
+      // gate: New chat and the session picker were dead): bind on its first render.
+      if (!boundHeader) bindEvents();
+      if (!header.querySelector?.('[data-ide-chatdock-new-chat]')) {
         const markup = buildHeaderMarkup();
         if (!markup) return;
         header.innerHTML = markup;
-      }
-      const collapse = header.querySelector?.('[data-ide-chatdock-collapse]');
-      const side = dockSide();
-      if (collapse && collapse.__jennyIdeChatDockSide !== side) {
-        collapse.innerHTML = side === 'left' ? CHEVRON_LEFT_GLYPH : CHEVRON_RIGHT_GLYPH;
-        collapse.__jennyIdeChatDockSide = side;
       }
       sessionPicker?.render();
     }
@@ -577,101 +494,37 @@
     }
 
     function open() {
-      if (!isFlagOn()) {
+      if (!isFlagOn() || !workbench) {
         return;
       }
-      getIde().chatDockOpen = true;
       focusComposerOnDock = true;
-      syncUiMirror();
-      schedulePersist();
-      requestRender();
+      workbench.setOpen(true);
     }
 
     function close() {
       sessionPicker?.close(false);
-      getIde().chatDockOpen = false;
       focusComposerOnDock = false;
-      syncUiMirror();
-      schedulePersist();
-      requestRender();
+      workbench?.setOpen(false);
     }
 
     function toggle() {
-      if (getIde().chatDockOpen === true) {
+      // A folded chat stack shows as a strip: toggle on what is seen.
+      if (workbench?.isVisible('chat') === true) {
         close();
       } else {
         open();
       }
     }
 
-    // ---- Header + resizer events -------------------------------------------
+    // ---- Header events -----------------------------------------------------
     function handleHeaderClick(event) {
       const target = event.target;
       if (!target || typeof target.closest !== 'function') {
         return;
       }
-      if (target.closest('[data-ide-chatdock-collapse]')) {
-        close();
-        return;
-      }
       if (target.closest('[data-ide-chatdock-new-chat]')) {
         onNewChat();
-        return;
       }
-    }
-
-    function handlePointerMove(event) {
-      if (!dragState) {
-        return;
-      }
-      // The grab edge is the dock's INNER edge (facing the editor): dock on the
-      // left -> dragging right widens; dock on the right -> dragging left widens.
-      // Under dir=rtl the grid mirrors, so the persisted side is the physical opposite.
-      const rtl = (event.target?.ownerDocument || event.target?.document || (typeof document !== 'undefined' ? document : null))?.documentElement?.dir === 'rtl';
-      const delta = (dockSide() === 'left') !== rtl
-        ? event.clientX - dragState.startX
-        : dragState.startX - event.clientX;
-      getIde().chatDockWidth = resolveSavedWidth(dragState.startWidth + delta);
-      applyWidthVar();
-    }
-
-    function endDrag() {
-      if (!dragState) {
-        return;
-      }
-      dragState = null;
-      windowRef.removeEventListener?.('pointermove', handlePointerMove);
-      windowRef.removeEventListener?.('pointerup', endDrag);
-      windowRef.removeEventListener?.('pointercancel', endDrag);
-      schedulePersist();
-    }
-
-    function handleResizerPointerDown(event) {
-      if (typeof event.button === 'number' && event.button !== 0) {
-        return;
-      }
-      dragState = { startX: event.clientX, startWidth: effectiveWidth() };
-      try {
-        boundResizer?.setPointerCapture?.(event.pointerId);
-      } catch (_error) {
-        /* pointer capture is best-effort (absent in jsdom) */
-      }
-      windowRef.addEventListener?.('pointermove', handlePointerMove);
-      windowRef.addEventListener?.('pointerup', endDrag);
-      windowRef.addEventListener?.('pointercancel', endDrag);
-      event.preventDefault?.();
-    }
-
-    function handleResizerKeydown(event) {
-      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
-        return;
-      }
-      const growKey = dockSide() === 'left' ? 'ArrowRight' : 'ArrowLeft';
-      const step = event.key === growKey ? KEYBOARD_RESIZE_STEP : -KEYBOARD_RESIZE_STEP;
-      getIde().chatDockWidth = resolveSavedWidth(effectiveWidth() + step);
-      applyWidthVar();
-      schedulePersist();
-      event.preventDefault();
     }
 
     function bindEvents() {
@@ -682,29 +535,19 @@
         boundHeader.addEventListener('click', handleHeaderClick);
         sessionPicker?.bindEvents(boundHeader);
       }
-      if (dom.ideChatDockResizer && !boundResizer) {
-        boundResizer = dom.ideChatDockResizer;
-        boundResizer.addEventListener('pointerdown', handleResizerPointerDown);
-        boundResizer.addEventListener('keydown', handleResizerKeydown);
-      }
     }
 
     function dispose() {
       if (disposed) return;
       disposed = true;
-      endDrag();
       cancelPendingAnchorRestore();
       anchorRegistry?.dispose?.();
       preparedSessionTransition = null;
       sessionPicker?.dispose();
+      changesTabs?.dispose();
       if (boundHeader) {
         boundHeader.removeEventListener('click', handleHeaderClick);
         boundHeader = null;
-      }
-      if (boundResizer) {
-        boundResizer.removeEventListener('pointerdown', handleResizerPointerDown);
-        boundResizer.removeEventListener('keydown', handleResizerKeydown);
-        boundResizer = null;
       }
     }
 
@@ -716,16 +559,21 @@
       reconcile,
       prepareSessionTransition,
       render,
-      // Re-apply the shown width through the live clamp (a side panel moved).
-      syncWidth: applyWidthVar,
+      // Only while the chat is docked: otherwise the side panel shows the review.
+      // A review asked for from Chat 2 (the Workspace's second chat) opens its own Changes 2.
+      revealChanges: (target) => (target?.secondChat === true ? deps?.revealSecondChanges?.(target) === true
+        : changesTabs && shouldDock() ? changesTabs.reveal(target) : false),
+      // Reveals the Changes view where it sits; the chat stack stays as it is.
+      openChanges: (target) => (changesTabs && isFlagOn() && state.ui?.activeView === 'ide' ? changesTabs.reveal(target || {}) : false),
       toggle,
+      toggleChangesTab: () => changesTabs?.toggle() || false,
+      getChangesWaitingCount: () => changesTabs?.waitingCount?.() || 0,
+      // New chat activity while the workbench chat view was hidden (cleared once it shows).
+      hasUnread: () => changesTabs?.hasUnread?.() || false,
     };
   }
 
   return {
-    MIN_CHAT_DOCK_WIDTH,
-    MAX_CHAT_DOCK_WIDTH,
-    clampWidth,
     createIdeChatDock,
   };
 });

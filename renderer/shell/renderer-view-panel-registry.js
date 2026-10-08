@@ -20,7 +20,6 @@
     ide: { panel: null },
     memory: { panel: null },
     artifacts: { panel: null },
-    plugin: { panel: 'chat-sessions', defaultWidth: 320, collapsible: true, dock: 'left' },
     logs: { panel: null },
     settings: { panel: null },
   };

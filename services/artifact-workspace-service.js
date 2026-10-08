@@ -18,8 +18,10 @@ const {
 const { parsePngDimensions } = require('./png-metadata-utils');
 const { createPreviewScreenshot } = require('./preview-screenshot-store');
 const { isJennyStateDirRoot } = require('./workspace-root-identity');
+const { ensureJennyDirGitignore } = require('./jenny-project-dir');
 const { ArtifactSessionAuthority, createSessionArtifactWorkspaceFacade } = require('./artifact-session-authority');
 const { cloneSessionArtifactsForBranch } = require('./artifact-branch-workspace');
+const { resolveRealPath, assertRealPathInside, assertSessionScratchDirUnredirected } = require('./artifact-scratch-containment');
 const {
   deleteSessionArtifactsForScope,
   prepareSessionArtifactDeletion,
@@ -330,11 +332,14 @@ class ArtifactWorkspaceService {
     this._assertSessionScopeCurrent(scope);
     await this._fs.mkdir(scratchDir, { recursive: true });
     this._assertSessionScopeCurrent(scope);
+    await ensureJennyDirGitignore(this._path.join(workspaceRoot, '.jenny'), { fs: this._fs });
+    this._assertSessionScopeCurrent(scope);
 
     const realWorkspaceRoot = await this._fs.realpath(workspaceRoot);
     this._assertSessionScopeCurrent(scope);
     const realScratchDir = await this._fs.realpath(scratchDir);
     this._assertSessionScopeCurrent(scope);
+    this._assertScratchDirUnredirected(realWorkspaceRoot, realScratchDir, sessionId);
     this._assertPathInside(
       realWorkspaceRoot,
       realScratchDir,
@@ -681,6 +686,7 @@ class ArtifactWorkspaceService {
         .realpath(rootResolved)
         .catch(() => rootResolved);
       this._assertSessionScopeCurrent(scope);
+      this._assertScratchDirUnredirected(realWorkspaceRoot, realScratchDir, safeSessionId);
       this._assertPathInside(
         realWorkspaceRoot,
         realScratchDir,
@@ -750,20 +756,15 @@ class ArtifactWorkspaceService {
   }
 
   async _resolveRealPath(targetPath) {
-    return this._fs.realpath(targetPath);
+    return resolveRealPath(this._fs, targetPath);
   }
 
   async _assertRealPathInside(targetPath, parentPath) {
-    const realTarget = await this._resolveRealPath(targetPath);
-    const realParent = await this._resolveRealPath(parentPath);
-    if (!isPathInside(this._path, realParent, realTarget)) {
-      throw artifactError(
-        ARTIFACT_ERROR_CODES.REAL_PATH_ESCAPES,
-        'Resolved path escapes the expected parent directory.'
-      );
-    }
-    return realTarget;
+    return assertRealPathInside(this._fs, this._path, targetPath, parentPath);
   }
+
+  _assertScratchDirUnredirected(realWorkspaceRoot, realScratchDir, sessionId) {
+    return assertSessionScratchDirUnredirected({ pathImpl: this._path, realWorkspaceRoot, realScratchDir, sessionId, sessionArtifactRoot: SESSION_ARTIFACT_ROOT }); }
 
   async deleteSessionArtifacts(sessionId) {
     return this._deleteSessionArtifacts(sanitizeSessionId(sessionId), null); }
@@ -841,7 +842,7 @@ class ArtifactWorkspaceService {
    *   { cloned: true, files, bytes, rewriteEntry } |
    *   { cloned: false, reason, bytes? } with reason one of
    *   workspace_root_unavailable | source_scratch_missing |
-   *   size_cap_exceeded | entry_cap_exceeded | copy_failed.
+   *   scratch_redirected | size_cap_exceeded | entry_cap_exceeded | copy_failed.
    * A failed copy removes the partial target dir it created. `rewriteEntry`
    * rebases one `generated_artifacts` entry (id, display_path,
    * absolute_path) onto the branch; it returns null for entries that do not

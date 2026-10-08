@@ -13,6 +13,12 @@
  * to the clipboard with a toast (paste into a Chromium-compatible DevTools window to attach). The raw
  * ws:// line stays visible in the Terminal panel - the "terminal echo".
  *
+ * Multi-terminal (row 40 W4): when `openTaskTerminal` is wired, the launch opens
+ * its OWN terminal through it (resolving null when none of the four is free),
+ * subscribes to that terminal's session-filtered onData and sends the command
+ * there, so it never types into the user's own shell. Without it the legacy
+ * single-terminal flow above is unchanged.
+ *
  * Why no IPC / no native module: CDP is just a websocket the EXTERNAL DevTools
  * front-end speaks; we only launch the process (via the terminal panel's
  * sanctioned command write) and surface the URL. There is no renderer-callable
@@ -84,6 +90,11 @@
     const getWorkspacePtyApi = typeof options.getWorkspacePtyApi === 'function'
       ? options.getWorkspacePtyApi
       : () => null;
+    // Opens a dedicated terminal: resolves { sendCommand(builder), onData(cb) -> unsubscribe }
+    // once its session is live, or null when no terminal is free.
+    const openTaskTerminal = typeof options.openTaskTerminal === 'function' ? options.openTaskTerminal : null;
+    // W7c: the terminal the launch should use, read when Debug starts (focus can move during the save).
+    const captureTaskTarget = typeof options.captureTaskTarget === 'function' ? options.captureTaskTarget : () => undefined;
     const getClipboardApi = typeof options.getClipboardApi === 'function' ? options.getClipboardApi : () => null;
     // Opens the bottom panel on the Terminal tab (the terminal moved off the rail)
     // so node's ws:// banner is visible there; the controller wires this.
@@ -196,8 +207,9 @@
         toast(jt('ide.debug.javascriptOnly', 'Debugging is currently available for JavaScript files only.'));
         return;
       }
-      const terminal = getWorkspacePtyApi();
-      if (!terminal || typeof terminal.onData !== 'function') {
+      const terminal = openTaskTerminal ? null : getWorkspacePtyApi();
+      const taskTarget = openTaskTerminal ? captureTaskTarget() : undefined;
+      if (!openTaskTerminal && (!terminal || typeof terminal.onData !== 'function')) {
         toast(jt('ide.debug.terminalUnavailable', 'The workspace terminal is unavailable in this shell mode.'));
         return;
       }
@@ -229,36 +241,44 @@
       const stripper = typeof ansiStreamUtils.createAnsiStreamStripper === 'function'
         ? ansiStreamUtils.createAnsiStreamStripper()
         : { push: (text) => text };
+      const handleData = (payload) => {
+        if (settled) {
+          return;
+        }
+        const chunk = payload && typeof payload.data === 'string' ? stripper.push(payload.data) : '';
+        if (!chunk) {
+          return;
+        }
+        // Match only COMPLETE lines so a banner split across chunks (e.g.
+        // ".../127.0.0.1:92" then "29/uuid") never matches a truncated ws URL;
+        // the partial tail is retained (capped) until its newline arrives.
+        buffer += chunk;
+        const lastNewline = buffer.lastIndexOf('\n');
+        if (lastNewline === -1) {
+          buffer = buffer.slice(-BUFFER_CAP);
+          return;
+        }
+        const completeLines = buffer.slice(0, lastNewline);
+        buffer = buffer.slice(lastNewline + 1).slice(-BUFFER_CAP);
+        const match = WS_BANNER_RE.exec(completeLines);
+        if (match) {
+          copyInspectorUrl(match[1]);
+        }
+      };
       // Subscribe BEFORE writing the command so the banner is never missed (the
-      // child can emit before the write promise resolves).
-      try {
-        activeUnsub = terminal.onData((payload) => {
-          if (settled) {
-            return;
-          }
-          const chunk = payload && typeof payload.data === 'string' ? stripper.push(payload.data) : '';
-          if (!chunk) {
-            return;
-          }
-          // Match only COMPLETE lines so a banner split across chunks (e.g.
-          // ".../127.0.0.1:92" then "29/uuid") never matches a truncated ws URL;
-          // the partial tail is retained (capped) until its newline arrives.
-          buffer += chunk;
-          const lastNewline = buffer.lastIndexOf('\n');
-          if (lastNewline === -1) {
-            buffer = buffer.slice(-BUFFER_CAP);
-            return;
-          }
-          const completeLines = buffer.slice(0, lastNewline);
-          buffer = buffer.slice(lastNewline + 1).slice(-BUFFER_CAP);
-          const match = WS_BANNER_RE.exec(completeLines);
-          if (match) {
-            copyInspectorUrl(match[1]);
-          }
-        }) || null;
-      } catch (error) {
-        appendClientLog('WARN', 'ide.debug.subscribe_failed', { message: messageOf(error) });
-        finishWith(() => toast(jt('ide.debug.attachFailed', 'Could not attach to the terminal output.')));
+      // child can emit before the write promise resolves). With a dedicated task
+      // terminal the subscription is made once that terminal is open (below).
+      const subscribe = (onData) => {
+        try {
+          activeUnsub = onData(handleData) || null;
+          return true;
+        } catch (error) {
+          appendClientLog('WARN', 'ide.debug.subscribe_failed', { message: messageOf(error) });
+          finishWith(() => toast(jt('ide.debug.attachFailed', 'Could not attach to the terminal output.')));
+          return false;
+        }
+      };
+      if (!openTaskTerminal && !subscribe((fn) => terminal.onData(fn))) {
         return;
       }
 
@@ -277,12 +297,34 @@
           finishWith(() => toast(jt('ide.debug.launchFailed', 'Could not launch the debug session.')));
           return;
         }
-        // Reveal the Terminal tab first so the panel owns (spawns and sizes) the
-        // PTY session and node's output - including the ws:// banner - is
-        // visible there. The builder runs after the session is up and refuses
-        // (throws, so nothing is written) once this launch is stale.
-        openTerminalPanel();
-        const sent = await sendTerminalCommand((shell) => {
+        let sendCommand = sendTerminalCommand;
+        if (openTaskTerminal) {
+          // Its own terminal (never the user's shell); a fresh session whose
+          // output - including the ws:// banner - is visible in its tab.
+          const task = await openTaskTerminal(taskTarget);
+          if (!launchIsCurrent(launchToken)) return;
+          if (task === false) {
+            // The terminal could not start; its panel has already said why.
+            appendClientLog('WARN', 'ide.debug.launch_failed', { message: 'task_terminal_start_failed' });
+            finishWith(() => {});
+            return;
+          }
+          if (!task) {
+            appendClientLog('WARN', 'ide.debug.launch_failed', { message: 'no_free_terminal' });
+            finishWith(() => toast(jt('ide.debug.noFreeTerminal', 'Close a terminal to start the debugger (four are open).')));
+            return;
+          }
+          if (!subscribe((fn) => task.onData(fn))) return;
+          sendCommand = (builder) => task.sendCommand(builder);
+        } else {
+          // Reveal the Terminal tab first so the panel owns (spawns and sizes) the
+          // PTY session and node's output - including the ws:// banner - is
+          // visible there.
+          openTerminalPanel();
+        }
+        // The builder runs after the session is up and refuses (throws, so
+        // nothing is written) once this launch is stale.
+        const sent = await sendCommand((shell) => {
           if (!launchIsCurrent(launchToken)) throw new Error('stale debug launch');
           return 'node --inspect-brk ' + quoteArg(absoluteTarget(rootPath, path), shell);
         });

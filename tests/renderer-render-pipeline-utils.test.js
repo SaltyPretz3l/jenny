@@ -627,7 +627,9 @@ test('render pipeline suppresses turn-article rollout diagnostics when the row-m
     pipeline.renderMessages({ forceFullRender: true });
   });
 
-  assert.deepEqual(rolloutSignals, []);
+  // The unified timeline_dom_write telemetry record is always on; only the
+  // row-model rollout diagnostics are suppressed.
+  assert.deepEqual(rolloutSignals.filter((entry) => entry.signal !== 'timeline_dom_write'), []);
 });
 
 test('streaming structural shift repaints the visible live article and syncs viewport', () => {

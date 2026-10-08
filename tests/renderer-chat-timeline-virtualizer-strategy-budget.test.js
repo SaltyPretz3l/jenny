@@ -328,6 +328,86 @@ test('offscreen unmount work is capped at 64 entries per presentation frame', (t
   assert.equal(v._internals.getBudgetStats().normalMaterializedArticles, 0);
 });
 
+test('an unmount frame measures every row before it writes any placeholder', (t) => {
+  // A geometry read after a placeholder write forces a synchronous style and
+  // layout of the whole timeline; interleaving them cost two full layouts per
+  // frame and drained only ~2 rows of a 5000-row corpus per 50 ms frame.
+  const env = buildEnvironment();
+  t.after(() => env.restore());
+  const frames = [];
+  const win = {
+    performance: { now: () => 0 },
+    requestAnimationFrame(callback) { frames.push(callback); return frames.length; },
+    cancelAnimationFrame() {},
+  };
+  const entries = bulkEntries(200);
+  const v = createTimelineVirtualizer({
+    chatTimeline: makeChatTimeline(entries),
+    document: makeFakeDocument(),
+    window: win,
+  });
+  t.after(() => v.dispose());
+  v.rebuild();
+  const order = [];
+  for (const entry of entries) {
+    const read = entry.getBoundingClientRect;
+    const write = entry.setAttribute;
+    entry.getBoundingClientRect = function trackedRead() { order.push('read'); return read.call(this); };
+    entry.setAttribute = function trackedWrite(name, value) {
+      if (name === 'data-virtualized') order.push('write');
+      return write.call(this, name, value);
+    };
+  }
+  env.observers[0]._fire(entries.slice(0, 10).map((target) => ({ target, isIntersecting: false })));
+  assert.equal(frames.length, 1);
+  frames.shift()(16);
+
+  assert.deepEqual(order, [...Array(10).fill('read'), ...Array(10).fill('write')]);
+  assert.equal(v._internals.getBudgetStats().queueDepth, 0);
+  assert.ok(entries.slice(0, 10).every((entry) => entry.getAttribute('data-virtualized') === 'true'));
+});
+
+test('measured rows left when the write budget runs out are requeued for the next frame', (t) => {
+  const env = buildEnvironment();
+  t.after(() => env.restore());
+  const frames = [];
+  let clock = 0;
+  const win = {
+    performance: { now: () => clock },
+    requestAnimationFrame(callback) { frames.push(callback); return frames.length; },
+    cancelAnimationFrame() {},
+  };
+  const entries = bulkEntries(200);
+  const v = createTimelineVirtualizer({
+    chatTimeline: makeChatTimeline(entries),
+    document: makeFakeDocument(),
+    window: win,
+  });
+  t.after(() => v.dispose());
+  v.rebuild();
+  for (const entry of entries) {
+    const write = entry.setAttribute;
+    // Each placeholder write costs 5 ms of the 8 ms frame budget.
+    entry.setAttribute = function slowWrite(name, value) {
+      if (name === 'data-virtualized') clock += 5;
+      return write.call(this, name, value);
+    };
+  }
+  const targets = entries.slice(0, 10);
+  env.observers[0]._fire(targets.map((target) => ({ target, isIntersecting: false })));
+  frames.shift()(16);
+
+  assert.equal(targets.filter((entry) => entry.getAttribute('data-virtualized') === 'true').length, 2);
+  assert.equal(v._internals.getBudgetStats().queueDepth, 8);
+  assert.equal(frames.length, 1, 'the requeued rows get another frame');
+  while (frames.length) {
+    clock = 0;
+    frames.shift()(32);
+  }
+  assert.ok(targets.every((entry) => entry.getAttribute('data-virtualized') === 'true'));
+  assert.equal(v._internals.getBudgetStats().queueDepth, 0);
+});
+
 test('dispose cancels queued unmount work and all later public calls are inert', (t) => {
   const env = buildEnvironment();
   t.after(() => env.restore());

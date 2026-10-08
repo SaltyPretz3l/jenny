@@ -5,7 +5,7 @@ const path = require('path');
 const vm = require('node:vm');
 
 const {
-  SCRIPT_ORDER, IDE_SCRIPT_ORDER,
+  SCRIPT_ORDER, IDE_SCRIPT_ORDER, SETTINGS_SCRIPTS,
   extractRendererScriptOrder,
   isExcludedScriptSource,
 } = require('./helpers/renderer-shell-harness-support');
@@ -128,16 +128,15 @@ test('subagent monitor dependencies load before transcript consumers and app com
   }
 });
 
-test('plugin session controller loads after its view host and before app composition', () => {
+test('plugin session controller loads before app composition', () => {
   const requiredOrder = [
-    'renderer/shell/renderer-plugin-view-host.js',
     'renderer/shell/renderer-plugin-session-controller.js',
     'renderer/app/renderer-app-shell-bindings-mcp.js',
   ];
   for (const scripts of [productionScripts, SCRIPT_ORDER]) {
     const indexes = requiredOrder.map((source) => scripts.indexOf(source));
     assert.ok(indexes.every((index) => index >= 0));
-    assert.ok(indexes[0] < indexes[1] && indexes[1] < indexes[2]);
+    assert.ok(indexes[0] < indexes[1]);
   }
 });
 
@@ -206,7 +205,7 @@ test('File Map atlas factories load before the controller without CommonJS', () 
   );
 
   const browserContext = vm.createContext({});
-  for (const src of [...dependencies, controller]) {
+  for (const src of ['renderer/shared/string-utils.js', ...dependencies, controller]) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, src), 'utf8'), browserContext, { filename: src });
   }
   assert.equal(typeof browserContext.rendererIdeMapAtlasLayout?.layout, 'function');
@@ -258,8 +257,6 @@ test('code review renderer helpers load before synchronous consumers', () => {
     ['renderer/chat/renderer-code-review-affordance.js', 'renderer/chat/renderer-transcript-tool-calls.js'],
     ['renderer/chat/renderer-diff-hunks-render.js', 'renderer/chat/renderer-transcript-tool-calls.js'],
     ['renderer/chat/renderer-jenny-change-ledger.js', 'renderer/chat/renderer-transcript-tool-calls.js'],
-    ['renderer/chat/renderer-session-diff-review-model.js', 'renderer/shell/renderer-shell-artifact-bridge.js'],
-    ['renderer/features/renderer-code-review-render.js', 'renderer/shell/renderer-shell-artifact-bridge.js'],
     ['renderer/features/renderer-code-review-rail.js', 'renderer/shell/renderer-shell-artifact-bridge.js'],
   ];
 
@@ -339,6 +336,7 @@ test('chat turn view-model factories load before the row projector without Commo
   // resolution (resolveViewModelFactory) actually finds a live builder
   // instead of caching null forever.
   const chain = [
+    'renderer/shared/string-utils.js',
     'renderer/chat/renderer-turn-normalization-utils.js',
     'renderer/chat/renderer-row-identity-utils.js',
     'renderer/chat/renderer-turn-row-projector-utils.js',
@@ -397,6 +395,7 @@ test('stream rehydrate loads after the turn reducer + normalization utils withou
   }
 
   const chain = [
+    'renderer/shared/string-utils.js',
     'renderer/chat/chat-terminal-status-vocabulary.js',
     'renderer/chat/renderer-stream-terminal-state.js',
     'renderer/chat/renderer-turn-normalization-utils.js',
@@ -436,15 +435,18 @@ test('stream rehydrate loads after the turn reducer + normalization utils withou
   );
 });
 
-test('settings overlay and v2-surface builders load before settings-utils without CommonJS', () => {
+test('settings overlay and v2-surface builders load before their consumers without CommonJS', () => {
   const sharedDependencies = [
     'renderer/features/setup-scenes/scene-utils.js',
   ];
   const newModules = [
     'renderer/shell/renderer-settings-overlays.js',
-    'renderer/shell/renderer-settings-v2-surfaces.js',
   ];
-  const consumer = 'renderer/shell/renderer-settings-utils.js';
+  const consumer = 'renderer/shell/renderer-settings-chrome.js';
+  const settingsScriptOrder = [...SCRIPT_ORDER, ...SETTINGS_SCRIPTS];
+  assert.notEqual(SETTINGS_SCRIPTS.indexOf('renderer/shell/renderer-settings-v2-surfaces.js'), -1);
+  assert.notEqual(SETTINGS_SCRIPTS.indexOf('renderer/shell/renderer-settings-utils.js'), -1);
+  assert.ok(SETTINGS_SCRIPTS.indexOf('renderer/shell/renderer-settings-v2-surfaces.js') < SETTINGS_SCRIPTS.indexOf('renderer/shell/renderer-settings-utils.js'));
 
   for (const dependency of [...sharedDependencies, ...newModules]) {
     assert.notEqual(productionScripts.indexOf(dependency), -1, `index.html should load ${dependency}`);
@@ -461,10 +463,10 @@ test('settings overlay and v2-surface builders load before settings-utils withou
   // renderer-settings-v2-surfaces.js reads root.rendererSetupSceneUtils at parse time.
   for (const dependency of sharedDependencies) {
     assert.ok(
-      productionScripts.indexOf(dependency) < productionScripts.indexOf('renderer/shell/renderer-settings-v2-surfaces.js')
+      productionScripts.indexOf(dependency) < settingsScriptOrder.indexOf('renderer/shell/renderer-settings-v2-surfaces.js')
     );
     assert.ok(
-      SCRIPT_ORDER.indexOf(dependency) < SCRIPT_ORDER.indexOf('renderer/shell/renderer-settings-v2-surfaces.js')
+      SCRIPT_ORDER.indexOf(dependency) < settingsScriptOrder.indexOf('renderer/shell/renderer-settings-v2-surfaces.js')
     );
   }
 
@@ -474,11 +476,14 @@ test('settings overlay and v2-surface builders load before settings-utils withou
     'renderer/shared/log-view-utils.js',
     ...sharedDependencies,
     ...newModules,
+    consumer,
+    'renderer/shell/renderer-settings-v2-surfaces.js',
   ];
   const browserContext = vm.createContext({});
   for (const src of chain) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, src), 'utf8'), browserContext, { filename: src });
   }
+  assert.equal(typeof browserContext.rendererSettingsChrome?.createSettingsRenderer, 'function');
   assert.equal(typeof browserContext.rendererSettingsOverlays?.createSettingsOverlayRenderer, 'function');
   assert.equal(typeof browserContext.rendererSettingsV2Surfaces?.renderSettingsV2Surfaces, 'function');
 });
@@ -490,34 +495,7 @@ test('Playlist Scroll core loads before its controller in production and the she
   assert.ok(SCRIPT_ORDER.indexOf(core) < SCRIPT_ORDER.indexOf(controller));
 });
 
-test('plugin settings commands bind to the production chat send controller', async () => {
-  let pluginOptions = null;
-  const windowRef = {
-    rendererPluginsSettingsUtils: {
-      createPluginsSettingsController(options) {
-        pluginOptions = options;
-        return { bind() {}, render() {}, dispose() {} };
-      },
-    },
-  };
-  const browserContext = vm.createContext({ window: windowRef });
-  const source = 'renderer/app/renderer-app-shell-bindings-mcp.js';
-  vm.runInContext(fs.readFileSync(path.join(ROOT, source), 'utf8'), browserContext, { filename: source });
-
-  windowRef.rendererAppShellBindingsMcp.bindSettingsSectionControllers({
-    state: { currentSessionId: 'session-1', features: { featureFlags: { plugins: false } } },
-    windowRef,
-    documentRef: {},
-    callbacks: {},
-    constants: {},
-    registerCleanup() {},
-    controllers: {},
-  });
-
-  assert.ok(pluginOptions, 'plugin settings controller receives its production dependencies');
-});
-
- test('durable Send loads before its composer consumer; inspector modules stay lazy', () => {
+test('durable Send loads before its composer consumer; inspector modules stay lazy', () => {
   const durable = 'renderer/chat/renderer-durable-send.js';
   assert.ok(SCRIPT_ORDER.includes(durable));
   assert.ok(SCRIPT_ORDER.indexOf(durable) < SCRIPT_ORDER.indexOf('renderer/chat/renderer-send-utils.js'));

@@ -1,5 +1,7 @@
 'use strict';
 
+const { assertSessionScratchDirUnredirected } = require('./artifact-scratch-containment');
+
 async function deleteSessionArtifactsForScope(service, sessionId, scope, sessionArtifactRoot) {
   const workspaceRoot = scope.rootPath;
   if (!workspaceRoot) return { deleted: false };
@@ -16,7 +18,11 @@ async function deleteSessionArtifactsForScope(service, sessionId, scope, session
   await service._assertRealPathInside(artifactsRoot, workspaceRoot);
   service._assertSessionScopeCurrent(scope);
   await service._assertRealPathInside(scratchDir, artifactsRoot);
-  await service._assertRealPathInside(scratchDir, workspaceRoot);
+  const realScratchDir = await service._assertRealPathInside(scratchDir, workspaceRoot);
+  const realWorkspaceRoot = await service._resolveRealPath(workspaceRoot);
+  assertSessionScratchDirUnredirected({
+    pathImpl: service._path, realWorkspaceRoot, realScratchDir, sessionId, sessionArtifactRoot,
+  });
   service._assertSessionScopeCurrent(scope);
   await service._fs.rm(scratchDir, { recursive: true, force: true });
   service._logger('INFO', 'artifacts.session_deleted', { sessionId });

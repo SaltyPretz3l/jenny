@@ -14,7 +14,7 @@ async function loadRendererTestApp(t, options) {
   return app;
 }
 
-test('renderer splits tool-first completed turns into tool and assistant articles', async (t) => {
+test('renderer coalesces tool-first completed turns and preserves source-owned rows', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
   const input = window.document.getElementById('chatInput');
   const sendButton = window.document.getElementById('sendButton');
@@ -67,12 +67,11 @@ test('renderer splits tool-first completed turns into tool and assistant article
   await waitForUi(window, 30);
 
   const toolEntry = window.document.querySelector('article[data-message-id="tool_call_1"]');
-  const assistantEntry = window.document.querySelector('article[data-message-id="assistant_stream-test-1"]');
   const assistantNode = window.document.querySelector('.chat-thread-node[data-thread-message-id="assistant_stream-test-1"]');
   assert.ok(toolEntry);
   assert.ok(toolEntry.classList.contains('message-shell'));
   assert.equal(toolEntry.querySelector('.chat-avatar'), null, 'the legacy per-message avatar was removed by scroll-W4c — the sprite layer owns assistant identity');
-  assert.ok(assistantEntry, 'the post-tool assistant segment should own its visible final article');
+  assert.equal(window.document.querySelector('article[data-message-id="assistant_stream-test-1"]'), null);
   assert.ok(toolEntry.querySelector('.chat-message-content'));
   assert.ok(toolEntry.querySelector('.chat-message-content .turn-row-list[data-turn-row-list="true"]'));
   // Trace parity (D1/B6): the tool cluster no longer coalesces into a single
@@ -80,14 +79,12 @@ test('renderer splits tool-first completed turns into tool and assistant article
   // the tool_use message; its matching tool_result is a separate row.
   assert.ok(toolEntry.querySelector('.chat-message-content .chat-row[data-row-kind="tool_call"][data-source-message-id="tool_call_1"]'));
   assert.ok(toolEntry.querySelector('.chat-message-content .tool-call-row'));
-  assert.equal(toolEntry.querySelector('.chat-message-content .chat-row[data-row-kind="assistant_text"]'), null);
-  assert.ok(assistantEntry.querySelector('.chat-message-content .chat-row[data-row-kind="assistant_text"][data-source-message-id="assistant_stream-test-1"]'));
-  assert.ok(assistantEntry.querySelector('.chat-message-content .chat-hover-row[data-message-id="assistant_stream-test-1"]'));
+  assert.ok(toolEntry.querySelector('.chat-message-content .chat-row[data-row-kind="assistant_text"][data-source-message-id="assistant_stream-test-1"]'));
+  assert.ok(toolEntry.querySelector('.chat-message-content .chat-hover-row[data-message-id="assistant_stream-test-1"]'));
   assert.ok(assistantNode);
-  assert.equal(
+  assert.ok(
     assistantNode.querySelector('.thread-compat-anchor[data-message-id="assistant_stream-test-1"]'),
-    null,
-    'assistant nodes with owned visible rows should not be hidden compat anchors'
+    'the assistant message keeps its anchor while its rows render in the turn article'
   );
   assert.equal(
     toolEntry.closest('.chat-thread-node')?.getAttribute('data-thread-parent'),
@@ -95,7 +92,7 @@ test('renderer splits tool-first completed turns into tool and assistant article
     'tool-first turns should keep the tool article attached to the user turn'
   );
   assert.equal(
-    assistantEntry.closest('.chat-thread-node')?.getAttribute('data-thread-parent'),
+    assistantNode?.getAttribute('data-thread-parent'),
     'user_stream-test-1',
     'flattened thread tree: assistant iterations are siblings under the turn anchor, not chained under tools'
   );
@@ -110,7 +107,7 @@ test('renderer splits tool-first completed turns into tool and assistant article
   );
 });
 
-test('renderer keeps segmented assistant continuations as source-owned articles in one stream branch', async (t) => {
+test('renderer keeps segmented assistant rows in one turn article with source anchors', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
   const input = window.document.getElementById('chatInput');
   const sendButton = window.document.getElementById('sendButton');
@@ -171,17 +168,17 @@ test('renderer keeps segmented assistant continuations as source-owned articles 
   await waitForUi(window, 30);
 
   const turnEntry = window.document.querySelector('article[data-message-id="assistant_stream-test-1"]');
-  const toolEntry = window.document.querySelector('article[data-message-id="tool_call_1"]');
-  const assistantContinuationEntry = window.document.querySelector('article[data-message-id="assistant_stream-test-1_seg1"]');
   const toolNode = window.document.querySelector('.chat-thread-node[data-thread-message-id="tool_call_1"]');
   const assistantContinuationNode = window.document.querySelector('.chat-thread-node[data-thread-message-id="assistant_stream-test-1_seg1"]');
 
   assert.ok(turnEntry);
-  assert.ok(toolEntry);
-  assert.ok(assistantContinuationEntry);
+  assert.equal(window.document.querySelector('article[data-message-id="tool_call_1"]'), null);
+  assert.equal(window.document.querySelector('article[data-message-id="assistant_stream-test-1_seg1"]'), null);
+  assert.ok(toolNode?.querySelector('.thread-compat-anchor[data-message-id="tool_call_1"]'));
+  assert.ok(assistantContinuationNode?.querySelector('.thread-compat-anchor[data-message-id="assistant_stream-test-1_seg1"]'));
   assert.ok(turnEntry.querySelector('.chat-message-content .chat-row[data-row-kind="assistant_text"][data-source-message-id="assistant_stream-test-1"]'));
-  assert.ok(toolEntry.querySelector('.chat-message-content .chat-row[data-row-kind="tool_call"][data-source-message-id="tool_call_1"]'));
-  assert.ok(assistantContinuationEntry.querySelector('.chat-message-content .chat-row[data-row-kind="assistant_text"][data-source-message-id="assistant_stream-test-1_seg1"]'));
+  assert.ok(turnEntry.querySelector('.chat-message-content .chat-row[data-row-kind="tool_call"][data-source-message-id="tool_call_1"]'));
+  assert.ok(turnEntry.querySelector('.chat-message-content .chat-row[data-row-kind="assistant_text"][data-source-message-id="assistant_stream-test-1_seg1"]'));
   assert.equal(
     toolNode?.getAttribute('data-thread-parent'),
     'assistant_stream-test-1',
@@ -198,7 +195,7 @@ test('renderer keeps segmented assistant continuations as source-owned articles 
     'tool-parent branches should not render a nested toggle chip for a single assistant continuation'
   );
   assert.ok(
-    toolNode?.querySelector('.chat-thread-node-article .chat-row .chat-row-node-dot'),
+    turnEntry.querySelector('.chat-row[data-row-kind="tool_call"] .chat-row-node-dot'),
     'tool rows should render per-row node dots so the vertical rail remains continuous'
   );
   assert.equal(
@@ -208,7 +205,7 @@ test('renderer keeps segmented assistant continuations as source-owned articles 
   );
 });
 
-test('renderer splits assistant metadata notices and awaiting-approval tool rows by source owner', async (t) => {
+test('renderer coalesces metadata notices and preserves an awaiting-approval tool row', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
   const input = window.document.getElementById('chatInput');
   const sendButton = window.document.getElementById('sendButton');
@@ -272,10 +269,8 @@ test('renderer splits assistant metadata notices and awaiting-approval tool rows
   await waitForUi(window, 30);
 
   const turnEntry = window.document.querySelector('article[data-message-id="assistant_notice_turn"]');
-  const toolEntry = window.document.querySelector('article[data-message-id="tool_use_notice_turn"]');
 
   assert.ok(turnEntry);
-  assert.ok(toolEntry);
   assert.ok(turnEntry.querySelector('.chat-row[data-row-kind="system_notice"] .context-compacted-notice'));
   assert.ok(
     turnEntry.querySelector('.context-compacted-notice-toggle[data-action="context-compaction-details"]'),
@@ -283,13 +278,12 @@ test('renderer splits assistant metadata notices and awaiting-approval tool rows
   );
   assert.ok(turnEntry.querySelector('.chat-row[data-row-kind="system_notice"] .agent-status-note'));
   assert.ok(
-    toolEntry.querySelector('.chat-row[data-row-kind="tool_call"][data-tool-call-id="call_notice_turn"][data-row-state="awaiting_approval"]')
+    turnEntry.querySelector('.chat-row[data-row-kind="tool_call"][data-tool-call-id="call_notice_turn"][data-row-state="awaiting_approval"]')
   );
-  assert.equal(
+  assert.ok(
     window.document.querySelector(
       '.chat-thread-node[data-thread-message-id="tool_use_notice_turn"] .thread-compat-anchor[data-message-id="tool_use_notice_turn"]'
-    ),
-    null
+    )
   );
 });
 

@@ -80,18 +80,13 @@
     // Host + active-gate are injectable so the single search instance can render
     // into the secondary sidebar when moved there (the "Move View" model); both
     // default to the primary rail for standalone use.
-    const getMountEl = typeof deps?.getMountEl === 'function' ? deps.getMountEl : () => getDom().ideRailPanel;
+    const getMountEl = typeof deps?.getMountEl === 'function' ? deps.getMountEl : () => null;
     const isActivePanel = typeof deps?.isActivePanel === 'function'
       ? deps.isActivePanel
       : () => getIde().railPanel === 'search';
     const escapeHtml = typeof deps?.escapeHtml === 'function'
       ? deps.escapeHtml
-      : (value) => String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     const onOpenResult = typeof deps?.onOpenResult === 'function' ? deps.onOpenResult : noop;
     const appendClientLog = typeof deps?.appendClientLog === 'function' ? deps.appendClientLog : noop;
     const editorHost = deps?.editorHost || null;
@@ -126,6 +121,13 @@
     }) || null;
 
     let boundHosts = [];
+    // This view's own scroll offset; the host is shared with Explorer, so the
+    // host's scrollTop is only ours while the search panel is what it shows.
+    let ownScrollTop = 0;
+    const isMountedIn = (host) => painted?.root?.parentNode === host;
+    function handleHostScroll(event) {
+      if (isMountedIn(event.currentTarget)) ownScrollTop = event.currentTarget.scrollTop;
+    }
     let debounceTimer = null;
     let searchSeq = 0;
     // Set once dispose() runs: makes the "don't act after teardown" intent
@@ -476,8 +478,11 @@
         const activeEl = panel.ownerDocument?.activeElement || null;
         const activeKey = ['[data-ide-replace-input]', '[data-ide-search-input]'].find((sel) => activeEl?.closest?.(sel)) || null;
         const selection = activeKey ? [activeEl.selectionStart, activeEl.selectionEnd] : null;
+        const previousScrollTop = isMountedIn(panel) ? panel.scrollTop : ownScrollTop;
         panel.innerHTML = markup;
         painted = { root: panel.firstElementChild };
+        panel.scrollTop = previousScrollTop;
+        ownScrollTop = previousScrollTop;
         // The composing input (if any) was just replaced; its compositionend never
         // arrives, so the flag must not keep blocking Enter/Escape and input events.
         composingEl = null;
@@ -765,12 +770,11 @@
       }
     }
 
-    // Bind BOTH possible hosts (rail + secondary) once: the panel can be moved
-    // between them at runtime; delegation survives innerHTML swaps and the
-    // handlers self-filter (closest), so a moved panel stays live with no rebind.
+    // Bind the panel's own persistent view host once (row 40 W3: the workbench
+    // re-parents the host when the view moves, so delegation stays live with no
+    // rebind and survives innerHTML swaps). Handlers self-filter (closest).
     function bindEvents() {
-      const dom = getDom();
-      const hosts = [dom.ideRailPanel, dom.ideSecondarySidebarPanel].filter(Boolean);
+      const hosts = [getMountEl()].filter(Boolean);
       if (!hosts.length || boundHosts.length) {
         return;
       }
@@ -781,6 +785,7 @@
         host.addEventListener('click', handleClick);
         host.addEventListener('compositionstart', handleCompositionStart);
         host.addEventListener('compositionend', handleCompositionEnd);
+        host.addEventListener('scroll', handleHostScroll);
       }
     }
 
@@ -820,6 +825,7 @@
         host.removeEventListener('click', handleClick);
         host.removeEventListener('compositionstart', handleCompositionStart);
         host.removeEventListener('compositionend', handleCompositionEnd);
+        host.removeEventListener('scroll', handleHostScroll);
       }
       boundHosts = [];
     }

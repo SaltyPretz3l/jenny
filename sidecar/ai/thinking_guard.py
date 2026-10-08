@@ -27,7 +27,7 @@ THINKING_BUDGET_NUM_PREDICT_FRACTION = 0.65
 # rest of the reasoning without ending the generation (abort kill switch off).
 # The router turns it into a non-persisted status ``ThinkingEvent`` so the live
 # reasoning row says why it went quiet (HB-004). Plain ``stream()`` paths never
-# yield it: ``chat_streaming`` renders unknown kinds as visible text.
+# yield it: a plain-text consumer would render an unknown kind as visible text.
 THINKING_STATUS_EVENT_KIND = "thinking_status"
 REPETITION_HIDDEN_STATUS_TEXT = "Reasoning hidden - repetition detected"
 BUDGET_HIDDEN_STATUS_TEXT = "Reasoning hidden - thinking budget reached"

@@ -1,8 +1,8 @@
-/* styles/ide-preview.css - Workspace IDE preview styling shared by
- * .ide-preview-pane and .ide-preview-host. Rules stay scoped so preview
+/* styles/ide-preview.css - Workspace IDE Preview stage styling
+ * (.ide-preview-host). Rules stay scoped so preview
  * content never leaks into chat surfaces. Loaded from styles.css. */
 
-/* ── Unified Preview stage host (workspace_preview_surface) ── */
+/* ── Unified Preview stage host ── */
 
 /* Stage-surface exclusivity: Monaco stays mounted for model/undo preservation,
  * but a hidden editor cluster must not paint descendants (the minimap has its
@@ -129,15 +129,6 @@
 }
 .ide-preview-frame-host.html-artifact-frame-fill {
   padding: 0;
-}
-
-.ide-preview-pane {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  background: var(--bg-base);
 }
 
 .ide-preview-content {

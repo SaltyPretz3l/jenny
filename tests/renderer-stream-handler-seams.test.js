@@ -58,7 +58,6 @@ function createLifecycleHarness(overrides = {}) {
       logs.push({ level, eventName, details });
     },
     handleStreamPayload: async () => ({ buffered: false, terminal: false }),
-    handleStreamEnvelope: async () => ({ buffered: false, terminal: false }),
     pendingStreamCommitQueue,
     approvalToastSessionIds: new Set(),
     isRowModelEnabled: () => false,
@@ -157,7 +156,6 @@ function createHarness(options = {}) {
     },
   };
   let streamListener = null;
-  let envelopeListener = null;
   const handler = createStreamHandler({
     state,
     thinkingIndicator,
@@ -259,12 +257,6 @@ function createHarness(options = {}) {
           streamListener = null;
         };
       },
-      onStreamEnvelope(listener) {
-        envelopeListener = listener;
-        return () => {
-          envelopeListener = null;
-        };
-      },
     },
   });
   return {
@@ -274,9 +266,6 @@ function createHarness(options = {}) {
     multiStreamController,
     async emit(payload) {
       await streamListener(payload);
-    },
-    async emitEnvelope(envelope) {
-      await envelopeListener(envelope);
     },
     restore() {
       global.window = previousWindow;
@@ -352,43 +341,6 @@ test('stream lifecycle logs subscribe failures instead of throwing from partial 
   harness.lifecycle.dispose();
 });
 
-test('stream lifecycle falls back to legacy stream events when envelope subscription throws', async () => {
-  const legacyPayloads = [];
-  const harness = createLifecycleHarness({
-    isStreamEnvelopeV2Enabled: () => true,
-    handleStreamPayload: async (payload) => {
-      legacyPayloads.push(payload);
-      return { buffered: false, terminal: false };
-    },
-  });
-  let legacyListener = null;
-
-  const unsubscribe = harness.lifecycle.registerStreamHandler({
-    chat: {
-      onStreamEnvelope() {
-        throw new Error('envelope subscribe failed');
-      },
-      onStream(listener) {
-        legacyListener = listener;
-        return () => {
-          legacyListener = null;
-        };
-      },
-    },
-  });
-
-  assert.equal(typeof unsubscribe, 'function');
-  assert.equal(typeof legacyListener, 'function');
-  await legacyListener({ type: 'started', streamId: 'stream-fallback', sessionId: 'session-1' });
-  assert.deepEqual(legacyPayloads, [{ type: 'started', streamId: 'stream-fallback', sessionId: 'session-1' }]);
-  assert.equal(
-    harness.logs.some((entry) => entry.level === 'INFO' && entry.eventName === 'stream.envelope_v2_legacy_fallback'),
-    true
-  );
-
-  harness.lifecycle.dispose();
-});
-
 test('stream lifecycle taps the health pill observer before handler dispatch', async (t) => {
   const observed = [];
   const previousController = globalThis.rendererHealthPillController;
@@ -414,133 +366,6 @@ test('stream lifecycle taps the health pill observer before handler dispatch', a
   await listener(payload);
   assert.deepEqual(observed, [payload]);
   harness.lifecycle.dispose();
-});
-
-test('stream lifecycle resyncs to envelope mode after the initial feature-state pull lands', async () => {
-  // Live boot order repro: registerStreamHandler runs while the placeholder
-  // feature flags are in state (stream_envelope_v2 unreadable -> legacy mode);
-  // the real flags then arrive via the features.getState() pull, which does
-  // NOT fire features.onChanged. resyncStreamSubscriptionMode() is the
-  // explicit post-bootstrap hook that must flip the live subscription.
-  let envelopeEnabled = false;
-  const envelopePayloads = [];
-  const legacyPayloads = [];
-  const harness = createLifecycleHarness({
-    isStreamEnvelopeV2Enabled: () => envelopeEnabled,
-    handleStreamPayload: async (payload) => {
-      legacyPayloads.push(payload);
-      return { buffered: false, terminal: false };
-    },
-    handleStreamEnvelope: async (envelope) => {
-      envelopePayloads.push(envelope);
-      return { buffered: false, terminal: false };
-    },
-  });
-  let legacyListener = null;
-  let envelopeListener = null;
-  const shell = {
-    chat: {
-      onStream(listener) {
-        legacyListener = listener;
-        return () => {
-          legacyListener = null;
-        };
-      },
-      onStreamEnvelope(listener) {
-        envelopeListener = listener;
-        return () => {
-          envelopeListener = null;
-        };
-      },
-    },
-  };
-
-  harness.lifecycle.registerStreamHandler(shell);
-  assert.equal(typeof legacyListener, 'function');
-  assert.equal(envelopeListener, null);
-
-  // Resync with an unchanged flag must not churn the subscription.
-  assert.equal(harness.lifecycle.resyncStreamSubscriptionMode(), null);
-  assert.equal(typeof legacyListener, 'function');
-
-  // The features.getState() pull resolves: the flag was actually on.
-  envelopeEnabled = true;
-  harness.lifecycle.resyncStreamSubscriptionMode();
-
-  assert.equal(legacyListener, null);
-  assert.equal(typeof envelopeListener, 'function');
-  assert.equal(
-    harness.logs.some((entry) => entry.level === 'INFO' && entry.eventName === 'stream.envelope_v2_resubscribe'),
-    true
-  );
-
-  await envelopeListener({ eventKind: 'terminal', streamId: 'stream-resync', channel: 'control' });
-  assert.equal(envelopePayloads.length, 1);
-  assert.equal(legacyPayloads.length, 0);
-
-  harness.lifecycle.dispose();
-});
-
-test('stream lifecycle resync before any registration is a safe no-op', () => {
-  const harness = createLifecycleHarness({ isStreamEnvelopeV2Enabled: () => true });
-
-  assert.equal(harness.lifecycle.resyncStreamSubscriptionMode(), null);
-  assert.equal(harness.logs.length, 0);
-
-  harness.lifecycle.dispose();
-});
-
-test('duplicate V2 envelope sequences are dropped before they replay visible deltas', async (t) => {
-  const logs = [];
-  const harness = createHarness({
-    stateOverrides: {
-      features: {
-        featureFlags: {
-          stream_envelope_v2: true,
-        },
-      },
-    },
-    callbackOverrides: {
-      appendClientLog(level, eventName, details) {
-        logs.push({ level, eventName, details });
-      },
-    },
-  });
-  t.after(() => harness.restore());
-
-  await harness.emitEnvelope({
-    schemaVersion: 2,
-    eventKind: 'started',
-    channel: 'control',
-    streamId: 'stream-envelope-duplicate',
-    turnId: 'turn-envelope-duplicate',
-    sessionId: 'session-1',
-    payload: { type: 'started' },
-  });
-  const responseDelta = {
-    schemaVersion: 2,
-    eventKind: 'delta',
-    channel: 'response',
-    streamId: 'stream-envelope-duplicate',
-    turnId: 'turn-envelope-duplicate',
-    sessionId: 'session-1',
-    sequence: 1,
-    channelSequence: 1,
-    phase: { phaseId: 'phase_text_duplicate', phaseKind: 'text', iteration: 1 },
-    payload: { delta: 'Hello' },
-  };
-
-  await harness.emitEnvelope(responseDelta);
-  await harness.emitEnvelope({ ...responseDelta });
-
-  const messages = harness.state.messagesBySession.get('session-1');
-  const assistant = messages.find((message) => message.role === 'assistant');
-  assert.ok(assistant);
-  assert.equal(assistant.content, 'Hello');
-  const regressionLog = logs.find((entry) => entry.eventName === 'stream.envelope_v2_sequence_regression');
-  assert.ok(regressionLog);
-  assert.equal(regressionLog.level, 'WARN');
-  assert.equal(regressionLog.details.expectedSequence, 2);
 });
 
 test('mid-stream cancellation commits partial text, clears throbber, and settles lifecycle', async (t) => {

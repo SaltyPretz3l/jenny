@@ -9,9 +9,6 @@ const {
 const {
   SessionTurnActorRegistry,
 } = require('../services/backend/session-turn-actor');
-const {
-  streamEnvelopeToLegacyPayload,
-} = require('../renderer/chat/renderer-stream-envelope-v2');
 
 class FakeTerminalStore {
   constructor() {
@@ -156,19 +153,4 @@ test('settled terminal omits canonical turn events when none exist', async (t) =
   });
 
   assert.equal('canonicalTurnEvents' in emitted[0], false);
-});
-
-test('terminal canonical turn events survive the renderer transport spread', () => {
-  const canonicalTurnEvents = [{ event_id: 'event_1', kind: 'assistant_text' }];
-  const legacy = streamEnvelopeToLegacyPayload({
-    schemaVersion: 2,
-    streamId: 'stream-1',
-    sessionId: 'session-1',
-    turnId: 'turn-1',
-    channel: 'control',
-    eventKind: 'terminal',
-    payload: { type: 'complete', canonicalTurnEvents },
-  });
-
-  assert.deepEqual(legacy.canonicalTurnEvents, canonicalTurnEvents);
 });

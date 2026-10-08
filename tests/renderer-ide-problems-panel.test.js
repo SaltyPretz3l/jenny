@@ -46,21 +46,21 @@ function marker(path, severity, line, message, extra) {
 }
 
 function setup(markers, opts = {}) {
-  // The panel was re-homed from the rail into the bottom panel's shared content
-  // host (#ideBottomPanelContent), gated on bottomPanelOpen + activeView.
-  const dom = new JSDOM('<!doctype html><body><div id="ideBottomPanelContent"></div></body>');
-  const panelEl = dom.window.document.getElementById('ideBottomPanelContent');
+  // The panel mounts into its own workbench host (#wbView-problems), gated on
+  // the view being visible (open + active in its stack).
+  const dom = new JSDOM('<!doctype html><body><div id="wbView-problems"></div></body>');
+  const panelEl = dom.window.document.getElementById('wbView-problems');
   const ide = {
-    bottomPanelOpen: opts.open !== false,
-    bottomPanelActiveView: opts.activeView || 'problems',
+    open: opts.open !== false,
+    activeView: opts.activeView || 'problems',
   };
   const calls = { reveal: [], render: 0 };
   const state = { markers: markers || [] };
   const panel = createIdeProblemsPanel({
-    getDom: () => ({ ideBottomPanelContent: panelEl }),
+    getDom: () => ({}),
     getIde: () => ide,
     getMountEl: () => panelEl,
-    isActivePanel: () => ide.bottomPanelOpen && ide.bottomPanelActiveView === 'problems',
+    isActivePanel: () => ide.open && ide.activeView === 'problems',
     actionButton,
     // markers === undefined simulates a host with no diagnostics surface (the
     // textarea fallback / pre-boot) - the panel must degrade to the empty state.
@@ -161,6 +161,13 @@ test('getCounts reports per-severity totals for the statusbar badge', () => {
     marker('b.js', 1, 1, 'h1'),
   ]);
   assert.deepEqual(panel.getCounts(), { error: 2, warning: 1, info: 1, hint: 1, total: 5 });
+  assert.equal(panel.getBadgeCount(), 3, 'the tab badge counts errors and warnings only');
+});
+
+test('getBadgeCount is zero without errors or warnings, so the Problems tab hides (F7)', () => {
+  assert.equal(setup([]).panel.getBadgeCount(), 0);
+  assert.equal(setup([marker('a.js', 2, 1, 'i1'), marker('a.js', 1, 1, 'h1')]).panel.getBadgeCount(), 0);
+  assert.equal(setup([marker('a.js', 4, 1, 'w1')]).panel.getBadgeCount(), 1);
 });
 
 test('does not render when the bottom panel shows a different view', () => {
@@ -192,18 +199,20 @@ test('without a diagnostics surface the panel degrades to the empty state', () =
   assert.deepEqual(panel.getCounts(), { error: 0, warning: 0, info: 0, hint: 0, total: 0 });
 });
 
-test('controller wires the Problems bottom-panel view and renders its empty state', async (t) => {
+test('controller hides the Problems view while there are no problems (F7)', async (t) => {
   const harness = createHarness({ bridgeOptions: { files: { 'README.md': 'r' } } });
   t.after(() => harness.dispose());
   await harness.controller.activateIde();
   await settle();
 
-  harness.state.ui.ide.bottomPanelOpen = true;
-  harness.state.ui.ide.bottomPanelActiveView = 'problems';
-  harness.controller.renderIde();
-  await settle();
+  const doc = harness.dom.window.document;
+  assert.equal(doc.querySelector('[data-wb-tab="problems"]'), null, 'no Problems tab without markers (no Monaco in jsdom)');
+  assert.ok(doc.querySelector('[data-wb-tab="terminal"]'), 'its stack still shows the other bottom views');
+  assert.equal(harness.viewHost('problems')?.isConnected === true, false, 'the host is parked, not shown');
+});
 
-  const panel = harness.getDom().ideBottomPanelContent;
-  assert.ok(panel.querySelector('.ide-prb'), 'problems panel rendered into the shared bottom host');
-  assert.ok(panel.querySelector('.ide-prb-empty'), 'empty state (no Monaco in jsdom)');
+test('hasMarkers counts every severity, so info and hints keep the Problems tab (F7)', () => {
+  assert.equal(setup([]).panel.hasMarkers(), false);
+  assert.equal(setup([marker('a.js', 2, 1, 'i1'), marker('a.js', 1, 1, 'h1')]).panel.hasMarkers(), true);
+  assert.equal(setup([marker('a.js', 4, 1, 'w1')]).panel.hasMarkers(), true);
 });

@@ -376,12 +376,13 @@ test('every Monaco create site opts in to the mono token and unregisters on disp
     ...artifactSource.matchAll(/editor\.create(?:DiffEditor)?\(/g),
     ...ideSource.matchAll(/editor\.create(?:DiffEditor)?\(/g),
   ];
-  assert.equal(createCalls.length, 3, 'expected exactly 3 Monaco create sites (artifact, IDE, IDE diff)');
+  assert.equal(createCalls.length, 4, 'expected exactly 4 Monaco create sites (artifact, IDE, IDE editor group, IDE diff)');
 
   // Each create call must hand its options through the wrapper.
   assert.match(artifactSource, /editor\.create\(host, withMonacoFontFamily\(\{/);
   assert.match(ideSource, /editor\.create\(host, fonts\.withFont\(\{/);
   assert.match(ideSource, /editor\.createDiffEditor\(diffEditorEl, fonts\.withFont\(/);
+  assert.match(ideSource, /editor\.create\(el, fonts\.withFont\(\{/); // a secondary editor group (row 40 W5)
 
   // And each must release its registration, or the observer reaches a
   // torn-down editor.
@@ -393,6 +394,9 @@ test('every Monaco create site opts in to the mono token and unregisters on disp
   assert.match(ideSource, /fonts\.register\(diffEditor\.getOriginalEditor\?\.\(\),/);
   assert.match(ideSource, /fonts\.register\(diffEditor\.getModifiedEditor\?\.\(\),/);
   assert.match(ideSource, /function dispose\(\) \{[\s\S]*?fonts\.release\(\);/);
+  // A group editor registers on its own, so closing one group leaves the observer.
+  assert.match(ideSource, /registerMonacoFontConsumer\(editor, doc\)/);
+  assert.match(ideSource, /function releaseGroupEditor\(editor\) \{[\s\S]*?entry\.unregisterFont\?\.\(\);/);
   // ...and the binding must actually invoke every handle it handed out.
   assert.match(artifactSource, /release\(\) \{\s*handles\.splice\(0\)\.forEach\(/);
 

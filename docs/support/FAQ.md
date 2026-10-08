@@ -101,8 +101,7 @@ file tools make durable edits. Capabilities and qualification differ by mode.
 ### What happened to Remote Control?
 
 Remote Control was removed on 2026-10-02. It may return later as a new design.
-When you update, Jenny deletes any stored phone pairing record and uninstalls
-the bundled Remote Control plugin if your profile still has it; your chats are
+When you update, Jenny deletes any stored phone pairing record; your chats are
 not touched. To use Jenny from a browser, see the
 [browser quick start](../operations/HOSTED_QUICKSTART.md).
 
@@ -269,7 +268,7 @@ personality workspace and can be edited directly with **Open folder**.
 
 ### How do I add a new MCP server?
 
-**Settings → Plugins & Extensions → MCP connections → Add connection**, then
+**Settings → Extensions → MCP connections → Add connection**, then
 test and approve it. The walkthrough is
 [docs/tutorials/02-adding-mcp-server.md](../tutorials/02-adding-mcp-server.md).
 
@@ -277,20 +276,15 @@ test and approve it. The walkthrough is
 
 A skill is a `SKILL.md` file: a named block of instructions Jenny can attach
 to a turn. Type `/` in the composer to pick one; it attaches as a chip on
-that message. Each skill can be disabled under **Settings → Plugins &
+that message. Each skill can be disabled under **Settings →
 Extensions → Skills**. Authoring is covered in [docs/SKILLS.md](../SKILLS.md).
 
 ### Are there plugins?
 
-The retained package lifecycle supports skills, prompts, color themes, settings
-schemas and sandboxed panel/artifact views under **Settings → Plugins &
-Extensions → Install plugin**. Current source bundles no plugin packages; ChatGPT sign-in
-is now a core Models setting. Use skill folders and standalone MCP servers
-for new extensions. Executable plugin tiers, plugin MCP, workflows, hooks,
-engine adapters and catalogs are retired; new packages declaring a retired
-kind are refused, and installed leftovers keep those parts inert. Unsigned
-packages need `JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE=1` for intake and loading.
-See the [retained authoring guide](../plugins/README.md).
+No. Jenny extends through skill folders and standalone MCP servers, both under
+**Settings → Extensions**. The ChatGPT sign-in is a core Models setting
+(**Settings → Models → Cloud models**). Chats made by the retired image plugin
+stay readable as read-only transcripts.
 
 ### Where is the IDE?
 

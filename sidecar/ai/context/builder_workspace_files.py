@@ -138,6 +138,11 @@ class _BuilderWorkspaceFilesMixin:
                     or ("file_budget" if read_result.truncated else "read_failed")
                 ),
             )
+        # Lazy import (builder_shared): a module-level personality import closes
+        # a circular chain when the grep worker imports the tools package first.
+        normalized = _sanitize_bootstrap_content(
+            normalized, source_name=WORKSPACE_INSTRUCTION_FILENAME
+        )
         if normalized:
             block = f"## Workspace Instructions ({WORKSPACE_INSTRUCTION_FILENAME})\n{normalized}"
         self._cached_workspace_instruction_block = block

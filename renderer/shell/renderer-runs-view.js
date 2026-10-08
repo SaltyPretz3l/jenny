@@ -18,7 +18,12 @@
     || function (key, count, params, one, other) { return jt.call(null, key, count === 1 ? one : other, params); };
   const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const GENERAL_PROJECT_ID = 'project_general';
-  const GROUPS = ['needs_you', 'running', 'waiting', 'finished'];
+  const GROUPS = ['needs_you', 'running', 'waiting', 'paused_earlier', 'finished'];
+  // Paused work untouched for a day leaves "Needs you" for the collapsed
+  // "Paused earlier" group: still resumable and stoppable, never deleted (gate F10).
+  const PAUSED_EARLIER_MS = 24 * 60 * 60 * 1000;
+  const COLLAPSIBLE = { paused_earlier: { listId: 'runsPausedEarlierList', open: 'pausedEarlierOpen' },
+    finished: { listId: 'runsFinishedList', open: 'finishedOpen' } };
   const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
   const locale = () => { try { return globalThis.jennyI18n?.tag?.() || undefined; } catch (_error) { return undefined; } };
 
@@ -107,7 +112,7 @@
       if (Number.isInteger(item.queue_position)) return jt('runtime.runs.state.queued', 'queued · {ordinal} in line', { ordinal: ordinal(item.queue_position) });
       return jt('runtime.runs.state.queuedUnknown', 'queued');
     }
-    if (item.group === 'needs_you') return needsYouDetail(item);
+    if (item.group === 'needs_you' || item.group === 'paused_earlier') return needsYouDetail(item);
     if (item.status === 'completed') return jt('runtime.runs.state.completed', 'finished');
     if (item.status === 'failed') return jt('runtime.runs.state.failed', 'failed');
     return jt('runtime.runs.state.cancelled', 'stopped');
@@ -139,10 +144,12 @@
     const items = Array.isArray(snapshot?.work) ? snapshot.work.slice() : [];
     const selectedWork = detail?.work;
     if (selectedWork && !items.some(item => item.work_id === selectedWork.work_id)) items.push({ ...selectedWork, pinned: true });
-    const groups = { needs_you: [], running: [], waiting: [], finished: [] };
+    const groups = { needs_you: [], running: [], waiting: [], paused_earlier: [], finished: [] };
     const projectIds = new Set();
     for (const raw of items) {
       const item = { ...raw, group: groupOf(raw) };
+      if (item.group === 'needs_you' && item.status === 'paused'
+        && now - Date.parse(item.updated_at || item.created_at) > PAUSED_EARLIER_MS) item.group = 'paused_earlier';
       if (item.group === 'finished' && !item.pinned && !(Date.parse(item.updated_at) >= finishedSince)) continue;
       projectIds.add(item.project_id || GENERAL_PROJECT_ID);
       if (projectFilter && (item.project_id || GENERAL_PROJECT_ID) !== projectFilter) continue;
@@ -171,8 +178,10 @@
     }
     const cancelRequested = item.control_kind === 'cancel';
     // Stop stays available on paused and needs-attention work, runtime off included (§5).
-    if (item.group === 'needs_you') {
-      return (item.status === 'paused' ? act('resume', l.resume, { variant: 'primary', disabled: blocked || off || cancelRequested }) : '')
+    if (item.group === 'needs_you' || item.group === 'paused_earlier') {
+      // No Resume the scheduler would refuse: `resumable: false` is paused work with no checkpoint for its attempt.
+      return (item.status === 'paused' && item.resumable !== false
+        ? act('resume', l.resume, { variant: 'primary', disabled: blocked || off || cancelRequested }) : '')
         + act('stop', l.stop, { disabled: blocked || cancelRequested }) + act('open', l.openChat, { variant: 'ghost' });
     }
     if (item.group === 'running') {
@@ -271,7 +280,7 @@
       + '<p class="settings-note runs-message" data-runs-message role="status" aria-live="polite" hidden></p>'
       + '<div class="runs-groups" data-runs-groups>' + GROUPS.map(group => '<section class="runs-group" data-group="' + group + '" hidden>'
         + '<h4 class="group-label runs-group-label" data-runs-group-label></h4><ul class="runs-list" data-runs-list'
-        + (group === 'finished' ? ' id="runsFinishedList"' : '') + '></ul></section>').join('') + '</div>'
+        + (COLLAPSIBLE[group] ? ' id="' + COLLAPSIBLE[group].listId + '"' : '') + '></ul></section>').join('') + '</div>'
       + '<p class="settings-note runs-empty" data-runs-empty hidden>' + escape(l.empty) + '</p>';
     const q = selector => host.querySelector(selector);
     const groupNodes = Object.fromEntries(GROUPS.map(group => {
@@ -375,12 +384,17 @@
         const nodes = groupNodes[group];
         const items = built.groups[group];
         nodes.section.hidden = items.length === 0;
-        if (group === 'finished') {
-          const toggle = button({ id: 'runs-finished-toggle', label: jt('runtime.runs.group.finishedToday', 'Finished today · {count}', { count: number(items.length) }),
-            plain: true, className: 'runs-group-toggle', ariaExpanded: model.finishedOpen === true, ariaControls: 'runsFinishedList',
-            dataset: { 'focus-key': 'finished-toggle' } });
+        const collapsible = COLLAPSIBLE[group];
+        if (collapsible) {
+          const finished = group === 'finished';
+          const label = finished ? jt('runtime.runs.group.finishedToday', 'Finished today · {count}', { count: number(items.length) })
+            : jt('runtime.runs.group.pausedEarlier', 'Paused earlier · {count}', { count: number(items.length) });
+          const open = model[collapsible.open] === true;
+          const toggle = button({ id: finished ? 'runs-finished-toggle' : 'runs-paused-earlier-toggle', label,
+            plain: true, className: 'runs-group-toggle', ariaExpanded: open, ariaControls: collapsible.listId,
+            dataset: { 'focus-key': finished ? 'finished-toggle' : 'paused-earlier-toggle' } });
           if (nodes.label.dataset.html !== toggle) { nodes.label.dataset.html = toggle; nodes.label.innerHTML = toggle; }
-          nodes.list.hidden = model.finishedOpen !== true;
+          nodes.list.hidden = !open;
         } else if (nodes.label.textContent !== l.groups[group]) nodes.label.textContent = l.groups[group];
         let previous = null;
         for (const item of items) {

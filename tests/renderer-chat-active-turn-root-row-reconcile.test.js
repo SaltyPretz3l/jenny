@@ -67,7 +67,7 @@ function activeRootRebuilds(window) {
 
 test('timeline-perf: a tool-gap repaint of the active turn root leaves settled rows unvisited', async (t) => {
   const app = await loadRendererApp({ shell: {
-    features: { state: { featureFlags: { ...buildFeatureFlagDefaults(), chat_timeline_render_telemetry: true } } },
+    features: { state: { featureFlags: { ...buildFeatureFlagDefaults() } } },
     chat: {
       async startStream(_payload, { state }) {
         state.sessions = [{ id: SESSION_ID, title: 'active root reconcile', conversation_mode: 'chat', preferred_model: 'gpt-test',

@@ -886,7 +886,10 @@ def _result_notes(state: _SearchState) -> str:
     if state.truncated_by_bytes:
         notes.append(f"Output truncated at {MAX_OUTPUT_BYTES} bytes.")
     if state.truncated_by_line_length:
-        notes.append(f"Lines longer than {MAX_RENDERED_LINE_CHARS} characters were trimmed.")
+        notes.append(
+            f"Lines longer than {MAX_RENDERED_LINE_CHARS} characters were trimmed to a window "
+            "around the first match; [col N] gives the window's first column."
+        )
     if state.timed_out_files:
         notes.append(f"Skipped {state.timed_out_files} file(s) because the regex timed out.")
     if state.aborted_by_timeout_cap:

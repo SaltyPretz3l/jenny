@@ -14,14 +14,17 @@ const {
 // the Shift+Tab cycle order share the Settings support normalizer so the send
 // path, the switcher chip, and Settings all use one renderer source.
 
-test('RUN_MODE_ORDER is the frozen ask -> auto -> plan cycle', () => {
-  assert.deepEqual([...composerV2State.RUN_MODE_ORDER], ['ask', 'auto', 'plan']);
+test('RUN_MODE_ORDER is the frozen ask -> auto -> plan -> propose cycle', () => {
+  assert.deepEqual([...composerV2State.RUN_MODE_ORDER], ['ask', 'auto', 'plan', 'propose']);
   assert.ok(Object.isFrozen(composerV2State.RUN_MODE_ORDER));
 });
 
 test('composer and Settings share the renderer run-mode normalizer owner', () => {
   assert.equal(composerV2State.normalizeRunMode, settingsSupport.normalizeRunMode);
-  assert.equal(settingsSupport.normalizeDefaultRunMode, settingsSupport.normalizeRunMode);
+  // The new-chat default never takes Propose (row 35); it falls back to Ask.
+  assert.equal(settingsSupport.normalizeDefaultRunMode('propose'), 'ask');
+  assert.equal(settingsSupport.normalizeDefaultRunMode('plan'), 'plan');
+  assert.equal(settingsSupport.normalizeRunMode('propose'), 'propose');
 });
 
 test('normalizeRunMode accepts the closed enum with trim/case tolerance', () => {
@@ -72,10 +75,11 @@ test('projectRunMode normalizes before projecting', () => {
   });
 });
 
-test('nextRunMode cycles ask -> auto -> plan -> ask', () => {
+test('nextRunMode cycles ask -> auto -> plan -> propose -> ask', () => {
   assert.equal(composerV2State.nextRunMode('ask'), 'auto');
   assert.equal(composerV2State.nextRunMode('auto'), 'plan');
-  assert.equal(composerV2State.nextRunMode('plan'), 'ask');
+  assert.equal(composerV2State.nextRunMode('plan'), 'propose');
+  assert.equal(composerV2State.nextRunMode('propose'), 'ask');
   // Invalid input normalizes to ask first.
   assert.equal(composerV2State.nextRunMode('bogus'), 'auto');
 });

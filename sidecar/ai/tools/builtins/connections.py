@@ -124,8 +124,6 @@ def _build_connections_output(
             engine_line,
             web_line,
             mcp_line,
-            "- Plugins with network access: not reported by the host "
-            "(needs connections_plugin_network_plugins)",
             "- Remote items above can receive what you type here.",
             "- Background traffic not carrying your messages: model catalog refresh; "
             "app auto-updater (when enabled)",

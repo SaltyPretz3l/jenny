@@ -200,14 +200,14 @@
       }
       case 'Write': {
         const targetPath = normalizeString(input.path || input.file_path);
-        const base = targetPath ? 'Write ' + targetPath : jt('chat.toolCall.writeFile', 'Write file');
-        return base;
+        return targetPath ? 'Write ' + targetPath : jt('chat.toolCall.writeFile', 'Write file');
       }
       case 'Edit': {
         const targetPath = normalizeString(input.path || input.file_path);
-        const base = targetPath ? 'Edit ' + targetPath : jt('chat.toolCall.editFile', 'Edit file');
-        return base;
+        return targetPath ? 'Edit ' + targetPath : jt('chat.toolCall.editFile', 'Edit file');
       }
+      case 'propose_change': // Plan Plus: a suggestion for review; nothing is written.
+        return jt('chat.toolCall.suggestChange', 'Suggest change') + (normalizeString(input.path) ? ': ' + normalizeString(input.path) : '');
       case 'Move': {
         const moves = Array.isArray(input.moves) ? input.moves : [];
         if (moves.length > 1) return 'Move ' + moves.length + ' files';
@@ -316,14 +316,13 @@
       }
       return parts.join(' · ');
     }
-    if (meta.result_kind === 'task_board') {
+    if (meta.result_kind === 'task_board' || meta.result_kind === 'project_notes') {
       if (normalizeString(meta.status) === 'failed') return '';
+      const notesUpdated = jt('chat.toolCall.notesUpdated', 'notes updated');
       return ({
-        add: jt('chat.toolCall.taskAdded', 'task added'),
-        update: jt('chat.toolCall.taskUpdated', 'task updated'),
-        complete: jt('chat.toolCall.taskCompleted', 'task completed'),
-        list: jt('chat.toolCall.tasksListed', 'tasks listed'),
-      })[normalizeString(meta.action)] || '';
+        task_board: { add: jt('chat.toolCall.taskAdded', 'task added'), update: jt('chat.toolCall.taskUpdated', 'task updated'), complete: jt('chat.toolCall.taskCompleted', 'task completed'), list: jt('chat.toolCall.tasksListed', 'tasks listed') },
+        project_notes: { read: jt('chat.toolCall.notesRead', 'notes read'), append: notesUpdated, replace: notesUpdated },
+      })[meta.result_kind][normalizeString(meta.action)] || '';
     }
     if (normalizeToolKind(toolName) !== 'verify' || meta.result_kind !== 'verify') return '';
     const status = normalizeString(meta.status);
@@ -624,13 +623,24 @@
     }
   }
 
+  const isLineCount = (value) => Number.isSafeInteger(value) && value >= 0;
   // Only authoritative per-operation totals; never infer missing values as zero.
+  // Scripted calls (row 34), even failed: files from the review, else diffs[]; +/− over full/partial diffs.
   function getToolLineCounts(toolName, metadata, status, isError) {
+    const scripted = /^(Bash|bash|run_temp_script|python_execute)$/.test(normalizeToolKind(toolName));
+    const scriptedDiffs = scripted && Array.isArray(metadata && metadata.diffs) ? metadata.diffs : [];
+    if (scriptedDiffs.length) {
+      const reviewed = metadata.scripted_change_review?.changed_path_count;
+      const lined = scriptedDiffs.filter((d) => /^(full|partial)$/.test(d?.review_state) && isLineCount(d.additions) && isLineCount(d.deletions));
+      const sum = (key) => lined.reduce((total, d) => total + d[key], 0);
+      const files = Number.isSafeInteger(reviewed) && reviewed > 0 ? reviewed : scriptedDiffs.length;
+      return lined.length ? { files, additions: sum('additions'), deletions: sum('deletions') } : { files };
+    }
     const diff = metadata && metadata.diff;
     if (!/^(Edit|Write)$/.test(normalizeToolKind(toolName))
       || normalizeToolStatus(status) !== 'completed' || isError
       || !diff || diff.review_state === 'failed' || diff.status === 'unknown'
-      || ![diff.additions, diff.deletions].every(value => Number.isSafeInteger(value) && value >= 0)) return null;
+      || ![diff.additions, diff.deletions].every(isLineCount)) return null;
     return { additions: diff.additions, deletions: diff.deletions };
   }
 
@@ -666,10 +676,13 @@
       + '<span class="tool-call-status-cluster">'
       + affordance(model.reviewableChange)
       + (model.lineCounts
-        ? '<span class="tool-call-line-counts"><span class="sr-only">'
-          + esc(jt('toolCallUtils.lineChanges', '{additions} lines added, {deletions} lines removed', model.lineCounts)) + '</span>'
+        ? '<span class="tool-call-line-counts">' + (model.lineCounts.files ? '<span class="tool-call-line-files">'
+          + esc(jtn('chat.toolShell.filesChanged', model.lineCounts.files, { count: model.lineCounts.files }, '{count} file changed', '{count} files changed')) + '</span>'
+          + (model.lineCounts.additions == null ? '' : '<span aria-hidden="true"> · </span>') : '')
+          + (model.lineCounts.additions == null ? '' : '<span class="sr-only">'
+          + esc(lineChangesLabel(model.lineCounts)) + '</span>'
           + '<span aria-hidden="true" class="tool-call-line-add' + (model.lineCounts.additions === 0 ? ' tool-call-line-zero' : '') + '">+' + esc(model.lineCounts.additions) + '</span>'
-          + '<span aria-hidden="true" class="tool-call-line-remove' + (model.lineCounts.deletions === 0 ? ' tool-call-line-zero' : '') + '">−' + esc(model.lineCounts.deletions) + '</span></span>'
+          + '<span aria-hidden="true" class="tool-call-line-remove' + (model.lineCounts.deletions === 0 ? ' tool-call-line-zero' : '') + '">−' + esc(model.lineCounts.deletions) + '</span>') + '</span>'
         : '')
       + (model.secondaryMeta
         ? '<span class="tool-call-meta">' + esc(model.secondaryMeta) + '</span>'
@@ -712,10 +725,10 @@
     return TOOL_RUN_VERB_BY_KIND[normalizeToolKind(name)] || '';
   }
   // Rows that carry their own content (questions, plans, images, diagrams,
-  // artifacts, spawned tasks, calendar blocks) never fold into a run.
+  // artifacts, spawned tasks, calendar blocks, notes rows) never fold into a run.
   const TOOL_RUN_UNFOLDABLE_TOOLS = new Set([
     'ask_user', 'exit_plan_mode', 'image_generate', 'mermaid_generate', 'create_artifact',
-    'workspace_present', 'preview_test', 'session_spawn', 'delegate', 'home',
+    'workspace_present', 'preview_test', 'session_spawn', 'delegate', 'home', 'project_notes',
   ]);
   // A step waiting on the user ends the run and stays its own open card.
   const TOOL_RUN_BREAK_STATUSES = new Set(['awaiting_approval', 'pending_user_input']);
@@ -733,6 +746,13 @@
   }
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn)
     || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, Object.assign({ count: count }, params || {})); };
+  // Each side pluralizes on its own count ("1 line added, 3 lines removed");
+  // the pair key keeps the locale's own separator (gate F8, 2026-10-05).
+  function lineChangesLabel(counts) {
+    const added = jtn('toolCallUtils.linesAdded', counts.additions, { count: counts.additions }, '{count} line added', '{count} lines added');
+    const removed = jtn('toolCallUtils.linesRemoved', counts.deletions, { count: counts.deletions }, '{count} line removed', '{count} lines removed');
+    return jt('toolCallUtils.lineChangesPair', '{added}, {removed}', { added: added, removed: removed });
+  }
 
   /**
    * Whether a tool step may join a run. `approvalRequested` covers a step that
@@ -980,17 +1000,8 @@
     shouldAutoExpandToolDetails,
     buildToolRowKey,
     toolRowKeySessionPrefix,
-    isToolRunFoldable,
-    groupToolRuns,
-    summarizeToolRun,
-    toolRunState,
-    toolRunVerb,
-    formatToolRunDuration,
-    buildToolRunToggleInner,
-    buildToolRunMemberAttributes,
-    readToolRunMemberAttributes,
-    getToolRunRows,
-    isToolRunLiveStatus,
+    isToolRunFoldable, groupToolRuns, summarizeToolRun, toolRunState, toolRunVerb, formatToolRunDuration,
+    buildToolRunToggleInner, buildToolRunMemberAttributes, readToolRunMemberAttributes, getToolRunRows, isToolRunLiveStatus,
     buildToolRowDomToken,
     statusToneFor,
     buildToolHeaderInner,

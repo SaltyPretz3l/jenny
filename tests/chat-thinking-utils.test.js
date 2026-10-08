@@ -428,15 +428,6 @@ for (const { name, raw, code } of STREAM_CONTEXT_FIXTURES) {
     assert.equal(out, prettifyReasoningMarkdown(raw).trim(), `${name}: settled bytes`);
     if (code) assert.ok(out.includes(code), `${name}: code bytes`);
     assert.equal(prettifyReasoningMarkdown(out), out, `${name}: idempotence`);
-    const hadDocument = Object.prototype.hasOwnProperty.call(globalThis, 'document');
-    const priorDocument = globalThis.document;
-    globalThis.document = { documentElement: { dataset: { reasoningPrettify: 'false' } } };
-    try {
-      assert.equal(joinReasoningEntriesMarkdown([{ id: name, text: raw }]), raw, `${name}: flag-off bytes`);
-    } finally {
-      if (hadDocument) globalThis.document = priorDocument;
-      else delete globalThis.document;
-    }
   });
 }
 

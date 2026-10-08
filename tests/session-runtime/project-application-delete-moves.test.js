@@ -27,7 +27,7 @@ const { cleanupTrackedResources, createTrackedTempDir } = require('../helpers/re
 
 test.afterEach(async () => cleanupTrackedResources());
 
-function createFixture({ moveMemories, isSessionBusy = () => false } = {}) {
+function createFixture({ moveMemories, isSessionBusy = () => false, onSessionProjectChanged, onProjectDeleted } = {}) {
   const root = createTrackedTempDir('jenny-project-delete-moves-');
   const profile = path.join(root, 'profile');
   fs.mkdirSync(profile);
@@ -76,6 +76,8 @@ function createFixture({ moveMemories, isSessionBusy = () => false } = {}) {
       return moveMemories ? moveMemories(request, memoryCalls.length) : { ok: true, moved: 3 };
     },
     isSessionBusy: (sessionId) => isSessionBusy(sessionId),
+    onSessionProjectChanged,
+    onProjectDeleted,
     resolveWorkspaceRoot: () => '',
     now: () => '2026-09-27T12:02:00.000Z',
   });
@@ -280,4 +282,68 @@ test('rollback never reassigns a chat that started work during the memory move',
   assert.equal(result.ok, false);
   assert.equal(result.error.restored_sessions, 0);
   assert.equal(fixture.sessionStore.getSessionSummary(fixture.chat.id).project_id, GENERAL_PROJECT_ID, 'a busy chat is never moved');
+});
+
+test('delete notifies the session-project hook once per moved chat, and an undo notifies with the original project', async () => {
+  const calls = [];
+  const record = (change) => calls.push(change);
+  const forward = createFixture({ onSessionProjectChanged: record });
+  const second = forward.sessionStore.createSession({ title: 'Two' });
+  assert.equal(forward.application.assignSessionProject({
+    session_id: second.id, project_id: forward.project.id,
+  }).ok, true);
+  calls.length = 0;
+  const deleted = await forward.application.deleteProject({ project_id: forward.project.id });
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  assert.deepEqual(
+    calls.map((call) => call.sessionId).sort(),
+    [forward.chat.id, second.id].sort(),
+  );
+  assert.ok(calls.every((call) => call.projectId === GENERAL_PROJECT_ID));
+
+  calls.length = 0;
+  const refused = createFixture({
+    moveMemories: async () => ({ ok: false, reason: 'memory_unavailable' }),
+    onSessionProjectChanged: record,
+  });
+  calls.length = 0;
+  const result = await refused.application.deleteProject({ project_id: refused.project.id });
+  assert.equal(result.ok, false);
+  assert.deepEqual(calls, [
+    { sessionId: refused.chat.id, projectId: GENERAL_PROJECT_ID },
+    { sessionId: refused.chat.id, projectId: refused.project.id },
+  ]);
+});
+
+test('delete notifies the project-deleted hook once, only past the point of no return', async () => {
+  const deletedIds = [];
+  const forward = createFixture({ onProjectDeleted: (projectId) => deletedIds.push(projectId) });
+  const deleted = await forward.application.deleteProject({ project_id: forward.project.id });
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  assert.deepEqual(deletedIds, [forward.project.id]);
+
+  // A refused delete puts the project back, so its notes must survive.
+  const refusedIds = [];
+  const refused = createFixture({
+    moveMemories: async () => ({ ok: false, reason: 'memory_unavailable' }),
+    onProjectDeleted: (projectId) => refusedIds.push(projectId),
+  });
+  const result = await refused.application.deleteProject({ project_id: refused.project.id });
+  assert.equal(result.ok, false);
+  assert.deepEqual(refusedIds, []);
+});
+
+test('a throwing project-deleted hook does not fail a project delete', async () => {
+  const fixture = createFixture({ onProjectDeleted: () => { throw new Error('notes hook exploded'); } });
+  const result = await fixture.application.deleteProject({ project_id: fixture.project.id });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(fixture.projectService.get(fixture.project.id), null);
+});
+
+test('a throwing session-project hook does not fail a project delete', async () => {
+  const fixture = createFixture({ onSessionProjectChanged: () => { throw new Error('hook exploded'); } });
+  const result = await fixture.application.deleteProject({ project_id: fixture.project.id });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.moved_sessions, 1);
+  assert.equal(fixture.sessionStore.getSessionSummary(fixture.chat.id).project_id, GENERAL_PROJECT_ID);
 });

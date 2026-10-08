@@ -29,7 +29,6 @@
   <link rel="stylesheet" href="styles/composer-workspace-nudge.css">
   <link rel="stylesheet" href="styles/chat-send-outbox.css">
   <link rel="stylesheet" href="styles/data-lifecycle.css">
-  <link rel="stylesheet" href="styles/plugin-view-host.css">
   <!-- xterm.css (PTY terminal): vendored from node_modules under CSP 'self'. -->
   <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
 </head>
@@ -99,10 +98,6 @@
                 </button>
                 <span class="chats-panel-tools" id="chatsPanelTools"></span>
               </div>
-            </div>
-
-            <div class="new-session-actions" id="newSessionActions">
-              <span class="plugin-session-provider-actions" id="pluginSessionProviderActions"></span>
             </div>
 
             <label class="search-shell rail-search-field inv-text-field" id="conversationSearchShell" for="conversationSearch">
@@ -286,7 +281,6 @@
           <div class="chat-thread-stage" id="chatThreadStage" data-chat-node="chatThreadStage">
             <div class="plugin-session-fallback" id="pluginSessionFallback" role="status" hidden>
               <p data-plugin-session-fallback-copy></p>
-              <span id="pluginSessionFallbackAction"></span>
             </div>
             <div class="chat-search-overlay-host" id="chatSearchOverlayHost" data-chat-node="chatSearchOverlayHost" hidden></div>
             <!-- F4/F5/F6: multi-select action bar host -->
@@ -375,7 +369,7 @@
                 <path d="M3.5 2h6l3 3v9h-9z"></path>
                 <path d="m7 8.5-1.5 1.5L7 11.5M9 8.5l1.5 1.5L9 11.5"></path>
               </svg>
-              <span class="sr-only" data-i18n="artifacts.review.toggleLabel">Artifacts panel</span>
+              <span class="chat-timeline-utility-text" data-i18n="artifacts.review.toggleTitle">Artifacts</span>
             </button>
             <div class="composer-wayfinder-host chat-timeline-wayfinder-host" id="composerWayfinderHost" data-chat-node="composerWayfinderHost" hidden></div>
           </div>
@@ -412,11 +406,9 @@
                         <path d="M14 8.5l-5.5 5.5a3.5 3.5 0 01-5-5L9 3.5a2.5 2.5 0 013.5 3.5L7 12.5a1.5 1.5 0 01-2-2L10.5 5"/>
                       </svg>
                     </button>
-                    <button class="composer-icon-button" id="composerTerminalShortcut" data-chat-node="composerTerminalShortcut" type="button"
-                            aria-label="Commands" data-i18n-aria-label="composer.commands" title="Commands" data-i18n-title="composer.commands" aria-haspopup="menu" aria-expanded="false" aria-controls="composerCommandPopover">
-                      <svg viewBox="0 0 16 16" aria-hidden="true">
-                        <path d="M3 5l4 3.5L3 12"/><path d="M9 12h5"/>
-                      </svg>
+                    <button class="composer-icon-button composer-text-button" id="composerTerminalShortcut" data-chat-node="composerTerminalShortcut" type="button"
+                            aria-label="Commands" data-i18n-aria-label="composer.commands" title="Commands · /" data-i18n-title="composer.commandsTitle" aria-haspopup="menu" aria-expanded="false" aria-controls="composerCommandPopover">
+                      <span class="composer-button-glyph" aria-hidden="true">/</span><span class="composer-button-text" data-i18n="composer.commands">Commands</span>
                     </button>
                     <div class="composer-toggle-slot" id="composerToolToggleSlot" data-rail-config>
                       <span id="composerChatChipHost"></span>
@@ -424,7 +416,6 @@
                         <div class="composer-chat-view" data-chat-panel-view="main">
                           <div class="composer-chat-panel-head"><span id="composerChatPanelTitle" data-i18n="composer.chatPanel.title">Tools for this chat</span><button type="button" class="composer-chat-link" data-chat-panel-action="all-tools" data-i18n="composer.chatPanel.allTools">All tools ›</button></div>
                           <div class="composer-chat-panel-chips" id="composerChatPanelChips" role="group" aria-label="Tools for this chat" data-i18n-aria-label="composer.chatPanel.title"></div>
-                          <div class="composer-chat-panel-row"><span data-i18n="composer.chatPanel.project">Project</span><div class="composer-project-pill-slot" id="composerProjectPillSlot"></div></div>
                           <div class="composer-chat-panel-row composer-chat-posture" id="composerChatPosture" hidden><span class="status-dot" id="composerChatPostureDot" aria-hidden="true"></span><span id="composerChatPostureText"></span></div>
                           <div class="composer-chat-panel-foot"><button type="button" class="composer-chat-link" data-chat-panel-action="reset" data-i18n="composer.chatPanel.reset" hidden>Reset to defaults</button><button type="button" class="composer-chat-link" data-chat-panel-action="settings" data-i18n="composer.chatPanel.settings">Full settings</button></div>
                         </div>
@@ -460,6 +451,7 @@
                           </div>
                         </div>
                       </div>
+                      <div class="composer-project-pill-slot" id="composerProjectPillSlot"></div>
                     </div>
 
                     <button class="composer-stop-button hidden" id="stopStreamButton" data-chat-node="stopStreamButton" type="button" aria-label="Stop current response" data-i18n-aria-label="composer.stopCurrentResponse" title="Stop" data-i18n-title="composer.stop">
@@ -511,11 +503,11 @@
                   <span class="context-section-rule" aria-hidden="true"></span>
                   <button class="context-section-action" id="contextArtifactExpand"
                           type="button" aria-label="Open artifact panel" data-i18n-aria-label="chat.context.openArtifactPanelLabel" title="Open artifact panel" data-i18n-title="chat.context.openArtifactPanelLabel">
-                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M9.5 2.5v11"/></svg>
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M9.5 2.5v11"/></svg><span class="context-section-action-text" data-i18n="chat.context.openShort">Open</span>
                   </button>
                   <button class="context-section-action context-panel-collapse" id="contextPanelToggle"
-                          type="button" aria-label="Collapse context panel" data-i18n-aria-label="chat.context.collapseLabel" title="Collapse panel" data-i18n-title="chat.context.collapseTitle">
-                    <svg class="icon-mirror-rtl" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
+                          type="button" aria-label="Hide context panel" data-i18n-aria-label="chat.context.collapseLabel" title="Collapse panel" data-i18n-title="chat.context.collapseTitle">
+                    <span class="context-section-action-text" data-i18n="chat.context.hideShort">Hide</span><svg class="icon-mirror-rtl" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
                   </button>
                 </div>
                 <div class="context-artifact-list" id="contextArtifactList" role="list"></div>
@@ -590,65 +582,46 @@
         </section>
 
         <section class="main-view ide-view hidden view-offscreen" id="ideView" role="tabpanel" aria-labelledby="ideTopRailTab" aria-hidden="true">
-          <div class="ide-shell" id="ideShell" data-rail-side="left">
-            <div class="ide-main" id="ideMain">
-              <div class="ide-tabstrip" id="ideTabStrip" role="tablist" aria-label="Open files" data-i18n-aria-label="ide.openFilesLabel"></div>
-              <nav class="ide-breadcrumbs hidden" id="ideBreadcrumbs" aria-label="Active file path" data-i18n-aria-label="ide.activeFilePathLabel"></nav>
-              <!-- Safety toolbar: shown only on a "Jenny's change" diff tab (revert + per-hunk accept/reject); renderer-ide-diff-controller.js owns its contents. -->
-              <div class="ide-diff-toolbar hidden" id="ideDiffToolbar" aria-label="Change review actions" data-i18n-aria-label="ide.changes.reviewActionsLabel"></div>
-              <!-- View-mode bar: Code | Exploded toggle, shown only on TS/JS file tabs when workspace_exploded_view is on; renderer-ide-explode-toggle.js owns its contents. -->
-              <div class="ide-viewmode-bar hidden" id="ideViewModeBar" aria-label="File view mode" data-i18n-aria-label="ide.fileViewModeLabel"></div>
-              <div class="ide-editor-stage" id="ideEditorStage" role="tabpanel" aria-label="Editor" data-i18n-aria-label="ide.editor.label">
-                <div class="ide-editor-host" id="ideEditorHost"></div>
-                <!-- textarea fallback: shown when Monaco is unavailable (jsdom tests, loader failure). -->
-                <textarea class="ide-editor-fallback hidden" id="ideEditorFallback" aria-label="File editor fallback" data-i18n-aria-label="ide.editor.fallbackLabel" spellcheck="false"></textarea>
-                <div class="ide-empty-state" id="ideEmptyState">
-                  <div class="page-eyebrow" data-i18n="ide.empty.workspaceEyebrow">Workspace</div>
-                  <h2 class="page-title" data-i18n="ide.empty.heading">Edit files with Jenny</h2>
-                  <p class="page-copy" id="ideEmptyStateCopy" data-i18n="ide.empty.description">Open a file from the explorer to start editing, search across the workspace, or review Jenny's changes.</p>
-                  <!-- "Choose Folder" action renders here (inventory action-button) while no workspace root is configured. -->
-                  <div class="ide-empty-state-action hidden" id="ideEmptyStateAction"></div>
+          <div class="ide-shell" id="ideShell">
+            <!-- Workbench (row 40 W3): renderer-ide-workbench.js renders the persisted layout tree of splits and stacks here
+                 and adopts #ideMain as the editor stack's body; every panel renders into its own view host. -->
+            <div class="ide-workbench" id="ideWorkbench">
+              <div class="ide-main" id="ideMain">
+                <div class="ide-tabbar">
+                  <div class="ide-tabstrip" id="ideTabStrip" role="tablist" aria-label="Open files" data-i18n-aria-label="ide.openFilesLabel"></div>
+                  <!-- Preview / File map toggles (renderer-ide-stage-switch.js). -->
+                  <div class="ide-stage-switch" id="ideStageSwitch" role="group"></div>
                 </div>
-                <div class="ide-map-host hidden" id="ideMapHost" aria-label="File map" data-i18n-aria-label="ide.fileMapLabel"></div>
-                <!-- Exploded View overlay: node graph of one TS/JS file (functions/data + wiring); renderer-ide-explode-controller.js mounts here on first exploded activation. -->
-                <div class="ide-exploded-host hidden" id="ideExplodedHost" aria-label="Exploded view" data-i18n-aria-label="ide.explodedViewLabel"></div>
-                <!-- Unified Preview stage host (workspace_preview_surface): markdown/mermaid + sandboxed HTML preview of a workspace file; renderer-ide-preview-stage.js mounts here, keep-alive like the map host. -->
-                <div class="ide-preview-host hidden" id="idePreviewHost" aria-label="File preview" data-i18n-aria-label="ide.filePreviewLabel"></div>
+                <nav class="ide-breadcrumbs hidden" id="ideBreadcrumbs" aria-label="Active file path" data-i18n-aria-label="ide.activeFilePathLabel"></nav>
+                <!-- Safety toolbar: shown only on a "Jenny's change" diff tab (revert + per-hunk accept/reject); renderer-ide-diff-controller.js owns its contents. -->
+                <div class="ide-diff-toolbar hidden" id="ideDiffToolbar" aria-label="Change review actions" data-i18n-aria-label="ide.changes.reviewActionsLabel"></div>
+                <!-- View-mode bar: Code | Exploded toggle, shown only on TS/JS file tabs when workspace_exploded_view is on; renderer-ide-explode-toggle.js owns its contents. -->
+                <div class="ide-viewmode-bar hidden" id="ideViewModeBar" aria-label="File view mode" data-i18n-aria-label="ide.fileViewModeLabel"></div>
+                <div class="ide-editor-stage" id="ideEditorStage" role="tabpanel" aria-label="Editor" data-i18n-aria-label="ide.editor.label">
+                  <div class="ide-editor-host" id="ideEditorHost"></div>
+                  <!-- textarea fallback: shown when Monaco is unavailable (jsdom tests, loader failure). -->
+                  <textarea class="ide-editor-fallback hidden" id="ideEditorFallback" aria-label="File editor fallback" data-i18n-aria-label="ide.editor.fallbackLabel" spellcheck="false"></textarea>
+                  <div class="ide-empty-state" id="ideEmptyState">
+                    <div class="page-eyebrow" data-i18n="ide.empty.workspaceEyebrow">Workspace</div>
+                    <h2 class="page-title" data-i18n="ide.empty.heading">Edit files with Jenny</h2>
+                    <p class="page-copy" id="ideEmptyStateCopy" data-i18n="ide.empty.description">Open a file from the explorer to start editing, search across the workspace, or review Jenny's changes.</p>
+                    <!-- "Choose Folder" action renders here (inventory action-button) while no workspace root is configured. -->
+                    <div class="ide-empty-state-action hidden" id="ideEmptyStateAction"></div>
+                  </div>
+                  <div class="ide-map-host hidden" id="ideMapHost" aria-label="File map" data-i18n-aria-label="ide.fileMapLabel"></div>
+                  <!-- Exploded View overlay: node graph of one TS/JS file (functions/data + wiring); renderer-ide-explode-controller.js mounts here on first exploded activation. -->
+                  <div class="ide-exploded-host hidden" id="ideExplodedHost" aria-label="Exploded view" data-i18n-aria-label="ide.explodedViewLabel"></div>
+                  <!-- Unified Preview stage host: markdown/mermaid + sandboxed HTML preview of a workspace file; renderer-ide-preview-stage.js mounts here, keep-alive like the map host. -->
+                  <div class="ide-preview-host hidden" id="idePreviewHost" aria-label="File preview" data-i18n-aria-label="ide.filePreviewLabel"></div>
+                </div>
               </div>
-              <div class="ide-bottom-resizer hidden" id="ideBottomResizer" role="separator" aria-orientation="horizontal" aria-label="Resize bottom panel" data-i18n-aria-label="ide.bottomPanel.resizeLabel" title="Drag to resize the bottom panel" data-i18n-title="ide.bottomPanel.resizeTitle" tabindex="0"></div>
-              <div class="ide-bottom-panel hidden" id="ideBottomPanel" data-open="false">
-                <nav class="ide-bottom-tabs" id="ideBottomTabs" role="toolbar" aria-label="Bottom panel" data-i18n-aria-label="ide.bottomPanel.label"></nav>
-                <!-- UIUX-011: Terminal's persistent host, outside the shared content
-                     host below. renderer-ide-pty-terminal-panel.js mounts its live
-                     xterm instance + ResizeObserver here exclusively; Problems/Run/
-                     Test Runner never touch it, so their innerHTML repaints can never
-                     orphan Terminal's DOM. renderer-ide-bottom-panel.js toggles
-                     visibility between the two hosts on view switch (never both). -->
-                <div class="ide-bottom-content hidden" id="ideBottomTerminalHost" aria-hidden="true"></div>
-                <div class="ide-bottom-content" id="ideBottomPanelContent"></div>
-              </div>
-              <!-- Collapsed-state affordance: a thin handle above the statusbar that expands the bottom panel (shown only while it is collapsed). -->
-              <div class="ide-bottom-handle hidden" id="ideBottomHandle"></div>
-              <div class="ide-statusbar hidden" id="ideStatusBar"></div>
             </div>
-            <div class="ide-rail" id="ideRail">
-              <div class="ide-rail-resizer" id="ideRailResizer" role="separator" aria-orientation="vertical" aria-label="Resize workspace rail" data-i18n-aria-label="ide.workspaceRail.resizeLabel" title="Drag to resize the workspace rail" data-i18n-title="ide.workspaceRail.resizeTitle" tabindex="0"></div>
-              <nav class="ide-activitybar" id="ideActivityBar" role="toolbar" aria-label="Workspace panels" data-i18n-aria-label="ide.workspacePanelsLabel"></nav>
-              <div class="ide-rail-panel" id="ideRailPanel"></div>
-            </div>
-            <!-- Secondary sidebar: a second static side container opposite the primary rail, hosting one of the existing rail panels (renderer-ide-secondary-sidebar.js). Opened from the rail activity-bar toggle; collapsed by default. -->
-            <aside class="ide-secondary-sidebar hidden" id="ideSecondarySidebar" aria-label="Secondary sidebar" data-i18n-aria-label="ide.secondarySidebar.label">
-              <div class="ide-secondary-sidebar-resizer hidden" id="ideSecondarySidebarResizer" role="separator" aria-orientation="vertical" aria-label="Resize secondary sidebar" data-i18n-aria-label="ide.secondarySidebar.resizeLabel" title="Drag to resize the secondary sidebar" data-i18n-title="ide.secondarySidebar.resizeTitle" tabindex="0"></div>
-              <nav class="ide-activitybar ide-secondary-sidebar-header" id="ideSecondarySidebarHeader" role="toolbar" aria-label="Secondary sidebar" data-i18n-aria-label="ide.secondarySidebar.label"></nav>
-              <div class="ide-secondary-sidebar-panel" id="ideSecondarySidebarPanel"></div>
-            </aside>
-            <!-- Workspace Chat Dock (ide_chat_dock): the OUTERMOST column on its chosen
-                 side. The chat transcript + active-turn deck + composer nodes are
-                 RELOCATED here from #chatView while Workspace is active + the dock is
+            <div class="ide-statusbar hidden" id="ideStatusBar"></div>
+            <!-- Workspace chat (ide_chat_dock): the workbench moves this element into the chat
+                 view's host. The chat transcript + active-turn deck + composer nodes are
+                 RELOCATED here from #chatView while Workspace is active + the chat stack is
                  open (renderer-ide-chat-dock.js reconcile); the body is empty at rest. -->
-            <aside class="ide-chat-dock hidden" id="ideChatDock" aria-label="Jenny chat" data-i18n-aria-label="ide.chatDock.label" data-dock-side="right">
-              <div class="ide-chat-dock-resizer hidden" id="ideChatDockResizer"
-                   role="separator" aria-orientation="vertical" aria-label="Resize chat dock" data-i18n-aria-label="ide.chatDock.resizeLabel" title="Drag to resize the chat dock" data-i18n-title="ide.chatDock.resizeTitle" tabindex="0"></div>
+            <aside class="ide-chat-dock hidden" id="ideChatDock" aria-label="Jenny chat" data-i18n-aria-label="ide.chatDock.label">
               <header class="ide-chat-dock-header" id="ideChatDockHeader"></header>
               <div class="ide-chat-dock-body" id="ideChatDockBody"></div>
             </aside>
@@ -671,7 +644,7 @@
               <div class="diagnostics-overall" id="diagnosticsOverall"></div>
               <div class="diagnostics-overview-layout">
                 <section class="diagnostics-section diagnostics-issues-section" aria-labelledby="diagnosticsIssuesHeading">
-                  <div class="diagnostics-section-heading"><div><h3 id="diagnosticsIssuesHeading" data-i18n="diagnostics.issues.heading">Recent issues</h3><p data-i18n="diagnostics.issues.description">Prioritized warnings and errors from the selected run.</p></div></div>
+                  <div class="diagnostics-section-heading"><div><h3 id="diagnosticsIssuesHeading" data-i18n="diagnostics.issues.heading">Recent issues</h3><p data-i18n="diagnostics.issues.descriptionLaunch">What needs attention in this app launch, newest first.</p></div></div>
                   <div class="diagnostics-issue-list" id="diagnosticsIssueList" role="list"></div>
                 </section>
                 <div class="diagnostics-overview-sidebar">
@@ -724,19 +697,6 @@
             </section>
             <section id="diagnosticsRuns" class="diagnostics-runs" role="tabpanel" aria-labelledby="diagnosticsRunsTab" hidden><div class="diagnostics-section diagnostics-runs-board" id="diagnosticsRunsMount"></div></section>
           </div>
-        </section>
-
-        <section class="main-view plugin-view" id="pluginView" aria-label="Plugin view" data-i18n-aria-label="plugins.view.label" aria-live="off">
-          <header class="plugin-view-trust-chrome" id="pluginViewTrustChrome" tabindex="-1">
-            <div class="plugin-view-heading">
-              <span class="plugin-view-eyebrow" data-i18n="plugins.view.eyebrow">Isolated plugin</span>
-              <h2 class="plugin-view-title" id="pluginViewTitle" data-i18n="plugins.view.title">Plugin view</h2>
-              <span class="plugin-view-identity" id="pluginViewIdentity"></span>
-            </div>
-            <span class="plugin-view-status" id="pluginViewStatus" role="status" aria-live="polite" data-i18n="plugins.view.sandboxedStatus">Sandboxed · Network blocked</span>
-            <div class="plugin-view-actions" id="pluginViewActions" role="group" aria-label="Plugin view controls" data-i18n-aria-label="plugins.view.controlsLabel"></div>
-          </header>
-          <div class="plugin-view-content-slot" id="pluginViewContentSlot" aria-label="Isolated plugin content" data-i18n-aria-label="plugins.view.contentLabel"></div>
         </section>
 
         <section class="main-view settings-view view-offscreen" id="settingsView" role="region" aria-label="Settings" data-i18n-aria-label="settings.shell.title" data-surface-effect-surface inert aria-hidden="true">
@@ -840,7 +800,6 @@
                   </div>
                 </details>
               </section>
-
 
               <section class="settings-card context-card" data-settings-section="context">
                 <div class="settings-card-header">
@@ -1042,15 +1001,12 @@
                 </div>
               </section>
 
-              <!-- Plugins & Extensions mounts installed plugins, skill sources,
-                   standalone MCP trust review, and verified package sources. -->
-              <section class="settings-card" data-settings-section="plugins" hidden>
+              <!-- Extensions: skill folders and standalone MCP servers. -->
+              <section class="settings-card" data-settings-section="extensions">
                 <div class="settings-card-header">
-                  <h3 data-i18n="settings.plugins.heading">Plugins &amp; Extensions</h3>
-                  <div id="pluginsHeaderActionsHost"></div>
+                  <h3 data-i18n="settings.extensions.heading">Extensions</h3>
                 </div>
-                <p class="settings-copy" data-i18n="settings.plugins.description">Plugins, skills, and MCP connections Jenny can use.</p>
-                <div id="pluginsSettingsHost"></div>
+                <p class="settings-copy" data-i18n="settings.extensions.description">Skills and MCP connections Jenny can use.</p>
                 <div class="settings-subsection" id="skillsSettingsSection" role="group" aria-labelledby="skillsSettingsHeading">
                   <h4 class="settings-group-heading" id="skillsSettingsHeading" data-i18n="settings.skills.heading">Skills</h4>
                   <p class="settings-group-copy" data-i18n="settings.skills.description">Type / in the composer to run a skill. Jenny can also pick one on her own when the model is capable enough.</p>
@@ -1058,7 +1014,6 @@
                   <div id="skillsFoldersHost"></div>
                 </div>
                 <div id="mcpServersHost"></div>
-                <div id="pluginsSourcesHost"></div>
               </section>
 
               <section class="settings-card memory-settings-card" data-settings-section="memories" data-settings-field="memoryManager" id="memorySettingsSection">
@@ -1246,7 +1201,7 @@
   <script defer src="renderer/features/renderer-mermaid-theme-bridge.js"></script>
   <!-- katex.min.js is lazy-loaded on first formula render via renderer-katex-runtime-loader.js. -->
   <script defer src="renderer/shared/renderer-katex-runtime-loader.js"></script>
-  <!-- katex_math protect-then-render module; precedes markdown-utils so the
+  <!-- KaTeX protect-then-render module; precedes markdown-utils so the
        consumer sees window.markdownMathUtils at eval time (mermaid precedent). -->
   <script defer src="renderer/shared/markdown-math-utils.js"></script>
   <!-- Inline prose path chips; precedes markdown-utils (math precedent). -->
@@ -1269,6 +1224,7 @@
   <script defer src="renderer/chat/renderer-reasoning-entry-merge-utils.js"></script>
   <script defer src="renderer/chat/chat-message-utils.js"></script>
   <script defer src="renderer/shared/string-utils.js"></script>
+  <script defer src="renderer/shared/model-load-failure.js"></script>
   <script defer src="renderer/shared/task-brief-utils.js"></script>
   <script defer src="renderer/shared/motion-height-utils.js"></script>
   <script defer src="renderer/shared/model-capability-utils.js"></script>
@@ -1277,7 +1233,7 @@
   <script defer src="renderer/shared/renderer-motion-preference-utils.js"></script>
   <script defer src="renderer/chat/chat-bubble-action-utils.js"></script>
   <script defer src="renderer/chat/chat-scroll-utils.js"></script>
-  <!-- reasoning_prettify: display-time whitespace repair for glued small-model
+  <!-- Reasoning prettify: display-time whitespace repair for glued small-model
        thinking; must precede chat-thinking-utils.js (consumed at load). -->
   <script defer src="renderer/chat/reasoning-prettify-utils.js"></script>
   <script defer src="renderer/chat/chat-thinking-utils.js"></script>
@@ -1369,7 +1325,6 @@
   <script defer src="renderer/chat/renderer-file-diff-view.js"></script>
   <script defer src="renderer/chat/renderer-file-diff-bindings.js"></script>
   <script defer src="renderer/chat/renderer-jenny-change-ledger.js"></script>
-  <script defer src="renderer/chat/renderer-session-diff-review-model.js"></script>
   <script defer src="renderer/chat/renderer-code-review-affordance.js"></script>
   <script defer src="renderer/chat/renderer-task-spawn-chip.js"></script>
   <!-- Chat calendar block (home tool results); must precede renderer-transcript-tool-calls.js and renderer-turn-row-tool-render-utils.js, which resolve it. -->
@@ -1409,14 +1364,12 @@
 <script defer src="renderer/chat/renderer-stream-handler-dispatch.js"></script>
 <script defer src="renderer/chat/renderer-stream-mailbox.js"></script>
 <script defer src="renderer/chat/renderer-stream-buffer-utils.js"></script>
-<script defer src="renderer/chat/renderer-stream-recovery.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-session-helpers.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-reasoning-merge.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-reasoning-phase-status.js"></script>
 <script defer src="renderer/chat/renderer-stream-text-cursor.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-pending-message.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-lifecycle.js"></script>
-<script defer src="renderer/chat/renderer-stream-envelope-v2.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-runtime.js"></script>
 <script defer src="renderer/chat/renderer-stream-tool-patch-utils.js"></script>
 <script defer src="renderer/chat/renderer-stream-tool-live-tail.js"></script>
@@ -1530,37 +1483,32 @@
 <script defer src="renderer/shell/renderer-health-pill-markup-utils.js"></script>
 <script defer src="renderer/shell/renderer-health-pill-utils.js"></script>
 <script defer src="renderer/shell/renderer-settings-section-registry.js"></script>
-<script defer src="renderer/shell/renderer-settings-control-tower-utils.js"></script>
 <script defer src="renderer/shell/renderer-settings-refresh-utils.js"></script>
-<script defer src="renderer/shell/renderer-settings-core-renderers.js"></script>
-<script defer src="renderer/shell/renderer-settings-lazy-renderers.js"></script>
 <script defer src="renderer/shell/renderer-settings-composer-measure.js"></script>
 <script defer src="renderer/shell/renderer-settings-overlays.js"></script>
-<script defer src="renderer/shell/renderer-settings-v2-surfaces.js"></script>
 <script defer src="renderer/shell/renderer-diagnostics-performance-utils.js"></script>
+<script defer src="renderer/shared/diagnostics-issue-explanations.js"></script>
+<script defer src="renderer/shell/renderer-diagnostics-issue-card.js"></script>
 <script defer src="renderer/shell/renderer-diagnostics-render-utils.js"></script>
-<script defer src="renderer/shell/renderer-settings-utils.js"></script>
+<!-- Settings scripts load together on first use, in manifest dependency order. -->
+<script defer src="renderer/shell/renderer-settings-chrome.js"></script>
+<script defer src="renderer/shell/renderer-settings-script-manifest.js"></script>
 <script defer src="renderer/shell/model-library/model-library-runtime-actions.js"></script>
+<script defer src="renderer/shell/model-library/model-library-recovery-actions.js"></script>
 <script defer src="renderer/shell/renderer-model-library-folders.js"></script>
 <script defer src="renderer/shell/model-library/model-library-image-engine.js"></script>
 <script defer src="renderer/shell/renderer-settings-model-library-section.js"></script>
-<script defer src="renderer/shell/renderer-plugin-view-host.js"></script>
 <script defer src="renderer/shell/renderer-plugin-session-controller.js"></script>
 <script defer src="renderer/inventory/drawer.js"></script>
 <script defer src="renderer/shell/renderer-model-tuning-engine-utils.js"></script>
 <script defer src="renderer/shell/renderer-model-tuning-drawer.js"></script>
-<script defer src="renderer/shell/renderer-plugin-manager-details.js"></script>
-<script defer src="renderer/shell/renderer-plugin-manager-operations.js"></script>
-<script defer src="renderer/shell/renderer-plugins-settings.js"></script>
 <script defer src="renderer/shell/renderer-mcp-servers.js"></script>
 <script defer src="renderer/shell/renderer-knowledge-scope.js"></script>
+<script defer src="renderer/shell/renderer-knowledge-catalog.js"></script>
 <script defer src="renderer/shell/renderer-knowledge-folders.js"></script>
 <script defer src="renderer/shell/renderer-ollama-tray-toast.js"></script>
 <script defer src="renderer/shell/renderer-ollama-health.js"></script>
 <script defer src="renderer/features/renderer-workspace-root-nudge.js"></script>
-<script defer src="renderer/shell/renderer-settings-editor-section.js"></script>
-<script defer src="renderer/shell/renderer-settings-home-section.js"></script>
-<script defer src="renderer/shell/renderer-settings-notifications-section.js"></script>
 <script defer src="renderer/shell/renderer-settings-compaction-section.js"></script>
 <script defer src="renderer/shell/renderer-settings-search.js"></script>
 <script defer src="renderer/shell/renderer-settings-nav-utils.js"></script>
@@ -1643,6 +1591,8 @@
   <script defer src="renderer/chat/renderer-composer-tools-slot.js"></script>
   <script defer src="renderer/chat/renderer-composer-model-picker-utils.js"></script>
   <script defer src="renderer/chat/renderer-composer-model-picker.js"></script>
+  <script defer src="renderer/chat/renderer-composer-model-failure-actions.js"></script>
+  <script defer src="renderer/chat/renderer-hero-model-state.js"></script>
   <script defer src="renderer/chat/renderer-composer-v2-flow.js"></script>
   <script defer src="renderer/chat/renderer-composer-v2-status.js"></script>
   <script defer src="renderer/chat/renderer-composer-v2-render.js"></script>
@@ -1653,7 +1603,7 @@
   <script defer src="renderer/chat/renderer-turn-row-tool-render-utils.js"></script>
   <script defer src="renderer/chat/renderer-turn-row-list-utils.js"></script>
   <script defer src="renderer/chat/renderer-turn-row-bubble-utils.js"></script>
-  <!-- turn_activity_envelope coalesce helpers; resolved lazily by renderer-render-pipeline-article-markup.js. -->
+  <!-- Turn-article coalesce helpers; resolved lazily by renderer-render-pipeline-article-markup.js. -->
   <script defer src="renderer/chat/renderer-turn-article-coalesce-utils.js"></script>
   <!-- Citation chips (source_citations); must precede renderer-turn-row-render-utils.js, which resolves it. -->
   <script defer src="renderer/chat/renderer-citation-chips-utils.js"></script>
@@ -1715,14 +1665,14 @@
 <script defer src="renderer/features/renderer-artifacts-projection.js"></script>
 <script defer src="renderer/features/renderer-artifact-document-render.js"></script>
 <script defer src="renderer/features/renderer-artifacts-render.js"></script>
-<!-- WS2 artifact renderer registry + per-kind renderers (artifact_renderer_registry); must precede the surface controller. -->
+<!-- WS2 artifact renderer registry + per-kind renderers; must precede the surface controller. -->
 <script defer src="renderer/features/renderer-artifacts-renderer-registry.js"></script>
 <script defer src="renderer/features/renderer-artifacts-render-mermaid.js"></script>
 <script defer src="renderer/features/renderer-artifacts-render-markdown.js"></script>
 <script defer src="renderer/features/renderer-artifacts-render-code.js"></script>
 <script defer src="renderer/features/renderer-artifacts-render-image.js"></script>
 <script defer src="renderer/features/renderer-artifacts-render-text.js"></script>
-<!-- HTML Artifact Preview (artifact_html_preview): frame-init is loaded here only so the factory can inline its source into the staged sandbox document (it never runs in-page); all three must precede renderer-artifacts-render-web.js, which delegates to the preview renderer. -->
+<!-- HTML Artifact Preview: frame-init is loaded here only so the factory can inline its source into the staged sandbox document (it never runs in-page); all three must precede renderer-artifacts-render-web.js, which delegates to the preview renderer. -->
 <script defer src="renderer/frames/html-artifact-frame-init.js"></script>
 <script defer src="renderer/features/renderer-html-artifact-frame-utils.js"></script>
 <script defer src="renderer/features/renderer-artifact-version-history-utils.js"></script>
@@ -1750,7 +1700,6 @@
 <!-- Delete-confirm gate (Wave-R queue #18); must precede renderer-artifacts-utils.js, which wires it. -->
 <script defer src="renderer/features/renderer-artifact-delete-confirm.js"></script>
 <script defer src="renderer/features/renderer-artifacts-utils.js"></script>
-<script defer src="renderer/features/renderer-code-review-render.js"></script>
 <script defer src="renderer/features/renderer-code-review-rail.js"></script>
 <!-- Read-only chat-rail file preview (file_preview rail mode); the pure render module must precede its controller, and both must precede renderer-shell-artifact-bridge.js, which builds the controller. -->
 <script defer src="renderer/features/renderer-artifact-file-preview-render.js"></script>
@@ -1758,6 +1707,8 @@
 <!-- Tasks rail stub: render module precedes the controller consumed by renderer-shell-artifact-bridge.js. -->
 <script defer src="renderer/features/renderer-task-rail-render.js"></script>
 <script defer src="renderer/features/renderer-task-rail.js"></script>
+<!-- Project notes entry (toggle, chat rows, lazy loader of the notes rail); must precede renderer-shell-artifact-bridge.js, which builds it. -->
+<script defer src="renderer/features/renderer-project-notes-entry.js"></script>
 <!-- Subagent Monitor rail (`subagents` rail mode of the artifact panel): must precede renderer-shell-artifact-bridge.js, which builds it. -->
 <script defer src="renderer/features/renderer-subagent-rail.js"></script>
   <script defer src="renderer/features/renderer-context-panel-utils.js"></script>
@@ -1789,16 +1740,10 @@
   <!-- Tier C per-field reset + two-step section reset (JENNY_UIUX_OVERHAUL_PLAN.md item 10); consumes renderer-settings-persistence-adapters.js, mounted from renderer-settings-shell-controller.js. -->
   <script defer src="renderer/shell/renderer-settings-field-reset.js"></script>
   <script defer src="renderer/shell/renderer-settings-field-binding.js"></script>
-  <script defer src="renderer/shell/renderer-settings-advanced-section.js"></script>
-  <script defer src="renderer/shell/renderer-settings-session-runtime.js"></script>
-  <script defer src="renderer/shell/renderer-settings-section-binders.js"></script>
   <script defer src="renderer/shell/renderer-settings-event-utils.js"></script>
   <!-- UIUX-009: coalesced snapshot-poll scheduler + section patch guard (signature-diffed, focus/dirty-draft aware) consumed by renderer-settings-shell-controller.js and renderer-app-shell-bindings.js. Must precede both. -->
   <script defer src="renderer/shell/renderer-settings-snapshot-poll.js"></script>
   <script defer src="renderer/shell/renderer-settings-shell-controller.js"></script>
-  <script defer src="renderer/shell/renderer-settings-command-sandbox.js"></script>
-  <script defer src="renderer/shell/renderer-settings-cloud-models.js"></script>
-  <script defer src="renderer/shell/renderer-settings-pdf-addon.js"></script>
   <script defer src="renderer/shell/renderer-workspace-state-utils.js"></script>
   <script defer src="renderer/shell/renderer-workspace-chrome-utils.js"></script>
   <script defer src="renderer/shell/renderer-workspace-tab-drag-utils.js"></script>
@@ -1850,6 +1795,7 @@
   <script defer src="renderer/app/renderer-app-lifecycle-composition.js"></script>
   <script defer src="renderer/app/renderer-app-controller-composition.js"></script>
   <script defer src="renderer/app/renderer-pane-drag-controller.js"></script>
+  <script defer src="renderer/app/renderer-app-pane-chrome.js"></script>
   <script defer src="renderer/app/renderer-app-pane-composition.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-mcp.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-display-media.js"></script>

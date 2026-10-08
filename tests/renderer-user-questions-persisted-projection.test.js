@@ -11,6 +11,7 @@ const test = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { JSDOM } = require('jsdom');
 
 const { normalizePersistedToolResultMetadata } = require('../services/backend/tool-result-diff-metadata');
 const messageUtils = require('../renderer/chat/renderer-turn-tree-projector-message-utils');
@@ -185,14 +186,61 @@ test('a persisted stale demotion outranks the projector pending state on full re
   assert.doesNotMatch(html, /user-questions-submit-btn|user-questions-block"/);
 });
 
-test('production wiring forwards session-message accessors to the transcript bindings', () => {
-  const eventUtilsSource = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat', 'renderer-chat-event-utils.js'), 'utf8');
-  const callBlock = eventUtilsSource.slice(eventUtilsSource.indexOf('createTranscriptEventBindings({'));
-  assert.notEqual(callBlock.indexOf('getSessionMessages,'), -1, 'transcript bindings must receive getSessionMessages');
-  assert.notEqual(callBlock.indexOf('setSessionMessages,'), -1, 'transcript bindings must receive setSessionMessages');
-  const compositionSource = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app', 'renderer-app-controller-composition.js'), 'utf8');
-  assert.match(compositionSource, /getSessionMessages: \(\.\.\.a\) => getSessionMessages\(\.\.\.a\)/);
-  assert.match(compositionSource, /setSessionMessages: \(\.\.\.a\) => setSessionMessages\(\.\.\.a\)/);
+async function assertExpiredQuestionPersists(t, omitAccessors = false) {
+  const dom = new JSDOM('<!doctype html><body><div id="chatView"><div id="chatTimeline"><div class="user-questions-block" data-question-ref="ref-1" data-tool-call-id="c1"></div></div></div></body>');
+  const { window } = dom;
+  const reads = [], writes = [], checks = [];
+  const messages = [{ id: 'tool_use_c1', kind: 'tool_use', tool_call: {
+    call_id: 'c1', tool_name: 'ask_user', status: 'pending_user_input', question_ref: 'ref-1',
+  } }];
+  window.jennyShell = { chat: { hasPendingUserQuestions: async (ref) => { checks.push(ref); return false; } } };
+  const transcriptFactory = require('../renderer/chat/renderer-chat-event-transcript-bindings');
+  const context = {
+    window, document: window.document, AbortController: window.AbortController,
+    rendererChatEventTranscriptBindings: { createTranscriptEventBindings(deps) {
+      const forwarded = { ...deps };
+      if (omitAccessors) { delete forwarded.getSessionMessages; delete forwarded.setSessionMessages; }
+      return transcriptFactory.createTranscriptEventBindings(forwarded);
+    } },
+    rendererChatEventSettingsBindings: { createSettingsEventBindings: () => ({}) },
+    rendererChatEventInteractiveBindings: { bindInteractiveComposerEvents() {} },
+    rendererAsyncFence: require('../renderer/shared/async-fence'),
+    rendererEnterKeydownUtils: require('../renderer/chat/renderer-enter-keydown-utils'),
+    rendererChatCtrlWheelGate: require('../renderer/chat/renderer-chat-ctrl-wheel-gate'),
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../renderer/chat/renderer-chat-event-utils.js'), 'utf8'), context);
+  const callbacks = new Proxy({
+    getSessionMessages: (id) => { reads.push(id); return messages; },
+    setSessionMessages: (...args) => writes.push(args),
+  }, { get: (target, key) => key in target ? target[key] : () => {} });
+  const bindings = context.rendererChatEventUtils.createChatEventBindings({
+    state: { currentSessionId: 'session-a', ui: { activeView: 'chat' } },
+    sessionContext: { paneId: 1, getSessionId: () => 'session-a' },
+    constants: { TOAST_SOURCE: {}, ACTIVITY_SCOPE: {} }, callbacks, controllers: {},
+    dom: { chatView: window.document.getElementById('chatView'), chatTimeline: window.document.getElementById('chatTimeline') },
+  });
+  t.after(() => { bindings.dispose(); window.close(); });
+  bindings.bind();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(checks, ['ref-1']);
+  assert.deepEqual(reads, ['session-a'], 'expired questions must read the bound session messages');
+  assert.equal(writes.length, 1, 'expired questions must persist their stale marker');
+  const [sessionId, settled, cacheKey] = writes[0];
+  assert.equal(sessionId, 'session-a');
+  assert.equal(cacheKey, 'session_session-a');
+  assert.equal(settled[0].id, 'tool_use_c1');
+  assert.equal(settled[0].user_questions_stale, true);
+  assert.equal(settled[0].user_questions_result_kind, 'user_questions_stale');
+  assert.equal(settled[0].tool_call.status, 'completed');
+  assert.equal(settled[0].tool_call.user_questions_stale, true);
+  assert.equal(messages[0].tool_call.status, 'pending_user_input');
+}
+
+test('production wiring persists an expired question through the session-message accessors', async (t) => {
+  await assertExpiredQuestionPersists(t);
+  await assert.rejects(() => assertExpiredQuestionPersists(t, true), {
+    code: 'ERR_ASSERTION', message: /expired questions must read the bound session messages/,
+  });
 });
 
 test('stream tool handlers register the browser global name the bindings fall back to', () => {

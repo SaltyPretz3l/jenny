@@ -120,11 +120,6 @@
     windowRef.rendererQuickSettingsModalController = controller;
     controllers.quickSettingsModalController = controller;
 
-    function isQuickSettingsFlagEnabled() {
-      const flags = state.features && state.features.featureFlags;
-      return !flags || flags.quick_settings !== false;
-    }
-
     function handleChordKeydown(event) {
       const isModifierChord = (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey
         && (event.key === ',' || event.code === 'Comma');
@@ -132,7 +127,6 @@
       if (event.defaultPrevented) return;
       if (event.isComposing) return;
       // Modifier chords never insert text, so this must fire even from the composer.
-      if (!isQuickSettingsFlagEnabled()) return;
       event.preventDefault();
       event.stopPropagation();
       controller.toggle();

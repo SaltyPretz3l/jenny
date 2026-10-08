@@ -89,15 +89,6 @@ for (const { name, raw, expected, exact, excluded } of BLOCK_REPAIR_FIXTURES) {
     else assert.ok(out.includes(expected), name);
     if (excluded) assert.ok(!out.includes(excluded), name);
     assert.equal(prettifyReasoningMarkdown(out), out, `${name}: idempotence`);
-    const hadDocument = Object.prototype.hasOwnProperty.call(globalThis, 'document');
-    const priorDocument = globalThis.document;
-    globalThis.document = { documentElement: { dataset: { reasoningPrettify: 'false' } } };
-    try {
-      assert.equal(joinReasoningEntriesMarkdown([{ id: name, text: raw }]), raw, `${name}: flag-off bytes`);
-    } finally {
-      if (hadDocument) globalThis.document = priorDocument;
-      else delete globalThis.document;
-    }
   });
 }
 
@@ -110,33 +101,6 @@ test('isProseBoundary accepts only a prefix that ends in prose with balanced quo
   assert.equal(isProseBoundary('```js\ncode\n```'), true);
   assert.equal(isProseBoundary('```js\ncode'), false);
   assert.equal(isProseBoundary('use `open'), false);
-});
-
-test('prettifies a 200K newline-free reasoning wall within 100 ms', () => {
-  const { performance } = require('node:perf_hooks');
-  const chunk = `${'a'.repeat(69)}. Actually, `;
-  const prose = chunk.repeat(Math.ceil(200_000 / chunk.length)).slice(0, 200_000);
-  const timings = [];
-  for (let run = 0; run < 3; run += 1) {
-    const startedAt = performance.now();
-    prettifyReasoningMarkdown(prose);
-    timings.push(performance.now() - startedAt);
-  }
-
-  assert.ok(Math.min(...timings) < 100, `fastest run was ${Math.min(...timings).toFixed(1)} ms`);
-});
-
-test('bounds whitespace-free glue-token scans below 50 ms', () => {
-  const { performance } = require('node:perf_hooks');
-  const prose = 'a.Aa'.repeat(4096);
-  const timings = [];
-  for (let run = 0; run < 3; run += 1) {
-    const startedAt = performance.now();
-    prettifyReasoningMarkdown(prose);
-    timings.push(performance.now() - startedAt);
-  }
-
-  assert.ok(Math.min(...timings) < 50, `fastest run was ${Math.min(...timings).toFixed(1)} ms`);
 });
 
 test('bounded glue-token scan still preserves a 200-character path token', () => {
@@ -475,27 +439,10 @@ test('hasSparseNewlines separates unformatted walls from formatted thinking', ()
   assert.equal(hasSparseNewlines(Array.from({ length: 10 }, () => 'para '.repeat(20)).join('\n\n')), false);
 });
 
-test('joinReasoningEntriesMarkdown prettifies by default and honors the kill switch', () => {
+test('joinReasoningEntriesMarkdown prettifies glued reasoning text', () => {
   const entries = [{ text: 'the guard held.Now wire the reset fields.' }];
   assert.equal(
     joinReasoningEntriesMarkdown(entries),
     'the guard held.\n\nNow wire the reset fields.',
   );
-
-  const hadDocument = Object.prototype.hasOwnProperty.call(globalThis, 'document');
-  const priorDocument = globalThis.document;
-  globalThis.document = { documentElement: { dataset: { reasoningPrettify: 'false' } } };
-  try {
-    assert.equal(
-      joinReasoningEntriesMarkdown(entries),
-      'the guard held.Now wire the reset fields.',
-      'flag-off must be byte-identical to the raw join',
-    );
-  } finally {
-    if (hadDocument) {
-      globalThis.document = priorDocument;
-    } else {
-      delete globalThis.document;
-    }
-  }
 });

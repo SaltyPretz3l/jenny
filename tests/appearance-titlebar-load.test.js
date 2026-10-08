@@ -3,12 +3,12 @@
 // Top chrome (area 1, 2026-09-29): the "Show machine load in the title bar"
 // appearance field. Default off, persisted with appearance, a lossless
 // migration for records written before it existed, and never part of a theme
-// bundle. The titlebar_gpu_telemetry flag stays the sampler's kill switch.
+// bundle.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const appearance = require('../renderer/shared/appearance-utils.js');
-const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { loadRendererApp, waitForUi, openSettingsView } = require('./helpers/renderer-shell-harness');
 
 function createStorage(initial = {}) {
   const values = new Map(Object.entries(initial));
@@ -64,6 +64,7 @@ test('theme bundles never touch the title-bar read-out choice', () => {
 test('Settings > Appearance offers "Show machine load in the title bar" and persists it', async (t) => {
   const app = await loadRendererApp();
   t.after(async () => app.dispose());
+  await openSettingsView(app.window);
   const { window } = app;
   const list = window.document.getElementById('appearanceHoloList');
   const toggle = list.querySelector('[data-inv-toggle="appearanceTitlebarLoadToggle"]');
@@ -92,6 +93,7 @@ test('Settings > Appearance offers "Show machine load in the title bar" and pers
 test('a system stats push through the booted app updates the title-bar read-out', async (t) => {
   const app = await loadRendererApp();
   t.after(async () => app.dispose());
+  await openSettingsView(app.window);
   const { window } = app;
   const readout = () => [...window.document.querySelectorAll('#metricList .metric-item')]
     .map((item) => item.textContent.replace(/\s+/g, ' ').trim());

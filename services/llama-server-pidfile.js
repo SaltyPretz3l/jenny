@@ -18,11 +18,13 @@ function normalizeLogger(logger) {
   return typeof logger === 'function' ? logger : () => {};
 }
 
-function getPidFilePath(userDataPath) {
+// `fileName` lets a second managed server (the embedding server) keep its own
+// record beside the chat server's; the default is the chat server's file.
+function getPidFilePath(userDataPath, fileName = PID_FILENAME) {
   if (!userDataPath) {
     return '';
   }
-  return path.join(userDataPath, PID_FILENAME);
+  return path.join(userDataPath, fileName || PID_FILENAME);
 }
 
 // F2c: persist the spawn command line alongside the pid. Without it, a reaper
@@ -125,6 +127,7 @@ function llamaServerIdentityConfirmed(pid, record, {
 
 function reapStalePidFile({
   userDataPath,
+  pidFileName = PID_FILENAME,
   logger,
   platform = process.platform,
   spawnSyncImpl = spawnSync,
@@ -132,7 +135,7 @@ function reapStalePidFile({
   getProcessCommandLineSyncImpl = getProcessCommandLineSync,
 } = {}) {
   const log = normalizeLogger(logger);
-  const pidPath = getPidFilePath(userDataPath);
+  const pidPath = getPidFilePath(userDataPath, pidFileName);
   const record = readPidFile(pidPath);
   const pid = record.pid;
   if (!pid) {

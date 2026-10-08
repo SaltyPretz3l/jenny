@@ -182,7 +182,8 @@
           updateActiveSources(snapshot, options.state.logs);
         }],
         ['status', async function () {
-          var status = await shell.diagnostics?.getJennyStatus?.({ include_harness: false });
+          // No harness snapshot (tools, memories, skills); the sidecar pressure rides its own light read.
+          var status = await shell.diagnostics?.getJennyStatus?.({ include_harness: false, include_system_pressure: true });
           if (isDisposed()) return;
           if (!status || typeof status !== 'object' || Array.isArray(status)) throw new Error('status unavailable');
           options.state.diagnosticsStatus = status;
@@ -223,29 +224,6 @@
             });
             throw error;
           }
-        }],
-        ['plugin_platform', async function () {
-          if (options.state.features?.featureFlags?.plugins !== true) {
-            options.state.pluginPlatformDiagnostics = null;
-            return;
-          }
-          if (!shell.plugins?.getState) {
-            options.state.pluginPlatformDiagnostics = null;
-            throw new Error('plugin platform bridge unavailable');
-          }
-          var results = await Promise.allSettled([
-            shell.plugins.getState(),
-            shell.plugins.getDistributionState?.() || Promise.resolve(null),
-          ]);
-          if (isDisposed()) return;
-          if (results[0].status !== 'fulfilled') {
-            options.state.pluginPlatformDiagnostics = null;
-            throw new Error('plugin platform unavailable');
-          }
-          options.state.pluginPlatformDiagnostics = {
-            platform: results[0].value,
-            distribution: results[1].status === 'fulfilled' ? results[1].value : null,
-          };
         }],
         ['phase_percentiles', async function () {
           if (!await options.refreshPhasePercentiles()) throw new Error('phase percentiles unavailable');

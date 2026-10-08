@@ -1,0 +1,197 @@
+/* Project Notes rail (renderer-project-notes-rail.js): the `notes` mode of the
+   artifact review panel. Mirrors the Tasks rail chrome: the shared 36px header
+   keeps the "Notes" title and Close; everything below is the rail's own. */
+.artifact-review-panel[data-artifact-review-mode="notes"] .artifact-panel-controls,
+.artifact-review-panel[data-artifact-review-mode="notes"] .artifact-panel-status,
+.artifact-review-panel[data-artifact-review-mode="notes"] > .artifact-review-header {
+  display: none;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .artifact-panel-v2-scroll,
+.artifact-review-panel[data-artifact-review-mode="notes"] .artifact-review-scroll,
+.artifact-review-panel[data-artifact-review-mode="notes"] .artifact-review-detail-panel,
+.artifact-review-panel[data-artifact-review-mode="notes"] .artifact-panel-v2-content-host,
+.artifact-review-panel[data-artifact-review-mode="notes"] .artifact-preview-shell,
+.artifact-review-panel[data-artifact-review-mode="notes"] .artifact-preview-content {
+  min-height: 0;
+  height: 100%;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .artifact-panel-v2-scroll,
+.artifact-review-panel[data-artifact-review-mode="notes"] .artifact-review-scroll,
+.artifact-review-panel[data-artifact-review-mode="notes"] .artifact-preview-content {
+  overflow: hidden;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .artifact-review-detail-panel {
+  gap: 0;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .artifact-preview-content {
+  padding: 0;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] {
+  background: var(--bg-base);
+  border-inline-start: 1px solid var(--line);
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--text-primary);
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-block-end: 1px solid var(--border-subtle);
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__header b {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__mode {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: var(--space-1);
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__strip,
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__error {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3);
+  font-size: var(--font-size-caption);
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__strip {
+  color: var(--text-muted);
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__strip-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__error {
+  color: var(--text-danger-emphasis);
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3);
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  cursor: text;
+  scrollbar-width: thin;
+  scrollbar-color: var(--widget-scrollbar-color) transparent;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__preview:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__empty,
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__loading {
+  padding: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-body);
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__preview .notes-rail__empty {
+  padding: 0;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__line {
+  min-height: 1.5em;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__line:empty {
+  min-height: 0.75em;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__line--new {
+  background: var(--accent-a-12);
+}
+
+/* The Scratchpad line renderer's classes are widget-scoped; restyle them here. */
+.artifact-review-panel[data-artifact-review-mode="notes"] .dashboard-scratchpad__preview-heading {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .dashboard-scratchpad__preview-heading[data-level="1"] {
+  font-size: var(--font-size-body);
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .dashboard-scratchpad__preview-bullet,
+.artifact-review-panel[data-artifact-review-mode="notes"] .dashboard-scratchpad__check {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .dashboard-scratchpad__preview-dot,
+.artifact-review-panel[data-artifact-review-mode="notes"] .dashboard-scratchpad__check-box {
+  color: var(--text-muted);
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .dashboard-scratchpad__check.is-checked .dashboard-scratchpad__check-label {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__editor-field {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__editor-field .inv-text-field-control {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-3);
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.5;
+  resize: none;
+}
+
+.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__footer {
+  flex: 0 0 auto;
+  padding: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}

@@ -1,4 +1,4 @@
-/* The Model library renders inside Settings > Models, gated by model_management_ui. */
+/* The Model library renders inside Settings > Models. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(
@@ -43,6 +43,8 @@
   formatUtils
 ) {
   'use strict';
+  var loadFailureReader = root.jennyModelLoadFailure || (typeof require === 'function' ? require('../shared/model-load-failure') : null);
+  var recoveryModule = root.rendererModelLibraryRecoveryActions || (typeof require === 'function' ? require('./model-library/model-library-recovery-actions') : null);
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var CARD_SELECTOR = '.settings-card[data-settings-section="models"]';
@@ -50,7 +52,7 @@
   var HOST_ID = 'modelLibrarySectionHost';
   var EXTRAS_HOST_ID = 'modelLibrarySectionExtrasHost'; // folders + image engine under the grid (else in the toolbar)
   var MODAL_ID = 'model-library-section-confirm-delete';
-  var ACTIONS = ['use', 'unload', 'tune', 'pull', 'cancel', 'menu'];
+  var ACTIONS = ['use', 'unload', 'tune', 'pull', 'cancel', 'menu', 'retry', 'loadSmaller', 'showFits', 'diagnostics', 'copyDetails'];
 
   if (!sourcesModule || typeof sourcesModule.createModelLibrarySource !== 'function'
     || typeof sourcesModule.createPullController !== 'function'
@@ -139,11 +141,6 @@
     function toolbarHost() { return byId(TOOLBAR_HOST_ID); }
     function extrasHost() { return byId(EXTRAS_HOST_ID); }
 
-    function enabled() {
-      var flags = state && state.features && state.features.featureFlags;
-      return Boolean(flags && flags.model_management_ui === true);
-    }
-
     function activeModel() {
       return String(state && state.status && state.status.model || '').trim();
     }
@@ -165,6 +162,7 @@
       return [
         activeModel(),
         preferredLocalModel(),
+        JSON.stringify(loadFailureReader.readModelLoadFailure(state.backend)),
         JSON.stringify(state.localEngines?.openaiCompatible?.managed || null),
         Boolean(state.accelerationCatalog),
       ].join('\n');
@@ -201,7 +199,7 @@
       contextSignature = mergeSignature();
       var managed = state.localEngines?.openaiCompatible?.managed || null;
       var library = libraryView(managed);
-      return mergeModule.mergeModelLibrary({
+      var result = mergeModule.mergeModelLibrary({
         installed: library.installed,
         ollamaTags: sourceData.ollamaTags,
         recommendations: sourceData.recommendations,
@@ -210,6 +208,7 @@
         memory: sourceData.memory,
         catalogMeta: sourceData.catalogMeta,
         activeModel: library.active,
+        loadFailure: loadFailureReader.readModelLoadFailure(state.backend),
         preferredLocalModel: library.preferred,
         // Kill switch: with the flag off none of the per-model engine inputs are
         // projected (no engine or Serving pills), so the library renders exactly
@@ -223,6 +222,11 @@
           families: state.accelerationCatalog?.families || [],
         },
       });
+      var recommended = result.cards.find(function (card) { return card.recommended === true && card.fitState === 'fits' && card.installed !== true; });
+      var previousTag = state.modelRecommendation?.tag;
+      state.modelRecommendation = recommended ? { tag: recommended.tag, downloadSizeMb: recommended.downloadSizeMb } : null;
+      if (previousTag !== state.modelRecommendation?.tag) windowRef.dispatchEvent(new windowRef.CustomEvent('jenny:model-state-changed'));
+      return result;
     }
 
     function hardwarePending() {
@@ -355,8 +359,7 @@
     function updateStatusLine() {
       var target = card();
       var status = target && target.querySelector('.model-library-section-status');
-      // A late write (a pull settling after the flag flipped) must not resurface.
-      if (status) status.textContent = enabled() ? view.statusMessage : '';
+      if (status) status.textContent = view.statusMessage;
     }
 
     function setStatusMessage(message) {
@@ -393,11 +396,6 @@
       var target = toolbarHost();
       if (!target) return;
       var extras = extrasHost();
-      if (!enabled()) {
-        target.innerHTML = '';
-        if (extras) extras.innerHTML = '';
-        return;
-      }
       var activeElement = documentRef.activeElement;
       // The GGUF folders row is rebuilt with the toolbar: its focused control
       // gets the focus back, like the pull input.
@@ -451,11 +449,6 @@
       if (disposed) return;
       var target = host();
       if (!target) return;
-      if (!enabled()) {
-        target.innerHTML = '';
-        removeConfirmModal();
-        return;
-      }
       var activeElement = documentRef.activeElement;
       var activeRow = activeElement && target.contains(activeElement)
         ? activeElement.closest?.('[data-model-key]') : null;
@@ -502,7 +495,7 @@
     // force: this refresh answers a user action or follows a mutation, so it must
     // start its own read instead of joining one that began before the change.
     function refresh(options) {
-      if (disposed || !enabled()) return Promise.resolve(null);
+      if (disposed) return Promise.resolve(null);
       return source.load({
         llamaServer: accelerationFlagEnabled(),
         force: Boolean(options && options.force === true),
@@ -654,6 +647,7 @@
     function ensurePullController() {
       if (!pullController) {
         pullController = sourcesModule.createPullController({
+          state: state, windowRef: windowRef,
           setupService: setupService,
           onChange: handlePullChange,
           appendClientLog: appendClientLog,
@@ -673,6 +667,11 @@
       setStatusMessage: setStatusMessage,
       showToastMessage: showToastMessage,
       appendClientLog: appendClientLog,
+    });
+
+    var recovery = recoveryModule.createModelLibraryRecoveryActions({
+      windowRef: windowRef, state: state, runtimeActions: runtimeActions, setStatusMessage: setStatusMessage,
+      setFilter: function (filter) { view.filter = filter; render(); }, openDiagnostics: d.openDiagnostics, reader: loadFailureReader,
     });
 
     function handleConfirmDelete() {
@@ -810,6 +809,7 @@
           });
           menuOpen = true;
         } else if (action === 'use') runtimeActions.handleUse(tag);
+        else if (['retry', 'loadSmaller', 'showFits', 'diagnostics', 'copyDetails'].includes(action)) void recovery.handle(action, tag);
         else if (action === 'unload') runtimeActions.handleUnload(tag);
         else if (action === 'tune') {
           // The card's merged engine facts (Ollama/GGUF availability) seed the
@@ -872,17 +872,16 @@
     // features.onChanged fires for every shell-config change, not only flag
     // flips. Reload the sources only when a flag this section reads changed
     // or nothing has loaded yet; otherwise fold in the state this tick carries.
+    // The boot seed marks the feature state unresolved: the first load waits
+    // for the real payload, so startup reads the sources once, not twice.
     var featureSignature = null;
     function syncFeatureState() {
-      var show = enabled();
-      var nextSignature = show + ':' + accelerationFlagEnabled();
-      var flagsChanged = nextSignature !== featureSignature;
-      featureSignature = nextSignature;
-      if (!show) {
-        render();
-        updateStatusLine();
+      if (state && state.features && state.features.availabilityResolved === false) {
         return Promise.resolve(null);
       }
+      var nextSignature = String(accelerationFlagEnabled());
+      var flagsChanged = nextSignature !== featureSignature;
+      featureSignature = nextSignature;
       if (!flagsChanged && sourceData) {
         rebuildFromState();
         return Promise.resolve(null);
@@ -891,7 +890,7 @@
     }
 
     function rebuildFromState() {
-      if (!enabled() || !sourceData) return;
+      if (!sourceData) return;
       var nextSignature = mergeSignature();
       if (nextSignature === contextSignature) return;
       merged = buildMerged();
@@ -915,7 +914,7 @@
 
     function syncLlamaServerStatus() {
       var bridge = windowRef.jennyShell && windowRef.jennyShell.llamaServer;
-      if (disposed || statusReadPending || !enabled() || !accelerationFlagEnabled() || !sourceData
+      if (disposed || statusReadPending || !accelerationFlagEnabled() || !sourceData
         || !bridge || typeof bridge.getStatus !== 'function'
         || typeof sourcesModule.normalizeLlamaServer !== 'function') return;
       var generation = source.latestGeneration();
@@ -939,7 +938,7 @@
     // model list available, the tick re-reads the sources (five times at most).
     function catchUpPendingLoad() {
       var list = state.modelList;
-      if (disposed || !enabled() || !sourceData || sourceData.backendPending !== true || catchUpAttempts >= 5
+      if (disposed || !sourceData || sourceData.backendPending !== true || catchUpAttempts >= 5
         || state.backend?.phase !== 'ready' || !list || typeof list !== 'object' || list.available === false) return false;
       catchUpAttempts += 1;
       void refresh();
@@ -1006,6 +1005,8 @@
       syncFeatureState: syncFeatureState,
       syncFromState: syncFromState,
       syncEngineSettings: syncEngineSettings,
+      startPull: startPull,
+      cancelPull: function (tag) { return ensurePullController().cancel(tag); },
     };
   }
 

@@ -203,7 +203,8 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         self.tool_nudge_attempted = False
         self.checkpoint_created = False
         self.thinking_budget_checkpoints = 0
-        self.reflexive_retry_attempted, self.pending_retry_response_format = False, None  # type: bool, Any | None
+        self.reflexive_retries_used: dict[str, int] = {}
+        self.pending_retry_response_format: Any | None = None
         self.post_tool_continuation_attempted = False
         self.sub_agent_report_finalization_requested = False
         self.sub_agent_budget_finalization_requested = False
@@ -779,6 +780,12 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
 
                 # Plan Mode prose plan: ask once for an exit_plan_mode call instead.
                 if _tl_hub.plan_presentation.final_prose_nudge(self, result, _iteration):
+                    continue
+                # Propose mode prose with no suggestion recorded: ask once for the calls.
+                if _tl_hub.propose_presentation.final_propose_nudge(self, result, _iteration):
+                    continue
+                # A promise of work with nothing done: ask once to do it or name the blocker.
+                if _tl_hub.promise_nudge.final_promise_nudge(self, result, _iteration):
                     continue
                 outcome = self._handle_final_response(result, _iteration)
                 if outcome is not None:

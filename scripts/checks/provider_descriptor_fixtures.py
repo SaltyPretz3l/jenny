@@ -4,10 +4,10 @@ One loader serves both live consumers:
 
   - ``scripts/checks/check_provider_descriptor_fixtures.py`` (schema + registry
     + redaction gate, run from ``scripts/checks/run_all.py``), and
-  - ``tests/sidecar/ai/plugins/test_provider_descriptor_conformance.py`` (runs
+  - ``tests/sidecar/ai/engines/test_provider_descriptor_conformance.py`` (runs
     every executable case against the real engine).
 
-That shape mirrors ``scripts/checks/plugin_parity_corpus.py``: one loader, cases
+The shape is one loader with cases
 co-located with their frozen expectations, so a case cannot be added without an
 expectation and cannot be added without the gate seeing it.
 
@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-FIXTURES_DIR = ROOT / "tests" / "fixtures" / "plugins" / "provider-descriptor"
+FIXTURES_DIR = ROOT / "tests" / "fixtures" / "provider-descriptor"
 INDEX_NAME = "index.json"
 SCHEMA_VERSION = 1
 
@@ -38,7 +38,7 @@ class ProviderDescriptorFixtureError(ValueError):
 
 
 # Closed binding vocabulary. Every executable case names one of these, and
-# tests/sidecar/ai/plugins/provider_descriptor_bindings.py must supply an
+# tests/sidecar/ai/engines/provider_descriptor_bindings.py must supply an
 # adapter for exactly this set (asserted by the conformance suite).
 BINDING_VOCABULARY: frozenset[str] = frozenset(
     {

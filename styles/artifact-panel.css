@@ -140,8 +140,9 @@
   display: none;
 }
 
-/* V3 Canvas chrome. */
-.artifact-review-panel.artifact-panel-v3 { position: relative; }
+/* V3 Canvas chrome. The narrow-stage overlay keeps its own position: absolute
+   (context-panel.css); relative here would drop the drawer into the chat grid (F6). */
+.artifact-review-panel.artifact-panel-v3:not(.artifact-review-overlay) { position: relative; }
 
 /* One 36px header row, the tab rail's height. The end edge trades part of the
    gutter for the icon buttons' internal padding so the glyphs (not the hit

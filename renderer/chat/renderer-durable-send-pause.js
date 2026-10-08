@@ -24,6 +24,8 @@
   // silent reads instead of disabling the control forever.
   const PAUSE_UNANSWERED_MAX = 3;
   const OWNER = 'runtime:pause';
+  // Bounds the interrupted-reply lookup's walk through a session's runtime work.
+  const PAUSED_LOOKUP_MAX_PAGES = 20;
 
   /**
    * @param {Object} deps
@@ -38,10 +40,11 @@
    * @param {Function} deps.schedulePoll
    * @param {Function|null} deps.pause - payload -> runtime pause result
    * @param {Function|null} deps.getWork - payload -> runtime work read
+   * @param {Function|null} [deps.getSnapshot] - payload -> one page of the session's runtime work
    */
   function createPauseRequests(deps) {
     const { state, callbacks: c, closed, render, refreshSessionQueue, getSessionRows,
-      controlDetached, noticeRefusal, schedulePoll, pause, getWork } = deps;
+      controlDetached, noticeRefusal, schedulePoll, pause, getWork, getSnapshot = null } = deps;
     const requests = new Map();
     function current(sessionId) { return String(state.currentSessionId || '').trim() === sessionId; }
     // A pause notice belongs to the conversation that paused, never to
@@ -158,8 +161,33 @@
         render(request.sessionId);
       }
     }
+    // Gate F9: the paused work whose attempt owns a stopped stream (the run a
+    // restart paused), so the interrupted reply's card acts on that same run
+    // the queue strip shows, never a second copy. Walks every page of the
+    // session's work: an old interrupted reply sits behind newer turns. ''
+    // when none is left or the runtime cannot be read.
+    async function pausedWorkForStream(sessionId, streamId) {
+      const id = String(sessionId || '').trim();
+      const stream = String(streamId || '').trim();
+      if (closed() || !id || !stream || !getWork || !getSnapshot) return '';
+      let cursor = null;
+      for (let page = 0; page < PAUSED_LOOKUP_MAX_PAGES; page += 1) {
+        let result;
+        try { result = await getSnapshot({ session_id: id, limit: 100, ...(cursor ? { cursor } : {}) }); } catch (_error) { return ''; }
+        if (closed() || result?.ok !== true || !Array.isArray(result.work)) return '';
+        for (const row of result.work.filter(item => item?.session_id === id && item.status === 'paused')) {
+          let read = null;
+          try { read = await getWork({ work_id: row.work_id }); } catch (_error) { /* try the next paused row */ }
+          if (closed()) return '';
+          if (read?.ok === true && read.work?.attempt?.stream_id === stream) return row.work_id;
+        }
+        cursor = typeof result.next_cursor === 'string' && result.next_cursor ? result.next_cursor : null;
+        if (!cursor) return '';
+      }
+      return '';
+    }
     function dispose() { requests.clear(); }
-    return { pauseSession, settleAll, reconcile, stateFor, forget, sessionOf, watching, hasSession, dispose };
+    return { pauseSession, settleAll, reconcile, stateFor, forget, sessionOf, watching, hasSession, pausedWorkForStream, dispose };
   }
 
   return { createPauseRequests };

@@ -1,0 +1,615 @@
+/* styles/ide-workbench.css — Workspace layout tree (row 40 W3).
+ * renderer-ide-workbench.js renders the persisted tree as nested flex splits:
+ * .wb-split > .wb-cell (+ .wb-sash between cells) > .wb-stack. Every side zone,
+ * the bottom panel and the chat column are the same stack: one 32px header with
+ * text tabs and the existing accent underline, one icon set, one resize line,
+ * one surface colour with 1px separators. A collapsed (or solver-folded) stack
+ * in a row split is a 32px icon strip; in a column split it keeps its header.
+ * No side highlight bars anywhere (po-review law). */
+
+:root {
+  --wb-header-height: 32px;
+  --wb-strip-width: 32px;
+  --wb-sash-hit: 6px;
+}
+
+.ide-workbench {
+  position: relative; /* anchors the drag drop indicator */
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-base);
+}
+
+.ide-workbench > .wb-split,
+.ide-workbench > .wb-stack {
+  flex: 1;
+}
+
+/* ── Splits, cells, sashes ── */
+
+.wb-split {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.wb-split[data-dir="row"] {
+  flex-direction: row;
+}
+
+.wb-split[data-dir="col"] {
+  flex-direction: column;
+}
+
+.wb-cell {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wb-cell--flex {
+  flex: 1 1 0;
+}
+
+.wb-cell > .wb-split,
+.wb-cell > .wb-stack {
+  flex: 1;
+}
+
+.wb-cell[hidden] {
+  display: none;
+}
+
+/* The resize line: a 1px separator drawn by the sash itself, with a wider
+ * invisible hit area overlapping its neighbours (negative margins), so the
+ * layout never pays for the grab zone. */
+.wb-sash {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 1px;
+  background: var(--line);
+  touch-action: none;
+}
+
+.wb-sash::before {
+  content: "";
+  position: absolute;
+}
+
+.wb-split[data-dir="row"] > .wb-sash {
+  cursor: col-resize;
+}
+
+.wb-split[data-dir="row"] > .wb-sash::before {
+  inset: 0 calc(var(--wb-sash-hit) / -2);
+}
+
+.wb-split[data-dir="col"] > .wb-sash {
+  cursor: row-resize;
+}
+
+.wb-split[data-dir="col"] > .wb-sash::before {
+  inset: calc(var(--wb-sash-hit) / -2) 0;
+}
+
+.wb-sash:hover,
+.wb-sash[data-dragging="true"] {
+  background: var(--accent);
+  transition: background-color var(--transition-fast) 120ms;
+}
+
+.wb-sash:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+/* Collapsed/folded neighbours carry no sash, but their own edge still needs a line. */
+.wb-split[data-dir="row"] > .wb-cell + .wb-cell {
+  border-inline-start: 1px solid var(--line);
+}
+
+.wb-split[data-dir="col"] > .wb-cell + .wb-cell {
+  border-top: 1px solid var(--line);
+}
+
+.wb-split > .wb-sash + .wb-cell {
+  border: 0;
+}
+
+/* While a sash drags, nothing under the pointer may steal it (iframes, xterm). */
+.ide-workbench.wb-dragging {
+  user-select: none;
+}
+
+.ide-workbench.wb-dragging .wb-stack-body {
+  pointer-events: none;
+}
+
+/* ── Stacks ── */
+
+.wb-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-sidebar);
+}
+
+.wb-stack--editor {
+  background: var(--bg-base);
+}
+
+.wb-stack-body {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.wb-stack-body[hidden] {
+  display: none;
+}
+
+/* The editor stack adopts #ideMain unchanged. */
+.wb-stack--editor > .wb-stack-body > .ide-main {
+  flex: 1;
+}
+
+/* Each view owns one persistent host; only the active one shows. The host is
+ * the scroll context for its panel (block flow, definite height from the
+ * flex column). */
+.wb-view-host {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.wb-view-host[hidden] {
+  display: none;
+}
+
+.wb-view-host:focus {
+  outline: none;
+}
+
+/* ── Stack header: tabs + actions ── */
+
+.wb-stack-header {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 var(--wb-header-height);
+  min-width: 0;
+  padding: 0 4px 0 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.wb-stack[data-state="collapsed"] > .wb-stack-header,
+.wb-stack[data-state="folded"] > .wb-stack-header {
+  border-bottom: 0;
+}
+
+.wb-tabs {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* The strip scrolls without a scrollbar: a scroll-driven fade marks each edge
+     that has more tabs past it. A strip that fits has an inactive timeline, so
+     both fades stay 0 and nothing changes. */
+  --wb-tabs-fade-start: 0px;
+  --wb-tabs-fade-end: 0px;
+  mask-image: linear-gradient(to right, transparent 0, #000 var(--wb-tabs-fade-start), #000 calc(100% - var(--wb-tabs-fade-end)), transparent 100%);
+  animation: wb-tabs-fade linear both;
+  animation-timeline: scroll(self inline);
+}
+
+.wb-tabs:dir(rtl) {
+  mask-image: linear-gradient(to left, transparent 0, #000 var(--wb-tabs-fade-start), #000 calc(100% - var(--wb-tabs-fade-end)), transparent 100%);
+}
+
+@property --wb-tabs-fade-start {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --wb-tabs-fade-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@keyframes wb-tabs-fade {
+  0% { --wb-tabs-fade-start: 0px; --wb-tabs-fade-end: 28px; }
+  8%, 92% { --wb-tabs-fade-start: 28px; --wb-tabs-fade-end: 28px; }
+  100% { --wb-tabs-fade-start: 28px; --wb-tabs-fade-end: 0px; }
+}
+
+.wb-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.wb-tab:hover {
+  color: var(--text-primary);
+}
+
+.wb-tab--active {
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* A collapsed column stack shows which view will open, without the underline. */
+.wb-stack[data-state="collapsed"] .wb-tab--active,
+.wb-stack[data-state="folded"] .wb-tab--active {
+  box-shadow: none;
+}
+
+.wb-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.wb-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-surface-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.wb-tab--active .wb-count {
+  color: var(--text-secondary);
+}
+
+/* New activity while the view was hidden (W6): a dot where a count would sit. */
+.wb-unread {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* The active view is bound to an editor group (W7c): its number, before the tabs. */
+.wb-action.wb-bound {
+  align-self: center;
+  min-width: 18px;
+  height: 18px;
+  margin-inline: 6px 0;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.wb-stack-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 2px;
+  margin-inline-start: 4px;
+}
+
+.wb-stack-actions .btn {
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 4px;
+  color: var(--text-muted);
+}
+
+.wb-stack-actions .btn:hover {
+  color: var(--text-primary);
+}
+
+/* Actions stay quiet until the stack is in use. */
+@media (hover: hover) {
+  .wb-stack:not(:hover):not(:focus-within) .wb-stack-actions .btn:not([aria-pressed="true"]) {
+    opacity: 0.55;
+  }
+}
+
+/* ── Collapsed / folded side strip (F10) ── */
+
+.wb-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 0 var(--wb-strip-width);
+  gap: 2px;
+  width: var(--wb-strip-width);
+  padding-top: 4px;
+}
+
+.wb-strip-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.wb-strip-btn:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.wb-strip-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.wb-strip-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.wb-strip-btn .wb-count {
+  position: absolute;
+  inset-block-start: -2px;
+  inset-inline-end: -4px;
+  min-width: 14px;
+  padding: 0 3px;
+  line-height: 14px;
+}
+
+.wb-strip-btn .wb-unread {
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-end: 2px;
+}
+
+/* ── Secondary editor groups (row 40 W5) ──
+ * The same tab row and stage as the primary editor (#ideMain); the group's own
+ * editor fills its stage. Tab drop marks reuse the move-by-drag accent. */
+.wb-stack--editor > .wb-stack-body > .ide-group {
+  flex: 1;
+}
+
+.ide-group {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ide-group-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ide-group-stage:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-group-editor,
+.ide-group-diff {
+  position: absolute;
+  inset: 0;
+}
+
+.ide-group-editor[hidden],
+.ide-group-diff[hidden],
+.ide-group-diff [hidden],
+.ide-group-review[hidden],
+.ide-group-empty[hidden] {
+  display: none;
+}
+
+.ide-group-review {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-height: 40%;
+  overflow: auto;
+}
+
+.ide-tabstrip[data-ide-drop="tabs"] {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.ide-group[data-ide-drop="stage"] > .ide-group-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* ── One empty state for every view ── */
+
+.wb-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px 14px;
+  color: var(--text-muted);
+  font-size: var(--font-size-body);
+  line-height: 1.45;
+}
+
+.wb-empty-title {
+  margin: 0;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.wb-empty-copy {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-sash,
+  .wb-tab,
+  .wb-strip-btn {
+    transition: none;
+  }
+}
+
+/* ── Move by drag (row 40 W4) ──
+ * One indicator for every target: an outline over the stack or edge band the
+ * view would land in, or a 2px insertion line in a tab row. Outline only, a
+ * faint wash so the band reads over dark editors; no motion. */
+.wb-drop-indicator {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: 2px;
+}
+
+.wb-drop-indicator[data-wb-drop="tabs"] {
+  border: 0;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.wb-tab[data-wb-drag-source="true"],
+.wb-strip-btn[data-wb-drag-source="true"] {
+  opacity: 0.55;
+}
+
+.ide-workbench.wb-dragging {
+  cursor: grabbing;
+}
+
+/* A pen or touch drag on a tab moves the view instead of panning the page. */
+.wb-tab,
+.wb-strip-btn {
+  touch-action: none;
+}
+
+/* ── Task tabs: Run and test output (F5/F6) ──
+ * The output reads like the terminal (mono, no box); a one-line footer under it
+ * says how the task ended and offers the next step. */
+.ide-task-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.ide-task-output-header {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 12px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.ide-task-output-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-task-output-result {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.ide-task-output-result[data-outcome="failed"] {
+  color: var(--status-fg-danger);
+}
+
+.ide-task-output-result[data-outcome="passed"] {
+  color: var(--status-fg-success);
+}
+
+/* The Run view's footer host sits under its scrollback. */
+[data-ide-run-footer] {
+  flex: none;
+}
+
+pre.ide-task-output {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 6px 12px;
+  overflow: auto;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+
+.ide-task-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--wb-header-height);
+  padding: 0 12px;
+  border-top: 1px solid var(--line);
+  font-size: var(--font-size-caption);
+}
+
+.ide-task-footer-status {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-task-footer-actions {
+  flex: none;
+  display: flex;
+  gap: 4px;
+}

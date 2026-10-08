@@ -22,17 +22,8 @@ const {
   getToolResourceOperations,
 } = require('../../services/session-runtime/resource-operations');
 
-const DYNAMIC_TOOL = 'plugin:acme-labs:widgets:compute';
-const DYNAMIC_AUTHORITY = Object.freeze({ mode: 'plugin', registry_revision: 1,
-  dependency_graph_hash: 'a'.repeat(64), commit_epoch: 1,
-  active_generation_id: 'generation-1' });
-const DYNAMIC_CAPTURE = Object.freeze({ authority: DYNAMIC_AUTHORITY,
-  descriptor_digest: 'b'.repeat(64), descriptors: Object.freeze([Object.freeze({
-    name: DYNAMIC_TOOL, side_effecting: true, read_only: false,
-    tool_family: 'other', source_kind: 'restricted', server_name: 'electron_tool_bridge',
-    plan_mode_only: false, workspace_required: false,
-    capability_identity: Object.freeze({ component_digest: 'c'.repeat(64) }),
-  })]) });
+// A builtin that claims only per-call tool capacity (no process, no workspace root).
+const PLAIN_TOOL = 'jenny_status';
 
 function createHarness(t, { limits, sandboxCommands = false, onSettled = null } = {}) {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-resource-operations-'));
@@ -60,13 +51,11 @@ function createHarness(t, { limits, sandboxCommands = false, onSettled = null } 
         git_diff: decision, worktree_create: decision, monitor: decision,
         check_background_job: decision, stop_background_job: decision,
         check_monitor: decision, jenny_status: decision,
-        [DYNAMIC_TOOL]: decision,
       }, rules: [] };
     } },
     knowledgeService: { getSidecarConfig: () => ({ tools_knowledge_enabled: false,
       knowledge_roots: [] }) },
     resolveProjectWorkspaceServices: () => ({}),
-    resolvePluginToolAuthority: () => DYNAMIC_CAPTURE,
     randomUUID: () => `authority-${++uuid}`,
   });
   const broker = new ResourceBroker({ limits, createId: () => `resource-${++lease}` });
@@ -186,14 +175,13 @@ test('native command classification does not claim the sandbox slot without trus
     ['tool_operations', 'native_processes']);
 });
 
-test('a trusted dynamic tool claims per-call tool capacity without native process capacity', t => {
+test('a plain tool claims per-call tool capacity without native process capacity', t => {
   const harness = createHarness(t, { limits: { tool_operations: 1, native_processes: 1 } });
-  const { binding, gateway, trusted } = harness.createGateway('request-dynamic');
-  harness.authorityService.bindPluginTools(binding, DYNAMIC_AUTHORITY);
+  const { gateway, trusted } = harness.createGateway('request-plain');
 
   assert.equal(gateway.handle(admit(trusted, {
-    tool_name: DYNAMIC_TOOL,
-    arguments: { value: 21 },
+    tool_name: PLAIN_TOOL,
+    arguments: {},
   })).status, 'granted');
   assert.deepEqual(capacityKeys(gateway.getHeldOperationLease('operation-1')),
     ['tool_operations']);
@@ -450,16 +438,13 @@ test('uncertain settlement remains quarantined until trusted producer cleanup co
 });
 
 test('quarantined tool leases block later operations only until their late settlements confirm', t => {
-  // Dynamic tools claim only per-call tool capacity, so two quarantined leases exhaust the
+  // Plain tools claim only per-call tool capacity, so two quarantined leases exhaust the
   // default tool_operations limit without contending on the workspace root.
   const harness = createHarness(t, { limits: { tool_operations: 2 } });
-  const gateways = ['request-first', 'request-second', 'request-third'].map(requestId => {
-    const created = harness.createGateway(requestId);
-    harness.authorityService.bindPluginTools(created.binding, DYNAMIC_AUTHORITY);
-    return created;
-  });
+  const gateways = ['request-first', 'request-second', 'request-third']
+    .map(requestId => harness.createGateway(requestId));
   const [first, second, third] = gateways;
-  const dynamicAdmit = (trusted, overrides = {}) => admit(trusted, { tool_name: DYNAMIC_TOOL, arguments: { value: 1 }, ...overrides });
+  const dynamicAdmit = (trusted, overrides = {}) => admit(trusted, { tool_name: PLAIN_TOOL, arguments: {}, ...overrides });
   assert.equal(first.gateway.handle(dynamicAdmit(first.trusted)).status, 'granted');
   assert.equal(second.gateway.handle(dynamicAdmit(second.trusted)).status, 'granted');
   assert.equal(harness.broker.snapshot().oldest_quarantined_at, null);

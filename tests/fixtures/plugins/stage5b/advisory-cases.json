@@ -1,7 +1,0 @@
-{
-  "fixture_schema_version": 1,
-  "cases": [
-    { "name": "precedence", "actions": ["warn", "block", "quarantine"], "expected": "quarantine" },
-    { "name": "revoked_artifact", "expected": "quarantine" }
-  ]
-}

@@ -267,6 +267,7 @@ function summarizeToolPayload(toolName, toolInput) {
   const displayName = ({
     read_file: 'Read',
     edit_file: 'Edit',
+    propose_change: 'Suggest',
     glob_files: 'Glob',
     grep_search: 'Grep',
     write_file: 'Write',

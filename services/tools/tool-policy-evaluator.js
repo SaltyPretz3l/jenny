@@ -41,6 +41,8 @@ const DEFAULT_TOOL_DEFAULTS = Object.freeze({
   grep_search: 'auto',
   write_file: 'ask',
   edit_file: 'ask',
+  // Plan Plus: records a suggestion for review and writes nothing.
+  propose_change: 'auto',
   run_command: 'ask',
   monitor: 'ask',
   create_artifact: 'ask',
@@ -69,6 +71,14 @@ const DEFAULT_TOOL_DEFAULTS = Object.freeze({
   // actions the user already controls. A user policy rule still overrides
   // this default in either direction.
   task_board: 'auto',
+  // `project_notes`'s manifest declares per-action side_effecting (append/
+  // replace: true, read: false), so without this scalar entry every write
+  // would fall through to the side-effecting 'ask' default. Same safety
+  // argument as `task_board`: every write only touches the user's own
+  // per-project note, is attributed to the assistant, is bounded (20,000
+  // characters, refused while the user is typing) and is one-click undoable
+  // from the chat and the Notes rail. A user policy rule still overrides.
+  project_notes: 'auto',
   // The in-session todo list is the model's own scratch state; approval is
   // for the user's files and commands (owner, 2026-09-22).
   todo_write: 'auto',

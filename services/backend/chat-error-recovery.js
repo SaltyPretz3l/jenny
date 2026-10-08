@@ -36,6 +36,20 @@ const RECOVERY_ACTIONS = Object.freeze({
     label: 'Start new session',
     priority: 20,
   }),
+  // Resumes the runtime work a restart paused for this turn, never a copy.
+  resume_paused_reply: Object.freeze({
+    id: 'resume_paused_reply',
+    kind: 'resume',
+    label: 'Resume',
+    priority: 10,
+  }),
+  // Discards the unresumable paused work, then reruns the turn: still one copy.
+  rerun_interrupted_reply: Object.freeze({
+    id: 'rerun_interrupted_reply',
+    kind: 'retry',
+    label: 'Run again',
+    priority: 10,
+  }),
 });
 
 const ASSISTANT_ERROR_RECOVERY_TOKEN_FIELDS = Object.freeze([
@@ -58,6 +72,14 @@ const RECOVERY_COPY = Object.freeze({
   app_shutdown: Object.freeze({
     title: 'Stopped when Jenny closed',
     hint: 'Jenny closed while this reply was running, so it stopped. Retry to run it again.',
+  }),
+  app_restart: Object.freeze({
+    title: 'Stopped when Jenny closed',
+    hint: 'Resume continues this reply where it stopped.',
+  }),
+  app_restart_rerun: Object.freeze({
+    title: 'Stopped when Jenny closed',
+    hint: 'This reply stopped before it saved any progress, so it cannot continue. Run it again to start over.',
   }),
   denied: Object.freeze({
     title: 'Tool denied',
@@ -224,6 +246,12 @@ function classifyAssistantError(errorPayload, {
   if (subcode === 'thinking_budget') {
     return 'thinking_budget';
   }
+  if (subcode === SIDECAR_TERMINAL_SUBCODES.APP_RESTART) {
+    return 'app_restart';
+  }
+  if (subcode === SIDECAR_TERMINAL_SUBCODES.APP_RESTART_UNRESUMABLE) {
+    return 'app_restart_rerun';
+  }
   if (
     (status === 'timeout' || category === 'timeout')
     && subcode === SIDECAR_TERMINAL_SUBCODES.TURN_TIMEOUT
@@ -284,6 +312,10 @@ function recoveryActionIdsForClass(recoveryClass, errorPayload) {
       return ['retry_turn', 'open_settings', 'open_diagnostics'];
     case 'sidecar_transport':
       return ['retry_turn', 'restart_sidecar', 'open_diagnostics'];
+    case 'app_restart':
+      return ['resume_paused_reply'];
+    case 'app_restart_rerun':
+      return ['rerun_interrupted_reply'];
     case 'run_mode_changed':
       return ['retry_turn'];
     case 'timeout':

@@ -6,6 +6,7 @@ const { AttachmentAssetStore } = require('../attachment-asset-store');
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
 const { ElectronSessionStore } = require('../backend/electron-session-store');
 const { importSession } = require('../backend/session-export-import');
+const { normalizeProjectId } = require('../projects/project-schema');
 const {
   ARCHIVE_EXTENSION,
   COMPLETE_MARKER,
@@ -29,7 +30,7 @@ const RESTORE_SCAN_LIMIT = 50;
 const MAX_WORKSPACE_RESTORE_FILE_BYTES = 8 * 1024 * 1024 * 1024;
 const PENDING_SUFFIX = '.jenny-restore-pending.json';
 const ACTIVE_RESTORE_RELATIVE_PATH = path.join('data-lifecycle', 'restore-active.json');
-const ALLOWED_ROOTS = Object.freeze(['sessions', 'preferences', 'personality', 'calendar', 'memory', 'workspace', 'runtime']);
+const ALLOWED_ROOTS = Object.freeze(['sessions', 'preferences', 'personality', 'calendar', 'memory', 'notes', 'workspace', 'runtime']);
 function restorePointerPath(userDataPath) {
   const root = path.resolve(String(userDataPath || ''));
   return path.join(path.dirname(root), `.${path.basename(root)}${PENDING_SUFFIX}`);
@@ -756,6 +757,11 @@ function destinationForEntry(entry, { userDataPath, runtimePath, workspaceRoot, 
     const targetName = fileName === 'legacy-memory.db' ? 'memory.db' : fileName;
     return ensureSafeDestination(runtimePath, path.join(runtimePath, targetName));
   }
+  if (root === 'notes') {
+    // Per-project notes: <userData>/project-notes/<projectId>.json. Anything else under notes/ is skipped.
+    const projectId = rest.length === 1 && rest[0].endsWith('.json') ? rest[0].slice(0, -'.json'.length) : '';
+    return projectId && normalizeProjectId(projectId) === projectId ? ensureSafeDestination(userDataPath, path.join(userDataPath, 'project-notes', rest[0])) : null;
+  }
   if (root === 'runtime') return ensureSafeDestination(userDataPath, runtimeArchive.runtimeDestinationForEntry(entry, userDataPath));
   if (root === 'workspace' && includeWorkspace && workspaceRoot) {
     return ensureSafeDestination(workspaceRoot, path.join(workspaceRoot, '.jenny', ...rest));
@@ -856,6 +862,7 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
   runtimeBackup.captureRuntimeBackupOwner(journal, actions, runtimePath);
   const runtimeRollbackRoot = runtimeBackup.assignRuntimeBackups(actions, journal, runtimePath);
   runtimeBackup.capturePromotionOriginals(journal, actions, ensureSafeDestination);
+  let stores = null;
   try {
     fs.mkdirSync(userRoot, { recursive: true });
     journal.status = 'promoting';
@@ -870,7 +877,7 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
     ensureSafeDestination(userRoot, path.join(userRoot, 'sessions'));
     ensureSafeDestination(userRoot, path.join(userRoot, 'sessions.json'));
     ensureSafeDestination(userRoot, path.join(userRoot, 'attachments'));
-    const stores = createRestoreStores(userRoot, nativeImage);
+    stores = createRestoreStores(userRoot, nativeImage);
     for (const entry of manifest.entries) {
       const sourcePath = assertSafeStagedSource(
         stagePath,
@@ -919,6 +926,11 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
         throw archiveError(DATA_ERROR_CODES.ARCHIVE_CORRUPT, 'archive_checksum_failed', 'Restored entry failed verification.');
       }
     }
+    // The app opens its own store on this profile next: this one must be closed
+    // (flushed, complete chat files, no timers) before the restore is promoted.
+    const restoredStore = stores.sessionStore;
+    stores = null;
+    restoredStore.dispose();
     writeJsonAtomic(activeMarkerPath, {
       schema_version: RESTORE_SCHEMA_VERSION,
       operation_id: journal.operation_id,
@@ -932,6 +944,11 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
     fs.rmSync(pointerPath, { force: true });
     return { ok: true, status: 'promoted', operationId: journal.operation_id };
   } catch (error) {
+    try {
+      stores?.sessionStore.dispose();
+    } catch (disposeError) {
+      void disposeError;
+    }
     runtimeBackup.rollbackPromotion(actions, rollbackRoot, ensureSafeDestination, journal.status === 'copying');
     journal.status = 'staged';
     writeJsonAtomic(journalPath, journal);

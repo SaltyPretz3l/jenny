@@ -172,6 +172,8 @@ function createHarness({ bridgeOptions } = {}) {
   return {
     dom,
     getDom,
+    // Row 40 W3: the controller mounts the Explorer into the workbench's own host.
+    viewHost: (id) => dom.window.document.getElementById(`wbView-${id}`),
     bridge,
     controller,
     state,
@@ -212,7 +214,7 @@ test('ide tree renders the root listing and opens files on click', async (t) => 
   await harness.controller.activateIde();
   await settle();
 
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   const rows = [...panel.querySelectorAll('[data-ide-tree-path]')];
   assert.deepEqual(rows.map((row) => row.dataset.ideTreePath), ['src', 'README.md']);
   assert.equal(rows[0].dataset.ideTreeKind, 'directory');
@@ -236,7 +238,7 @@ test('ide tree lazily expands directories and persists expandedDirs', async (t) 
   await harness.controller.activateIde();
   await settle();
 
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   panel.querySelector('[data-ide-tree-path="src"]').click();
   await settle();
   assert.deepEqual(harness.bridge.calls.listDirectory.map((call) => call.path || ''), ['', 'src']);
@@ -264,7 +266,7 @@ test('ide tree context menu creates a file inline and opens it', async (t) => {
   await harness.controller.activateIde();
   await settle();
   const doc = harness.dom.window.document;
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
 
   openContextMenu(harness, panel.querySelector('[data-ide-tree-path="src"]'));
   for (const label of ['New File', 'New Folder', 'Rename', 'Delete']) {
@@ -293,7 +295,7 @@ test('ide tree context menu carries path/OS utilities on file and directory rows
   await harness.controller.activateIde();
   await settle();
   const doc = harness.dom.window.document;
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
 
   // Directory rows: reveal + copy items, but no Open in Default App.
   openContextMenu(harness, panel.querySelector('[data-ide-tree-path="src"]'));
@@ -329,7 +331,7 @@ test('ide tree context menu creates a folder at the workspace root', async (t) =
   await harness.controller.activateIde();
   await settle();
   const doc = harness.dom.window.document;
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
 
   // Empty-area context menu offers creation at the root.
   openContextMenu(harness, panel.querySelector('.ide-tree'));
@@ -350,12 +352,11 @@ test('ide tree context menu creates a folder at the workspace root', async (t) =
 
 test('ide tree rejects invalid names and escape cancels the inline editor', async (t) => {
   const harness = createHarness({ bridgeOptions: { files: { 'README.md': 'r' } } });
-  harness.state.features = { featureFlags: { workspace_explorer_qol: true } };
   t.after(() => harness.dispose());
   await harness.controller.activateIde();
   await settle();
   const doc = harness.dom.window.document;
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
 
   openContextMenu(harness, panel.querySelector('[data-ide-tree-path="README.md"]'));
   findMenuItem(doc, 'Rename').click();
@@ -385,7 +386,7 @@ test('ide tree rename of an open file closes and reopens its tab', async (t) => 
   await harness.controller.activateIde();
   await settle();
   const doc = harness.dom.window.document;
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
 
   panel.querySelector('[data-ide-tree-path="src"]').click();
   await settle();
@@ -422,7 +423,7 @@ test('ide tree delete closes the open tab and refreshes the listing', async (t) 
   await harness.controller.activateIde();
   await settle();
   const doc = harness.dom.window.document;
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
 
   panel.querySelector('[data-ide-tree-path="src"]').click();
   await settle();
@@ -452,7 +453,7 @@ test('ide tree directory delete closes every tab underneath and prunes expansion
   await harness.controller.activateIde();
   await settle();
   const doc = harness.dom.window.document;
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
 
   panel.querySelector('[data-ide-tree-path="src"]').click();
   await settle();
@@ -489,7 +490,7 @@ test('ide tree rename save failure blocks the mutation and preserves the dirty t
   await harness.controller.openFile('app.js');
   await settle();
   const doc = harness.dom.window.document;
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   const editor = harness.getDom().ideEditorFallback;
   editor.value = 'unsaved';
   editor.dispatchEvent(new harness.dom.window.Event('input', { bubbles: true }));
@@ -519,7 +520,7 @@ test('ide tree discard preflight is canceled when rename fails', async (t) => {
   await harness.controller.openFile('app.js');
   await settle();
   const doc = harness.dom.window.document;
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   const editor = harness.getDom().ideEditorFallback;
   editor.value = 'unsaved';
   editor.dispatchEvent(new harness.dom.window.Event('input', { bubbles: true }));
@@ -550,7 +551,7 @@ test('ide tree delete confirmation cancel leaves the backend and tab untouched',
   await harness.controller.openFile('app.js');
   await settle();
   const doc = harness.dom.window.document;
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
 
   openContextMenu(harness, panel.querySelector('[data-ide-tree-path="app.js"]'));
   findMenuItem(doc, 'Delete').click();
@@ -572,7 +573,7 @@ test('ide tree discard preflight is canceled when recycle-bin delete fails', asy
   await harness.controller.openFile('app.js');
   await settle();
   const doc = harness.dom.window.document;
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   const editor = harness.getDom().ideEditorFallback;
   editor.value = 'unsaved';
   editor.dispatchEvent(new harness.dom.window.Event('input', { bubbles: true }));
@@ -597,7 +598,7 @@ for (const [errorName, detail] of [['WorkspaceFsError', 'recycle bin offline'], 
     const wrapped = `Error invoking remote method 'workspace-fs:delete': ${errorName}: ${detail}`;
     const harness = createHarness({ bridgeOptions: { files: { 'app.js': 'original' }, failDelete: wrapped } }); t.after(() => harness.dispose());
     await harness.controller.activateIde(); await settle();
-    const doc = harness.dom.window.document, panel = harness.getDom().ideRailPanel;
+    const doc = harness.dom.window.document, panel = harness.viewHost('explorer');
     openContextMenu(harness, panel.querySelector('[data-ide-tree-path="app.js"]')); findMenuItem(doc, 'Delete').click();
     await settle(); doc.querySelector('[data-ide-confirm-action="confirm"]').click(); await settle();
     assert.equal(harness.toasts.at(-1).message, detail); assert.equal(harness.bridge.calls.clientLog.meta.message, wrapped);
@@ -611,7 +612,7 @@ test('ide tree rows carry file-type icons (W3)', async (t) => {
   t.after(() => harness.dispose());
   await harness.controller.activateIde();
   await settle();
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   const dirRow = panel.querySelector('[data-ide-tree-path="src"]');
   assert.ok(dirRow.querySelector('.ide-tree-icon--folder'), 'directory rows get folder icons');
   const mdRow = panel.querySelector('[data-ide-tree-path="README.md"]');
@@ -631,7 +632,7 @@ test('ide tree header collapse-all clears expansion and persists (W3)', async (t
   t.after(() => harness.dispose());
   await harness.controller.activateIde();
   await settle();
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   panel.querySelector('[data-ide-tree-path="src"]').click();
   await settle();
   panel.querySelector('[data-ide-tree-path="src/deep"]').click();
@@ -653,7 +654,7 @@ test('ide tree header refresh re-lists only cached directories (W3)', async (t) 
   t.after(() => harness.dispose());
   await harness.controller.activateIde();
   await settle();
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   panel.querySelector('[data-ide-tree-path="src"]').click();
   await settle();
   // Cached listings: '' and 'src' ('src/deep' was never expanded).
@@ -674,19 +675,19 @@ test('ide tree header refresh re-lists only cached directories (W3)', async (t) 
   assert.ok(findMenuItem(doc, 'Collapse All'));
 });
 
-// Drop-to-open source side: only file/symlink rows are draggable, and the
-// dragstart handler writes the file's path into the internal drag payload so
-// the editor stage can open it. Directory rows are inert for both.
-test('ide tree marks file rows draggable but not directory rows', async (t) => {
+// Drop-to-open source side: file, symlink and directory rows are draggable,
+// and the dragstart handler writes the row's path into the internal drag
+// payload (a directory uses the multi-path payload so it can only move).
+test('ide tree marks file and directory rows draggable', async (t) => {
   const harness = createHarness({
     bridgeOptions: { files: { 'src/app.js': 'a', 'README.md': 'r' } },
   });
   t.after(() => harness.dispose());
   await harness.controller.activateIde();
   await settle();
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   assert.equal(panel.querySelector('[data-ide-tree-path="README.md"]').getAttribute('draggable'), 'true');
-  assert.equal(panel.querySelector('[data-ide-tree-path="src"]').getAttribute('draggable'), null);
+  assert.equal(panel.querySelector('[data-ide-tree-path="src"]').getAttribute('draggable'), 'true');
 });
 
 // Dispatch a synthetic dragstart with a hand-rolled dataTransfer (jsdom's
@@ -712,7 +713,7 @@ test('ide tree dragstart writes the internal payload for a file row', async (t) 
   t.after(() => harness.dispose());
   await harness.controller.activateIde();
   await settle();
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
 
   const { writes, effectAllowed } = dispatchDragStart(
     harness,
@@ -720,9 +721,10 @@ test('ide tree dragstart writes the internal payload for a file row', async (t) 
   );
   assert.equal(writes['application/x-jenny-tree-path'], 'README.md');
   assert.equal(writes['text/plain'], 'README.md');
-  assert.equal(effectAllowed, 'copy');
+  assert.equal(effectAllowed, 'copyMove');
 
-  // Mutation check: a directory drag is inert - setData is never called.
+  // A directory drag writes only the multi-path payload, never the single-file one.
   const dirResult = dispatchDragStart(harness, panel.querySelector('[data-ide-tree-path="src"]'));
-  assert.deepEqual(dirResult.writes, {}, 'directory dragstart writes no payload');
+  assert.equal(dirResult.writes['application/x-jenny-tree-path'], undefined, 'directory dragstart writes no single-file payload');
+  assert.deepEqual(JSON.parse(dirResult.writes['application/x-jenny-tree-paths']), ['src']);
 });

@@ -267,7 +267,7 @@ test('hosted command scopes input to the captured project and fails closed witho
     } else {
       assert.equal(calls.length, 0);
       assert.equal(result.error_code, TOOL_ERROR_CODES.EXECUTION_FAILED);
-      assert.equal(result.output, 'Hosted execution failed: project_root_outside_workspace.');
+      assert.equal(result.output, 'Hosted execution needs a configured workspace mount and a chat project folder inside it; that scope could not be established (project_root_outside_workspace).');
     }
     setup.gateway.close({ producerSettled: true });
   }

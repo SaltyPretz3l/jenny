@@ -671,7 +671,7 @@ def test_reflexive_retry_still_precedes_checkpoint(
         session_id=None,
         tool_payload=[{"name": "grep_search", "parameters": {}}],
         working_messages=[],
-        reflexive_retry_attempted=False,
+        reflexive_retries_used={},
         pending_retry_response_format=None,
         streamed_event_types=set(),
         thinking_budget_checkpoints=0,
@@ -690,7 +690,7 @@ def test_reflexive_retry_still_precedes_checkpoint(
 
     assert outcome is None
     assert len(calls) == 1
-    assert run.reflexive_retry_attempted is True
+    assert calls[0]["retries_used"] is run.reflexive_retries_used
     assert run.thinking_budget_checkpoints == 0
     assert run.working_messages == []
 

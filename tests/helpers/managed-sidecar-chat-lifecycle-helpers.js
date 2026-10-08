@@ -99,7 +99,6 @@ function createManagedChatServiceStub(options = {}) {
   };
   const sessionExecutionAuthority = new SessionExecutionAuthority({
     projectAuthority,
-    resolvePluginToolAuthority: options.resolvePluginToolAuthority,
     permissionStore: { getSnapshot: () => ({ version: 3, legacy_policies: {}, rules: [] }) },
     knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
     resolveProjectWorkspaceServices: () => ({}),

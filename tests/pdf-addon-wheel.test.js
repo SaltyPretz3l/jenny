@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { extractWheel } = require('../services/pdf-addon-wheel');
-const { assembleZip } = require('./helpers/plugins/hostile-archive-builder');
+const { assembleZip } = require('./helpers/hostile-archive-builder');
 const { cleanupTrackedResources, createTrackedTempDir } = require('./helpers/resource-cleanup');
 
 test.afterEach(async () => {

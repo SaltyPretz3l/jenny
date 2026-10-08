@@ -59,6 +59,11 @@
   --tl-turn-gap: 40px;
   --tl-cluster-gap: var(--space-8); /* prose <-> machinery-cluster spacing */
   --tl-dot-size: 6px;        /* status dot in machinery rows */
+  /* Activity throbbers (rail dot, activity-row dot and checklist glyph)
+     follow Text size at half rate, so Large never crowds the 30px rail slot
+     or the row label: Small 1.10 / Default 1.15 / Large 1.20 (capped). */
+  --tl-throbber-scale: min(calc(0.55 + var(--font-scale, 1.2) * 0.5), 1.2);
+  --tl-activity-dot-size: calc(var(--tl-dot-size) * var(--tl-throbber-scale));
   --tl-detail-indent: 22px;
   --tl-detail-gap: var(--space-4);
   --tl-detail-clamp-lines: 14;

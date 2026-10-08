@@ -12,6 +12,7 @@ no diagnostic, which reads as a hang.
 
 from __future__ import annotations
 
+import urllib.error
 from typing import Any
 
 import pytest
@@ -23,6 +24,7 @@ from sidecar.ai.engines.ollama_residency import (
     residency_key,
     residency_registry,
 )
+from sidecar.runtime.ollama_support import EngineConnectionError
 
 
 @pytest.fixture(autouse=True)
@@ -89,6 +91,35 @@ class TestRegistryPrimitives:
 
 
 class TestEngineDispose:
+    def test_catalog_failure_cleanup_does_not_evict_another_engines_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        holder = _engine()
+        claim = holder._residency_claim
+        assert claim is not None
+        candidate = OllamaEngine(host=holder.host, configured_context_length=32768)
+        posts: list[dict[str, Any]] = []
+        _record_posts(candidate, posts)
+
+        def fail_catalog(endpoint: str, timeout: int | None = None) -> dict[str, Any]:
+            assert endpoint == "/api/tags"
+            raise urllib.error.URLError("catalog unavailable")
+
+        monkeypatch.setattr(candidate, "_get", fail_catalog)
+        with pytest.raises(EngineConnectionError):
+            candidate.load_model("qwen3.5:9b")
+        assert candidate.model_name == holder.model_name
+        assert candidate._residency_claim is None
+
+        candidate.unload_model()  # The same no-argument cleanup used by the factory.
+
+        assert posts == [], "the failed candidate never held this runner"
+        assert candidate.model_name is None
+        assert candidate._ready is False
+        assert candidate._residency_claim is None
+        assert holder._residency_claim == claim
+        assert residency_registry().snapshot() == {claim: 1}
+
     def test_two_generations_on_the_same_model_do_not_evict_on_the_first_close(
         self,
     ) -> None:
@@ -169,15 +200,34 @@ class TestEngineDispose:
             "the runner really went away, so no stale count may survive"
         )
 
-    def test_engine_that_never_claimed_still_evicts(self) -> None:
+    @pytest.mark.parametrize("name", [None, "unclaimed:latest"])
+    def test_engine_that_never_claimed_stays_eager_when_nobody_holds_the_model(
+        self, name: str | None
+    ) -> None:
         engine = OllamaEngine(host="http://localhost:11434")
         engine.model_name = "unclaimed:latest"
         posts: list[dict[str, Any]] = []
         _record_posts(engine, posts)
 
-        engine.unload_model()
+        engine.unload_model(name)
 
-        assert len(posts) == 1
+        assert len(posts) == 1, "no holder: the pre-refcount eager unload"
+        assert engine.model_name is None
+        assert engine._ready is False
+        assert engine._residency_claim is None
+
+    def test_a_warmup_only_instance_does_not_evict_another_engines_model(self) -> None:
+        holder = _engine()
+        warm = OllamaEngine(host=holder.host)
+        warm.model_name = holder.model_name
+        warm._warmup_model = holder.model_name  # a warmup requested, no claim
+        posts: list[dict[str, Any]] = []
+        _record_posts(warm, posts)
+
+        warm.unload_model()
+
+        assert posts == [], "the holder's runner is not this instance's to evict"
+        assert holder._residency_claim is not None
 
     def test_a_foreign_tag_still_evicts_without_touching_this_engine_state(self) -> None:
         engine = _engine()

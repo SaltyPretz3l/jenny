@@ -220,8 +220,8 @@ test('Recent issues restacks on its own width, not the window width', () => {
   // the fixed-minimum grid spills over the sidebar cards (Linux QA 2026-10-04).
   const css = readFileSync(join(__dirname, '..', 'styles', 'diagnostics-health.css'), 'utf8');
   assert.match(css, /\.diagnostics-issue-list\s*\{[^}]*container:\s*diagnostics-issues\s*\/\s*inline-size/s);
-  assert.match(css, /@container diagnostics-issues \(max-width: 800px\)\s*\{[\s\S]*?\.diagnostics-issue\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/);
-  assert.doesNotMatch(css, /@media \(max-width: 720px\)\s*\{\s*\.diagnostics-issue-header/);
+  assert.match(css, /@container diagnostics-issues \(max-width: 560px\)\s*\{[\s\S]*?\.diagnostics-issue-tech-body\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.doesNotMatch(css, /@media \(max-width: 720px\)\s*\{\s*\.diagnostics-issue/);
 });
 
 test('Runtime Inventory reads shell values instead of listing section keys', async (t) => {

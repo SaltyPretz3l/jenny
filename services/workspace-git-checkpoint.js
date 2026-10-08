@@ -11,6 +11,10 @@
  * operation ever opens a nested transaction (a rollback snapshot is created by
  * a helper inside the SAME restore transaction).
  *
+ * Untracked files (row 34 A1) ride along as a stash -u-shaped third parent
+ * built by workspace-git-checkpoint-untracked without touching the real index
+ * or the working tree; restore writes them back without deleting anything.
+ *
  * Ref writes are compare-and-swap: creation passes the zero OID as the expected
  * old value (the ref must not exist; a concurrent create loses cleanly and the
  * retry re-reads the namespace for a fresh sequence), and deletion passes the
@@ -23,6 +27,8 @@
 const { createHash } = require('crypto');
 
 const { WORKSPACE_GIT_ERROR_CODES, workspaceGitError } = require('./workspace-git-errors');
+const { createUntrackedCheckpointSupport } = require('./workspace-git-checkpoint-untracked');
+const { createCheckpointFileOps } = require('./workspace-git-checkpoint-files');
 
 const CHECKPOINT_PREFIX = 'refs/jenny/checkpoints';
 const CHECKPOINT_FORMAT = '%(refname)%00%(objectname)%00%(committerdate:iso-strict)';
@@ -37,8 +43,9 @@ const MAX_CREATE_ATTEMPTS = 5;
 const MAX_CHECKPOINTS_PER_SESSION = 20;
 const MAX_CHECKPOINTS_TOTAL = 100;
 const MAX_CHECKPOINT_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-// The only verbs this owner may hand to the executor as mutations.
-const CHECKPOINT_WRITE_VERBS = new Set(['stash', 'update-ref', 'restore']);
+// The only verbs this owner may hand to the executor as mutations. The last
+// three write objects only (blobs, trees, commits), never the index or worktree.
+const CHECKPOINT_WRITE_VERBS = new Set(['stash', 'update-ref', 'restore', 'hash-object', 'mktree', 'commit-tree']);
 
 // Caps and hash-stabilizes a caller-supplied session id into one git-ref-safe
 // path segment. A value that is ALREADY ref-safe and within the length cap
@@ -164,6 +171,17 @@ function planCheckpointRetention(rows, {
   return [...prune.values()].sort((a, b) => a.ref.localeCompare(b.ref));
 }
 
+// `git stash create` exits 1 with no output when a racily-clean tracked file
+// passes its first change check but not the second (git's do_create_stash
+// "no changes" path). That is "nothing to snapshot", not a failure. A timeout
+// or abort carries its own message and never matches.
+function stashFoundNothing(result) {
+  return result.reason === 'git_failed'
+    && !String(result.stdout || '').trim()
+    && !String(result.stderr || '').trim()
+    && /^command failed: git stash create\s*$/i.test(String(result.message || ''));
+}
+
 // The transaction runner (WIDE-035 design point 1): ONE mutation lease + ONE
 // serialized slot for the whole checkpoint operation (create/list/restore/
 // delete), with repo scope validated once up front. The handler receives the
@@ -228,6 +246,9 @@ function createCheckpointTransactionRunner({
  *  - probeHeadState(exec, root, signal): typed HEAD probe — a broken probe
  *    surfaces as { failure } and is NEVER read as "unborn HEAD".
  *  - retention: optional cap overrides (tests/config), defaults above.
+ *  - untrackedLimits / fs: optional untracked-capture caps and fs seam (tests).
+ *  - resolveInsideRoot(relPath, root) / trashItem(absolutePath): the service's
+ *    path containment and recycle-bin seams for the per-file operations.
  */
 function createWorkspaceGitCheckpointApi({
   runTransaction,
@@ -236,16 +257,33 @@ function createWorkspaceGitCheckpointApi({
   probeHeadState,
   log = () => {},
   retention: retentionCaps = {},
+  untrackedLimits = {},
+  fs = undefined,
+  resolveInsideRoot = null,
+  trashItem = null,
 } = {}) {
-  function mutate(tx, args) {
+  // `identity` is a fixed `-c user.*` prefix for commit-tree; it is prepended
+  // only after the verb check, so args[0] is always the checked verb.
+  function mutate(tx, args, { input = null, timeoutMs, identity = [] } = {}) {
     if (!CHECKPOINT_WRITE_VERBS.has(args[0])) {
       throw workspaceGitError(
         WORKSPACE_GIT_ERROR_CODES.GIT_COMMAND_FAILED,
         `Unexpected checkpoint mutation verb: ${String(args[0])}`
       );
     }
-    return exec(tx.root, args, { signal: tx.signal });
+    return exec(tx.root, [...identity, ...args], {
+      signal: tx.signal,
+      ...(input !== null ? { input } : {}),
+      ...(timeoutMs ? { timeoutMs } : {}),
+    });
   }
+
+  const untracked = createUntrackedCheckpointSupport({
+    exec,
+    mutate,
+    limits: untrackedLimits,
+    ...(fs ? { fs } : {}),
+  });
 
   function softResult(op, extra) {
     return { ok: true, available: true, isRepo: true, op, ...extra };
@@ -284,11 +322,12 @@ function createWorkspaceGitCheckpointApi({
 
   // Snapshot the current repo state (`git stash create`: non-destructive,
   // preserves the index tree as the commit's second parent so staged vs
-  // unstaged state round-trips exactly) and pin it under a CAS-created ref.
+  // unstaged state round-trips exactly), add untracked files as a third
+  // parent when there are any, and pin it under a CAS-created ref.
   // With { allowClean: true } a clean tree still yields a DURABLE ref by
   // pinning HEAD itself (used for pre-restore rollback snapshots).
-  // Returns { ref, sha, sequence } or { result } (a terminal soft/failure
-  // result the caller must return).
+  // Returns { ref, sha, sequence, untracked } or { result } (a terminal
+  // soft/failure result the caller must return).
   async function createSnapshotRef(tx, sessionSegment, op, { allowClean = false } = {}) {
     const head = await probeHeadState(exec, tx.root, tx.signal);
     if (head.failure) return { result: execFailure(op, head.failure) };
@@ -297,24 +336,28 @@ function createWorkspaceGitCheckpointApi({
     }
     if (!tx.isCurrent()) return { result: tx.stale() };
     const stash = await mutate(tx, ['stash', 'create']);
-    if (!stash.success) return { result: execFailure(op, stash) };
+    if (!stash.success && !stashFoundNothing(stash)) return { result: execFailure(op, stash) };
     // `stash create` signals "nothing to snapshot" via EMPTY stdout + exit 0.
-    let sha = String(stash.stdout || '').trim().toLowerCase();
+    const stashSha = stash.success ? String(stash.stdout || '').trim().toLowerCase() : '';
+    if (stashSha && !SHA_RE.test(stashSha)) {
+      return { result: execFailure(op, { message: 'stash create returned an invalid object id' }) };
+    }
+    const extended = await untracked.captureCheckpoint(tx, { stashSha });
+    if (extended.stale) return { result: tx.stale() };
+    if (extended.failure) return { result: execFailure(op, extended.failure) };
+    let sha = extended.sha || stashSha;
     if (!sha) {
       if (!allowClean) {
-        return { result: softResult(op, { created: false, reason: 'nothing_to_checkpoint' }) };
+        return { result: softResult(op, { created: false, reason: 'nothing_to_checkpoint', untracked: extended.summary }) };
       }
       const headSha = await exec(tx.root, ['rev-parse', '--verify', 'HEAD'], { signal: tx.signal });
       sha = String(headSha.stdout || '').trim().toLowerCase();
       if (!headSha.success || !SHA_RE.test(sha)) return { result: execFailure(op, headSha) };
     }
-    if (!SHA_RE.test(sha)) {
-      return { result: execFailure(op, { message: 'stash create returned an invalid object id' }) };
-    }
     const cas = await casCreateRef(tx, sessionSegment, sha);
     if (cas.stale) return { result: tx.stale() };
     if (cas.failure) return { result: execFailure(op, cas.failure) };
-    return { ref: cas.ref, sha, sequence: cas.sequence };
+    return { ref: cas.ref, sha, sequence: cas.sequence, untracked: extended.summary };
   }
 
   // Count/age retention sweep. Every delete is CAS'd against the SHA observed
@@ -349,10 +392,12 @@ function createWorkspaceGitCheckpointApi({
     return summary;
   }
 
-  async function createCheckpoint({ session = '', signal = null } = {}) {
+  // `allowClean` pins HEAD when nothing is dirty, so the run always has a
+  // restore point to put script-changed files back from (row 34 S5).
+  async function createCheckpoint({ session = '', signal = null, allowClean = false } = {}) {
     const safeSession = sanitizeCheckpointSession(session);
     return runTransaction('createCheckpoint', async (tx) => {
-      const snapshot = await createSnapshotRef(tx, safeSession, 'createCheckpoint');
+      const snapshot = await createSnapshotRef(tx, safeSession, 'createCheckpoint', { allowClean: allowClean === true });
       if (snapshot.result) return snapshot.result;
       const retention = await pruneWithRetention(tx, [snapshot.ref]);
       return softResult('createCheckpoint', {
@@ -360,6 +405,7 @@ function createWorkspaceGitCheckpointApi({
         ref: snapshot.ref,
         sha: snapshot.sha,
         sequence: snapshot.sequence,
+        untracked: snapshot.untracked,
         retention,
       });
     }, { signal });
@@ -443,6 +489,12 @@ function createWorkspaceGitCheckpointApi({
         }
         indexSha = targetSha;
       }
+      // Untracked files (third parent) are listed and validated BEFORE any
+      // restore mutation; old checkpoints without one restore as before.
+      const untrackedPlan = await untracked.planRestore(tx, targetSha);
+      if (untrackedPlan.failure) {
+        return withRollback({ ...execFailure(op, untrackedPlan.failure), restored: false, partial: false });
+      }
       const indexRestore = await mutate(tx, ['restore', `--source=${indexSha}`, '--staged', '--', '.']);
       if (!indexRestore.success) {
         return withRollback({ ...execFailure(op, indexRestore), restored: false, partial: false });
@@ -453,6 +505,16 @@ function createWorkspaceGitCheckpointApi({
       const worktreeRestore = await mutate(tx, ['restore', `--source=${targetSha}`, '--worktree', '--', '.']);
       if (!worktreeRestore.success) {
         return withRollback({ ...execFailure(op, worktreeRestore), restored: false, partial: true });
+      }
+      if (untrackedPlan.commit) {
+        const applied = await untracked.applyRestore(tx, untrackedPlan);
+        if (applied.stale) {
+          return withRollback({ ok: false, available: true, isRepo: true, op, restored: false, partial: true, reason: 'root_changed' });
+        }
+        if (applied.failure) {
+          return withRollback({ ...execFailure(op, applied.failure), restored: false, partial: true });
+        }
+        return withRollback(softResult(op, { restored: true, ref: normalizedRef, sha: targetSha, untracked: applied.summary }));
       }
       return withRollback(softResult(op, { restored: true, ref: normalizedRef, sha: targetSha }));
     }, { signal });
@@ -483,7 +545,36 @@ function createWorkspaceGitCheckpointApi({
     }, { signal });
   }
 
-  return { createCheckpoint, listCheckpoints, restoreCheckpoint, deleteCheckpoint };
+  // Row 34 S5: per-file preflight/restore (worktree only) in the same
+  // transaction model; the rollback snapshot doubles as the Redo target.
+  const fileOps = createCheckpointFileOps({
+    runTransaction,
+    exec,
+    mutate,
+    execFailure,
+    softResult,
+    untracked,
+    createSnapshotRef,
+    rollbackSessionFor: (ref) => sanitizeCheckpointSession(`rollback-${CHECKPOINT_REF_RE.exec(ref)[1]}`),
+    checkpointRefIsSafe,
+    resolveInsideRoot: async (relPath, root) => {
+      if (typeof resolveInsideRoot !== 'function') {
+        throw workspaceGitError(WORKSPACE_GIT_ERROR_CODES.PATH_INVALID, 'Path containment is unavailable.');
+      }
+      return resolveInsideRoot(relPath, root);
+    },
+    trashItem,
+    ...(fs ? { fs } : {}),
+  });
+
+  return {
+    createCheckpoint,
+    listCheckpoints,
+    restoreCheckpoint,
+    deleteCheckpoint,
+    preflightCheckpointFiles: fileOps.preflightCheckpointFiles,
+    restoreCheckpointFiles: fileOps.restoreCheckpointFiles,
+  };
 }
 
 module.exports = {

@@ -3,6 +3,10 @@ const {
   GENERAL_PROJECT_ID,
   normalizeProjectId,
 } = require('../projects/project-schema');
+const {
+  MAX_FOLLOW_UP_BODY_CHARS,
+  MAX_FOLLOW_UP_LABEL_CHARS,
+} = require('../shell-config-followups-schema');
 
 const ACTIVE_TURN_STATUSES = new Set(['awaiting_assistant', 'streaming']);
 const TOOL_CATEGORY_OVERRIDE_KEYS = Object.freeze([
@@ -10,6 +14,15 @@ const TOOL_CATEGORY_OVERRIDE_KEYS = Object.freeze([
   'checks', 'artifacts', 'images', 'knowledge', 'home', 'helpers',
 ]);
 const TOOL_CONNECTION_OVERRIDES_MAX = 64;
+const COMPOSER_DRAFT_CLIP_MARKER = '\n\n[clipped]';
+const MAX_COMPOSER_DRAFT_CHARS = MAX_FOLLOW_UP_LABEL_CHARS + 2 + MAX_FOLLOW_UP_BODY_CHARS;
+
+function normalizeComposerDraft(value) {
+  const text = typeof value === 'string' ? value.replace(/\0/g, '').trim() : '';
+  return text.length > MAX_COMPOSER_DRAFT_CHARS
+    ? `${text.slice(0, MAX_COMPOSER_DRAFT_CHARS - COMPOSER_DRAFT_CLIP_MARKER.length).trimEnd()}${COMPOSER_DRAFT_CLIP_MARKER}`
+    : text;
+}
 // The longest connection id: 'plugin:' + a 64-char publisher id + ':' + a 64-char plugin id.
 const TOOL_CONNECTION_KEY_MAX = 136;
 
@@ -197,6 +210,7 @@ module.exports = {
   normalizeActiveTurn,
   normalizeActiveTurnMatch,
   normalizeActiveTurnStatus,
+  normalizeComposerDraft,
   normalizePreferredModel,
   normalizeReasoningEffort,
   normalizeSessionProjectId,

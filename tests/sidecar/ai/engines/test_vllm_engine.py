@@ -5,7 +5,6 @@ import json
 import threading
 import time
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -16,7 +15,6 @@ from sidecar.ai.engines.provider_http import ProviderHttpService
 from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.ai.engines.vllm_engine import VLLMEngine, _model_matches
 from sidecar.ai.engines.vllm_sse_stream import _resolve_vllm_stream_finish_reason
-from sidecar.ai.exceptions import UnsupportedModalityError
 from sidecar.ai.routing.generation_runtime_stream import _StreamFailure, _StreamReader
 from sidecar.ai.routing.provider_stream_normalizer import (
     FINISH_REASON_INCOMPLETE,
@@ -774,108 +772,6 @@ class TestGenerateWithTools:
         assert snapshot["time_to_first_chunk_ms"] >= 0
         assert snapshot["time_to_first_visible_token_ms"] >= 0
         engine.clear_request_context(request_id="req_vllm_diag")
-
-
-class TestGenerateWithVision:
-    def test_generate_with_vision_payload(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _patch_models_probe(
-            monkeypatch,
-            lambda *_a, **_kw: _make_models_response("Qwen/Qwen2.5-VL-7B-Instruct"),
-        )
-        engine = VLLMEngine(host="http://localhost:8000")
-        engine.load_model("Qwen/Qwen2.5-VL-7B-Instruct")
-
-        captured: dict[str, Any] = {}
-
-        def _fake_post_json(path: str, payload: dict[str, Any]) -> dict[str, Any]:
-            captured["path"] = path
-            captured["payload"] = payload
-            return {"choices": [{"message": {"content": "vision ok"}}]}
-
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
-
-        result = engine.generate_with_vision("Describe", [_PNG_BASE64])
-
-        assert result.content == "vision ok"
-        assert result.finish_reason == "stop"
-        assert captured["path"] == "/chat/completions"
-        assert captured["payload"]["messages"] == [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Describe"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{_PNG_BASE64}"},
-                    },
-                ],
-            }
-        ]
-
-    def test_generate_with_vision_reports_length_finish_reason(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _patch_models_probe(
-            monkeypatch,
-            lambda *_a, **_kw: _make_models_response("Qwen/Qwen2.5-VL-7B-Instruct"),
-        )
-        engine = VLLMEngine(host="http://localhost:8000")
-        engine.load_model("Qwen/Qwen2.5-VL-7B-Instruct")
-
-        monkeypatch.setattr(
-            engine._service,
-            "post_json",
-            lambda *_a, **_kw: {
-                "choices": [{"message": {"content": "clipped"}, "finish_reason": "length"}]
-            },
-        )
-
-        result = engine.generate_with_vision("Describe", [_PNG_BASE64])
-
-        # The provider's finish_reason must reach the caller so the chat layer
-        # can report honest truncation instead of a hardcoded end_turn.
-        assert result.content == "clipped"
-        assert result.finish_reason == "length"
-
-    def test_generate_with_vision_raises_for_text_model(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        engine = _make_streaming_engine(monkeypatch, model="Qwen/Qwen3.5-9B")
-
-        with pytest.raises(UnsupportedModalityError):
-            engine.generate_with_vision("Describe", ["YWJj"])
-
-    def test_vision_file_read_and_encode(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _patch_models_probe(
-            monkeypatch,
-            lambda *_a, **_kw: _make_models_response("Qwen/Qwen2.5-VL-7B-Instruct"),
-        )
-        engine = VLLMEngine(host="http://localhost:8000")
-        engine.load_model("Qwen/Qwen2.5-VL-7B-Instruct")
-
-        image_path = tmp_path / "sample.png"
-        image_bytes = _PNG_BYTES
-        image_path.write_bytes(image_bytes)
-
-        captured: dict[str, Any] = {}
-
-        def _fake_post_json(path: str, payload: dict[str, Any]) -> dict[str, Any]:
-            captured["path"] = path
-            captured["payload"] = payload
-            return {"choices": [{"message": {"content": "file ok"}}]}
-
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
-
-        result = engine.generate_with_vision("Describe", [str(image_path)])
-
-        assert result.content == "file ok"
-        encoded = base64.b64encode(image_bytes).decode("ascii")
-        assert captured["payload"]["messages"][0]["content"][1] == {
-            "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{encoded}"},
-        }
 
 
 # -- helpers for streaming tests -------------------------------------------

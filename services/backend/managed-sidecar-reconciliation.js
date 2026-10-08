@@ -10,6 +10,7 @@ const {
 const {
   settlePendingApprovalsForStream,
 } = require('./chat-stream-tool-handling');
+const { sameAttempt } = require('../session-runtime/abandoned-work-reclaim');
 const {
   hasTerminalMessageEvidence,
 } = require('./active-turn-terminal-evidence');
@@ -19,6 +20,32 @@ const {
 } = require('./backend-active-turn-state');
 
 const SIDECAR_CRASH_MESSAGE = 'Jenny lost contact with the managed sidecar before this turn could finish.';
+const APP_RESTART_MESSAGE = 'Jenny closed before this reply finished.';
+
+// The runtime work a restart paused for this turn (store.js
+// _pauseUnfinishedAfterRestart), if any. Its stale active turn is an app
+// close, not a sidecar crash, and Resume of that work is the one recovery
+// path: Retry would start a second copy of the turn (gate F9). The scheduler
+// resumes only work whose checkpoint belongs to its attempt (scheduler.js
+// resume); one killed before its first checkpoint can only be run again.
+function findRestartPausedWork(service, sessionId, streamId) {
+  const store = service.sessionRuntime?.store;
+  if (!store || typeof store.listSummaries !== 'function' || typeof store.get !== 'function') return null;
+  try {
+    let cursor = null;
+    do {
+      const page = store.listSummaries({ cursor, limit: 100 });
+      for (const summary of page?.items || []) {
+        if (summary?.session_id !== sessionId || summary.status !== 'paused') continue;
+        const work = store.get(summary.work_id);
+        if (work?.status === 'paused' && work.recovery?.kind === 'restart_paused'
+          && work.attempt?.stream_id === streamId) return work;
+      }
+      cursor = page?.next_cursor || null;
+    } while (cursor);
+  } catch (_error) { /* Unknown runtime state keeps the crash row. */ }
+  return null;
+}
 
 function normalizeActiveTurn(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
@@ -71,18 +98,24 @@ function settleOrphanedManagedTurn(service, sessionId, activeTurn, { emitChatStr
     });
     return true;
   }
+  const pausedWork = findRestartPausedWork(service, normalizedSessionId, streamId);
+  const appRestart = Boolean(pausedWork);
+  const appRestartSubcode = pausedWork && sameAttempt(pausedWork.attempt, pausedWork.checkpoint_ref?.source_attempt)
+    ? SIDECAR_TERMINAL_SUBCODES.APP_RESTART : SIDECAR_TERMINAL_SUBCODES.APP_RESTART_UNRESUMABLE;
   const persistResult = persistAssistantFailure(adapter, {
     messageId: `assistant_${streamId}`,
-    errorPayload: {
-      message: SIDECAR_CRASH_MESSAGE,
-      error_code: SIDECAR_ERROR_CODES.PROCESS_EXIT,
-      category: 'process_exit',
-      retryable: true,
-    },
+    errorPayload: appRestart
+      ? { message: APP_RESTART_MESSAGE, category: 'interrupted', retryable: false }
+      : {
+        message: SIDECAR_CRASH_MESSAGE,
+        error_code: SIDECAR_ERROR_CODES.PROCESS_EXIT,
+        category: 'process_exit',
+        retryable: true,
+      },
     parentStreamId: streamId,
     model: String(service.currentModel || service.sessionStore.getSession(normalizedSessionId)?.last_model_used || '').trim(),
     terminalStatus: 'runtime_error',
-    terminalSubcode: SIDECAR_TERMINAL_SUBCODES.CRASH,
+    terminalSubcode: appRestart ? appRestartSubcode : SIDECAR_TERMINAL_SUBCODES.CRASH,
   });
   if (!mutationAccepted(persistResult)) {
     throw new Error('Active turn reconciliation failure persist was refused.');
@@ -102,11 +135,11 @@ function settleOrphanedManagedTurn(service, sessionId, activeTurn, { emitChatStr
       requestId,
       traceId,
       trace_id: traceId,
-      message: SIDECAR_CRASH_MESSAGE,
-      category: 'process_exit',
-      retryable: true,
+      message: appRestart ? APP_RESTART_MESSAGE : SIDECAR_CRASH_MESSAGE,
+      category: appRestart ? 'interrupted' : 'process_exit',
+      retryable: !appRestart,
       status: 'runtime_error',
-      terminal_subcode: SIDECAR_TERMINAL_SUBCODES.CRASH,
+      terminal_subcode: appRestart ? appRestartSubcode : SIDECAR_TERMINAL_SUBCODES.CRASH,
       model: String(service.currentModel || '').trim(),
     });
   }

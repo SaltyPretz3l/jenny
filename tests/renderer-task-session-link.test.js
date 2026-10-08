@@ -71,4 +71,15 @@ test('task-session creation forwards linkedTaskId only when supplied', async (t)
 
   assert.equal(creates[0].linkedTaskId, 'task-123');
   assert.equal(Object.hasOwn(creates[1], 'linkedTaskId'), false);
+
+  await dom.window.rendererTaskSessionActions.start({
+    title: 'Project task', initialPrompt: 'Brief', linkedTaskId: 'task-9', projectId: 'project_abc',
+  });
+  await dom.window.rendererTaskSessionActions.start({ title: 'Bad id', initialPrompt: 'Brief', projectId: 'nope' });
+  await dom.window.rendererTaskSessionActions.start({ title: 'Non string', initialPrompt: 'Brief', projectId: 42 });
+  await dom.window.rendererTaskSessionActions.start({ title: 'Traversal', initialPrompt: 'Brief', projectId: 'project_../x' });
+  assert.equal(creates[2].projectId, 'project_abc');
+  assert.equal(Object.hasOwn(creates[3], 'projectId'), false);
+  assert.equal(Object.hasOwn(creates[4], 'projectId'), false);
+  assert.equal(Object.hasOwn(creates[5], 'projectId'), false);
 });

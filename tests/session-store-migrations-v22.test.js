@@ -46,7 +46,7 @@ test('v21 to v22 initializes failure retry reasoning snapshots without touching 
     sessions: { s1: { id: 's1', messages, turn_events: turnEvents } },
   });
 
-  assert.equal(result.schema_version, 22);
+  assert.equal(result.schema_version, 24);
   assert.deepEqual(result.sessions.s1.failure_retry_reasoning_snapshots, {});
   assert.deepEqual(result.sessions.s1.messages, messages);
   assert.deepEqual(result.sessions.s1.turn_events, turnEvents);

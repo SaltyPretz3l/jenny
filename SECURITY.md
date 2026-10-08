@@ -52,13 +52,9 @@ prioritized over ordinary issues. There is no bug bounty.
   builtins and synthetic tools keep their existing names and win reserved-name
   collisions. Third-party MCP is unavailable in hosted and desktop command
   sandbox modes.
-- Wasm and native/privileged plugin tiers, plugin MCP, workflows, hooks, engine adapters,
-  catalogs and privileged hosts have been retired in current source. New
-  packages declaring retired kinds are refused; installed leftovers remain
-  listed with those contributions inert. Unsigned package intake/loading is
-  disabled unless `JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE=1` is set. Retained
-  panel/artifact views run HTML/JS/CSS in a sandboxed WebContentsView with a
-  bounded host bridge; signing does not grant unrestricted host execution.
+- There is no plugin platform: no plugin install, store, signing, or plugin
+  views. Extensions are skill folders and standalone MCP servers; MCP servers
+  are reviewed and approved per configuration before their tools are used.
 
 ## Tool Safety
 

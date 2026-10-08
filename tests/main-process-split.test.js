@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const vm = require('node:vm');
 
 const ROOT = path.resolve(__dirname, '..');
 const MAIN_PATH = path.join(ROOT, 'main.js');
@@ -135,25 +136,43 @@ test('main defers electron-updater and overlaps managed llama-server startup wit
   );
 });
 
-test('main starts the deferred background refreshes it wires from the backend service', () => {
-  const mainSource = readSource('main.js');
-  const backendWiring = readSource('services/main/backend-service-wiring.js');
+function assertDeferredStartupOrder({ omitRefresh = false, schedulerThrows = false } = {}) {
+  const calls = [], logs = [];
+  const noop = () => {};
+  const owner = new Proxy({}, { get: () => noop });
+  // Evaluate the entire main module; no Electron app, timers or services start.
+  const context = vm.createContext({
+    __dirname: ROOT, module: { exports: {} }, process: { env: {}, arch: 'x64' },
+    require(name) {
+      if (name === './services/main/gpu-memory-sample') return { createGpuMemorySampleController: () => ({}) };
+      if (name === './services/main/startup-audit') return { createStartupAudit: () => ({}) };
+      if (name === './services/main/setup-readiness') return { createSetupReadinessProbe: () => ({}) };
+      if (name === './services/main/feature-settings-facade') return { createFeatureSettingsFacade: () => ({}) };
+      return owner;
+    },
+    recordRefresh: () => calls.push('refresh'),
+    recordingScheduler: { start() { calls.push('scheduler'); if (schedulerThrows) throw new Error('scheduler failed'); } },
+    recordLog: (...args) => logs.push(args),
+  });
+  vm.runInContext(readSource('main.js'), context, { filename: MAIN_PATH });
+  vm.runInContext('startDeferredBackgroundRefreshes = recordRefresh; schedulerService = recordingScheduler; log = recordLog;', context);
+  const start = omitRefresh
+    ? () => context.recordingScheduler.start()
+    : () => vm.runInContext('startDeferredServices();', context);
+  start();
+  assert.deepEqual(calls, ['refresh', 'scheduler'], 'refreshes must run before the scheduler');
+  assert.equal(logs[0][0], schedulerThrows ? 'WARN' : 'INFO');
+  assert.equal(logs[0][1], schedulerThrows ? 'app.deferred_services_failed' : 'app.deferred_services_started');
+  start();
+  assert.deepEqual(calls, ['refresh', 'scheduler'], 'deferred services start only once');
+}
 
-  // The refreshes shipped exported-but-uncalled: the ICS calendar stayed
-  // blank for ~15 minutes after every launch, and the model catalog (which has
-  // no interval at all) only refreshed when the offline surface opened. Assert the whole chain, not just the export.
-  assert.match(backendWiring, /startDeferredBackgroundRefreshes,/);
-  assert.match(mainSource, /startDeferredBackgroundRefreshes = created\.startDeferredBackgroundRefreshes;/);
-
-  const deferredStart = mainSource.indexOf('function startDeferredServices() {');
-  assert.ok(deferredStart > -1, 'startDeferredServices must still own the deferred-startup step');
-  const deferredBody = mainSource.slice(deferredStart, mainSource.indexOf('\n}', deferredStart));
-  const refreshCall = deferredBody.indexOf('startDeferredBackgroundRefreshes();');
-  const schedulerCall = deferredBody.indexOf('schedulerService.start();');
-  assert.ok(refreshCall > -1, 'startDeferredServices must kick the deferred background refreshes');
-  // Ordering is load-bearing: both sit in one try block, so a scheduler throw
-  // must not be able to suppress the refreshes the way it would if it ran first.
-  assert.ok(refreshCall < schedulerCall, 'refreshes must run before schedulerService.start()');
+test('main starts deferred background refreshes before the scheduler, even when it throws', () => {
+  assertDeferredStartupOrder();
+  assertDeferredStartupOrder({ schedulerThrows: true });
+  assert.throws(() => assertDeferredStartupOrder({ omitRefresh: true }), {
+    code: 'ERR_ASSERTION', message: /refreshes must run before the scheduler/,
+  });
 });
 
 // SC-2: a getter that registerMainIpcHandlers defaults to `() => null` turns its

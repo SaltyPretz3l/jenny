@@ -53,16 +53,9 @@
   };
 
   // List/header controls whose data attribute names the equivalent control across a re-render.
-  const FOCUS_ATTRS = ['run', 'abort', 'remove', 'gate-config', 'gate-mode'].map((name) => `data-test-runner-${name}`);
+  const FOCUS_ATTRS = ['run', 'abort', 'remove', 'show-output', 'gate-config', 'gate-mode'].map((name) => `data-test-runner-${name}`);
 
-  function defaultEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function historyFor(state, configId) {
     const byConfig = state && state.history && state.history.byConfig;
@@ -83,6 +76,7 @@
     const getMountEl = typeof deps.getMountEl === 'function' ? deps.getMountEl : () => null;
     const getState = typeof deps.getState === 'function' ? deps.getState : () => null;
     const actions = deps.actions || {};
+    const getRunOutput = typeof deps.getRunOutput === 'function' ? deps.getRunOutput : () => null; // F6: kept output gates Show output
     const actionButton = typeof deps.actionButton === 'function'
       ? deps.actionButton
       : (typeof windowRef.inventoryActionButton === 'function' ? windowRef.inventoryActionButton : null);
@@ -144,6 +138,15 @@
       });
     }
 
+    function buildShowOutputButton(config) {
+      return buildActionButton({
+        variant: 'ghost', className: 'ide-test-runner-panel__show-output',
+        label: jt('ide.testRunner.showOutput', 'Show output'),
+        ariaLabel: jt('ide.testRunner.showOutputFor', 'Show output for {label}', { label: config.label || config.id }),
+        dataset: { 'test-runner-show-output': config.id },
+      });
+    }
+
     // UIUX-033: a live run on this config disables Remove — the backend
     // already refuses this write (CONFIG_ACTIVE_RUN), but a client-side guard
     // avoids even the optimistic-removal round trip: the row must never flash
@@ -185,6 +188,7 @@
         + buildAttribution(state, id)
         + `<span class="ide-test-runner-panel__cmd">${escapeHtml(config.command || '')}</span>`
         + '<span class="ide-test-runner-panel__row-actions">'
+        + (getRunOutput(id) ? buildShowOutputButton(config) : '')
         + buildRunButton(config, runDisabled, isRunning)
         + buildRemoveButton(config, isRunning)
         + '</span>'
@@ -248,6 +252,7 @@
           c && c.cwd,
           c && c.gate === true,
           c && c.gateOnFailure,
+          (getRunOutput(c && c.id) || {}).runId || '',
           historyFor(state, c && c.id).slice(-30).map((run) => run && [
             run.status, run.durationMs, run.startedAt, run.passedCount, run.failedCount,
             run.initiator, run.gateAttempt, run.skipReason,
@@ -532,6 +537,11 @@
         return;
       }
       if (removeBtn) {
+        return;
+      }
+      const showBtn = target.closest('[data-test-runner-show-output]');
+      if (showBtn) {
+        actions.showOutput?.(configIdOf(showBtn));
         return;
       }
       const abortBtn = target.closest('[data-test-runner-abort]');

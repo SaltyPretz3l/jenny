@@ -2,10 +2,15 @@
  * IDE terminal rail (the only IDE terminal since the post-1.2.0 sweep retired
  * the piped line terminal and its workspace_pty_terminal flag). This drives
  * an actual pseudo-terminal via @lydell/node-pty (zero-toolchain prebuilds), so
- * interactive TUIs, colors, and line editing work. Single session, cwd pinned
+ * interactive TUIs, colors, and line editing work. Multi-session with slots:
+ * at most MAX_SESSIONS (4) concurrent sessions, one per renderer terminal-tab
+ * slot (1..4; a missing or invalid slot means 1). Spawning an occupied slot
+ * returns that slot's live session (alreadyRunning) so a reloaded renderer can
+ * reattach; write/resize/kill route by sessionId; kill with no sessionId (the
+ * workspace root switch) and dispose() terminate every session. cwd pinned
  * to the tools workspace root, env scrubbed (credentials + JENNY_* feature
  * vars), byte-capped output forwarded over the bridge as workspacePty.onData /
- * onExit events.
+ * onExit events (both carry sessionId and slot).
  *
  * Pinned invariant: the native module loader is NEVER invoked before the
  * workspace root is confirmed, so a rootless install never loads native
@@ -32,6 +37,13 @@ const ROWS_MAX = 300;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const TERMINATION_TIMEOUT_MS = 2000;
+const MAX_SESSIONS = 4; // owner decision F3: at most 4 terminals
+const DEFAULT_SLOT = 1;
+
+// Integer 1..MAX_SESSIONS, else slot 1 (today's callers send no slot).
+function normalizeSlot(value) {
+  return Number.isInteger(value) && value >= 1 && value <= MAX_SESSIONS ? value : DEFAULT_SLOT;
+}
 
 function clampInt(value, min, max, fallback) {
   const n = Math.trunc(Number(value));
@@ -81,7 +93,7 @@ class WorkspacePtyService {
     this._clearTimeout = clearTimeoutImpl;
     this._terminationTimeoutMs = clampInt(terminationTimeoutMs, 1, 30_000, TERMINATION_TIMEOUT_MS);
     this._ptyModule = null; // cached loaded module
-    this._session = null; // { id, pty, shell, cwd }
+    this._sessions = new Map(); // slot -> { id, slot, pty, shell, cwd, ... }
     this._sessionCounter = 0;
     this._disposed = false;
     this._disposePromise = null;
@@ -110,13 +122,13 @@ class WorkspacePtyService {
     return this._ptyModule;
   }
 
-  _createOutputQueue(sessionId) {
+  _createOutputQueue(sessionId, slot) {
     return createTerminalOutputQueue({
       maxEventBytes: MAX_CHUNK_BYTES,
       schedule: this._scheduleOutputFlush,
       cancel: this._cancelOutputFlush,
       emit: (_stream, data, droppedBytes) => {
-        const payload = { sessionId, data };
+        const payload = { sessionId, slot, data };
         if (droppedBytes > 0) payload.droppedBytes = droppedBytes;
         try { this._sendBridgeEvent('workspacePty.onData', payload); } catch (_error) {
           this._log('WARN', 'workspace_pty.bridge_emit_failed', { event: 'data' });
@@ -130,11 +142,12 @@ class WorkspacePtyService {
     if (!session || session.settled) return false;
     session.settled = true;
     session.outputQueue.dispose({ flushPending: true });
-    if (this._session === session) this._session = null;
+    if (this._sessions.get(session.slot) === session) this._sessions.delete(session.slot);
     const { exitCode, signal } = info || {};
     try {
       this._sendBridgeEvent('workspacePty.onExit', {
         sessionId: session.id,
+        slot: session.slot,
         exitCode: Number(exitCode ?? -1),
         signal: signal == null ? '' : String(signal),
       });
@@ -188,7 +201,13 @@ class WorkspacePtyService {
     }
   }
 
-  async spawn({ cols, rows } = {}) {
+  async spawn({ cols, rows, slot } = {}) {
+    // A slot whose session is being killed (a terminal closed and reopened at
+    // once) is waited out, so the new tab never reattaches to the dying shell.
+    for (let dying = this._sessions.get(normalizeSlot(slot)); dying?.terminationPromise && !this._disposed; dying = this._sessions.get(normalizeSlot(slot))) {
+      await dying.terminationPromise.catch(() => {});
+      if (this._sessions.get(normalizeSlot(slot)) === dying) break; // settled without leaving: reattach below
+    }
     if (this._disposed) {
       return {
         ok: false,
@@ -207,15 +226,18 @@ class WorkspacePtyService {
         message: t('main.workspacePty.workspaceRootRequired', 'No workspace root is configured; choose a workspace folder first.'),
       };
     }
-    // 2. Single-session policy.
-    if (this._session) {
+    // 2. One live session per slot; an occupied slot is reattached, not respawned.
+    const safeSlot = normalizeSlot(slot);
+    const existing = this._sessions.get(safeSlot);
+    if (existing) {
       return {
         ok: true,
         available: true,
         alreadyRunning: true,
-        sessionId: this._session.id,
-        shell: this._session.shell,
-        cwd: this._session.cwd,
+        sessionId: existing.id,
+        slot: safeSlot,
+        shell: existing.shell,
+        cwd: existing.cwd,
       };
     }
     // 3. Lazy-load the native module - fail soft.
@@ -274,12 +296,12 @@ class WorkspacePtyService {
     let resolveExit;
     const exitPromise = new Promise((resolve) => { resolveExit = resolve; });
     const session = {
-      id, pty, shell: chosen, cwd, settled: false, resolveExit, exitPromise,
+      id, slot: safeSlot, pty, shell: chosen, cwd, settled: false, resolveExit, exitPromise,
       cols: safeCols, rows: safeRows, // last applied size; resize() skips a no-op
-      outputQueue: this._createOutputQueue(id),
+      outputQueue: this._createOutputQueue(id, safeSlot),
       terminationPromise: null,
     };
-    this._session = session;
+    this._sessions.set(safeSlot, session);
     // 6. Wire data/exit forwarding.
     try {
       this._wire(session);
@@ -297,23 +319,26 @@ class WorkspacePtyService {
       };
     }
 
-    this._log('INFO', 'workspace_pty.started', { shell: chosen });
+    this._log('INFO', 'workspace_pty.started', { shell: chosen, slot: safeSlot });
     return {
       ok: true,
       available: true,
       alreadyRunning: false,
       sessionId: id,
+      slot: safeSlot,
       shell: chosen,
       cwd,
     };
   }
 
+  // Resolve by session id across slots; an empty/unknown id resolves nothing.
   _sessionFor(sessionId) {
     const wanted = String(sessionId || '');
-    if (!this._session || (wanted && this._session.id !== wanted)) {
-      return null;
+    if (!wanted) return null;
+    for (const session of this._sessions.values()) {
+      if (session.id === wanted) return session;
     }
-    return this._session;
+    return null;
   }
 
   async write({ sessionId, data } = {}) {
@@ -355,13 +380,31 @@ class WorkspacePtyService {
     return { ok: true };
   }
 
+  // Terminate every live session in parallel; resolves the sessions whose
+  // termination was not confirmed (empty = all confirmed).
+  async _terminateAll() {
+    const sessions = [...this._sessions.values()];
+    const outcomes = await Promise.all(sessions.map((session) => this._terminateSession(session)));
+    return sessions.filter((_session, index) => outcomes[index] !== true);
+  }
+
+  // kill({ sessionId }) kills that session; kill({}) with no sessionId (the
+  // workspace root switch) kills every session.
   async kill({ sessionId } = {}) {
-    const session = this._sessionFor(sessionId);
-    if (!session) {
-      return { ok: true, killed: false };
+    let unconfirmed;
+    if (String(sessionId || '')) {
+      const session = this._sessionFor(sessionId);
+      if (!session) {
+        return { ok: true, killed: false };
+      }
+      unconfirmed = (await this._terminateSession(session)) === true ? [] : [session];
+    } else {
+      if (this._sessions.size === 0) {
+        return { ok: true, killed: false };
+      }
+      unconfirmed = await this._terminateAll();
     }
-    const terminationConfirmed = await this._terminateSession(session);
-    if (!terminationConfirmed) {
+    if (unconfirmed.length > 0) {
       return {
         ok: false,
         killed: false,
@@ -373,12 +416,12 @@ class WorkspacePtyService {
   }
 
   hasSession() {
-    return Boolean(this._session);
+    return this._sessions.size > 0;
   }
 
   // Coordinator participant signal; same ownership state as hasSession().
   isRunning() {
-    return Boolean(this._session);
+    return this._sessions.size > 0;
   }
 
   // Window close / app shutdown (will-quit guard): never orphan a pty, never throw.
@@ -386,18 +429,19 @@ class WorkspacePtyService {
     this._disposed = true;
     if (!this._disposePromise) {
       this._disposePromise = (async () => {
-        const session = this._session;
-        if (!session) return { disposed: true, terminationConfirmed: true };
-        const result = await this.kill({ sessionId: session.id });
-        if (result.terminationConfirmed === true) {
+        if (this._sessions.size === 0) return { disposed: true, terminationConfirmed: true };
+        const unconfirmed = await this._terminateAll();
+        if (unconfirmed.length === 0) {
           return { disposed: true, terminationConfirmed: true };
         }
-        return {
+        const result = {
           disposed: false,
-          sessionId: session.id,
+          sessionId: unconfirmed[0].id,
           terminationConfirmed: false,
-          code: result.code || TERMINAL_ERROR_CODES.SPAWN_FAILED,
+          code: TERMINAL_ERROR_CODES.SPAWN_FAILED,
         };
+        if (unconfirmed.length > 1) result.sessionIds = unconfirmed.map((session) => session.id);
+        return result;
       })();
       void this._disposePromise.then((result) => {
         if (!result.disposed) this._disposePromise = null;
@@ -408,6 +452,7 @@ class WorkspacePtyService {
 }
 
 module.exports = {
+  MAX_SESSIONS,
   MAX_WRITE_BYTES,
   WorkspacePtyService,
 };

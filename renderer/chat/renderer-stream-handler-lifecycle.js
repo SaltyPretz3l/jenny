@@ -32,8 +32,6 @@
       normalizeId,
       appendClientLog,
       handleStreamPayload,
-      handleStreamEnvelope,
-      handleStreamRecovery,
       pendingStreamCommitQueue,
       runtime,
       approvalToastSessionIds,
@@ -41,8 +39,6 @@
       streamRehydrateUtils,
       isRowModelEnabled,
       getLiveStateStore,
-      isStreamEnvelopeV2Enabled = () => false,
-      streamEnvelopeReceiptTracker = null,
       clearBufferedStreamEvents,
     } = options || {};
 
@@ -54,12 +50,6 @@
     }
     if (typeof handleStreamPayload !== 'function') {
       throw new Error('createStreamHandlerLifecycle requires handleStreamPayload');
-    }
-    if (handleStreamEnvelope != null && typeof handleStreamEnvelope !== 'function') {
-      throw new Error('createStreamHandlerLifecycle requires handleStreamEnvelope to be a function when provided');
-    }
-    if (handleStreamRecovery != null && typeof handleStreamRecovery !== 'function') {
-      throw new Error('createStreamHandlerLifecycle requires handleStreamRecovery to be a function when provided');
     }
     if (typeof appendClientLog !== 'function') {
       throw new Error('createStreamHandlerLifecycle requires appendClientLog');
@@ -80,12 +70,8 @@
     const streamMailbox = mailboxModule.createStreamMailbox();
 
     let streamUnsubscribe = null;
-    let recoveryUnsubscribe = null;
-    let featuresUnsubscribe = null;
-    let currentEnvelopeMode = null;
     let lastShellRef = null;
     let beforeUnloadRegistered = false;
-    let forcedLegacyReason = '';
 
     function safeUnsubscribeStream(reason) {
       if (typeof streamUnsubscribe !== 'function') {
@@ -106,25 +92,6 @@
       }
     }
 
-    function safeUnsubscribeRecovery(reason) {
-      if (typeof recoveryUnsubscribe !== 'function') {
-        recoveryUnsubscribe = null;
-        return false;
-      }
-      const unsubscribe = recoveryUnsubscribe;
-      recoveryUnsubscribe = null;
-      try {
-        unsubscribe();
-        return true;
-      } catch (error) {
-        appendClientLog('WARN', 'stream.envelope_recovery_unsubscribe_failed', {
-          reason: String(reason || 'unknown').slice(0, 60),
-          message: String(error?.message || error).slice(0, 300),
-        });
-        return false;
-      }
-    }
-
     function removeBeforeUnloadListener() {
       if (!beforeUnloadRegistered) {
         return;
@@ -135,226 +102,54 @@
       beforeUnloadRegistered = false;
     }
 
-    function removeFeaturesListener() {
-      if (typeof featuresUnsubscribe !== 'function') {
-        return;
-      }
-      try {
-        featuresUnsubscribe();
-      } catch (_error) {
-        // best-effort
-      }
-      featuresUnsubscribe = null;
-    }
-
-    function readEnvelopeFlag() {
-      try {
-        return isStreamEnvelopeV2Enabled() === true && !forcedLegacyReason;
-      } catch (error) {
-        appendClientLog('WARN', 'stream.envelope_v2_flag_failed', {
-          message: String(error?.message || error).slice(0, 300),
-        });
-        return false;
-      }
-    }
-
-    // Re-check the envelope flag and re-register only when the desired mode
-    // differs from the live subscription. The first registerStreamHandler call
-    // can run against the bootstrap placeholder feature flags (before the
-    // initial features.getState() pull resolves), and that pull does NOT fire
-    // features.onChanged — so bind-time mode must never be latched permanently.
-    // Shared by the onChanged push listener and the explicit post-bootstrap
-    // resync in bootstrapAppShell.
-    function resyncStreamSubscriptionMode() {
-      if (!lastShellRef) {
-        return null;
-      }
-      const nextMode = readEnvelopeFlag() ? 'envelope' : 'legacy';
-      if (nextMode === currentEnvelopeMode) {
-        return null;
-      }
-      appendClientLog('INFO', 'stream.envelope_v2_resubscribe', {
-        from: currentEnvelopeMode || 'initial',
-        to: nextMode,
-      });
-      return registerStreamHandler(lastShellRef);
-    }
-
-    function ensureFeaturesListener(jennyShell) {
-      if (typeof featuresUnsubscribe === 'function') {
-        return;
-      }
-      if (typeof jennyShell?.features?.onChanged !== 'function') {
-        return;
-      }
-      try {
-        featuresUnsubscribe = jennyShell.features.onChanged(() => {
-          let rawEnvelopeEnabled = false;
-          try {
-            rawEnvelopeEnabled = isStreamEnvelopeV2Enabled() === true;
-          } catch (_error) {
-            // readEnvelopeFlag logs the actionable warning during resync.
-          }
-          if (!rawEnvelopeEnabled) {
-            forcedLegacyReason = '';
-          }
-          // applyFeatureStatePayload runs in app.js's listener (registered earlier in
-          // bootstrap) before this one fires, so the resync reads the fresh value.
-          // Re-registering only on a mode change keeps every other
-          // features.onChanged event cheap.
-          resyncStreamSubscriptionMode();
-        });
-      } catch (error) {
-        appendClientLog('WARN', 'stream.envelope_v2_features_subscribe_failed', {
-          message: String(error?.message || error).slice(0, 300),
-        });
-      }
-    }
-
     function registerStreamHandler(jennyShell) {
       lastShellRef = jennyShell || lastShellRef;
       // A subscription replacement is a renderer-ownership boundary. Abort
       // callbacks already executing under the prior listener before binding
-      // the next mode so they cannot mutate the new handler generation.
-      const rendererEpoch = streamMailbox.beginEpoch();
+      // the next one so they cannot mutate the new handler generation.
+      streamMailbox.beginEpoch();
       safeUnsubscribeStream('resubscribe');
-      safeUnsubscribeRecovery('resubscribe');
       removeBeforeUnloadListener();
       const chatBridge = lastShellRef?.chat || null;
-      const wantsEnvelope = readEnvelopeFlag();
-      const hasLegacyBridge = typeof chatBridge?.onStream === 'function';
-      const hasEnvelopeBridge = typeof chatBridge?.onStreamEnvelope === 'function';
-      const envelopeEnabled = wantsEnvelope
-        && hasEnvelopeBridge
-        && typeof handleStreamEnvelope === 'function';
-      if (typeof chatBridge?.onStreamRecoveryRequired === 'function'
-        && typeof handleStreamRecovery === 'function') {
-        try {
-          recoveryUnsubscribe = chatBridge.onStreamRecoveryRequired((ticket) => {
-            const ticketEpoch = ticket?.renderer_epoch;
-            if (!Number.isSafeInteger(ticketEpoch) || ticketEpoch !== streamMailbox.getRendererEpoch()) {
-              appendClientLog('DEBUG', 'stream.envelope_recovery_stale_ticket', {
-                recoveryId: String(ticket?.recovery_id || '').slice(0, 30),
-                rendererEpoch: Number(ticketEpoch) || 0,
-                currentRendererEpoch: streamMailbox.getRendererEpoch(),
-              });
-              return Promise.resolve({ ok: false, reason: 'stale_renderer_epoch' });
-            }
-            return Promise.resolve(handleStreamRecovery(ticket)).catch((error) => {
-              appendClientLog('WARN', 'stream.envelope_recovery_handler_failed', {
-                recoveryId: String(ticket?.recovery_id || '').slice(0, 30),
-                message: String(error?.message || error).slice(0, 300),
-              });
-              return { ok: false, reason: 'recovery_handler_failed' };
-            });
-          });
-        } catch (error) {
-          recoveryUnsubscribe = null;
-          appendClientLog('WARN', 'stream.envelope_recovery_subscribe_failed', {
-            message: String(error?.message || error).slice(0, 300),
-          });
-        }
-      }
-      if (wantsEnvelope && !envelopeEnabled) {
-        appendClientLog('WARN', 'stream.envelope_v2_unavailable', {
-          hasEnvelopeBridge,
-          hasEnvelopeHandler: typeof handleStreamEnvelope === 'function',
-        });
-      }
-      if (!envelopeEnabled && !hasLegacyBridge) {
-        currentEnvelopeMode = 'unavailable';
-        streamEnvelopeReceiptTracker?.beginSubscription?.(rendererEpoch, 'legacy');
+      if (typeof chatBridge?.onStream !== 'function') {
         appendClientLog('WARN', 'stream.listener_unavailable', {
-          wantsEnvelope,
-          hasLegacyBridge,
-          hasEnvelopeBridge,
+          hasLegacyBridge: false,
         });
-        ensureFeaturesListener(lastShellRef);
         return null;
       }
-      currentEnvelopeMode = envelopeEnabled ? 'envelope' : 'legacy';
-      const subscribe = envelopeEnabled
-        ? chatBridge.onStreamEnvelope.bind(chatBridge)
-        : chatBridge.onStream.bind(chatBridge);
       if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
         window.addEventListener('beforeunload', dispose);
         beforeUnloadRegistered = true;
       }
-      function createListener(useEnvelopeHandler) {
-        return (payload) => streamMailbox.enqueue(payload, async ({ guard, signal, rendererEpoch }) => {
-          try { globalThis.rendererHealthPillController?.observeStreamPayload?.(payload); } catch (_error) { /* presentation tap */ }
-          try {
-            if (state.runtimeSendController?.acceptAdmission?.(payload) === false) return { buffered: false, terminal: false };
-            // Desktop notifications see every admitted live payload once (a question request has no terminal).
-            try { state.desktopNotificationsController?.onStreamPayload?.(payload); } catch (_error) { /* presentation tap */ }
-            const continuation = { continuationGuard: guard, signal, rendererEpoch };
-            if (useEnvelopeHandler) {
-              return await handleStreamEnvelope(payload, continuation);
-            }
-            return await handleStreamPayload(payload, continuation);
-          } catch (error) {
-            appendClientLog('ERROR', 'stream.listener_exception', {
-              type: String(payload?.type || payload?.eventKind || ''),
-              channel: String(payload?.channel || '').slice(0, 30),
-              streamId: String(payload?.streamId || '').slice(0, 30),
-              message: String(error?.message || error).slice(0, 300),
-            });
-            return { buffered: false, terminal: false, handlerError: true };
-          }
-        });
-      }
+      const listener = (payload) => streamMailbox.enqueue(payload, async ({ guard, signal, rendererEpoch }) => {
+        try { globalThis.rendererHealthPillController?.observeStreamPayload?.(payload); } catch (_error) { /* presentation tap */ }
+        try {
+          if (state.runtimeSendController?.acceptAdmission?.(payload) === false) return { buffered: false, terminal: false };
+          // Desktop notifications see every admitted live payload once (a question request has no terminal).
+          try { state.desktopNotificationsController?.onStreamPayload?.(payload); } catch (_error) { /* presentation tap */ }
+          return await handleStreamPayload(payload, { continuationGuard: guard, signal, rendererEpoch });
+        } catch (error) {
+          appendClientLog('ERROR', 'stream.listener_exception', {
+            type: String(payload?.type || payload?.eventKind || ''),
+            channel: String(payload?.channel || '').slice(0, 30),
+            streamId: String(payload?.streamId || '').slice(0, 30),
+            message: String(error?.message || error).slice(0, 300),
+          });
+          return { buffered: false, terminal: false, handlerError: true };
+        }
+      });
       try {
-        streamUnsubscribe = subscribe(createListener(envelopeEnabled));
-        streamEnvelopeReceiptTracker?.beginSubscription?.(rendererEpoch, currentEnvelopeMode);
+        streamUnsubscribe = chatBridge.onStream.bind(chatBridge)(listener);
       } catch (error) {
         appendClientLog('WARN', 'stream.listener_subscribe_failed', {
-          mode: envelopeEnabled ? 'envelope' : 'legacy',
+          mode: 'legacy',
           message: String(error?.message || error).slice(0, 300),
         });
-        if (envelopeEnabled && hasLegacyBridge) {
-          try {
-            currentEnvelopeMode = 'legacy';
-            streamUnsubscribe = chatBridge.onStream.bind(chatBridge)(createListener(false));
-            streamEnvelopeReceiptTracker?.beginSubscription?.(rendererEpoch, 'legacy');
-            appendClientLog('INFO', 'stream.envelope_v2_legacy_fallback', {
-              reason: 'subscribe_failed',
-            });
-            ensureFeaturesListener(lastShellRef);
-            return streamUnsubscribe;
-          } catch (legacyError) {
-            appendClientLog('WARN', 'stream.listener_subscribe_failed', {
-              mode: 'legacy',
-              message: String(legacyError?.message || legacyError).slice(0, 300),
-            });
-          }
-        }
-        currentEnvelopeMode = 'unavailable';
         streamUnsubscribe = null;
-        streamEnvelopeReceiptTracker?.beginSubscription?.(rendererEpoch, 'legacy');
         removeBeforeUnloadListener();
-        ensureFeaturesListener(lastShellRef);
         return null;
       }
-      ensureFeaturesListener(lastShellRef);
       return streamUnsubscribe;
-    }
-
-    function fallbackToLegacy(reason = 'envelope_fault') {
-      if (currentEnvelopeMode === 'legacy') {
-        return streamUnsubscribe;
-      }
-      const chatBridge = lastShellRef?.chat;
-      if (typeof chatBridge?.onStream !== 'function') {
-        appendClientLog('WARN', 'stream.envelope_v2_legacy_fallback_failed', {
-          reason: String(reason || 'envelope_fault').slice(0, 80),
-        });
-        return null;
-      }
-      forcedLegacyReason = String(reason || 'envelope_fault').slice(0, 80);
-      appendClientLog('WARN', 'stream.envelope_v2_legacy_fallback', {
-        reason: forcedLegacyReason,
-      });
-      return registerStreamHandler(lastShellRef);
     }
 
     function dispose() {
@@ -362,10 +157,7 @@
       // are cleared; late awaits then observe an aborted renderer epoch.
       streamMailbox.dispose();
       removeBeforeUnloadListener();
-      removeFeaturesListener();
       safeUnsubscribeStream('dispose');
-      safeUnsubscribeRecovery('dispose');
-      currentEnvelopeMode = null;
       lastShellRef = null;
       pendingStreamCommitQueue.dispose();
       runtime?.disposeRenderQueue?.();
@@ -480,8 +272,6 @@
 
     return {
       registerStreamHandler,
-      resyncStreamSubscriptionMode,
-      fallbackToLegacy,
       dispose,
       rehydrateSessionFromPersistedTurnEvents,
     };

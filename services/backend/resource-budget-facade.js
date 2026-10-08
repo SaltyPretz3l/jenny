@@ -66,8 +66,8 @@ function appendResourcePressure(items, resources = {}) {
   if (!pressure || typeof pressure !== 'object' || Array.isArray(pressure)) {
     return;
   }
-  const status = normalizeString(pressure.status).toLowerCase();
-  if (!status || status === 'ok' || status === 'unknown' || status === 'disabled') {
+  const status = mapPressure(pressure.status);
+  if (!status || status === 'normal') {
     return;
   }
   items.push({
@@ -99,15 +99,56 @@ function appendToolPressure(items, toolObservability = {}) {
   }
 }
 
-function appendSlowOperations(items, slowOperations = {}) {
-  if (!isReadyFacet(slowOperations) || Number(slowOperations.count || 0) <= 0) {
-    return;
+function resourceNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function mapPressure(status) {
+  switch (normalizeString(status).toLowerCase()) {
+    case 'ok': return 'normal';
+    case 'pressured': return 'high';
+    case 'critical': return 'critical';
+    default: return null;
   }
-  items.push({
-    kind: 'slow_operations',
-    count: Number(slowOperations.count || 0),
-    items: Array.isArray(slowOperations.items) ? slowOperations.items.slice(0, 8) : [],
-  });
+}
+
+function sumModelBytes(models, read) {
+  // An empty resident list is a real zero; unknown sizes stay null.
+  if (models.length === 0) return 0;
+  const values = models.map(read).filter((value) => value !== null);
+  return values.length ? resourceNumber(values.reduce((sum, value) => sum + value, 0)) : null;
+}
+
+// Ollama's `size` is the whole resident footprint and `size_vram` the part on the GPU, so the RAM share is
+// the difference (never negative); a model without a VRAM figure counts whole as RAM.
+function modelRamBytes(model) {
+  if (model.size_bytes === null) return null;
+  return Math.max(0, model.size_bytes - (model.vram_bytes ?? 0));
+}
+
+function buildResources(resources = {}) {
+  const models = Array.isArray(resources?.resident_models) ? resources.resident_models.map((model) => ({
+    name: normalizeString(model?.name),
+    size_bytes: resourceNumber(model?.size_bytes),
+    vram_bytes: resourceNumber(model?.vram_bytes),
+  })) : null;
+  const gpu = resources?.system?.gpuMemory;
+  const systemPressure = resources?.sidecar?.system_pressure;
+  const percent = resourceNumber(resources?.system?.ramPercent) ?? resourceNumber(systemPressure?.memory?.percent);
+  const pressure = mapPressure(systemPressure?.status);
+  return {
+    app_memory_bytes: resourceNumber(resources?.app_memory_bytes),
+    model_memory: models === null ? null : {
+      ram_bytes: sumModelBytes(models, modelRamBytes),
+      vram_bytes: sumModelBytes(models, (model) => model.vram_bytes),
+      vram_total_bytes: gpu?.available === true && resourceNumber(gpu.totalMb) > 0
+        ? resourceNumber(gpu.totalMb * 1024 * 1024) : null,
+      models,
+    },
+    workers: null,
+    retained_caches: null,
+    system_memory: percent === null && pressure === null ? null : { percent, pressure },
+  };
 }
 
 function deriveStatus(items) {
@@ -124,7 +165,6 @@ function buildResourceBudgetFacet(payload = {}) {
   const items = [];
   appendResourcePressure(items, payload.resources);
   appendToolPressure(items, payload.tool_observability);
-  appendSlowOperations(items, payload.slow_operations);
   const usageSession = asPlainObject(payload.usage?.session);
   const usageCumulative = asPlainObject(payload.usage?.cumulative);
   return {
@@ -138,6 +178,7 @@ function buildResourceBudgetFacet(payload = {}) {
       slow_operations: isReadyFacet(payload.slow_operations),
     },
     items,
+    resources: buildResources(payload.resources),
     usage: {
       session_total_tokens: normalizeFiniteNumber(usageSession.total_tokens),
       cumulative_total_tokens: normalizeFiniteNumber(usageCumulative.total_tokens),

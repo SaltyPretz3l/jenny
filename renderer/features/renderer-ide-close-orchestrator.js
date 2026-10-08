@@ -217,18 +217,24 @@
       return runCloseFlow([normalized]);
     }
 
+    // Bulk closes act on one editor group (row 40 W5): the kept tab's group, or
+    // `groupId` ('' = the primary group, a tab without `group`).
+    const inGroup = (tab, groupId) => String(tab.group || '') === String(groupId || '');
+
     function requestCloseOthers(path) {
       const keep = String(path || '');
-      return runCloseFlow(unpinnedPaths((tab) => tab.path !== keep));
+      const keepTab = (getIde().openTabs || []).find((tab) => tab.path === keep);
+      return runCloseFlow(unpinnedPaths((tab) => tab.path !== keep && inGroup(tab, keepTab?.group)));
     }
 
-    function requestCloseAll() {
-      return runCloseFlow(unpinnedPaths());
+    function requestCloseAll(groupId) {
+      return runCloseFlow(unpinnedPaths((tab) => inGroup(tab, groupId)));
     }
 
     // Close clean, non-diff tabs without prompting because no unsaved content can be lost.
-    function requestCloseSaved() {
-      const paths = openTabPaths().filter((path) => !isDiffTabId(path) && !isDirty(path));
+    function requestCloseSaved(groupId) {
+      const paths = (getIde().openTabs || []).filter((tab) => inGroup(tab, groupId)).map((tab) => tab.path)
+        .filter((path) => !isDiffTabId(path) && !isDirty(path));
       return runCloseFlow(paths, { allowPrompt: false });
     }
 

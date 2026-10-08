@@ -25,6 +25,8 @@ describe('collectDataInventory', () => {
     fs.mkdirSync(path.join(userDataPath, 'personality', 'default-workspace'), { recursive: true });
     fs.writeFileSync(path.join(userDataPath, 'personality', 'default-workspace', 'profile.md'), 'hello');
     fs.writeFileSync(path.join(userDataPath, 'home-calendar.json'), '{}');
+    fs.mkdirSync(path.join(userDataPath, 'project-notes'), { recursive: true });
+    fs.writeFileSync(path.join(userDataPath, 'project-notes', 'project_alpha.json'), '{"version":1}');
     fs.writeFileSync(path.join(userDataPath, 'secure-state.json'), 'secret');
     fs.mkdirSync(path.join(workspaceRoot, '.jenny', 'artifacts'), { recursive: true });
     fs.writeFileSync(path.join(workspaceRoot, '.jenny', 'artifacts', 'chart.json'), '{}');
@@ -49,6 +51,8 @@ describe('collectDataInventory', () => {
     assert.equal(paths.some((value) => value.startsWith('sessions/')), true);
     assert.equal(paths.includes('personality/profile.md'), true);
     assert.equal(paths.includes('calendar/home-calendar.json'), true);
+    assert.equal(paths.includes('notes/project_alpha.json'), true);
+    assert.equal(result.entries.find((entry) => entry.logicalPath === 'notes/project_alpha.json').category, 'memory');
     assert.equal(paths.includes('workspace/artifacts/chart.json'), true);
     assert.equal(paths.includes('preferences/shell-config.json'), true);
     assert.equal(paths.some((value) => value.includes('secure-state')), false);

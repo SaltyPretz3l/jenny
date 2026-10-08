@@ -148,12 +148,6 @@
       fallbackInertRecords = [];
     }
 
-    // ── flag gate ──
-    function isFeatureEnabled() {
-      const flags = state && state.features && state.features.featureFlags;
-      return !flags || flags.quick_settings !== false;
-    }
-
     // ── generic write-with-rollback-reflect helper ──
     // Every control's write goes through its OWN adapter (appearance / zoom /
     // offline) -- never merged. On failure the adapter has already rolled its
@@ -198,7 +192,7 @@
       control.className = 'quick-settings-row-control';
       row.appendChild(label);
       row.appendChild(control);
-      return { row, control };
+      return { row, label, control };
     }
 
     function buildAppearanceSlot() {
@@ -255,6 +249,7 @@
       slotRoot.appendChild(contextNote);
 
       const localOnlyRow = buildRow(jt('quickSettings.forceLocalInference', 'Force local inference'));
+      localOnlyRow.label.id = 'quickSettingsLocalOnlyLabel';
       slotRoot.appendChild(localOnlyRow.row);
       // Do NOT install initToggleHandlers on this host: production's
       // renderer/inventory/index.js already delegates on `document`, and the
@@ -313,8 +308,10 @@
       function renderLocalOnly() {
         const offlineState = state && state.offline && typeof state.offline === 'object' ? state.offline : {};
         buildInventoryHtml(localOnlyRow.control, inventory && inventory.toggleSwitch ? inventory.toggleSwitch({
-           id: 'quickSettingsLocalOnly',
-           label: jt('quickSettings.forceLocalInference', 'Force local inference'),
+          id: 'quickSettingsLocalOnly',
+          // The row label names the switch; a second visible label repeated it.
+          bare: true,
+          labelledBy: 'quickSettingsLocalOnlyLabel',
           checked: offlineState.mode === 'local_only',
         }) : '');
         renderReadinessNote(offlineState);
@@ -556,7 +553,7 @@
 
     // ── open / close / toggle ──
     function open() {
-      if (disposed || !documentRef || !isFeatureEnabled() || opened) {
+      if (disposed || !documentRef || opened) {
         return false;
       }
       lifecycleGeneration += 1;

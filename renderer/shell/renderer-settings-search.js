@@ -14,7 +14,7 @@
  *     the nav rail, results list, keyboard nav, jump-and-flash) — kept
  *     separate from the pure logic above so tests can exercise either half.
  *
- * The merged skills section resolves to its plugins host in the index;
+ * The merged skills section resolves to its Extensions host in the index;
  * `rawSectionId` keeps the original copy-map sectionId for reference.
  */
 (function (root, factory) {
@@ -283,7 +283,7 @@
 
     function findFieldTarget(fieldId) {
       var toggleTrack = doc.querySelector('[data-inv-toggle="' + fieldId + '"]');
-      if (toggleTrack) return toggleTrack.closest('.settings-field') || toggleTrack.closest('.inv-toggle') || toggleTrack;
+      if (toggleTrack) return toggleTrack.closest('.settings-field') || toggleTrack.closest('.settings-field-row') || toggleTrack.closest('.inv-toggle') || toggleTrack;
       var target = doc.querySelector('[data-limits-line="' + fieldId + '"]') || doc.getElementById(fieldId) || doc.querySelector('[data-settings-field="' + fieldId + '"]');
       var row = target && (target.closest('.settings-field') || target);
       return row && row.closest('[hidden]') ? null : row;
@@ -400,6 +400,8 @@
       if (!hit) {
         return;
       }
+      // A pick closes the list so it no longer covers the page; the query and the nav filter stay.
+      renderResults([], '');
       var token = bindingGate.capture();
       var activeFence = bindingFence;
       navigateToSection(hit.sectionId);
@@ -449,6 +451,16 @@
 
     function handleInput(event) {
       runQuery(event && event.target ? event.target.value : '');
+    }
+
+    function handleFocus() {
+      if (inputEl && resultsEl && resultsEl.hidden && inputEl.value.trim()) runQuery(inputEl.value);
+    }
+
+    function handleDocumentPointerDown(event) {
+      var box = inputEl && inputEl.closest('[data-settings-search]');
+      if (!resultsEl || resultsEl.hidden || (box && box.contains(event.target))) return;
+      renderResults([], '');
     }
 
     function handleKeydown(event) {
@@ -521,7 +533,9 @@
       inputEl.setAttribute('aria-expanded', 'false');
       inputEl.addEventListener('input', handleInput);
       inputEl.addEventListener('keydown', handleKeydown);
+      inputEl.addEventListener('focus', handleFocus);
       resultsEl.addEventListener('click', handleResultsClick);
+      doc.addEventListener('pointerdown', handleDocumentPointerDown, true);
     }
 
     function dispose() {
@@ -535,7 +549,9 @@
       if (inputEl) {
         inputEl.removeEventListener('input', handleInput);
         inputEl.removeEventListener('keydown', handleKeydown);
+        inputEl.removeEventListener('focus', handleFocus);
       }
+      doc.removeEventListener('pointerdown', handleDocumentPointerDown, true);
       if (resultsEl) {
         resultsEl.removeEventListener('click', handleResultsClick);
       }

@@ -119,6 +119,7 @@ function harness(opts = {}) {
   const calls = { openRunPanel: 0, runStateChange: 0, saveFile: [] };
   const engine = createIdeRunScripts({
     getDom: opts.getDom || (() => ({})),
+    getMountEl: opts.getMountEl,
     isActivePanel: opts.isActivePanel || (() => false),
     editorHost: opts.editorHost || fakeEditorHost(opts.hostOverrides),
     getWorkspaceFsApi: () => fs,
@@ -128,7 +129,8 @@ function harness(opts = {}) {
       calls.saveFile.push({ path, startedSoFar: runTask ? runTask.calls.start : 0 });
       return opts.saveResult === undefined ? true : opts.saveResult;
     },
-    openRunPanel: () => { calls.openRunPanel += 1; },
+    openRunPanel: (near) => { calls.openRunPanel += 1; calls.runNear = near; },
+    getRunTarget: opts.getRunTarget,
     onRunStateChange: () => { calls.runStateChange += 1; },
     appendClientLog: () => {},
     showToastMessage: (message) => toasts.push(message),
@@ -173,6 +175,28 @@ test('runActiveFile starts a task with the quoted path as ONE command string (no
   assert.equal(h.runTask.lastCommand, "node 'src/app.js'", 'the command is exactly the composed shell string, nothing appended');
   assert.equal(h.calls.openRunPanel, 1, 'opens the bottom panel on the run view');
   assert.equal(h.engine.isRunning(), true, 'running indicator armed');
+});
+
+test('W7c: Run opens beside the terminal bound to the group it started from, read at the start', async () => {
+  let target = 'terminal-3';
+  const h = harness({ getRunTarget: () => target });
+  const run = h.engine.runActiveFile();
+  target = ''; // the save or the picker may move focus before the task starts
+  await run;
+  assert.equal(h.calls.runNear, 'terminal-3');
+});
+
+test('W7c: a Run waiting on its save keeps its target when another Run starts meanwhile', async () => {
+  let target = 'terminal-3';
+  let path = 'src/app.js';
+  const host = { ...fakeEditorHost(), getActivePath: () => path, getActiveLanguageId: () => (path.endsWith('.js') ? 'javascript' : 'plaintext'), isDirty: (p) => p === 'src/app.js' };
+  const h = harness({ editorHost: host, getRunTarget: () => target });
+  const run = h.engine.runActiveFile(); // dirty: the save is pending
+  path = 'notes/plan.xyz'; target = 'terminal-4';
+  h.engine.runActiveFile(); // another group, an unsupported file: toasts and runs nothing
+  await run;
+  assert.equal(h.runTask.lastCommand, "node 'src/app.js'");
+  assert.equal(h.calls.runNear, 'terminal-3');
 });
 
 test('language id maps each interpreter (python / bash / npx tsx / go run / ruby / php)', async () => {
@@ -318,7 +342,7 @@ test('guards against a second run while one is in flight', async () => {
 test('UIUX-014 (A): a script printing marker-SHAPED stdout text is only ever displayed, never treated as completion', async () => {
   const dom = new JSDOM('<!doctype html><body><div id="host"></div></body>');
   const host = dom.window.document.getElementById('host');
-  const h = harness({ getDom: () => ({ ideBottomPanelContent: host }), isActivePanel: () => true });
+  const h = harness({ getDom: () => ({}), getMountEl: () => host, isActivePanel: () => true });
   h.engine.bindEvents();
   await h.engine.runActiveFile();
   const taskId = h.runTask.lastTaskId || 'run-1';
@@ -354,7 +378,7 @@ test('UIUX-014 pre-ready: output arriving before the start() reply still paints 
     this.emitData('for another task\n', 'run-999'); // must NOT paint (exact-match still governs replay)
     return { ok: true, taskId: 'run-1', cwd: 'C:/ws' };
   };
-  const h = harness({ runTask, getDom: () => ({ ideBottomPanelContent: host }), isActivePanel: () => true });
+  const h = harness({ runTask, getDom: () => ({}), getMountEl: () => host, isActivePanel: () => true });
   h.engine.bindEvents();
   await h.engine.runActiveFile();
   await flush();
@@ -395,7 +419,7 @@ test('UIUX-014 pre-ready: the buffer is bounded (drop-oldest) and logs a WARN co
     return { ok: true, taskId: 'run-1', cwd: 'C:/ws' };
   };
   const engine = createIdeRunScripts({
-    getDom: () => ({ ideBottomPanelContent: host }),
+    getDom: () => ({}), getMountEl: () => host,
     isActivePanel: () => true,
     editorHost: fakeEditorHost(),
     getWorkspaceRunTaskApi: () => runTask,
@@ -429,7 +453,7 @@ test('UIUX-014 pre-ready: a timed-out dispatch discards its buffer (no stale rep
     }
     return { ok: true, taskId: 'run-2', cwd: 'C:/ws' };
   };
-  const h = harness({ runTask, runStartTimeoutMs: 10, getDom: () => ({ ideBottomPanelContent: host }), isActivePanel: () => true });
+  const h = harness({ runTask, runStartTimeoutMs: 10, getDom: () => ({}), getMountEl: () => host, isActivePanel: () => true });
   h.engine.bindEvents();
   const pending = h.engine.runActiveFile();
   await flush(30); // start-timeout fires; the hung dispatch's buffer must be discarded
@@ -445,7 +469,7 @@ test('UIUX-014 pre-ready: a timed-out dispatch discards its buffer (no stale rep
 test('a real onExit event (matching the active taskId) settles the run and surfaces the exit code', async () => {
   const dom = new JSDOM('<!doctype html><body><div id="host"></div></body>');
   const host = dom.window.document.getElementById('host');
-  const h = harness({ getDom: () => ({ ideBottomPanelContent: host }), isActivePanel: () => true });
+  const h = harness({ getDom: () => ({}), getMountEl: () => host, isActivePanel: () => true });
   h.engine.bindEvents();
   await h.engine.runActiveFile();
   assert.equal(host.querySelector('[data-ide-run-action="kill"]').disabled, false);
@@ -465,7 +489,7 @@ test('a real onExit event (matching the active taskId) settles the run and surfa
 test('a late/stale event for a superseded taskId never paints into the current task\'s UI', async () => {
   const dom = new JSDOM('<!doctype html><body><div id="host"></div></body>');
   const host = dom.window.document.getElementById('host');
-  const h = harness({ getDom: () => ({ ideBottomPanelContent: host }), isActivePanel: () => true });
+  const h = harness({ getDom: () => ({}), getMountEl: () => host, isActivePanel: () => true });
   h.engine.bindEvents();
   await h.engine.runActiveFile(); // taskId run-1
   h.engine.kill(); // run-1 killed; engine is idle again
@@ -481,7 +505,7 @@ test('a late/stale event for a superseded taskId never paints into the current t
 test('idle output (no active run) never pollutes the run tab', async () => {
   const dom = new JSDOM('<!doctype html><body><div id="host"></div></body>');
   const host = dom.window.document.getElementById('host');
-  const h = harness({ getDom: () => ({ ideBottomPanelContent: host }), isActivePanel: () => true });
+  const h = harness({ getDom: () => ({}), getMountEl: () => host, isActivePanel: () => true });
   h.engine.bindEvents();
   h.engine.renderRunPanel();
   assert.equal(host.querySelector('[data-ide-run-action="kill"]').disabled, true);
@@ -662,7 +686,7 @@ function panelHarness(opts = {}) {
   const dom = new JSDOM('<!doctype html><body><div id="host"></div></body>');
   const host = dom.window.document.getElementById('host');
   const h = harness({
-    getDom: () => ({ ideBottomPanelContent: host }),
+    getDom: () => ({}), getMountEl: () => host,
     isActivePanel: () => true,
     ...opts,
   });

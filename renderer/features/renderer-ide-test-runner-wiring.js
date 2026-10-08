@@ -9,7 +9,8 @@
  *
  * No child_process, no direct IPC: every side effect goes through the injected
  * window.jennyShell.workspaceTestRunner bridge, which is itself flag-gated in main
- * (a disabled feature resolves a no-op envelope, which this wiring ignores). */
+ * (a disabled feature resolves a no-op envelope, which this wiring records as
+ * "unavailable" so the host can hide the tab; it never blanks the cached configs). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -44,10 +45,22 @@
       ? deps.selectField
       : (typeof win.inventorySelectField === 'function' ? win.inventorySelectField : null);
     const showShellErrorToast = typeof deps.showShellErrorToast === 'function' ? deps.showShellErrorToast : () => {};
+    const onAvailabilityChange = typeof deps.onAvailabilityChange === 'function' ? deps.onAvailabilityChange : () => {};
+    // F6: "Show output" on a row (the host selects the config + reveals the test-output view),
+    // and a heads-up that a config's kept output changed (the host repaints that view).
+    const onShowOutput = typeof deps.onShowOutput === 'function' ? deps.onShowOutput : () => {};
+    const onOutputChange = typeof deps.onOutputChange === 'function' ? deps.onOutputChange : () => {};
 
     let cachedState = EMPTY_STATE;
+    // Availability is tracked apart from the cached state: a feature_disabled
+    // envelope keeps the last good configs but marks the runner unavailable.
+    let available = true;
+    // Most recent run output per config, in memory only (oldest evicted at the cap).
+    const RUN_OUTPUT_CAP = 8;
+    const lastRunOutput = new Map();
     let loadedOnce = false;
     let unsubscribe = null;
+    let unsubscribeFeatures = null;
     let disposed = false;
 
     // Await the bridge call, normalize thrown and typed failures into one
@@ -70,6 +83,7 @@
             message: String(obj.error.message || failureMessage),
           };
         }
+        if (obj && obj.available === false) return disabledOutcome(obj);
         return { ok: true, result };
       } catch (error) {
         return { ok: false, code: '', message: String(error?.message || error || failureMessage) };
@@ -89,66 +103,112 @@
       });
     }
 
+    // A main-process refusal because the feature is off (flag flipped live):
+    // report it, and hide the tab when the reason is feature_disabled.
+    function disabledOutcome(obj) {
+      if (obj.reason === 'feature_disabled') setAvailable(false);
+      return { ok: false, code: String(obj.reason || 'feature_disabled'), message: jt('ide.testRunner.disabled', 'Test running is turned off.') };
+    }
+
+    function setAvailable(next) {
+      if (available === next) return;
+      available = next;
+      onAvailabilityChange(next);
+    }
+
+    function recordRunOutput(result) {
+      const obj = asObject(result);
+      if (!obj || obj.error || obj.available === false || typeof obj.runId !== 'string' || !obj.runId) {
+        return;
+      }
+      const configId = String(obj.configId || '');
+      lastRunOutput.delete(configId);
+      lastRunOutput.set(configId, {
+        configId,
+        runId: obj.runId,
+        status: String(obj.status || ''),
+        exitCode: obj.exitCode != null ? obj.exitCode : null,
+        stdoutTail: String(obj.stdoutTail || ''),
+        stderrTail: String(obj.stderrTail || ''),
+        finishedAt: obj.finishedAt != null ? obj.finishedAt : null,
+      });
+      while (lastRunOutput.size > RUN_OUTPUT_CAP) {
+        lastRunOutput.delete(lastRunOutput.keys().next().value);
+      }
+      paintIfActive(); // the row's Show output action tracks the kept output
+      onOutputChange(configId);
+    }
+
+    const panelActions = {
+      showOutput: (configId) => onShowOutput(configId),
+      runConfig: (configId) => callMutationAndToast(
+        (api) => api.run({ configId, includeOutput: true }),
+    jt('ide.testRunner.startFailed', 'Could not start the test run.'),
+        `ide:test-runner:run:${configId}`
+      ).then((outcome) => {
+        if (outcome.ok) recordRunOutput(outcome.result);
+        return outcome;
+      }),
+      abort: () => callMutationAndToast(
+        (api) => api.abort(),
+    jt('ide.testRunner.stopFailed', 'Could not stop the test run.'),
+        'ide:test-runner:abort'
+      ),
+      // WIDE-032: a typed result ({ok, configs} or {ok:false, code, message})
+      // so the panel can roll back its optimistic composition baseline instead
+      // of silently swallowing a refusal (e.g. CONFIG_ACTIVE_RUN) or a
+      // rejected bridge call. A successful save re-fetches so the panel's
+      // overlay is replaced by the canonical, normalized set the store wrote.
+      saveConfigs: (configs) => {
+        const api = getApi();
+        if (!api || typeof api.saveConfigs !== 'function') {
+          const unavailable = { ok: false, code: '', message: jt('ide.testRunner.unavailable', 'Test runner is unavailable.') };
+          showShellErrorToast(unavailable.message, { title: jt('ide.testRunner.title', 'Test Runner'), dedupeKey: 'ide:test-runner:save' });
+          return Promise.resolve(unavailable);
+        }
+        return Promise.resolve(api.saveConfigs(configs))
+          .then((result) => {
+            const obj = asObject(result);
+            if (obj && obj.error) {
+              return {
+                ok: false,
+                code: String(obj.error.code || ''),
+      message: String(obj.error.message || jt('ide.testRunner.saveFailed', 'Could not save the test configurations.')),
+              };
+            }
+            if (obj && obj.available === false) {
+              return disabledOutcome(obj);
+            }
+            return refresh().then(() => ({
+              ok: true,
+              configs: obj && Array.isArray(obj.configs) ? obj.configs : configs,
+              // Entries the store dropped and why (invalid/duplicate id, ...),
+              // so the panel can say so instead of reporting a silent success.
+              rejected: obj && Array.isArray(obj.rejected) ? obj.rejected : [],
+            }));
+          })
+          .catch((error) => ({
+            ok: false,
+            code: '',
+    message: String(error?.message || error || jt('ide.testRunner.saveFailed', 'Could not save the test configurations.')),
+          }))
+          // Normalized save failures are toasted after the panel receives
+          // its rollback outcome.
+          .then((outcome) => {
+            if (!outcome.ok) {
+              showShellErrorToast(outcome.message, { title: jt('ide.testRunner.title', 'Test Runner'), dedupeKey: 'ide:test-runner:save' });
+            }
+            return outcome;
+          });
+      },
+    };
+
     const panel = typeof panelFactory === 'function'
       ? panelFactory({
         getMountEl,
         getState: () => cachedState,
-        actions: {
-          runConfig: (configId) => callMutationAndToast(
-            (api) => api.run({ configId }),
-        jt('ide.testRunner.startFailed', 'Could not start the test run.'),
-            `ide:test-runner:run:${configId}`
-          ),
-          abort: () => callMutationAndToast(
-            (api) => api.abort(),
-        jt('ide.testRunner.stopFailed', 'Could not stop the test run.'),
-            'ide:test-runner:abort'
-          ),
-          // WIDE-032: a typed result ({ok, configs} or {ok:false, code, message})
-          // so the panel can roll back its optimistic composition baseline instead
-          // of silently swallowing a refusal (e.g. CONFIG_ACTIVE_RUN) or a
-          // rejected bridge call. A successful save re-fetches so the panel's
-          // overlay is replaced by the canonical, normalized set the store wrote.
-          saveConfigs: (configs) => {
-            const api = getApi();
-            if (!api || typeof api.saveConfigs !== 'function') {
-              const unavailable = { ok: false, code: '', message: jt('ide.testRunner.unavailable', 'Test runner is unavailable.') };
-              showShellErrorToast(unavailable.message, { title: jt('ide.testRunner.title', 'Test Runner'), dedupeKey: 'ide:test-runner:save' });
-              return Promise.resolve(unavailable);
-            }
-            return Promise.resolve(api.saveConfigs(configs))
-              .then((result) => {
-                const obj = asObject(result);
-                if (obj && obj.error) {
-                  return {
-                    ok: false,
-                    code: String(obj.error.code || ''),
-          message: String(obj.error.message || jt('ide.testRunner.saveFailed', 'Could not save the test configurations.')),
-                  };
-                }
-                return refresh().then(() => ({
-                  ok: true,
-                  configs: obj && Array.isArray(obj.configs) ? obj.configs : configs,
-                  // Entries the store dropped and why (invalid/duplicate id, ...),
-                  // so the panel can say so instead of reporting a silent success.
-                  rejected: obj && Array.isArray(obj.rejected) ? obj.rejected : [],
-                }));
-              })
-              .catch((error) => ({
-                ok: false,
-                code: '',
-        message: String(error?.message || error || jt('ide.testRunner.saveFailed', 'Could not save the test configurations.')),
-              }))
-              // Normalized save failures are toasted after the panel receives
-              // its rollback outcome.
-              .then((outcome) => {
-                if (!outcome.ok) {
-                  showShellErrorToast(outcome.message, { title: jt('ide.testRunner.title', 'Test Runner'), dedupeKey: 'ide:test-runner:save' });
-                }
-                return outcome;
-              });
-          },
-        },
+        getRunOutput: (configId) => lastRunOutput.get(String(configId)) || null,
+        actions: panelActions,
         actionButton,
         textField,
         selectField,
@@ -184,11 +244,17 @@
             return;
           }
           const obj = asObject(next);
-          // Ignore the disabled envelope (available:false) — keep the last good
-          // cache rather than blanking the panel on a flag rollback.
-          if (!obj || obj.available === false) {
+          if (!obj) {
             return;
           }
+          // The disabled envelope (available:false) keeps the last good cache
+          // rather than blanking the panel; only feature_disabled marks the
+          // runner unavailable (root_missing keeps the tab and its empty state).
+          if (obj.available === false) {
+            setAvailable(obj.reason !== 'feature_disabled');
+            return;
+          }
+          setAvailable(true);
           cachedState = {
             configs: Array.isArray(obj.configs) ? obj.configs : [],
             history: asObject(obj.history) || { byConfig: {} },
@@ -256,6 +322,12 @@
       if (api && typeof api.onStateChanged === 'function' && !unsubscribe) {
         unsubscribe = api.onStateChanged(handleStateChange) || null;
       }
+      // The flag is read live in main: a Settings change can turn the runner on
+      // or off mid-session, and a hidden tab never renders to notice it.
+      const features = win.jennyShell?.features;
+      if (features && typeof features.onChanged === 'function' && !unsubscribeFeatures) {
+        unsubscribeFeatures = features.onChanged(() => { if (!disposed) refresh(); }) || null;
+      }
       refresh();
     }
 
@@ -270,6 +342,10 @@
         }
       }
       unsubscribe = null;
+      if (typeof unsubscribeFeatures === 'function') {
+        try { unsubscribeFeatures(); } catch (_error) { /* best-effort unsubscribe */ }
+      }
+      unsubscribeFeatures = null;
       if (panel) {
         panel.dispose();
       }
@@ -280,11 +356,22 @@
       stateSeq += 1;
       cachedState = EMPTY_STATE;
       loadedOnce = false;
+      lastRunOutput.clear(); // the old workspace's test output must not show in the new one
       panel?.resetForRoot?.(); // the old root's add-form draft must not reach the new root
       return refresh();
     }
 
-    return { render, bindEvents, dispose, refresh, resetForRoot };
+    return {
+      render, bindEvents, dispose, refresh, resetForRoot,
+      // F6: the host's test-output view re-runs a config through the same path as the panel's Run.
+      runConfig: (configId) => panelActions.runConfig(String(configId || '')),
+      isAvailable: () => available,
+      getLastRunOutput: (configId) => lastRunOutput.get(String(configId)) || null,
+      getConfigLabel: (configId) => {
+        const config = (Array.isArray(cachedState.configs) ? cachedState.configs : []).find((c) => c && c.id === String(configId));
+        return config ? String(config.label || config.id) : String(configId || '');
+      },
+    };
   }
 
   return { createIdeTestRunnerWiring };

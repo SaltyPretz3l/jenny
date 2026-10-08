@@ -1,4 +1,0 @@
-{
-  "contract": "PluginViewEventV5", "contract_version": 5, "frozen": true,
-  "root": { "type": "object", "required": ["event_schema_version", "sequence", "topic", "payload_json"], "max_keys": 4, "additional_properties": "reject", "properties": { "event_schema_version": { "type": "const", "value": 5 }, "sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, "topic": { "type": "enum", "values": ["context_changed", "settings_changed", "provider_auth_changed", "artifact_changed"] }, "payload_json": { "type": "ref", "ref": "payload_json" } } }
-}

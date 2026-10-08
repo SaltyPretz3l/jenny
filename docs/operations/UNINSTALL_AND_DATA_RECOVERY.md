@@ -57,7 +57,7 @@ Archive v1 includes canonical chats and managed media, an allowlisted portable
 preference projection, personality, memory, reminders/calendar, app-owned user
 content, and selected compatible workspace `.jenny` data. It excludes secrets,
 credentials, logs, caches, process state, Ollama/shared models, image-generation
-weights and environments, external knowledge, plugin/MCP/skill executables,
+weights and environments, external knowledge, MCP/skill executables,
 schedules, and ordinary project files. Workspace inclusion defaults off. If
 enabled in either Settings or the uninstall assistant, Jenny first shows the
 bounded current-workspace identity, allowlisted `.jenny` scope, item count, and
@@ -118,7 +118,9 @@ receipts. Profile and runtime cleanup use exact child-name allowlists. Unknown
 profile children and unknown `.companion` children are retained and reported;
 `models` and `python-runtime` are intentionally outside those allowlists.
 `image-gen`, left by the archived image plugin, is also retained; remove it by
-hand as described above.
+hand as described above. A leftover `<userData>/plugins/` folder from an older
+profile is not read by Jenny; the uninstaller removes it with the rest of the
+profile data.
 
 Archives are never cleanup targets. Shared Ollama models, package-manager data,
 global Node/Python installations, external knowledge folders, project files

@@ -28,12 +28,12 @@ function pendingServer(overrides = {}) {
       advertised_tools_digest: '', reviewed_at: '' }, ...overrides };
 }
 
-function harness(t, { initialState = discovery(), feature = true, bridge = {}, authBridge = {} } = {}) {
+function harness(t, { initialState = discovery(), bridge = {}, authBridge = {} } = {}) {
   const dom = new JSDOM(`<!doctype html><body><nav id="nav">
-    <button data-settings-section="plugins">Plugins</button></nav>
-    <section class="settings-card" data-settings-section="plugins"><h3>Plugins &amp; Extensions</h3>
-      <div id="pluginsSettingsHost"></div><div id="skillsSettingsSection"></div>
-      <div id="mcpServersHost"></div><div id="pluginsSourcesHost"></div></section>
+    <button data-settings-section="extensions">Extensions</button></nav>
+    <section class="settings-card" data-settings-section="extensions"><h3>Extensions</h3>
+      <div id="skillsSettingsSection"></div>
+      <div id="mcpServersHost"></div></section>
     <section class="settings-card" data-settings-section="tools"><h3>Tools</h3></section></body>`,
   { pretendToBeVisual: true });
   let state = initialState;
@@ -65,8 +65,7 @@ function harness(t, { initialState = discovery(), feature = true, bridge = {}, a
   globalThis.inventoryTextField = textField;
   globalThis.inventorySelectField = selectField;
   globalThis.inventoryToggleSwitch = toggleSwitch;
-  const controller = createMcpServersController({ state: { features: { featureFlags: {
-    mcp_management_ui: feature } } }, windowRef: dom.window, documentRef: dom.window.document,
+  const controller = createMcpServersController({ windowRef: dom.window, documentRef: dom.window.document,
     showToastMessage: (message, options) => toasts.push({ message, options }),
     appendClientLog: (...entry) => logs.push(entry),
     confirmDanger: async (config) => { confirms.push(config); return true; } });
@@ -74,19 +73,9 @@ function harness(t, { initialState = discovery(), feature = true, bridge = {}, a
     globalThis.inventorySelectField, globalThis.inventoryToggleSwitch] = previous; });
   return { dom, controller, calls, toasts, confirms, logs, api, setState: (next) => { state = next; },
     setAuthState: (next) => { authState = next; },
-    pluginsCard: dom.window.document.querySelector('.settings-card[data-settings-section="plugins"]'),
+    extensionsCard: dom.window.document.querySelector('.settings-card[data-settings-section="extensions"]'),
     toolsCard: dom.window.document.querySelector('.settings-card[data-settings-section="tools"]') };
 }
-
-test('flag off clears only the MCP host', async (t) => {
-  const h = harness(t, { feature: false });
-  const host = h.dom.window.document.getElementById('mcpServersHost');
-  host.innerHTML = '<i>stale</i>';
-  h.controller.bind();
-  await flush();
-  assert.equal(host.textContent, '');
-  assert.equal(h.dom.window.document.getElementById('mcpServersGroup'), null);
-});
 
 test('flat MCP rows mount in their stable host with only drawer action and switch', async (t) => {
   const h = harness(t, { initialState: discovery({ servers: [pendingServer()] }) });
@@ -96,7 +85,7 @@ test('flat MCP rows mount in their stable host with only drawer action and switc
   const row = group.querySelector('[data-mcp-server-row="weather"]');
   assert.ok(group.classList.contains('settings-group--wide'));
   assert.equal(group.parentElement.id, 'mcpServersHost');
-  assert.equal(group.closest('.settings-card'), h.pluginsCard);
+  assert.equal(group.closest('.settings-card'), h.extensionsCard);
   assert.equal(h.toolsCard.querySelector('#mcpServersGroup'), null);
   assert.ok(row.classList.contains('settings-field-row'));
   assert.deepEqual(Array.from(row.querySelectorAll('button')).map((button) => button.textContent.trim()), ['Review', '']);
@@ -110,21 +99,21 @@ test('read-only future state explains preservation and disables creation', async
     remediationReason: 'future_schema' }) });
   h.controller.bind();
   await flush();
-  assert.match(h.pluginsCard.textContent, /preserved unchanged/);
-  assert.match(h.pluginsCard.textContent, /future_schema/);
-  assert.equal(h.pluginsCard.querySelector('[data-mcp-servers-action="add"]').disabled, true);
+  assert.match(h.extensionsCard.textContent, /preserved unchanged/);
+  assert.match(h.extensionsCard.textContent, /future_schema/);
+  assert.equal(h.extensionsCard.querySelector('[data-mcp-servers-action="add"]').disabled, true);
 });
 
 test('create editor stays outside the list and preserves typed values through refresh', async (t) => {
   const h = harness(t, { initialState: discovery({ servers: [pendingServer()] }) });
   h.controller.bind();
   await flush();
-  const trigger = h.pluginsCard.querySelector('[data-mcp-servers-action="add"]');
+  const trigger = h.extensionsCard.querySelector('[data-mcp-servers-action="add"]');
   trigger.focus();
   trigger.click();
   const drawer = h.dom.window.document.getElementById('mcpServerDetailsDrawer');
   assert.equal(drawer.hidden, false);
-  assert.equal(h.pluginsCard.querySelector('[data-mcp-editor]'), null);
+  assert.equal(h.extensionsCard.querySelector('[data-mcp-editor]'), null);
   h.dom.window.document.getElementById('mcpServerName').value = 'docs';
   h.dom.window.document.getElementById('mcpServerTarget').value = 'node';
   h.dom.window.document.getElementById('mcpServerArgs').value = 'server.js\n--safe';
@@ -141,7 +130,7 @@ test('Edit stays in the drawer and preserves bounded stdio arguments', async (t)
   const h = harness(t, { initialState: discovery({ servers: [pendingServer()] }) });
   h.controller.bind();
   await flush();
-  h.pluginsCard.querySelector('[data-mcp-servers-action="details"]').click();
+  h.extensionsCard.querySelector('[data-mcp-servers-action="details"]').click();
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="edit"]').click();
   assert.equal(h.dom.window.document.getElementById('mcpServerArgs').value, '--stdio');
   h.dom.window.document.getElementById('mcpServerTarget').value = 'weather-mcp-v2';
@@ -155,7 +144,7 @@ test('pending Review opens one drawer for inspection and approval', async (t) =>
   const h = harness(t, { initialState: discovery({ servers: [pendingServer()] }) });
   h.controller.bind();
   await flush();
-  const trigger = h.pluginsCard.querySelector('[data-mcp-servers-action="details"]');
+  const trigger = h.extensionsCard.querySelector('[data-mcp-servers-action="details"]');
   trigger.focus();
   trigger.click();
   let drawer = h.dom.window.document.getElementById('mcpServerDetailsDrawer');
@@ -187,13 +176,13 @@ test('in-progress drawer actions are visibly disabled and restored after failure
   } });
   h.controller.bind();
   await flush();
-  h.pluginsCard.querySelector('[data-mcp-servers-action="details"]').click();
+  h.extensionsCard.querySelector('[data-mcp-servers-action="details"]').click();
   const drawer = h.dom.window.document.getElementById('mcpServerDetailsDrawer');
   drawer.querySelector('[data-mcp-servers-action="test"]').click();
   assert.equal(drawer.querySelector('.inv-drawer-panel').getAttribute('aria-busy'), 'true');
   assert.match(drawer.querySelector('[data-mcp-drawer-operation-status]').textContent, /Working/);
   assert.equal(drawer.querySelector('[data-mcp-servers-action="remove"]').disabled, true);
-  assert.match(h.pluginsCard.querySelector('[data-mcp-server-row]').textContent, /operation in progress/);
+  assert.match(h.extensionsCard.querySelector('[data-mcp-server-row]').textContent, /operation in progress/);
   finish({ ok: false, reason: 'unavailable' });
   await flush();
   assert.equal(drawer.querySelector('[data-mcp-drawer-operation-status]'), null);
@@ -206,7 +195,7 @@ test('structured editor failures retain typed values and surface bounded diagnos
   const h = harness(t, { bridge: { createServer: async () => ({ ok: false, reason: 'invalid' }) } });
   h.controller.bind();
   await flush();
-  h.pluginsCard.querySelector('[data-mcp-servers-action="add"]').click();
+  h.extensionsCard.querySelector('[data-mcp-servers-action="add"]').click();
   h.dom.window.document.getElementById('mcpServerName').value = 'docs';
   h.dom.window.document.getElementById('mcpServerTarget').value = 'node';
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="save-editor"]').click();
@@ -223,14 +212,14 @@ test('approved switch uses inv-toggle-change and removal uses shared danger conf
   const h = harness(t, { initialState: discovery({ servers: [approved] }) });
   h.controller.bind();
   await flush();
-  const toggle = h.pluginsCard.querySelector('[role="switch"]');
+  const toggle = h.extensionsCard.querySelector('[role="switch"]');
   assert.equal(toggle.disabled, false);
   toggle.focus();
   toggle.click();
   await flush();
   assert.deepEqual(h.calls[0], ['toggle', { name: 'weather', enabled: true }]);
   assert.equal(h.dom.window.document.activeElement.dataset.invToggle, toggle.dataset.invToggle);
-  h.pluginsCard.querySelector('[data-mcp-servers-action="details"]').click();
+  h.extensionsCard.querySelector('[data-mcp-servers-action="details"]').click();
   const drawer = h.dom.window.document.getElementById('mcpServerDetailsDrawer');
   assert.match(drawer.textContent, /Approved tool surface/);
   assert.match(drawer.textContent, new RegExp('a{64}'));
@@ -255,7 +244,7 @@ test('remote credentials use the safeStorage bridge and never render the secret'
   } });
   h.controller.bind();
   await flush();
-  h.pluginsCard.querySelector('[data-mcp-servers-action="details"]').click();
+  h.extensionsCard.querySelector('[data-mcp-servers-action="details"]').click();
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="configure-credential"]').click();
   h.dom.window.document.getElementById('mcpServerCredential').value = 'secret-value';
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="save-credential"]').click();
@@ -275,7 +264,7 @@ test('credential bridge failures keep raw errors out of UI diagnostics', async (
   } });
   h.controller.bind();
   await flush();
-  h.pluginsCard.querySelector('[data-mcp-servers-action="details"]').click();
+  h.extensionsCard.querySelector('[data-mcp-servers-action="details"]').click();
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="configure-credential"]').click();
   h.dom.window.document.getElementById('mcpServerCredential').value = 'secret-value';
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="save-credential"]').click();
@@ -293,12 +282,12 @@ test('drawer close restores the current row focus after an operation rerenders t
   } });
   h.controller.bind();
   await flush();
-  const trigger = h.pluginsCard.querySelector('[data-mcp-servers-action="details"]');
+  const trigger = h.extensionsCard.querySelector('[data-mcp-servers-action="details"]');
   trigger.focus();
   trigger.click();
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="test"]').click();
   await flush();
-  const currentTrigger = h.pluginsCard.querySelector('[data-mcp-servers-action="details"]');
+  const currentTrigger = h.extensionsCard.querySelector('[data-mcp-servers-action="details"]');
   assert.notEqual(currentTrigger, trigger);
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-drawer-close]').click();
   assert.equal(h.dom.window.document.activeElement, currentTrigger);
@@ -315,7 +304,7 @@ test('closing a drawer during an operation prevents async completion from reopen
   } });
   h.controller.bind();
   await flush();
-  h.pluginsCard.querySelector('[data-mcp-servers-action="details"]').click();
+  h.extensionsCard.querySelector('[data-mcp-servers-action="details"]').click();
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="test"]').click();
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-drawer-close]').click();
   finish({ ok: true, tool_count: 1, tools_digest: 'b'.repeat(64), tools: [] });
@@ -348,7 +337,7 @@ test('authenticated editor preserves the opaque credential reference', async (t)
   })] }) });
   h.controller.bind();
   await flush();
-  h.pluginsCard.querySelector('[data-mcp-servers-action="details"]').click();
+  h.extensionsCard.querySelector('[data-mcp-servers-action="details"]').click();
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="edit"]').click();
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="save-editor"]').click();
   await flush();
@@ -361,10 +350,33 @@ test('builtin row is labeled and has no management actions', async (t) => {
   })] }) });
   h.controller.bind();
   await flush();
-  const row = h.pluginsCard.querySelector('[data-mcp-server-row="jenny_local_tools"]');
+  const row = h.extensionsCard.querySelector('[data-mcp-server-row="jenny_local_tools"]');
   assert.match(row.textContent, /Built-in/);
   assert.equal(row.querySelectorAll('button, [role="switch"]').length, 0);
-  assert.match(h.pluginsCard.textContent, /No standalone MCP connections/);
+  assert.match(h.extensionsCard.textContent, /No standalone MCP connections/);
+});
+
+test('the editor shows only the fields its transport and authentication use', async (t) => {
+  const h = harness(t, { initialState: discovery({ servers: [pendingServer()] }) });
+  h.controller.bind();
+  await flush();
+  h.extensionsCard.querySelector('[data-mcp-servers-action="add"]').click();
+  const doc = h.dom.window.document;
+  const visible = (id) => !doc.getElementById(id).closest('[hidden]');
+  const choose = (id, value) => {
+    doc.getElementById(id).value = value;
+    doc.getElementById(id).dispatchEvent(new h.dom.window.Event('change', { bubbles: true }));
+  };
+  assert.deepEqual(['mcpServerArgs', 'mcpServerAuthKind', 'mcpServerTokenUrl'].map(visible), [true, false, false],
+    'a local command has arguments and no authentication');
+  choose('mcpServerTransport', 'sse');
+  assert.deepEqual(['mcpServerArgs', 'mcpServerAuthKind', 'mcpServerTokenUrl', 'mcpServerScope'].map(visible),
+    [false, true, false, false], 'Authentication None hides the OAuth fields');
+  assert.equal(doc.querySelector('label[for="mcpServerTarget"] .inv-text-field-label').textContent, 'HTTPS URL');
+  choose('mcpServerAuthKind', 'oauth_client_credentials');
+  assert.deepEqual(['mcpServerTokenUrl', 'mcpServerClientId', 'mcpServerScope'].map(visible), [true, true, true]);
+  choose('mcpServerAuthKind', 'bearer');
+  assert.equal(visible('mcpServerTokenUrl'), false);
 });
 
 test('editor selecting no authentication explicitly clears the auth block', async (t) => {
@@ -374,7 +386,7 @@ test('editor selecting no authentication explicitly clears the auth block', asyn
   })] }) });
   h.controller.bind();
   await flush();
-  h.pluginsCard.querySelector('[data-mcp-servers-action="details"]').click();
+  h.extensionsCard.querySelector('[data-mcp-servers-action="details"]').click();
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="edit"]').click();
   h.dom.window.document.getElementById('mcpServerAuthKind').value = 'none';
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="save-editor"]').click();
@@ -389,7 +401,7 @@ test('pending runtime application tells the user the prior configuration may be 
   } });
   h.controller.bind();
   await flush();
-  h.pluginsCard.querySelector('[data-mcp-servers-action="details"]').click();
+  h.extensionsCard.querySelector('[data-mcp-servers-action="details"]').click();
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="edit"]').click();
   h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="save-editor"]').click();
   await flush();

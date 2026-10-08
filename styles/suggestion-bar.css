@@ -1,0 +1,218 @@
+/* styles/suggestion-bar.css
+ * Suggested changes (row 35 Plan Plus): the decision bar shared by the editor's
+ * diff toolbar and the side panel, the header progress, the finish summary,
+ * the grouped tray, the overflow button and dependency facts. Split out of
+ * changes-view.css at its line ratchet; loaded right after it.
+ */
+
+/* ── Suggested changes (row 35): header progress, decision bar, finish ── */
+
+.changes-suggested-progress {
+  margin-top: var(--space-4);
+  --inv-progress-text-color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.changes-suggestion-bar-host {
+  margin: 0 var(--space-4) var(--space-4);
+}
+
+/* One bar in two hosts: the editor's diff toolbar and the side panel detail page. */
+.suggestion-bar {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.suggestion-bar-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+}
+
+.suggestion-bar-text {
+  display: grid;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.suggestion-bar-caption {
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+.suggestion-bar-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-footnote);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.suggestion-bar-actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-3);
+  margin-inline-start: auto;
+}
+
+.suggestion-bar[aria-busy="true"] .suggestion-bar-actions {
+  cursor: progress;
+}
+
+.suggestion-bar-note {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.suggestion-bar-note-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.suggestion-bar-note-hint {
+  flex: 1 1 auto;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+.suggestion-bar-status,
+.suggestion-bar-error {
+  margin: 0;
+  font-size: var(--font-size-caption);
+  line-height: 1.45;
+}
+
+.suggestion-bar-status {
+  color: var(--text-secondary);
+}
+
+.suggestion-bar-status[data-suggestion-status="out_of_date"],
+.suggestion-bar-status[data-suggestion-status="needs_attention"] {
+  color: var(--tl-status-warn);
+}
+
+.suggestion-bar-error {
+  color: var(--tl-status-error);
+}
+
+.suggestion-bar-explain {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-caption);
+  line-height: 1.45;
+}
+
+.suggestion-bar-explain-item {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
+.suggestion-bar-explain dt {
+  color: var(--text-muted);
+}
+
+.suggestion-bar-explain dd {
+  margin: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.suggestion-bar-explain--empty {
+  color: var(--text-muted);
+}
+
+.changes-finish {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  padding: var(--space-8);
+}
+
+.changes-finish-totals,
+.changes-finish-files {
+  margin: 0;
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+}
+
+.changes-finish .btn {
+  margin-top: var(--space-3);
+}
+
+/* ── W3: grouped tray, overflow menu, dependency facts (row 35, UI spec §3.3-3.4) ── */
+
+.changes-view-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.changes-view-title-row .changes-view-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.changes-view-overflow {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  color: var(--text-muted);
+}
+
+.changes-view-overflow:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.changes-group-tray {
+  margin: var(--space-2) 0;
+  padding: var(--space-2) 0 var(--space-1);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface) 55%, transparent);
+  list-style: none;
+}
+
+.changes-group-caption {
+  display: block;
+  padding: 0 var(--space-4) var(--space-1);
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+.changes-group-rows {
+  padding: 0;
+}
+
+.suggestion-bar-facts {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--font-size-caption);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.suggestion-bar-fact-tag {
+  margin-inline-start: var(--space-2);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-2);
+  color: var(--text-muted);
+}
+
+.suggestion-bar-fact--warn {
+  color: var(--tl-status-warn);
+}

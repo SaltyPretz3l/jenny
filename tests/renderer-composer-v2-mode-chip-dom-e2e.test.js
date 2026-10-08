@@ -82,8 +82,29 @@ test('dom-e2e: the rail slot also carries the Ask | Auto | Plan segments; refres
 
   chip.disabled = true; // plugin read-only session (the render pipeline flips it directly)
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(Array.from(group.querySelectorAll('button')).map((b) => b.disabled), [true, true, true]);
+  assert.deepEqual(Array.from(group.querySelectorAll('button')).map((b) => b.disabled), [true, true, true, true]);
 
   h.renderer.destroy();
   assert.equal(slot.querySelector('.composer-run-mode-segments'), null, 'destroy removes the segments');
+});
+
+test('dom-e2e: cycling through every run mode leaves exactly one composer-run-mode-* class', (t) => {
+  const h = buildHarness(t);
+  const chip = h.container.ownerDocument.getElementById('composerRunModeChip');
+  const modeClasses = () => Array.from(chip.classList).filter((c) => /^composer-run-mode-(?!chip$)/.test(c));
+  for (const mode of ['ask', 'auto', 'plan', 'propose', 'ask', 'propose', 'plan']) {
+    h.mode.current = mode;
+    h.renderer.refresh();
+    assert.deepEqual(modeClasses(), [`composer-run-mode-${mode}`], `after switching to ${mode}`);
+    assert.equal(chip.classList.contains('inv-chip--on'), mode === 'auto');
+  }
+});
+
+test('dom-e2e: an unchanged apply still strips a stale run-mode class', (t) => {
+  const h = buildHarness(t, { runMode: 'ask' });
+  const chip = h.container.ownerDocument.getElementById('composerRunModeChip');
+  chip.classList.add('composer-run-mode-propose');
+  h.renderer.refresh();
+  assert.equal(chip.classList.contains('composer-run-mode-propose'), false);
+  assert.ok(chip.classList.contains('composer-run-mode-ask'));
 });

@@ -32,6 +32,7 @@ const {
 const {
   buildAssistantErrorRecoveryFields,
 } = require('./chat-error-recovery');
+const { buildTerminalMessageExtras } = require('./chat-stream-discarded-drafts');
 
 const ACTIVE_TURN_PROGRESS_WRITE_INTERVAL_MS = 1000;
 
@@ -485,6 +486,7 @@ function buildAssistantCompletionTerminalMutation({
   normalizedInteractiveResponse,
   exchangeTitle = '',
   resumableStop = null,
+  discardedDrafts = null,
   timestamp = new Date().toISOString(),
   includeAssistantMessage = true,
 }) {
@@ -498,7 +500,7 @@ function buildAssistantCompletionTerminalMutation({
       finalizedAt: timestamp,
       client_message_id: String(messageId || ''),
       model_used: String(model || ''),
-      ...(resumableStop ? { resumable_stop: resumableStop } : {}),
+      ...buildTerminalMessageExtras({ resumableStop, discardedDrafts }),
       ...buildAssistantTranscriptFields({
         parentStreamId,
         phases,
@@ -546,6 +548,7 @@ async function settleAssistantCompletion(adapter, {
   normalizedInteractiveResponse,
   exchangeTitle = '',
   resumableStop = null,
+  discardedDrafts = null,
   timestamp = new Date().toISOString(),
   persistAssistantMessage = null,
 }) {
@@ -562,6 +565,7 @@ async function settleAssistantCompletion(adapter, {
     normalizedInteractiveResponse,
     exchangeTitle,
     resumableStop,
+    discardedDrafts,
     timestamp,
   });
   const persist =

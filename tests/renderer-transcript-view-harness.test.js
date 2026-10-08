@@ -69,7 +69,7 @@ const TERMINAL = { type: 'complete', content: '', interactiveProtocolDrift: fals
 async function loadApp(t) {
   let streamCount = 0;
   const app = await loadRendererApp({ shell: {
-    features: { state: { featureFlags: { ...buildFeatureFlagDefaults(), chat_timeline_render_telemetry: true } } },
+    features: { state: { featureFlags: { ...buildFeatureFlagDefaults() } } },
     chat: {
       async startStream(_payload, { state }) {
         streamCount += 1;

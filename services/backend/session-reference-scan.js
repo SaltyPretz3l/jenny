@@ -18,13 +18,21 @@
 //     `message_count`, which is what makes the stub detectable. (The scan's own
 //     peek is what can trigger that quarantine.)
 function readSessionMessagesForReferenceScan(sessionStore, summary) {
+  return readSessionRecordForReferenceScan(sessionStore, summary).messages;
+}
+
+// Same read, plus the persisted turn events (tool-result media refs live only
+// there: message normalization drops `tool_result.trusted_attachment_refs`).
+function readSessionRecordForReferenceScan(sessionStore, summary) {
   const sessionId = summary?.id;
   const expectedCount = Number(summary?.message_count || 0);
   let messages = null;
+  let turnEvents = [];
   if (typeof sessionStore?.peekSession === 'function') {
     // Cache-neutral peek so the scan never churns the session LRU.
     const record = sessionStore.peekSession(sessionId);
     messages = Array.isArray(record?.messages) ? record.messages : null;
+    turnEvents = Array.isArray(record?.turn_events) ? record.turn_events : [];
   } else if (typeof sessionStore?.getSessionMessages === 'function') {
     const read = sessionStore.getSessionMessages(sessionId);
     messages = Array.isArray(read) ? read : null;
@@ -37,7 +45,7 @@ function readSessionMessagesForReferenceScan(sessionStore, summary) {
       `reference scan read an empty stub for session ${sessionId} (index expects ${expectedCount})`
     );
   }
-  return messages;
+  return { messages, turnEvents };
 }
 
-module.exports = { readSessionMessagesForReferenceScan };
+module.exports = { readSessionMessagesForReferenceScan, readSessionRecordForReferenceScan };

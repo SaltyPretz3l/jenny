@@ -101,10 +101,10 @@ function buildApprovedPlanOverlay(plan, guidance) {
   return lines.join('\n').trim().slice(0, 8000);
 }
 
-function buildApprovedPlanSendFields(planMode, effectiveMode, messages) {
+function buildApprovedPlanSendFields(planMode, messages) {
   const approvedPlan = deriveApprovedPlanContext(messages);
   return {
-    plan_mode: Boolean(planMode) && effectiveMode !== 'chat',
+    plan_mode: Boolean(planMode),
     ...(approvedPlan ? { approved_plan: approvedPlan } : {}),
   };
 }

@@ -45,14 +45,7 @@
     malformed: jt('ide.testRunner.malformedReason', 'the entry could not be read'),
   };
 
-  function defaultEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function count(value) {
     const n = Number(value);

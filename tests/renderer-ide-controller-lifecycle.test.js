@@ -104,24 +104,26 @@ test('wide-033: a committed-root notification after dispose is a complete no-op'
   assert.equal(harness.state.ui.ide.activeTabPath, 'keep.js');
 });
 
-test('external watcher changes refresh Changes while it is active in the secondary sidebar', async () => {
+test('a debounced window resize re-renders the Workspace only while it is the active view', async () => {
   const harness = createHarness();
   try {
     await harness.controller.activateIde();
-    const ide = harness.state.ui.ide;
-    ide.panelLocations.changes = 'secondary';
-    ide.railPanel = 'explorer';
-    ide.secondaryPanel = 'changes';
-    ide.secondaryPanelOpen = true;
-    harness.controller.renderIde();
+    // A workbench render re-applies each stack's data-state; clearing it is a render probe.
+    const stack = harness.dom.window.document.querySelector('#ideWorkbench .wb-stack[data-kind="views"]');
+    await waitFor(() => stack?.getAttribute('data-state') === 'open', 'precondition: the Workspace rendered');
+    const fireResize = async () => {
+      harness.dom.window.dispatchEvent(new harness.dom.window.Event('resize'));
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    };
 
-    const mount = harness.getDom().ideSecondarySidebarPanel;
-    mount.innerHTML = 'STALE CHANGES';
-    mount.__jennyIdeRailMarkup = 'stale-marker';
-    harness.bridge.emitChange({ changes: [{ relPath: 'external.js', kind: 'changed' }] });
+    harness.state.ui.activeView = 'chat';
+    stack.removeAttribute('data-state');
+    await fireResize();
+    assert.equal(stack.getAttribute('data-state'), null, 'a hidden Workspace skips the full re-render');
 
-    assert.notEqual(mount.innerHTML, 'STALE CHANGES', 'the active secondary Changes panel repaints');
-    assert.match(mount.innerHTML, /ide-changes/);
+    harness.state.ui.activeView = 'ide';
+    await fireResize();
+    assert.equal(stack.getAttribute('data-state'), 'open', 'the visible Workspace re-renders on resize');
   } finally {
     harness.dispose();
   }

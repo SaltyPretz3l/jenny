@@ -314,7 +314,7 @@
   // Summary guidance saves through the compaction tuning transaction (services/model-tuning-service.js), not the feature settings.
   def({ id: 'compactionPromptField', sectionId: 'context', kind: 'text', default: '', adapterId: 'compactionTuning', key: 'customPrompt', validation: { maxLength: 20000 }, defaultLabel: jt('settings.field.defaultNone', 'None') });
 
-  // Skills (hosted by Plugins & Extensions)
+  // Skills (hosted by Extensions)
   // Off by default: services/shell-config-normalizers.js seeds userEnabled/projectEnabled false.
   bool('skillsUserToggle', 'skills', 'skills', 'userEnabled', false);
   bool('skillsProjectToggle', 'skills', 'skills', 'projectEnabled', false);

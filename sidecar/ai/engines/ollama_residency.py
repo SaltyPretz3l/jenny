@@ -176,6 +176,16 @@ def release_residency(key: ResidencyKey | None) -> bool:
     return last_holder
 
 
+def residency_held(host: object, model: object) -> bool:
+    """True when any engine holds a claim on ``model`` at ``host`` (any num_ctx)."""
+    normalized_host = str(host or "").strip()
+    normalized_model = str(model or "").strip()
+    return any(
+        key[0] == normalized_host and key[1] == normalized_model and count > 0
+        for key, count in residency_registry().snapshot().items()
+    )
+
+
 def forget_residency(key: ResidencyKey | None) -> None:
     """Forget every claim on a triple after an intentional eviction."""
     if key is not None:

@@ -4,7 +4,9 @@ const { evaluatePolicy } = require('../tools/tool-policy-evaluator');
 const { digest, sandboxError } = require('./sandbox-errors');
 const { captureSandboxAuthority } = require('./sandbox-project-authority');
 const { createToolResourceClaim, projectToolResourceWait } = require('../tools/tool-resource-execution');
-const ALLOWED = new Set(['run_command', 'ask_user', 'exit_plan_mode', 'home', 'task_board']);
+// Electron-owned tools that touch no host shell pass through the sandbox bridge unchanged.
+// Seam 17 for a new manifest tool: tests/desktop-command-sandbox-approval.test.js pins this set.
+const ALLOWED = new Set(['run_command', 'ask_user', 'exit_plan_mode', 'home', 'task_board', 'project_notes']);
 function sandboxEnabled(service) {
   return service?.commandSandbox?.enabled === true
     || service?.configService?.getState?.()?.commandSandbox?.enabled === true;

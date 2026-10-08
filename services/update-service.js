@@ -160,6 +160,17 @@ function normalizeProgress(progress = {}) {
   };
 }
 
+// A short machine token for the log (ECONNREFUSED, net::ERR_PROXY_CONNECTION_FAILED,
+// rate-limited): the reader-facing message cannot tell a refused connection
+// from a certificate or metadata problem. Never the message text, which can
+// carry a URL.
+function failureCause(error) {
+  const candidates = [error?.code, error?.cause?.code,
+    /net::ERR_[A-Z0-9_]+/.exec(String(error?.message || ''))?.[0]];
+  const token = candidates.find((value) => typeof value === 'string' && /^[A-Za-z0-9_:.-]{1,64}$/.test(value));
+  return token || 'unknown';
+}
+
 class UpdateService extends EventEmitter {
   constructor({ app, autoUpdater, autoUpdaterLoader = loadAutoUpdater,
     storePath = '', logger = null, platform = process.platform, arch = process.arch,
@@ -514,7 +525,7 @@ class UpdateService extends EventEmitter {
     this._persist();
     this._setState({ status: 'error', reason: message, lastError: message, errorCode, errorStage: stage,
       failureCount: this.persisted.failureCount, lastFailedAt: this.persisted.lastFailedAt });
-    this._log('ERROR', 'updates.failed', { errorCode, stage });
+    this._log('ERROR', 'updates.failed', { errorCode, stage, cause: failureCause(error) });
   }
 
   _setState(patch) {

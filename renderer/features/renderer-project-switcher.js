@@ -278,15 +278,17 @@
         }
         return row;
       });
-      rows.push({ id: '__new', kind: 'action', separatorBefore: true, label: jt('projects.menu.newFromFolder', 'New project from folder') });
+      // F9 (row 40): switch, No folder, Open folder…, Manage projects…; Settings › Projects
+      // owns rename, delete, reveal and new chat.
       rows.push({
-        id: '__clear', kind: 'action', radio: true,
+        id: '__clear', kind: 'action', radio: true, separatorBefore: true,
         label: jt('projects.switcher.noFolder', 'No folder (General)'),
         detail: jt('projects.switcher.noFolderDetail', 'closes the Workspace'),
         selected: !current && !workspaceRootPath(),
         disabled: !workspaceRootPath(),
       });
-      rows.push({ id: '__manage', kind: 'action', label: jt('projects.menu.manage', 'Manage projects') });
+      rows.push({ id: '__new', kind: 'action', label: jt('projects.menu.openFolder', 'Open folder…') });
+      rows.push({ id: '__manage', kind: 'action', label: jt('projects.menu.manageProjects', 'Manage projects…') });
       return rows;
     }
 

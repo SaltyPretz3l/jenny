@@ -32,6 +32,7 @@ const {
   isGeneratedDirectoryName, pruneAmbiguousGeneratedEntries,
 } = require('./workspace-ide-generated-directories');
 const { WorkspaceRootOperationManager, sameFileIdentity } = require('./workspace-root-operation');
+const { createWorkspaceIdeRecoveryIo, replaceLeafAtomically } = require('./workspace-ide-recovery-io');
 
 const READ_MAX_BYTES_DEFAULT = 5 * 1024 * 1024;
 const BINARY_SCAN_LENGTH = 8192;
@@ -109,6 +110,8 @@ class WorkspaceIdeService {
       platform,
       hooks,
     });
+    this._recoveryIo = createWorkspaceIdeRecoveryIo({ fs, path, rootOperations: this._rootOperations,
+      getTrashItem: () => this._trashItemImpl, log: (...args) => this._log(...args) });
   }
 
   _log(level, event, details = {}) {
@@ -376,34 +379,20 @@ class WorkspaceIdeService {
       }
       assertExpectedMtime(current.currentStats || target.stats);
 
-      const tempPath = this._path.join(
-        target.parent.realPath,
-        `.${this._path.basename(target.operationPath)}.tmp-${process.pid}-${crypto.randomBytes(8).toString('hex')}`
-      );
-      let tempCreated = false;
-      try {
-        await this._fs.writeFile(tempPath, content, { encoding: 'utf8', flag: 'wx' });
-        tempCreated = true;
-        await this._rootOperations.revalidateParent(root, target.parent, operation);
-        const beforeReplace = await this._rootOperations.revalidateLeaf(root, target, operation);
-        if (!target.lexicalStats && beforeReplace.exists) {
-          throw workspaceFsError(
-            WORKSPACE_FS_ERROR_CODES.WRITE_CONFLICT,
-            'A file appeared at the target path before it could be saved.',
-            buildPathLogHint(relPath)
-          );
-        }
-        assertExpectedMtime(beforeReplace.currentStats || target.stats);
-        await this._fs.rename(tempPath, target.operationPath);
-        tempCreated = false;
-      } catch (error) {
-        if (tempCreated) await this._fs.rm(tempPath, { force: true }).catch(() => {});
-        throw error;
-      }
-      await this._rootOperations.revalidateRoot(root, operation);
-      await this._rootOperations.revalidateParent(root, target.parent, operation);
-      const stats = await this._fs.stat(target.operationPath);
-      this._rootOperations.assertCurrent(operation);
+      const stats = await replaceLeafAtomically({
+        fs: this._fs, path: this._path, rootOperations: this._rootOperations, operation, root, target,
+        data: content, encoding: 'utf8',
+        beforeReplace: (beforeReplace) => {
+          if (!target.lexicalStats && beforeReplace.exists) {
+            throw workspaceFsError(
+              WORKSPACE_FS_ERROR_CODES.WRITE_CONFLICT,
+              'A file appeared at the target path before it could be saved.',
+              buildPathLogHint(relPath)
+            );
+          }
+          assertExpectedMtime(beforeReplace.currentStats || target.stats);
+        },
+      });
       this._recordRecentWrite(target.operationPath, stats);
       this._log('INFO', 'workspace_fs.write', {
         ...buildPathLogHint(relPath),
@@ -810,6 +799,17 @@ class WorkspaceIdeService {
       });
       return { path: relPath, trashed: true, kind: stats.isDirectory() ? 'directory' : 'file' };
     });
+  }
+
+  // Main-process-only recovery IO for the safety copies (never IPC-exposed); see workspace-ide-recovery-io.
+  recoveryBinding(operation) { return this._recoveryIo.bindingFor(operation); }
+  readFileBytesForRecovery(payload, operation) { return this._recovery('read', 'readFileBytes', payload, operation); }
+  writeFileBytesForRecovery(payload, operation) { return this._recovery('mutation', 'writeFileBytes', payload, operation); }
+  trashFileForRecovery(payload, operation) { return this._recovery('mutation', 'trashFile', payload, operation); }
+
+  _recovery(kind, method, payload = {}, operation = null) {
+    return this._withRootOperation(kind, payload, operation,
+      (op) => this._recoveryIo[method](this._normalizeRelPath(payload.path), op, payload));
   }
 
   // Opens the OS file manager with the item selected. Same lexical +

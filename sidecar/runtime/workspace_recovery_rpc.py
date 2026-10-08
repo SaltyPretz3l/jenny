@@ -9,6 +9,7 @@ from typing import Any
 
 from sidecar.ai.error_codes import CMP_PROTO_VERSION_MISMATCH, CMP_TOOL_EXECUTION_FAILED
 from sidecar.ai.tools.workspace_mutation_journal_store import WorkspaceMutationJournalStore
+from sidecar.ai.tools.workspace_reapply import reapply_change_set
 from sidecar.ai.tools.workspace_restore import (
     WorkspaceRestoreError,
     abandon_restore,
@@ -25,10 +26,12 @@ from sidecar.ai.tools.workspace_retention import (
 from sidecar.protocol import (
     WORKSPACE_ABANDON_RESTORE_METHOD,
     WORKSPACE_ACKNOWLEDGE_RECOVERY_REVIEW_METHOD,
+    WORKSPACE_APPLY_SUGGESTED_CHANGES_METHOD,
     WORKSPACE_CONFIRM_RUNTIME_CHECKPOINT_METHOD,
     WORKSPACE_LIST_CHANGE_SETS_METHOD,
     WORKSPACE_LIST_RECOVERY_REVIEW_METHOD,
     WORKSPACE_PREFLIGHT_UNDO_METHOD,
+    WORKSPACE_REAPPLY_CHANGE_SET_METHOD,
     WORKSPACE_RECONCILE_RUNTIME_PREPARATIONS_METHOD,
     WORKSPACE_RELEASE_RUNTIME_CHECKPOINT_METHOD,
     WORKSPACE_RESTORE_TRASH_ENTRY_METHOD,
@@ -44,6 +47,7 @@ _METHODS = frozenset(
         WORKSPACE_LIST_CHANGE_SETS_METHOD,
         WORKSPACE_PREFLIGHT_UNDO_METHOD,
         WORKSPACE_UNDO_CHANGE_SET_METHOD,
+        WORKSPACE_REAPPLY_CHANGE_SET_METHOD,
         WORKSPACE_RESTORE_TRASH_ENTRY_METHOD,
         WORKSPACE_LIST_RECOVERY_REVIEW_METHOD,
         WORKSPACE_ACKNOWLEDGE_RECOVERY_REVIEW_METHOD,
@@ -51,6 +55,7 @@ _METHODS = frozenset(
         WORKSPACE_RELEASE_RUNTIME_CHECKPOINT_METHOD,
         WORKSPACE_CONFIRM_RUNTIME_CHECKPOINT_METHOD,
         WORKSPACE_RECONCILE_RUNTIME_PREPARATIONS_METHOD,
+        WORKSPACE_APPLY_SUGGESTED_CHANGES_METHOD,
     }
 )
 
@@ -81,6 +86,16 @@ def process_workspace_recovery_method(
     if not isinstance(params, dict):
         return _invalid(message_id, initialized, "params must be an object")
     try:
+        if method == WORKSPACE_APPLY_SUGGESTED_CHANGES_METHOD:
+            from sidecar.runtime.suggested_change_apply import (
+                SuggestedChangeParamsError,
+                apply_suggested_changes,
+            )
+            try:
+                result = apply_suggested_changes(params, brain_container.stack.config)
+            except SuggestedChangeParamsError as error:
+                return _invalid(message_id, initialized, error.detail, reason=error.reason)
+            return _outcome(result_response(message_id, result), initialized)
         if method == WORKSPACE_RECONCILE_RUNTIME_PREPARATIONS_METHOD:
             from sidecar.runtime.mutation_preparation_recovery import (
                 reconcile_mutation_preparations,
@@ -162,6 +177,8 @@ def _invoke(
         )
     if method == WORKSPACE_PREFLIGHT_UNDO_METHOD:
         return preflight_undo(store, workspace_root, _required_text(params, "change_set_id"))
+    if method == WORKSPACE_REAPPLY_CHANGE_SET_METHOD:
+        return reapply_change_set(store, workspace_root, _required_text(params, "change_set_id"))
     if method == WORKSPACE_UNDO_CHANGE_SET_METHOD:
         decisions = params.get("decisions")
         if decisions is not None and not isinstance(decisions, (list, dict)):
@@ -201,13 +218,15 @@ def _required_text(params: dict[str, Any], key: str) -> str:
     return value.strip()
 
 
-def _invalid(message_id: Any, initialized: bool, detail: str) -> ProcessOutcome:
+def _invalid(
+    message_id: Any, initialized: bool, detail: str, *, reason: str = "invalid_params"
+) -> ProcessOutcome:
     return _outcome(
         error_response(
             message_id,
             code=INVALID_PARAMS_CODE,
             message="workspace recovery invalid params",
-            data={"reason": "invalid_params", "detail": detail},
+            data={"reason": reason, "detail": detail},
         ),
         initialized,
     )

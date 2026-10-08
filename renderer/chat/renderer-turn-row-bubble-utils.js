@@ -8,14 +8,36 @@
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  function fallbackEscapeHtml(value) {
-    return String(value || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
+
+  // Literal keys per reason (the i18n scanner rejects computed keys).
+  function discardReasonPhrase(reason) {
+    switch (reason) {
+      case 'provider_retry': return jt('chat.discardedDraft.reason.provider_retry', 'the engine dropped the reply, so Jenny asked again');
+      case 'nudge_retry': return jt('chat.discardedDraft.reason.nudge_retry', 'it skipped a tool it needed, so Jenny asked again');
+      case 'reflexive_retry': return jt('chat.discardedDraft.reason.reflexive_retry', 'the first answer missed, so Jenny asked again');
+      case 'post_tool_restart': return jt('chat.discardedDraft.reason.post_tool_restart', "the answer after the tools didn't hold up, so Jenny asked again");
+      case 'deterministic_replacement': return jt('chat.discardedDraft.reason.deterministic_replacement', "it made up a result Jenny couldn't get, so Jenny replaced it");
+      case 'verification_gate_retry': return jt('chat.discardedDraft.reason.verification_gate_retry', 'it failed a check, so Jenny asked again');
+      case 'model_winddown': return jt('chat.discardedDraft.reason.model_winddown', 'cut short so the reply could wrap up within limits');
+      default: return jt('chat.discardedDraft.reason.unknown', 'Jenny started this part over');
+    }
   }
+
+  function discardReceiptReasonPhrase(reason) {
+    switch (reason) {
+      case 'provider_retry': return jt('chat.discardedDraft.receiptReason.provider_retry', 'the engine dropped the reply');
+      case 'nudge_retry': return jt('chat.discardedDraft.receiptReason.nudge_retry', 'it skipped a tool it needed');
+      case 'reflexive_retry': return jt('chat.discardedDraft.receiptReason.reflexive_retry', 'the first answer missed');
+      case 'post_tool_restart': return jt('chat.discardedDraft.receiptReason.post_tool_restart', "the answer after the tools didn't hold up");
+      case 'deterministic_replacement': return jt('chat.discardedDraft.receiptReason.deterministic_replacement', 'it made up a result');
+      case 'verification_gate_retry': return jt('chat.discardedDraft.receiptReason.verification_gate_retry', 'it failed a check');
+      case 'model_winddown': return jt('chat.discardedDraft.receiptReason.model_winddown', 'cut short to wrap up');
+      default: return jt('chat.discardedDraft.receiptReason.unknown', 'started over');
+    }
+  }
+
+  const fallbackEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function fallbackNormalizeId(value) {
     return String(value || '').trim();
@@ -191,20 +213,50 @@
       return `<div class="chat-bubble chat-bubble-editing" dir="auto" data-message-id="${escapeHtml(id)}" data-pin-fade-trigger="user">${escapeHtml(draft)}</div>`;
     }
 
-    /* EH-W5: rows the reducer marked truncated (stream_reset discarded
-     * their tail) get a subtle hairline marker — a reset that recovers
-     * cleanly shows nothing else (no system_notice, no toast). Upstream
-     * guarantee: markLatestAssistantRowsTruncated in
-     * renderer-turn-reducer.js (covered by renderer-turn-reducer.test.js). */
-    function buildTruncationMarkerMarkup(payload) {
-      if (!payload || payload.truncated !== true) {
+    /* Live stream_reset fold: the reducer stamps ONE anchor row per reset
+     * (discard_anchor + reason + capped erased text) and hides the rest
+     * (discard_hidden). Plain escaped text, closed by default; a plain
+     * <details> keeps its open state through the preservation registry. */
+    function buildDiscardedDraftFoldMarkup(row) {
+      const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
+      if (payload.discard_anchor !== true) {
         return '';
       }
-      return '<div class="chat-truncation-marker" role="note" aria-label="' + escapeHtml(jt('chat.bubble.responseRestarted', 'Response restarted')) + '">'
-        + '<span class="chat-truncation-marker-rule" aria-hidden="true"></span>'
-        + '<span class="chat-truncation-marker-label">restarted</span>'
-        + '<span class="chat-truncation-marker-rule" aria-hidden="true"></span>'
-        + '</div>';
+      const text = String(payload.discard_text || '');
+      const reasoning = String(payload.discard_reasoning_text || '');
+      return '<details class="chat-discarded-draft"><summary>'
+        + '<span class="chat-discarded-draft-chevron" aria-hidden="true">&#9654;</span>'
+        + `<span class="chat-discarded-draft-what">${escapeHtml(jt('chat.discardedDraft.summary', 'Draft discarded'))}</span>`
+        + `<span class="chat-discarded-draft-reason">\u00b7 ${escapeHtml(discardReasonPhrase(payload.discard_reason))}</span>`
+        + '</summary><div class="chat-discarded-draft-body">'
+        + (text ? `<div class="chat-discarded-draft-text">${escapeHtml(text)}</div>` : '')
+        + (reasoning
+          ? `<div class="chat-discarded-draft-label">${escapeHtml(jt('chat.discardedDraft.thinking', 'Thinking'))}</div>`
+            + `<div class="chat-discarded-draft-text chat-discarded-draft-reasoning">${escapeHtml(reasoning)}</div>`
+          : '')
+        + (payload.discard_text_trimmed === true
+          ? `<div class="chat-discarded-draft-trimmed">${escapeHtml(jt('chat.discardedDraft.trimmed', 'Trimmed.'))}</div>`
+          : '')
+        + `<div class="chat-discarded-draft-note">${escapeHtml(jt('chat.discardedDraft.notSaved', 'Not saved. Shown only while this reply is streaming.'))}</div>`
+        + '</div></details>';
+    }
+
+    /* Settled receipt: one line under the LAST assistant_text row of a message
+     * whose persisted discarded_drafts is set. "Last" = no later sibling
+     * assistant_text row shares its primary_message_id (the attachments rule), so
+     * every settled turn keeps its receipt, not just the resume tail. */
+    function buildDiscardedReceiptMarkup(row, sourceMessage, options) {
+      const drafts = sourceMessage && sourceMessage.discarded_drafts;
+      const draftCount = Math.floor(Number(drafts && drafts.count));
+      // Between `complete` and the hydrated swap the live fold is still on
+      // screen ("Shown only while this reply is streaming"): no receipt yet.
+      const liveFoldShown = (options.turnRows || options.siblingRows || []).some((sibling) => sibling?.payload?.discard_anchor === true);
+      if (!(draftCount > 0) || options.isStreaming === true || liveFoldShown || !shouldRenderMessageAttachments(row, options)) {
+        return '';
+      }
+      const phrase = discardReceiptReasonPhrase(drafts.latest_reason);
+      const label = jtn('chat.discardedDraft.receipt', draftCount, { count: draftCount }, '{count} draft discarded', '{count} drafts discarded');
+      return `<div class="chat-discarded-receipt" title="${escapeHtml(jt('chat.discardedDraft.receiptTitle', 'Jenny threw away a draft of this reply and replaced it. The draft was not saved.'))}">${escapeHtml(`${label} \u00b7 ${phrase}`)}</div>`;
     }
 
     // Citations: gpt-oss (at minimum) echoes the tool's web:N ids back into
@@ -232,7 +284,8 @@
       buildSendFailureChipMarkup,
       buildUserBubbleRowMarkup,
       buildEditingUserBubbleMarkup,
-      buildTruncationMarkerMarkup,
+      buildDiscardedDraftFoldMarkup,
+      buildDiscardedReceiptMarkup,
       stripCitationMarkersForDisplay,
     };
   }

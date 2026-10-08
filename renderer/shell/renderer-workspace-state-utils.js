@@ -11,9 +11,7 @@
   const PANE_LAYOUT_PERSIST_DELAY_MS = 250;
   const DEFAULT_SPLIT_RATIO = 0.5;
 
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function normalizeIdList(values, validIds, cap) {
     const seen = new Set();

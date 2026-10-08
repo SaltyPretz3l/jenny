@@ -94,6 +94,7 @@
           state.snapshot = { ...snapshot, messages: [...messages.values()] };
         } else state.snapshot = snapshot;
         state.planMode = state.snapshot.session.plan_mode === true;
+        const previousLive = state.liveProjection;
         state.liveProjection = snapshot.live_projection || null;
         state.activeStreamId = snapshot.active_turn?.stream_id || '';
         // A snapshot at the same cursor can predate the already-applied start.
@@ -102,6 +103,13 @@
         if (pending.activeStreamId && snapshotCursor <= pending.cursor) {
           state.activeStreamId = pending.activeStreamId;
           state.liveProjection = pending.liveProjection;
+        }
+        // Discarded drafts are client-local (never in a server projection):
+        // carry them across a snapshot of the same stream.
+        const drafts = previousLive?.discarded_drafts;
+        if (state.liveProjection && Array.isArray(drafts) && drafts.length
+          && state.liveProjection.stream_id === previousLive.stream_id) {
+          state.liveProjection = { ...state.liveProjection, discarded_drafts: drafts };
         }
         owner.syncControlFromSnapshot(snapshot);
         if (owner.bridge && (!snapshot.boot_epoch || snapshot.boot_epoch === owner.bridge.bootEpoch)) {

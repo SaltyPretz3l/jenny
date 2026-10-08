@@ -94,6 +94,10 @@ async function executeResolvedTool(executor, call, context, {
         : executor._workspaceTestRunnerService,
       homeAssistantService: scopedServices
         ? scopedServices.homeAssistantService || null : executor._homeAssistantService(),
+      // Keyed by the trusted projectAuthority inside the tool, so the scoped
+      // bundle does not need to carry it: fall back to the executor getter.
+      projectNotesService: scopedServices?.projectNotesService
+        || (typeof executor._projectNotesService === 'function' ? executor._projectNotesService() : null),
       configService: scopedServices ? scopedServices.configService || null : executor._configService,
       refreshManagedConfig: executor._refreshManagedConfig,
       logger: executor._logger,

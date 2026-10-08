@@ -22,14 +22,20 @@ function persistSessionToStore(store, session) {
       : {};
   payload.sessions = sessions;
   sessions[sessionId] = session;
-  store._write(payload);
+  if (store._write(payload) === false) {
+    throw new Error('session_persist_failed');
+  }
   return session;
 }
 
 function persistSessionWithShadow(sessionStore, session, { shadowStore = null } = {}) {
   persistSessionToStore(sessionStore, session);
   if (shadowStore && shadowStore !== sessionStore && isSessionStoreLike(shadowStore)) {
-    persistSessionToStore(shadowStore, session);
+    try {
+      persistSessionToStore(shadowStore, session);
+    } catch (error) {
+      if (error?.message !== 'session_persist_failed') throw error;
+    }
   }
   return typeof sessionStore._toSummary === 'function'
     ? sessionStore._toSummary(session)

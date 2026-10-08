@@ -59,6 +59,7 @@ REQUEST_NOT_ENABLED_REASON = "request preference not enabled"
 SAFETY_MODE_STRICT_REASON = "strict safety mode blocks network tools"
 TOOL_NOT_EXPOSED_REASON = "model/runtime does not expose this turn"
 PLAN_MODE_ONLY_REASON = "tool is available only in plan mode"
+PROPOSE_MODE_ONLY_REASON = "tool is available only in propose mode"
 
 
 def current_info_remediation(reason: str | None) -> str:
@@ -110,6 +111,8 @@ class ToolAssemblyContext:
     engine_supports_inband_tool_calling: bool = False
     mode: str | None = None
     plan_mode: bool = False
+    # Plan Plus: the request is in Propose mode (read-only; propose_change offered).
+    propose_mode: bool = False
     read_only: bool = False
     tool_preferences: dict[str, tuple[str, ...]] | None = None
     resolution_context: Any | None = None
@@ -216,12 +219,20 @@ def schema_from_descriptor(descriptor: CanonicalToolDescriptor) -> dict[str, Any
     }
 
 
+def mode_only_tool(descriptor: object) -> bool:
+    """Plan's and Propose's mode-only tools never ride the one-send auto-run grant."""
+    availability = getattr(descriptor, "availability", None)
+    return bool(getattr(availability, "plan_mode_only", False)
+                or getattr(availability, "propose_mode_only", False))
+
+
 def blocked_tool_error_code(reason: str | None) -> str:
     if reason in {
         MODE_DISABLED_REASON,
         MODE_SIDE_EFFECTING_REASON,
         READ_ONLY_UNAVAILABLE_REASON,
         PLAN_MODE_ONLY_REASON,
+        PROPOSE_MODE_ONLY_REASON,
     }:
         return CMP_MODE_TOOL_BLOCKED
     if reason == TOOL_NOT_EXPOSED_REASON:
@@ -235,6 +246,8 @@ def blocked_tool_message(tool_name: str, reason: str | None) -> str:
         return f"Tool '{normalized_name}' is unavailable because this request is read-only."
     if reason == PLAN_MODE_ONLY_REASON:
         return f"Tool '{normalized_name}' is available only in Plan Mode."
+    if reason == PROPOSE_MODE_ONLY_REASON:
+        return f"Tool '{normalized_name}' is available only in Propose mode."
     if reason == MODE_DISABLED_REASON:
         return f"Tool '{normalized_name}' is unavailable because the active mode blocks tool use."
     if reason == MODE_SIDE_EFFECTING_REASON:
@@ -264,6 +277,8 @@ def blocked_tool_metadata(reason: str | None) -> dict[str, Any]:
         return {"read_only_blocked": True}
     if reason == PLAN_MODE_ONLY_REASON:
         return {"plan_mode_only": True}
+    if reason == PROPOSE_MODE_ONLY_REASON:
+        return {"propose_mode_only": True}
     if reason == REQUEST_DISABLED_REASON:
         return {"request_preference_disabled": True}
     if reason == REQUEST_NOT_ENABLED_REASON:
@@ -388,6 +403,8 @@ def _base_unavailable_reason(
         return host_reason
     if descriptor.availability.plan_mode_only and not context.plan_mode:
         return PLAN_MODE_ONLY_REASON
+    if descriptor.availability.propose_mode_only and not context.propose_mode:
+        return PROPOSE_MODE_ONLY_REASON
     if descriptor.availability.always_available:
         return None if descriptor.runtime_registered else RUNTIME_UNAVAILABLE_REASON
     if not (

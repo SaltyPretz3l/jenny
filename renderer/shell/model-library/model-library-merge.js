@@ -298,7 +298,9 @@
     var key = canonicalTag(tag);
     var installed = Boolean(installedEntry || ollamaTag);
     var observed = fitEstimate && fitEstimate.fitSource === 'observed' ? fitEstimate : null;
-    var resolvedFit = observed || recommendation;
+    // Re-estimated at the window Jenny loads when that differs from the catalog's.
+    var reestimated = installed && fitEstimate && fitEstimate.fitSource === 'estimated' ? fitEstimate : null;
+    var resolvedFit = observed || reestimated || recommendation;
     var vramRequiredMb = nonNegativeNumber(resolvedFit.vramRequiredMb);
     var family = matchAccelerationFamily(tag, context.acceleration);
     var engine = engineFields(tag, family, context, installedEntry, ollamaTag);
@@ -328,8 +330,8 @@
       fitState: fit.fitState,
       fitRatio: fit.fitRatio,
       fitLabel: fit.fitLabel,
-      fitSource: observed ? 'observed' : 'catalog',
-      fitConfidence: 'high',
+      fitSource: observed ? 'observed' : (reestimated ? 'estimated' : 'catalog'),
+      fitConfidence: reestimated ? String(reestimated.fitConfidence || 'low') : 'high',
       accelerationEligible: isEligibleFamily(family),
       accelerationHeadroomMb: headroomMb,
       managedKey: engine.managedKey,
@@ -569,6 +571,13 @@
       }, true, context, entry, fitEstimatesByKey.get(key) || null));
     });
 
+    // item 1: the failed card carries its failure. An exact key wins; only when no card matches
+    // exactly does a canonical match (an own-card GGUF keyed without a tag or in another case)
+    // apply, so a same-name Ollama card and own card never share one failure.
+    var failedKey = source.loadFailure && canonicalTag(source.loadFailure.model);
+    var failed = failedKey ? cards.filter(function (card) { return card.key === failedKey; }) : [];
+    if (failedKey && !failed.length) failed = cards.filter(function (card) { return canonicalTag(card.key) === failedKey; });
+    failed.forEach(function (card) { card.loadFailure = source.loadFailure; });
     return {
       hardware: hardware,
       catalogMeta: source.catalogMeta && typeof source.catalogMeta === 'object'

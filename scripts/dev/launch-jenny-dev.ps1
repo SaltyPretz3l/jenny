@@ -166,13 +166,6 @@ $env:OLLAMA_KV_CACHE_TYPE = 'q8_0'
 Write-Host ('Ollama long-context tuning: FLASH_ATTENTION={0} KV_CACHE_TYPE={1}' -f $env:OLLAMA_FLASH_ATTENTION, $env:OLLAMA_KV_CACHE_TYPE) -ForegroundColor DarkGray
 Write-Host ''
 
-# Keep the bounded sequential subagent batch available in ordinary desktop-dev
-# launches. The user's Read-only subagents preference remains the outer gate,
-# so disabling that Settings toggle still removes both subagent tools.
-$env:JENNY_ENABLE_SUBAGENT_BATCH = '1'
-Write-Host 'Subagent tools: batch gate enabled (subject to the Read-only subagents setting).' -ForegroundColor DarkGray
-Write-Host ''
-
 # --- Step 3/3: launch Electron via npm run dev (foreground / blocking) -------
 Write-Host '[3/3] Launching Jenny (npm run dev) -- Ctrl+C in this window to stop.' -ForegroundColor Cyan
 Write-Host ''

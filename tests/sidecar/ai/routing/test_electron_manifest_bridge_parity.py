@@ -48,6 +48,11 @@ EXPECTED_ELECTRON_BRIDGE_TOOLS = frozenset(
         # follow-ups into the Open Loops store through Electron; side-effecting,
         # so it is withheld from the plan-mode schema like `verify`.
         "task_board",
+        # Added deliberately (FG-002 C2): `project_notes` reads and edits the
+        # per-project note through Electron. The plan-mode schema keeps it
+        # (read is allowed there); the Electron read-only gate refuses its
+        # append/replace, as it does task_board's writes.
+        "project_notes",
         # Added deliberately: `verify` runs one of the user's own saved Test
         # Runner configurations through WorkspaceTestRunnerService. It is the
         # first Electron-owned tool that is NOT read-only, so it is correctly
@@ -96,6 +101,7 @@ def _kernel(workspace_root: str, **overrides: bool) -> SimpleNamespace:
         "tools_image_generate_enabled": True,
         "tools_home_enabled": True,
         "tools_task_board_enabled": True,
+        "tools_project_notes_enabled": True,
         "tools_workspace_root": workspace_root,
         "mode": "assist",
     }
@@ -184,6 +190,7 @@ def test_electron_owned_read_only_tools_reach_the_plan_mode_schema(tmp_path) -> 
         ("tools_image_generate_enabled", {"image_generate"}),
         ("tools_home_enabled", {"home"}),
         ("tools_task_board_enabled", {"task_board"}),
+        ("tools_project_notes_enabled", {"project_notes"}),
     ],
 )
 def test_manifest_config_flags_still_gate_their_bridge_groups(

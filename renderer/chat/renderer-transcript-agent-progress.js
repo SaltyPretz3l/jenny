@@ -22,14 +22,7 @@
     ? agentStepUtils.formatElapsed
     : function fallbackFormat() { return ''; };
 
-  function defaultEscapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function renderAgentProgressRow(options) {
     const opts = options || {};

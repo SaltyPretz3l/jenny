@@ -231,27 +231,21 @@ class McpDiscoveryService {
     return this.configStore.getState().document;
   }
 
-  // DECIDED gate design (MCP HTTP Transport Step 1): the Electron side only
-  // forwards `mcp_sse_enabled: true` when BOTH the user config gate
-  // (mcp-servers.json `mcp_sse_enabled`) AND the `mcp_http_transport`
-  // internal flag are on. The sidecar's `_parse_mcp_servers` hard-raises
-  // (CMP-MCP-0002) if an sse/http server arrives while its own single
-  // `mcp_sse_enabled` gate is false, so the forwarding filter and the
-  // forwarded gate value must move together — hence `effectiveSseEnabled`
-  // is threaded into both the `isForwardableServer` filter and the
-  // response's `mcp_sse_enabled`. Callers that omit `httpTransportEnabled`
-  // (or pass false) get exactly today's no-flag behavior.
-  getSidecarConfig({ httpTransportEnabled = false } = {}) {
+  // The Electron side forwards `mcp_sse_enabled: true` only when the user
+  // config gate (mcp-servers.json `mcp_sse_enabled`) is on. The sidecar's
+  // `_parse_mcp_servers` hard-raises (CMP-MCP-0002) if an sse/http server
+  // arrives while that gate is false, so the forwarding filter and the
+  // forwarded gate value both read the same `sseEnabled`.
+  getSidecarConfig() {
     const config = this._loadConfig();
-    const effectiveSseEnabled = config.mcp_sse_enabled === true && httpTransportEnabled === true;
-    const effectiveConfig = { ...config, mcp_sse_enabled: effectiveSseEnabled };
+    const sseEnabled = config.mcp_sse_enabled === true;
     const supportedServers = config.mcp_servers.filter((server) =>
       server.enabled === true
       && server.trust?.status === 'approved'
       && server.trust.configuration_digest === configurationDigest(server)
-      && isForwardableServer(server, effectiveConfig)
+      && isForwardableServer(server, config)
     );
-    if (!supportedServers.length && effectiveSseEnabled !== true) {
+    if (!supportedServers.length && !sseEnabled) {
       return {};
     }
     return {
@@ -259,7 +253,7 @@ class McpDiscoveryService {
         ...projectServerConfig(server),
         approved_tools_digest: server.trust.advertised_tools_digest,
       })),
-      mcp_sse_enabled: effectiveSseEnabled,
+      mcp_sse_enabled: sseEnabled,
     };
   }
 
@@ -377,13 +371,9 @@ class McpDiscoveryService {
     const server = config.mcp_servers.find((row) => row.name === name);
     if (!server) return structuredError('server_not_found', 'The MCP server was not found.');
     // An explicit Test is the user's consent to one inspection connection, so
-    // only the Electron kill switch gates it. The document gate is turned on
-    // when an approved SSE server is enabled (D2) and governs live
-    // registration; requiring it here would block the first approval.
-    const sseEnabled = this.backendService?.featureFlags?.mcp_http_transport === true;
-    if (server.transport === 'sse' && !sseEnabled) {
-      return structuredError(MCP_ERROR_CODES.SSE_DISABLED, 'MCP SSE transport is disabled.');
-    }
+    // the document gate does not apply here. It is turned on when an approved
+    // SSE server is enabled (D2) and governs live registration; requiring it
+    // here would block the first approval.
     const client = this.backendService?.sidecarClient;
     if (!client?.connected || typeof client.request !== 'function') {
       return structuredError('sidecar_unavailable', 'MCP inspection is unavailable until the local runtime is ready.');
@@ -411,7 +401,7 @@ class McpDiscoveryService {
       const result = await client.request('mcp.inspect', {
         accept_version: require('./backend/sidecar-client').API_VERSION,
         server: inspectionServer,
-        mcp_sse_enabled: sseEnabled,
+        mcp_sse_enabled: true,
         confirmed_stdio: server.transport !== 'stdio' || payload.confirmed === true,
       }, { timeoutMs: 20_000, signal: controller.signal });
       if (!result?.ok || !/^[a-f0-9]{64}$/.test(String(result.tools_digest || ''))) return result;

@@ -39,7 +39,8 @@
         "delta": "I should read the file first.",
         "thinking_id": "think_req_replay_model",
         "kind": "reasoning",
-        "persist": true
+        "persist": true,
+        "thinking_budget_chars": 265
       }
     },
     {

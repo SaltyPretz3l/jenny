@@ -354,11 +354,6 @@
       disposeControllerQuietly(candidate.effectId, candidate.controller);
     }
 
-    function isHeartbeatEnabled() {
-      return Boolean(state && state.features && state.features.featureFlags
-        && state.features.featureFlags.surface_effect_heartbeat === true);
-    }
-
     function resetHeartbeat() {
       const changed = activity.heartbeatBoost !== 0;
       activity.heartbeatBoost = 0;
@@ -371,9 +366,6 @@
     // cadence at 10 Hz rather than forwarding per-token motion; the additive
     // term is strongly low-passed and bounded independently of phase energy.
     function sampleHeartbeatCadence() {
-      if (!isHeartbeatEnabled()) {
-        return resetHeartbeat();
-      }
       const now = nowMs();
       activity.heartbeatPendingChunks += 1;
       if (activity.heartbeatLastSampleAt === null) {
@@ -413,7 +405,7 @@
     }
 
     function buildActivitySnapshot() {
-      const heartbeatBoost = activity.phase === 'streaming' && isHeartbeatEnabled()
+      const heartbeatBoost = activity.phase === 'streaming'
         ? activity.heartbeatBoost
         : 0;
       return {
@@ -764,7 +756,6 @@
         hasPendingCandidate: Boolean(pendingCandidate),
         activity: buildActivitySnapshot(),
         heartbeat: {
-          enabled: isHeartbeatEnabled(),
           boost: activity.heartbeatBoost,
           pendingChunks: activity.heartbeatPendingChunks,
           lastSampleAt: activity.heartbeatLastSampleAt,

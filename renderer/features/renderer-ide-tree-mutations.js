@@ -52,10 +52,9 @@
       ? deps.onRenameCommitted : noop;
     const onEntryDeleted = deps.onEntryDeleted;
     const render = deps.render;
-    const isQolEnabled = typeof deps?.isQolEnabled === 'function' ? deps.isQolEnabled : () => false;
     const editSession = deps?.editSession || {};
     const treeMarkup = resolveModule('rendererIdeTreeMarkup', './renderer-ide-tree-markup');
-    const { parentDirOf, isValidEntryName } = treeMarkup;
+    const { parentDirOf } = treeMarkup;
 
     function toMessage(error, fallback) {
       return String(error?.message || error || fallback || '')
@@ -111,19 +110,10 @@
         setCommittingEdit(null);
       }
       const name = String(rawValue || '').trim();
-      if (!isQolEnabled() && !isValidEntryName(name)) {
-        showError(jt('ide.treeMutations.invalidName', 'Enter a valid file or folder name (no path separators).'), {
-          title: jt('ide.treeMutations.workspaceTitle', 'Workspace'),
-          dedupeKey: 'ide:tree:name',
-        });
+      const result = editSession.validate?.(rawValue, edit) || { ok: true };
+      if (!result.ok) {
+        editSession.paintError?.(result.message, { edit, value: rawValue });
         return;
-      }
-      if (isQolEnabled()) {
-        const result = editSession.validate?.(rawValue, edit) || { ok: true };
-        if (!result.ok) {
-          editSession.paintError?.(result.message, { edit, value: rawValue });
-          return;
-        }
       }
       const editEpoch = getRootEpoch();
       const targetPath = edit.dirPath ? `${edit.dirPath}/${name}` : name;
@@ -143,7 +133,7 @@
           title: jt('ide.treeMutations.workspaceTitle', 'Workspace'),
           dedupeKey: 'ide:tree:no-bridge',
         });
-        if (isQolEnabled()) editSession.paintError?.(message, { edit });
+        editSession.paintError?.(message, { edit });
         return;
       }
       setCommittingEdit(edit);
@@ -174,7 +164,7 @@
           await onEntryRenamed(edit.targetPath, targetPath, edit.kind, { wasOpen: preflight?.paths?.length > 0, preservedPaths });
         }
         if (editEpoch !== getRootEpoch()) return;
-        if (edit.mode === 'rename' && isQolEnabled()) {
+        if (edit.mode === 'rename') {
           onRenameCommitted({ from: edit.targetPath, to: targetPath, kind: edit.kind });
         }
         if (editIsCurrent && !getPendingEdit()) render();
@@ -186,7 +176,7 @@
           title: jt('ide.treeMutations.workspaceTitle', 'Workspace'),
           dedupeKey: 'ide:tree:op',
         });
-        if (isQolEnabled()) editSession.paintError?.(message, { edit });
+        editSession.paintError?.(message, { edit });
         appendClientLog('WARN', 'ide.tree_op_failed', { message: String(error?.message || error || '') });
       } finally {
         if (editEpoch === getRootEpoch() && getCommittingEdit() === edit) setCommittingEdit(null);

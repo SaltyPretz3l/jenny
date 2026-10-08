@@ -1,8 +1,11 @@
-"""knowledge_search — regex search across the registered knowledge folders.
+"""knowledge_search — regex and by-meaning search across the registered knowledge folders.
 
-Reuses grep_search's pure-Python worker pipeline (spawned subprocess with a
-per-file timeout) scoped to each registered root's WorkspaceGuard. No
-ripgrep, no index — live filesystem reads, bounded per call.
+``pattern`` reuses grep_search's pure-Python worker pipeline (spawned
+subprocess with a per-file timeout) scoped to each registered root's
+WorkspaceGuard: live filesystem reads, bounded per call. ``query`` adds search
+by meaning over the semantic catalog when one is available (one query embed,
+fused by reciprocal rank; see ``semantic_fusion``) and otherwise matches the
+query's words.
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Callable
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -26,6 +30,7 @@ from sidecar.ai.tools.builtins.grep_search import (
     _bounded_int,
     _build_result,
     _iter_candidate_files,
+    _matches_glob,
     _max_search_file_bytes,
     _optional_string,
     _RegexSearchWorker,
@@ -40,7 +45,13 @@ from sidecar.ai.tools.builtins.knowledge.roots import (
     select_roots,
     skipped_root_labels,
 )
-from sidecar.ai.tools.builtins.regex_safety import compile_safe_pattern
+from sidecar.ai.tools.builtins.knowledge.semantic_fusion import (
+    SemanticOutcome,
+    compile_search_pattern,
+    fuse_entries,
+    passages_payload,
+    semantic_passages,
+)
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 
 # Corpus-wide traversal cap, independent of the per-call runtime budget.
@@ -65,12 +76,7 @@ def knowledge_search_tool(
     workspace: object,
 ) -> ToolHandlerResult:
     _ = workspace  # knowledge tools are scoped to registered roots, not the workspace
-    ignore_case = arguments.get("ignore_case")
-    compiled = compile_safe_pattern(
-        arguments.get("pattern"),
-        ignore_case=isinstance(ignore_case, bool) and ignore_case,
-        error_code=CMP_TOOL_INVALID_PATH,
-    )
+    compiled, query = compile_search_pattern(arguments)
     roots, start_paths = _resolve_search_scope(
         root_argument=arguments.get("root"),
         path_argument=arguments.get("path"),
@@ -115,10 +121,21 @@ def knowledge_search_tool(
     finally:
         search_context.worker.close()
 
+    semantic = (
+        semantic_passages(
+            query,
+            roots=roots,
+            start_paths=start_paths,
+            include=_glob_matcher(include_glob),
+        )
+        if query is not None
+        else None
+    )
     return _knowledge_search_result(
         context=search_context,
         roots=roots,
         aborted_by_file_budget=aborted_by_file_budget,
+        semantic=semantic,
     )
 
 
@@ -147,6 +164,15 @@ def _resolve_search_scope(
     return roots, [None] * len(roots)
 
 
+def _glob_matcher(include_glob: str | None) -> Callable[[Path, Path], bool] | None:
+    """The grep walker's ``include_glob`` rule as a ``(file, search root)`` predicate."""
+    if include_glob is None:
+        return None
+    return lambda path, search_root: _matches_glob(
+        path, search_root=search_root, pattern=include_glob
+    )
+
+
 def _search_root(
     root: KnowledgeRoot,
     *,
@@ -158,7 +184,7 @@ def _search_root(
     for candidate in _iter_candidate_files(
         start_path or root.path,
         root.guard,
-        context.include_glob,
+        (context.include_glob,) if context.include_glob else None,
     ):
         if time.monotonic() - context.started_at >= MAX_TOTAL_RUNTIME_SECONDS:
             context.state.aborted_by_runtime_budget = True
@@ -230,16 +256,24 @@ def _knowledge_search_result(
     context: _RootSearchContext,
     roots: tuple[KnowledgeRoot, ...],
     aborted_by_file_budget: bool,
+    semantic: SemanticOutcome | None = None,
 ) -> ToolHandlerResult:
     pattern = context.compiled.pattern
     text_result = _build_result(pattern=pattern, state=context.state)
-    sources = build_sources(context.source_entries)
+    passages = semantic.passages if semantic is not None else []
+    sources = build_sources(
+        fuse_entries(context.source_entries, passages) if passages else context.source_entries
+    )
     payload: dict[str, object] = {
         "pattern": pattern,
         "result": text_result.output,
         "sources": sources,
         "missing_source_metadata": len(sources) == 0,
     }
+    if passages:
+        payload["passages"] = passages_payload(passages, sources)
+    if semantic is not None and semantic.note:
+        payload["note"] = semantic.note
     skipped = skipped_root_labels()
     if skipped:
         payload["skipped_roots"] = list(skipped)
@@ -251,9 +285,14 @@ def _knowledge_search_result(
     metadata["source_count"] = len(sources)
     if aborted_by_file_budget:
         metadata["aborted_by_file_budget"] = True
+    if semantic is not None:
+        metadata["semantic_passages"] = len(passages)
+        metadata["semantic_partial"] = semantic.partial
+    # Passages found by meaning make the call useful even when no line matched.
+    found_by_meaning = bool(passages)
     return ToolHandlerResult(
         output=json.dumps(payload, ensure_ascii=False),
-        success=text_result.success,
-        error_code=text_result.error_code,
+        success=text_result.success or found_by_meaning,
+        error_code=None if found_by_meaning else text_result.error_code,
         metadata=metadata,
     )

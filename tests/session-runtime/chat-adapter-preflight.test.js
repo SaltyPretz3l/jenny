@@ -32,7 +32,7 @@ test('immediate runtime preflight reads session metadata without hydrating canon
   let hydrated = 0;
   sessionStore.getSession = () => { hydrated += 1; throw new Error('canonical history hydrated'); };
   const service = { activeStreams: new Map(), currentEngineType: 'mock', projectAuthority,
-    sessionExecutionAuthority, sessionStore, featureFlags: { vision_unified_turn: true },
+    sessionExecutionAuthority, sessionStore, featureFlags: {},
     configService: { getState: () => ({}) } };
   const adapter = new SessionRuntimeChatAdapter(service, {
     lanes: new RuntimeLaneAdmission(), resourceBroker: new ResourceBroker(),
@@ -63,7 +63,7 @@ test('paused managed completion preserves the private resource descriptor refere
     knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
     resolveProjectWorkspaceServices: () => ({}) });
   const service = { activeStreams: new Map(), currentEngineType: 'mock', projectAuthority,
-    sessionExecutionAuthority, sessionStore, featureFlags: { vision_unified_turn: true },
+    sessionExecutionAuthority, sessionStore, featureFlags: {},
     configService: { getState: () => ({}) } };
   const adapter = new SessionRuntimeChatAdapter(service, { lanes: new RuntimeLaneAdmission(),
     resourceBroker: new ResourceBroker(), pathResolver: new PhysicalPathResolver() });
@@ -108,7 +108,7 @@ test('resume preflight rejection remains a scheduler outcome without an unhandle
     knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
     resolveProjectWorkspaceServices: () => ({}) });
   const service = { activeStreams: new Map(), currentEngineType: 'mock', projectAuthority,
-    sessionExecutionAuthority, sessionStore, featureFlags: { vision_unified_turn: true },
+    sessionExecutionAuthority, sessionStore, featureFlags: {},
     configService: { getState: () => ({}) } };
   const adapter = new SessionRuntimeChatAdapter(service, { lanes: new RuntimeLaneAdmission(),
     resourceBroker: new ResourceBroker(), pathResolver: new PhysicalPathResolver() });

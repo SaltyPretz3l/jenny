@@ -10,7 +10,10 @@ from math import isfinite
 from time import monotonic
 from typing import Any
 
-from sidecar.ai.engines.ollama_stream_transport import iter_bounded_response_lines
+from sidecar.ai.engines.ollama_stream_transport import (
+    force_close_socket,
+    iter_bounded_response_lines,
+)
 
 ProgressCallback = Callable[[dict[str, Any]], None]
 
@@ -60,6 +63,8 @@ class _PullDeadline:
 
     def _expire(self) -> None:
         self._expired.set()
+        raw = getattr(getattr(self._response, "fp", None), "raw", None)
+        force_close_socket(getattr(raw, "_sock", None))
         close = getattr(self._response, "close", None)
         if callable(close):
             try:

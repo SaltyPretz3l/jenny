@@ -9,6 +9,7 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const TREE_DRAG_MIME = 'application/x-jenny-tree-path';
   const TREE_DRAG_PATHS_MIME = 'application/x-jenny-tree-paths';
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const IMPORT_ERROR = jt('ide.treeImport.unresolvedPaths', 'Imported files could not be resolved to disk paths.');
   function noop() {}
 
@@ -38,12 +39,10 @@
   function createIdeTreeImport(deps) {
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const getMountEl = typeof deps?.getMountEl === 'function'
-      ? deps.getMountEl : () => getDom().ideRailPanel || null;
+      ? deps.getMountEl : () => null;
     const isActivePanel = typeof deps?.isActivePanel === 'function'
       ? deps.isActivePanel : () => true;
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
-    const isImportEnabled = typeof deps?.isImportEnabled === 'function'
-      ? deps.isImportEnabled : () => false;
     const getAttachmentsApi = typeof deps?.getAttachmentsApi === 'function'
       ? deps.getAttachmentsApi : () => null;
     const getWorkspaceFsApi = typeof deps?.getWorkspaceFsApi === 'function'
@@ -117,8 +116,7 @@
     }
 
     function handleDragOver(event) {
-      if (!eventBelongs(event) || !isImportEnabled()
-        || !isExternalFileTransfer(event.dataTransfer)) return;
+      if (!eventBelongs(event) || !isExternalFileTransfer(event.dataTransfer)) return;
       event.preventDefault();
       event.stopPropagation();
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
@@ -309,7 +307,9 @@
         selection.replace?.(paths, firstPath);
         revealPath(firstPath, { focus: false });
       }
-      showToast(skipped.length ? jt('ide.treeImport.completedWithSkipped', 'Imported {count} items, {skipped} skipped', { count: imported.length, skipped: skipped.length }) : jt('ide.treeImport.completed', 'Imported {count} items', { count: imported.length }));
+      showToast(skipped.length
+        ? jtn('ide.treeImport.completedWithSkipped', imported.length, { count: imported.length, skipped: skipped.length }, 'Imported {count} item, {skipped} skipped', 'Imported {count} items, {skipped} skipped')
+        : jtn('ide.treeImport.completed', imported.length, { count: imported.length }, 'Imported {count} item', 'Imported {count} items'));
     }
 
     async function startImport(files, destination, generation, rootEpoch) {
@@ -379,8 +379,7 @@
     }
 
     function handleDrop(event) {
-      if (!eventBelongs(event) || !isImportEnabled()
-        || !isExternalFileTransfer(event.dataTransfer)) return;
+      if (!eventBelongs(event) || !isExternalFileTransfer(event.dataTransfer)) return;
       event.preventDefault();
       event.stopPropagation();
       cancelPendingEdit();
@@ -395,11 +394,10 @@
     }
 
     function bindEvents() {
-      if (boundHosts.length || !isImportEnabled()) return;
+      if (boundHosts.length) return;
       disposed = false;
-      const dom = getDom();
-      boundHosts = [dom.ideRailPanel, dom.ideSecondarySidebarPanel].filter(Boolean);
-      if (!boundHosts.length && getMountEl()) boundHosts = [getMountEl()];
+      // The Files view's own persistent host (row 40 W3).
+      boundHosts = [getMountEl()].filter(Boolean);
       for (const host of boundHosts) {
         host.addEventListener('dragenter', handleDragOver);
         host.addEventListener('dragover', handleDragOver);

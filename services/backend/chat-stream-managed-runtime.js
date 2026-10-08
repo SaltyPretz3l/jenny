@@ -12,9 +12,7 @@ const {
   rememberPersistedUserStream,
   hasPersistedUserStream,
 } = require('./chat-stream-persisted-user-registry');
-const {
-  handleNotification: handleNotificationImpl,
-} = require('./chat-stream-managed-runtime-notifications');
+const { handleNotification: handleNotificationImpl } = require('./chat-stream-managed-runtime-notifications');
 const {
   persistCurrentTextSegment: persistCurrentTextSegmentImpl,
   discardPersistedTextSegmentsForReset: discardPersistedTextSegmentsForResetImpl,
@@ -27,15 +25,10 @@ const {
   buildInteractiveQuestionBatchVisibleText,
   hasValidInteractiveQuestionCount,
 } = require('./interactive-session-utils');
-const {
-  isDeniedTerminalStatus,
-  resolveTerminalRouting,
-} = require('./chat-stream-terminal-utils');
+const { isDeniedTerminalStatus, resolveTerminalRouting } = require('./chat-stream-terminal-utils');
+const { buildTerminalMessageExtras, patchLastSegmentDiscardedDrafts } = require('./chat-stream-discarded-drafts');
 const { settleDeniedTerminal } = require('./chat-stream-managed-runtime-denial');
-const {
-  logAndBuildActiveTurnClaimRefusedError,
-  logAndBuildUserMessagePersistRefusedError,
-} = require('./chat-stream-managed-runtime-admission-claim');
+const { logAndBuildActiveTurnClaimRefusedError, logAndBuildUserMessagePersistRefusedError } = require('./chat-stream-managed-runtime-admission-claim');
 const {
   createManagedSessionLifecycleAdapter,
   startActiveTurn,
@@ -143,6 +136,7 @@ function createManagedChatStreamRuntime({
   let streamSawBatch = false;
   let turnUsage = null;
   let resumableStop = null;
+  let discardedDrafts = null;
   const toolResultCounts = { successful: 0, failed: 0 };
   let visibleCompletionEmitted = false;
   let visibleCompletionPromise = null;
@@ -525,6 +519,7 @@ function createManagedChatStreamRuntime({
       content: assistantText,
       ...(turnUsage ? { usage: turnUsage } : {}),
       ...(resumableStop ? { resumableStop } : {}),
+      ...(discardedDrafts ? { discardedDrafts } : {}),
       ...eventBase,
     }, { channel: 'control', phase: null });
 
@@ -568,7 +563,8 @@ function createManagedChatStreamRuntime({
           // The final slice flushes through the segment path; null from it is
           // a real refusal, undefined is a no-op (nothing left to persist —
           // every segment already landed at a tool boundary).
-          const segmentSummary = persistCurrentTextSegment({ resumableStop });
+          const segmentSummary = persistCurrentTextSegment({ resumableStop, discardedDrafts });
+          if (segmentSummary === undefined) patchLastSegmentDiscardedDrafts(service.sessionStore, resolvedSessionId, persistedTextSegmentIds, discardedDrafts);
           transcriptCollector.resetSlice();
           // Audit A3: a refusal of ANY segment this turn — a prior mid-stream
           // flush or this final slice — leaves the reply partially
@@ -595,7 +591,7 @@ function createManagedChatStreamRuntime({
             finalizedAt: assistantTimestamp,
             client_message_id: assistantBaseMessageId,
             model_used: model,
-            ...(resumableStop ? { resumable_stop: resumableStop } : {}),
+            ...buildTerminalMessageExtras({ resumableStop, discardedDrafts }),
             ...transcriptCollector.buildAssistantMessageFields({
               fallbackReasoningEntries: reasoningEntries,
             }),
@@ -919,6 +915,7 @@ function createManagedChatStreamRuntime({
     set turnUsage(v) { turnUsage = v; },
     get resumableStop() { return resumableStop; },
     set resumableStop(v) { resumableStop = v; },
+    get discardedDrafts() { return discardedDrafts; }, set discardedDrafts(v) { discardedDrafts = v; },
     toolResultCounts,
     get visibleCompletionPromise() { return visibleCompletionPromise; },
     set visibleCompletionPromise(v) { visibleCompletionPromise = v; },

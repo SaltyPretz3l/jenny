@@ -78,6 +78,7 @@ def test_sandbox_tool_allowlist_matches_typed_files_and_bridge() -> None:
         "read_file",
         "write_file",
         "edit_file",
+        "propose_change",
         "glob_files",
         "grep_search",
         "list_dir",

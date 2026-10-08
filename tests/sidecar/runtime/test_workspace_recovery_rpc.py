@@ -15,6 +15,7 @@ from sidecar.protocol import (
     WORKSPACE_ACKNOWLEDGE_RECOVERY_REVIEW_METHOD,
     WORKSPACE_LIST_CHANGE_SETS_METHOD,
     WORKSPACE_PREFLIGHT_UNDO_METHOD,
+    WORKSPACE_REAPPLY_CHANGE_SET_METHOD,
     WORKSPACE_RESTORE_TRASH_ENTRY_METHOD,
     WORKSPACE_UNDO_CHANGE_SET_METHOD,
 )
@@ -97,6 +98,22 @@ def test_rpc_round_trips_list_preflight_decisions_and_undo(tmp_path: Path) -> No
     assert not (root / "created.txt").exists()
 
 
+def test_rpc_reapplies_an_undone_change_set_and_refuses_a_second_time(tmp_path: Path) -> None:
+    root, container = _runtime(tmp_path)
+    content = (root / "created.txt").read_bytes()
+    _call(WORKSPACE_UNDO_CHANGE_SET_METHOD, {"change_set_id": CHANGE_SET_ID}, container)
+    (root / "created.txt").write_bytes(content)
+
+    reapplied = _call(WORKSPACE_REAPPLY_CHANGE_SET_METHOD, {"change_set_id": CHANGE_SET_ID}, container)
+    again = _call(WORKSPACE_REAPPLY_CHANGE_SET_METHOD, {"change_set_id": CHANGE_SET_ID}, container)
+    missing = _call(WORKSPACE_REAPPLY_CHANGE_SET_METHOD, {}, container)
+
+    assert reapplied["result"]["state"] == "committed"
+    assert reapplied["result"]["restore_status"] == "not_requested"
+    assert again["error"]["data"]["reason"] == "change_set_not_reapplicable"
+    assert missing["error"]["data"]["reason"] == "invalid_params"
+
+
 def test_unknown_change_set_id_returns_structured_error(tmp_path: Path) -> None:
     _root, container = _runtime(tmp_path)
 
@@ -175,6 +192,7 @@ def test_all_recovery_methods_run_on_one_capped_auxiliary_family() -> None:
         WORKSPACE_LIST_CHANGE_SETS_METHOD,
         WORKSPACE_PREFLIGHT_UNDO_METHOD,
         WORKSPACE_UNDO_CHANGE_SET_METHOD,
+        WORKSPACE_REAPPLY_CHANGE_SET_METHOD,
         WORKSPACE_RESTORE_TRASH_ENTRY_METHOD,
         WORKSPACE_ACKNOWLEDGE_RECOVERY_REVIEW_METHOD,
         WORKSPACE_ABANDON_RESTORE_METHOD,

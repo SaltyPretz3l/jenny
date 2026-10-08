@@ -114,7 +114,6 @@ async function mountComposer(browser, { paneWidth, lang = 'en', palette = 'darkr
       document.body.appendChild(dock);
       // Raised above the sidebar it now overlaps, so hit-tests reach the dock.
       Object.assign(dock.style, { position: 'fixed', insetInlineStart: '0', insetBlockStart: '0', inlineSize: `${width}px`, blockSize: '800px', zIndex: '10' });
-      dock.style.setProperty('--ide-chat-dock-width', `${width}px`);
       dock.appendChild(document.getElementById('composerWrap'));
       view.style.display = 'none';
     }

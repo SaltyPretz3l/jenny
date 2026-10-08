@@ -1,4 +1,0 @@
-{
-  "contract": "PluginViewCallV5", "contract_version": 5, "frozen": true,
-  "root": { "type": "object", "required": ["call_schema_version", "request_id", "operation", "payload_json"], "max_keys": 4, "additional_properties": "reject", "properties": { "call_schema_version": { "type": "const", "value": 5 }, "request_id": { "type": "ref", "ref": "operation_id" }, "operation": { "type": "enum", "values": ["get_context", "read_settings", "update_settings", "provider_auth_status", "provider_auth_start", "provider_auth_cancel", "provider_auth_sign_out", "provider_activate", "artifact_read_chunk", "artifact_ready", "artifact_error"] }, "payload_json": { "type": "string", "max_utf8_bytes": 16384 } } }
-}

@@ -1,7 +1,6 @@
 /* renderer/features/renderer-workspace-root-nudge.js
  *
- * Slim dismissible hint above the composer, gated by the default-on
- * workspace_root_nudge flag, in one of two states:
+ * Slim dismissible hint above the composer, in one of two states:
  *
  *   set-root    no Workspace folder is configured at all.
  *   use-folder  a folder is configured, but this chat's project has none
@@ -14,7 +13,7 @@
  * (#composerProjectPillSlot, beside the run-mode and model pills): it names
  * the current chat's project (General included) and opens the shared
  * "Move this chat to" menu (the switcher's one move engine, idle-only). It
- * never switches the Workspace, and it is not gated by the nudge flag.
+ * never switches the Workspace.
  *
  * Project names come from the switcher's one cache (never listed here, 2026-09-27).
  *
@@ -98,7 +97,6 @@
 
   var PILL_SLOT_ID = 'composerProjectPillSlot';
   var PILL_ID = 'composerProjectPill';
-  var FOLDER_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5z"/></svg>';
 
   function resolveChip() {
     return (root && root.inventoryChip)
@@ -106,20 +104,28 @@
       || null;
   }
 
+  // Quiet text on the Composer bar: "in <name>" with a caret (row 38 item 3,
+  // variant A). The name takes the accent while the Chats filter hides this
+  // chat, so the bar says where the message lands even when the list shows
+  // another project.
   function buildProjectPillHtml(pill) {
     var chip = resolveChip();
     if (typeof chip !== 'function') return '';
     return chip({
       id: 'composer-project',
       domId: PILL_ID,
-      iconHtml: FOLDER_ICON,
+      iconHtml: '<span class="composer-project-pill-prefix">' + escapeHtml(jt('composer.projectPill.prefix', 'in')) + '</span>',
       label: pill.name,
       ariaLabel: jt('composer.projectPill.ariaLabel', 'Project: {name}. Move this chat to another project.', { name: pill.name }),
-      title: pill.rootPath
+      title: pill.hiddenByFilter
+        ? jt('composer.projectPill.titleFiltered', 'This chat is in {name}. The Chats list is showing another project; your next message still goes here. Click to move it.', { name: pill.name })
+        : pill.rootPath
         ? jt('composer.projectPill.title', 'This chat is in {name} ({path}). Click to move it.', { name: pill.name, path: pill.rootPath })
         : jt('composer.projectPill.titleNoFolder', 'This chat is in {name} (no folder). Click to move it.', { name: pill.name }),
       hasPopup: true,
-      className: 'composer-project-pill' + (pill.rootPath ? '' : ' composer-project-pill--general'),
+      className: 'composer-project-pill'
+        + (pill.rootPath ? '' : ' composer-project-pill--general')
+        + (pill.hiddenByFilter ? ' composer-project-pill--filtered' : ''),
     });
   }
 
@@ -171,15 +177,6 @@
     var switcherRequested = false;
     var unsubscribeProjects = null;
     var adoptInFlight = '';
-
-    function isFeatureEnabled() {
-      return Boolean(
-        state
-        && state.features
-        && state.features.featureFlags
-        && state.features.featureFlags.workspace_root_nudge === true
-      );
-    }
 
     function workspaceRootPath() {
       var workspaceRootState = state && state.workspaceRoot;
@@ -314,13 +311,16 @@
         ? jt('projects.switcher.generalName', 'General')
         : (known ? known.name : jt('projects.filter.project', 'Project'));
       var rootPath = known ? known.rootPath : '';
+      var filter = String(state.ui && state.ui.chatsProjectFilter || '').trim();
+      var hiddenByFilter = Boolean(filter) && filter !== projectId;
       return {
         sessionId: String(session.id || '').trim(),
         projectId: projectId,
         name: name,
         rootPath: rootPath,
+        hiddenByFilter: hiddenByFilter,
         idle: isSessionIdle(session),
-        key: ['pill', session.id, projectId, name, rootPath].join('|'),
+        key: ['pill', session.id, projectId, name, rootPath, hiddenByFilter ? 'filtered' : ''].join('|'),
       };
     }
 
@@ -348,6 +348,11 @@
       if (!session) return null;
       var sessionId = String(session.id || '').trim();
       if (dismissedChats[sessionId]) return null;
+      if (session.session_type === 'plugin') return null;
+      // A chat with no backend record yet (first Send in flight, or a local
+      // draft) carries no project_id: sessions.create binds it to the Workspace
+      // folder's project, so its project is unknown here, not General.
+      if (session.optimistic_local === true && !String(session.project_id || '').trim()) return null;
       if (projectRootState(String(session.project_id || '').trim()) !== 'unbound') return null;
       var rootPath = workspaceRootPath();
       var idle = isSessionIdle(session) && adoptInFlight !== sessionId;
@@ -394,7 +399,9 @@
     function render() {
       if (disposalFence.isDisposed()) return;
       renderProjectPill();
-      if (!isFeatureEnabled()) {
+      // Boot seed: the root state is not authoritative until the feature
+      // payload lands, so no chip mounts (and flashes) before hydration.
+      if (state && state.features && state.features.availabilityResolved === false) {
         removeExistingChip();
         return;
       }
@@ -562,12 +569,18 @@
       render();
     }
 
+    function handleSidebarRendered() {
+      if (disposalFence.isDisposed()) return;
+      renderProjectPill();
+    }
+
     function bind() {
       if (disposalFence.isDisposed() || !documentRef || typeof documentRef.addEventListener !== 'function') {
         return;
       }
       documentRef.addEventListener('click', handleClick);
       documentRef.addEventListener('composer-state-rendered', handleComposerRendered);
+      documentRef.addEventListener('sidebar-rendered', handleSidebarRendered, true);
     }
 
     function dispose() {
@@ -575,6 +588,7 @@
       if (documentRef && typeof documentRef.removeEventListener === 'function') {
         documentRef.removeEventListener('click', handleClick);
         documentRef.removeEventListener('composer-state-rendered', handleComposerRendered);
+        documentRef.removeEventListener('sidebar-rendered', handleSidebarRendered, true);
       }
       if (typeof unsubscribeProjects === 'function') unsubscribeProjects();
       unsubscribeProjects = null;
@@ -588,7 +602,6 @@
       bind: bind,
       dispose: dispose,
       render: render,
-      isFeatureEnabled: isFeatureEnabled,
       isWorkspaceRootConfigured: isWorkspaceRootConfigured,
     };
   }

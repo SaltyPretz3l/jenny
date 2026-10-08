@@ -69,14 +69,7 @@
     ? eventOwnership.ownsMapKeyboardEvent
     : () => true;
 
-  function defaultEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function bridgeUnavailable() {
     return { ok: false, available: false, reason: 'bridge_unavailable' };

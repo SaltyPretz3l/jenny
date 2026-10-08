@@ -20,6 +20,19 @@ const { workspaceRootId } = require('../services/workspace-root-identity');
 
 const TEST_WORKSPACE_ROOT = 'C:/dev/workspace-ide-config-test';
 
+test('tab normalization keeps preview and positive integer view lines only', () => {
+  const value = normalizeWorkspaceIde({ openTabs: [
+    { path: 'preview.js', preview: true, line: 12, top: 8 },
+    { path: 'bad.js', preview: 'true', line: 1.5, top: 0 },
+    { path: 'plain.js', preview: false, line: -1, top: '4' },
+  ] });
+  assert.deepEqual(value.openTabs, [
+    { path: 'preview.js', pinned: false, preview: true, line: 12, top: 8 },
+    { path: 'bad.js', pinned: false },
+    { path: 'plain.js', pinned: false },
+  ]);
+});
+
 function ideState(state) {
   return workspaceIdeStateForRoot(
     state.workspaceIde,
@@ -143,7 +156,7 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
     bottomPanelHeight: 220,
     bottomPanelActiveView: 'terminal',
     secondaryPanelOpen: false,
-    secondaryPanel: 'changes',
+    secondaryPanel: 'source-control',
     secondaryWidth: 260,
     chatDockOpen: false,
     chatDockSide: 'right',
@@ -151,7 +164,6 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
     panelLocations: {
       explorer: 'primary',
       search: 'primary',
-      changes: 'secondary',
       'source-control': 'secondary',
     },
     showGenerated: false,
@@ -168,6 +180,7 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
     trimTrailingWhitespace: false,
     insertFinalNewline: false,
     rulers: [],
+    workbenchLayout: null,
   });
   // save-time hygiene: all DEFAULT-OFF (only a literal true enables).
   for (const key of ['formatOnSave', 'trimTrailingWhitespace', 'insertFinalNewline']) {
@@ -210,12 +223,12 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
   assert.equal(normalizeWorkspaceIde({ bottomPanelActiveView: 'test-runner' }).bottomPanelActiveView, 'test-runner');
   assert.equal(normalizeWorkspaceIde({ bottomPanelActiveView: 'bogus' }).bottomPanelActiveView, 'terminal');
   // secondary sidebar: secondaryPanel is the ACTIVE panel among the secondary-
-  // located ids, cross-validated against panelLocations. By default Changes +
-  // Source Control home there, so an explicit secondaryPanelOpen:true sticks, and
-  // an active id that isn't secondary-located recomputes to the first secondary
-  // panel ('changes').
+  // located ids, cross-validated against panelLocations. By default Source
+  // Control homes there, so an explicit secondaryPanelOpen:true sticks, and an
+  // active id that isn't secondary-located recomputes to the first secondary
+  // panel ('source-control').
   assert.equal(normalizeWorkspaceIde({ secondaryPanelOpen: true }).secondaryPanelOpen, true);
-  assert.equal(normalizeWorkspaceIde({ secondaryPanel: 'explorer' }).secondaryPanel, 'changes');
+  assert.equal(normalizeWorkspaceIde({ secondaryPanel: 'explorer' }).secondaryPanel, 'source-control');
   // With the panel located secondary, the active id + open flag carry through.
   const located = normalizeWorkspaceIde({
     panelLocations: { search: 'secondary' },
@@ -228,24 +241,24 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
   // An active id that isn't located secondary recomputes to the first secondary
   // panel; a railPanel pushed into the secondary recomputes to a primary id.
   const drift = normalizeWorkspaceIde({
-    panelLocations: { changes: 'secondary' },
+    panelLocations: { 'source-control': 'secondary' },
     secondaryPanel: 'explorer',
     secondaryPanelOpen: true,
-    railPanel: 'changes',
+    railPanel: 'source-control',
   });
-  assert.equal(drift.secondaryPanel, 'changes');
+  assert.equal(drift.secondaryPanel, 'source-control');
   assert.equal(drift.railPanel, 'explorer');
-  // panelLocations: full 4-key map; unknown keys dropped; an ABSENT or invalid
-  // value falls to that panel's default home (Explorer/Search primary, Changes/
-  // Source Control secondary); never all-secondary (the rail keeps >=1 panel).
+  // panelLocations: full 3-key map; unknown keys dropped; an ABSENT or invalid
+  // value falls to that panel's default home (Explorer/Search primary, Source
+  // Control secondary); never all-secondary (the rail keeps >=1 panel).
   assert.deepEqual(normalizeWorkspaceIde({ panelLocations: { bogus: 'secondary', terminal: 'secondary' } }).panelLocations, {
-    explorer: 'primary', search: 'primary', changes: 'secondary', 'source-control': 'secondary',
+    explorer: 'primary', search: 'primary', 'source-control': 'secondary',
   });
   assert.equal(normalizeWorkspaceIde({ panelLocations: { search: 'sideways' } }).panelLocations.search, 'primary');
   assert.equal(normalizeWorkspaceIde({ panelLocations: 'nope' }).panelLocations.explorer, 'primary');
   assert.equal(
     normalizeWorkspaceIde({
-      panelLocations: { explorer: 'secondary', search: 'secondary', changes: 'secondary', 'source-control': 'secondary' },
+      panelLocations: { explorer: 'secondary', search: 'secondary', 'source-control': 'secondary' },
     }).panelLocations.explorer,
     'primary'
   );
@@ -258,6 +271,8 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
   // 'terminal'/'problems' are no longer valid rail panels (re-homed to the bottom panel).
   assert.equal(normalizeWorkspaceIde({ railPanel: 'terminal' }).railPanel, 'explorer');
   assert.equal(normalizeWorkspaceIde({ railPanel: 'problems' }).railPanel, 'explorer');
+  // 'changes' left the rail in row 34 S5 (no CONFIG_VERSION bump): it coerces too.
+  assert.equal(normalizeWorkspaceIde({ railPanel: 'changes' }).railPanel, 'explorer');
   // source-control is a valid rail panel, but it now homes to the secondary side
   // by default — locate it primary to make it the active rail panel.
   assert.equal(
@@ -470,18 +485,18 @@ test('v26 -> v27 migration fills secondary-sidebar defaults while preserving tab
   assert.equal(ideState(migrated).bottomPanelOpen, true);
   assert.equal(ideState(migrated).bottomPanelHeight, 300);
   assert.equal(ideState(migrated).bottomPanelActiveView, 'problems');
-  // New secondary-sidebar defaults arrive: Changes + Source Control home to the
-  // secondary side (the split default), which stays collapsed; the active
-  // secondary tab resolves to the first secondary panel ('changes').
+  // New secondary-sidebar defaults arrive: Source Control homes to the secondary
+  // side (the split default), which stays collapsed; the active secondary tab
+  // resolves to the first secondary panel ('source-control').
   assert.equal(ideState(migrated).secondaryPanelOpen, false);
-  assert.equal(ideState(migrated).secondaryPanel, 'changes');
+  assert.equal(ideState(migrated).secondaryPanel, 'source-control');
   assert.equal(ideState(migrated).secondaryWidth, 260);
   assert.deepEqual(ideState(migrated).panelLocations, {
-    explorer: 'primary', search: 'primary', changes: 'secondary', 'source-control': 'secondary',
+    explorer: 'primary', search: 'primary', 'source-control': 'secondary',
   });
 });
 
-test('v27 -> v28 migration adds panelLocations (split default; Changes/Source Control secondary)', () => {
+test('v27 -> v28 migration adds panelLocations (split default; Source Control secondary)', () => {
   const persisted = {
     version: 27, // pre-Move-View payload: secondaryPanel pinned a CLONE, not a location
     toolsWorkspaceRoot: TEST_WORKSPACE_ROOT,
@@ -504,14 +519,14 @@ test('v27 -> v28 migration adds panelLocations (split default; Changes/Source Co
   assert.deepEqual(ideState(migrated).openTabs, [{ path: 'src/index.js', pinned: false }]);
   assert.equal(ideState(migrated).railPanel, 'explorer');
   assert.equal(ideState(migrated).secondaryWidth, 300);
-  // panelLocations defaults to the split (Changes + Source Control secondary).
-  // The old v27 clone fields are still not a location source, but since 'changes'
-  // now homes secondary by default, the persisted secondaryPanel:'changes' + open
-  // flag land on a populated secondary side (active 'changes', open).
+  // panelLocations defaults to the split (Source Control secondary). The old v27
+  // clone fields are still not a location source; the persisted (now retired)
+  // secondaryPanel:'changes' recomputes to the first secondary panel, and the open
+  // flag lands on that populated secondary side (active 'source-control', open).
   assert.deepEqual(ideState(migrated).panelLocations, {
-    explorer: 'primary', search: 'primary', changes: 'secondary', 'source-control': 'secondary',
+    explorer: 'primary', search: 'primary', 'source-control': 'secondary',
   });
-  assert.equal(ideState(migrated).secondaryPanel, 'changes');
+  assert.equal(ideState(migrated).secondaryPanel, 'source-control');
   assert.equal(ideState(migrated).secondaryPanelOpen, true);
 });
 
@@ -524,19 +539,19 @@ test('v28 -> v29 migration preserves prior IDE state', () => {
       openTabs: [{ path: 'src/index.js' }],
       activeTabPath: 'src/index.js',
       expandedDirs: ['src'],
-      railPanel: 'changes',
+      railPanel: 'source-control',
       railSide: 'right',
       railWidth: 340,
       wordWrap: 'on',
       fontSize: 16,
-      panelLocations: { explorer: 'primary', search: 'secondary', changes: 'primary', 'source-control': 'primary' },
+      panelLocations: { explorer: 'primary', search: 'secondary', 'source-control': 'primary' },
     },
   };
   const migrated = normalizeState(persisted);
   assert.equal(migrated.version, CONFIG_VERSION);
   // Tabs / rail / editor prefs / panel locations survive the bump.
   assert.deepEqual(ideState(migrated).openTabs, [{ path: 'src/index.js', pinned: false }]);
-  assert.equal(ideState(migrated).railPanel, 'changes');
+  assert.equal(ideState(migrated).railPanel, 'source-control');
   assert.equal(ideState(migrated).fontSize, 16);
   assert.equal(ideState(migrated).panelLocations.search, 'secondary');
   // The v29 inline-autocomplete keys no longer exist (removed 2026-10-01).
@@ -631,8 +646,10 @@ test('v31 -> v32 migration persists pinned tabs while preserving prior IDE state
 test('v34 -> v35 migration flips a prior-default rail to the split, preserving customized layouts', () => {
   // A v34 profile sitting on the PRIOR default (rail right + all four panels
   // primary) adopts the new split: Explorer + Search stay primary (left rail),
-  // Changes + Source Control move to the secondary sidebar (right, collapsed),
-  // with the active secondary tab = 'changes'. Tabs / editor prefs ride along.
+  // Source Control moves to the secondary sidebar (right, collapsed), with the
+  // active secondary tab = 'source-control'. The retired 'changes' id the v35
+  // literal still names is dropped by the whitelist (row 34 S5). Tabs / editor
+  // prefs ride along.
   const priorDefault = normalizeState({
     version: 34,
     toolsWorkspaceRoot: TEST_WORKSPACE_ROOT,
@@ -653,9 +670,9 @@ test('v34 -> v35 migration flips a prior-default rail to the split, preserving c
   assert.equal(priorDefault.version, CONFIG_VERSION);
   assert.equal(ideState(priorDefault).railSide, 'left');
   assert.deepEqual(ideState(priorDefault).panelLocations, {
-    explorer: 'primary', search: 'primary', changes: 'secondary', 'source-control': 'secondary',
+    explorer: 'primary', search: 'primary', 'source-control': 'secondary',
   });
-  assert.equal(ideState(priorDefault).secondaryPanel, 'changes');
+  assert.equal(ideState(priorDefault).secondaryPanel, 'source-control');
   assert.equal(ideState(priorDefault).secondaryPanelOpen, false);
   // Non-layout state survives the flip.
   assert.deepEqual(ideState(priorDefault).openTabs, [{ path: 'src/index.js', pinned: false }]);
@@ -678,7 +695,8 @@ test('v34 -> v35 migration flips a prior-default rail to the split, preserving c
   });
   assert.equal(ideState(movedPanel).railSide, 'right');
   assert.equal(ideState(movedPanel).panelLocations.search, 'secondary');
-  assert.equal(ideState(movedPanel).panelLocations.changes, 'primary');
+  assert.equal(ideState(movedPanel).panelLocations['source-control'], 'primary');
+  assert.equal('changes' in ideState(movedPanel).panelLocations, false);
 
   const flippedLeft = normalizeState({
     version: 34,
@@ -692,14 +710,61 @@ test('v34 -> v35 migration flips a prior-default rail to the split, preserving c
   });
   assert.equal(ideState(flippedLeft).railSide, 'left');
   assert.deepEqual(ideState(flippedLeft).panelLocations, {
-    explorer: 'primary', search: 'primary', changes: 'primary', 'source-control': 'primary',
+    explorer: 'primary', search: 'primary', 'source-control': 'primary',
   });
 
   // Idempotent: the flipped (now v35) slice re-normalizes to itself.
   const reRun = normalizeState(serializeState(priorDefault));
   assert.equal(ideState(reRun).railSide, 'left');
   assert.deepEqual(ideState(reRun).panelLocations, ideState(priorDefault).panelLocations);
-  assert.equal(ideState(reRun).secondaryPanel, 'changes');
+  assert.equal(ideState(reRun).secondaryPanel, 'source-control');
+});
+
+test('a persisted pre-S5 slice naming the retired Changes panel coerces on read (no CONFIG_VERSION bump)', () => {
+  // Row 34 S5 moved Jenny's Changes to the chat dock; the rail whitelist drops
+  // 'changes' and the existing normalization coerces a stale id on every read.
+  const legacy = normalizeWorkspaceIde({
+    railPanel: 'changes',
+    secondaryPanel: 'changes',
+    secondaryPanelOpen: true,
+    panelLocations: { explorer: 'primary', search: 'primary', changes: 'secondary', 'source-control': 'secondary' },
+  });
+  assert.equal(legacy.railPanel, 'explorer');
+  assert.equal(legacy.secondaryPanel, 'source-control');
+  assert.equal(legacy.secondaryPanelOpen, true);
+  assert.deepEqual(legacy.panelLocations, {
+    explorer: 'primary', search: 'primary', 'source-control': 'secondary',
+  });
+  assert.equal('changes' in legacy.panelLocations, false);
+
+  // `changes` was the ONLY secondary panel: the secondary side empties and closes.
+  const lone = normalizeWorkspaceIde({
+    railPanel: 'search',
+    secondaryPanel: 'changes',
+    secondaryPanelOpen: true,
+    panelLocations: { explorer: 'primary', search: 'primary', changes: 'secondary', 'source-control': 'primary' },
+  });
+  assert.equal(lone.railPanel, 'search');
+  assert.equal(lone.secondaryPanel, '');
+  assert.equal(lone.secondaryPanelOpen, false);
+  assert.equal('changes' in lone.panelLocations, false);
+
+  // The same coercion holds through a full current-version state read.
+  const state = normalizeState({
+    version: CONFIG_VERSION,
+    toolsWorkspaceRoot: TEST_WORKSPACE_ROOT,
+    workspaceIde: {
+      railPanel: 'changes',
+      secondaryPanel: 'changes',
+      secondaryPanelOpen: true,
+      panelLocations: { explorer: 'primary', search: 'primary', changes: 'secondary', 'source-control': 'secondary' },
+    },
+  });
+  assert.equal(state.version, CONFIG_VERSION);
+  assert.equal(ideState(state).railPanel, 'explorer');
+  assert.equal(ideState(state).secondaryPanel, 'source-control');
+  assert.equal(ideState(state).secondaryPanelOpen, true);
+  assert.equal('changes' in ideState(state).panelLocations, false);
 });
 
 test('normalizeWorkspaceIde keeps pinned tabs and defaults a bare tab to unpinned', () => {

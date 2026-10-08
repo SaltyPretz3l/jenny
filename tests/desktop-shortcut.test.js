@@ -58,15 +58,6 @@ test('desktop shortcut options omit dot-args for packaged app launches', () => {
   assert.equal(details.icon, execPath);
 });
 
-test('development desktop launcher enables the bounded subagent batch gate', () => {
-  const launcher = fs.readFileSync(
-    path.resolve(__dirname, '..', 'scripts', 'dev', 'launch-jenny-dev.ps1'),
-    'utf8'
-  );
-
-  assert.match(launcher, /\$env:JENNY_ENABLE_SUBAGENT_BATCH\s*=\s*'1'/);
-});
-
 test('desktop shortcut repair creates or overwrites the Windows desktop shortcut', () => {
   const calls = [];
   const entries = [];

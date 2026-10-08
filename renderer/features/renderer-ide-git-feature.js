@@ -55,9 +55,7 @@
     const confirmDialog = options.confirmDialog || null;
     const escapeHtml = typeof options.escapeHtml === 'function'
       ? options.escapeHtml
-      : (value) => String(value == null ? '' : value)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     // Inventory primitives are resolved here so the controller doesn't have to
     // thread them through (it has no headroom). Injectable for tests.
     const actionButtonResolved = resolveModule('inventoryActionButton', '../inventory/action-button');
@@ -155,7 +153,7 @@
       const label = jt('ide.git.vsHeadLabel', '{file} (vs HEAD)', { file: fileNameOf(normalized) });
       await editorHost.openDiffDocument({ id, label, languagePath: normalized, original: headContent, modified });
       ideStateUtils.openDiffTab?.(getIde(), { id, label });
-      editorHost.activateDocument(id);
+      (options.showDiffTab || ((tabId) => editorHost.activateDocument(tabId)))(id);
       renderTabs();
       return true;
     }
@@ -175,11 +173,11 @@
       const untracked = store.getDecoration?.(normalized) === 'untracked';
       const approved = confirmDialog && typeof confirmDialog.confirm === 'function'
         ? await confirmDialog.confirm({
-          title: jt('ide.git.discardChangesTitle', 'Discard changes?'),
+          title: untracked ? jt('ide.git.discardNewFileTitle', 'Discard this new file?') : jt('ide.git.discardEditsTitle', 'Discard all edits since the last commit?'),
           message: untracked
             ? (dirty ? jt('ide.git.discardUntrackedDirtyMessage', 'Discard "{file}"? It was never committed, so the file is moved to the recycle bin and unsaved editor changes are lost.', { file: fileNameOf(normalized) }) : jt('ide.git.discardUntrackedMessage', 'Discard "{file}"? It was never committed, so the file is moved to the recycle bin.', { file: fileNameOf(normalized) }))
             : (dirty ? jt('ide.git.discardDirtyMessage', 'Discard changes to "{file}"? Unsaved editor changes will also be lost. This cannot be undone.', { file: fileNameOf(normalized) }) : jt('ide.git.discardMessage', 'Discard changes to "{file}"? This restores the last committed version and cannot be undone.', { file: fileNameOf(normalized) })),
-          confirmLabel: jt('ide.git.discardChanges', 'Discard Changes'),
+          confirmLabel: jt('ide.git.discardEdits', 'Discard edits'),
           cancelLabel: jt('ide.git.keepEditing', 'Keep Editing'),
           variant: 'danger',
         })
@@ -351,7 +349,7 @@
       // (the unified diff text is itself a diff, so a two-pane editor is wrong).
       await editorHost.openDiffDocument({ id, label, placeholderText: body });
       ideStateUtils.openDiffTab?.(getIde(), { id, label });
-      editorHost.activateDocument(id);
+      (options.showDiffTab || ((tabId) => editorHost.activateDocument(tabId)))(id);
       renderTabs();
       return { opened: true };
     }
@@ -394,6 +392,9 @@
       onDiscard: (path) => confirmDiscard(path),
       onDelete: (path) => deleteUntracked(path),
       onOpenDiff: (path) => openHeadCompare(path),
+      // Jenny marker on rows (row 40 W6): both optional, supplied by the controller.
+      getJennyChange: options.getJennyChange,
+      onOpenJennyChange: options.onOpenJennyChange,
       onCommit: (message) => store && store.commit({ message }),
       onGetDiff: () => getStagedDiff(),
       onWriteMessage: (diff) => generateCommitMessage(diff),
@@ -463,8 +464,13 @@
         : Promise.resolve();
     }
 
-    // Switch the rail to the Source Control panel (statusbar branch-chip click).
+    // Reveal the Git view wherever it lives (statusbar branch-chip click). The
+    // controller injects showPanel (the workbench); the fallback keeps the old rail switch.
     function openPanel() {
+      if (typeof deps?.showPanel === 'function') {
+        deps.showPanel('source-control');
+        return;
+      }
       const ide = getIde();
       if (ide.railPanel !== 'source-control') {
         ide.railPanel = 'source-control';
@@ -505,6 +511,8 @@
       openPanel,
       bindEvents,
       renderPanel: () => { panel && panel.renderSourceControlPanel(); },
+      // Re-render so the Jenny markers follow ledger changes (no-op when unmounted).
+      refreshJennyMarkers: () => { panel && panel.renderSourceControlPanel(); },
       dispose() {
         if (unsubscribe) {
           unsubscribe();

@@ -154,12 +154,7 @@
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const escapeHtml = typeof deps?.escapeHtml === 'function'
       ? deps.escapeHtml
-      : (value) => String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     const windowRef = deps?.windowRef || globalRef.window || globalRef;
     const confirmDialog = deps?.confirmDialog || null;
     const appendClientLog = typeof deps?.appendClientLog === 'function' ? deps.appendClientLog : noop;

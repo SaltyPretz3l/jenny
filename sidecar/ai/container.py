@@ -6,7 +6,7 @@ import logging
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator, cast
+from typing import TYPE_CHECKING, Any, Callable, Iterator
 
 from sidecar.ai.config import (
     RuntimeConfig,
@@ -391,8 +391,6 @@ def _apply_generation_profile(
 
 _BRAIN_CONTAINER_REQUEST_BOUNDARY_ALLOWED_ATTRS: frozenset[str] = frozenset(
     {
-        "_plugin_runtime_apply_stage8",
-        "_plugin_runtime_registry",
         "_host_policy_enforced",
         "_desktop_execution_policy_enforced",
         "_desktop_execution_policy_invalid",
@@ -402,18 +400,6 @@ _BRAIN_CONTAINER_REQUEST_BOUNDARY_ALLOWED_ATTRS: frozenset[str] = frozenset(
         "_subprocess_manager",
     }
 )
-
-
-class _CorePluginRuntimeAdmission:
-    mode = "core_only"
-
-    @contextmanager
-    def bind(self) -> Iterator[None]:
-        yield None
-
-    @staticmethod
-    def release() -> None:
-        return None
 
 
 class BrainContainer:
@@ -429,113 +415,7 @@ class BrainContainer:
         self._desktop_execution_policy_invalid = False
         self._desktop_execution_policy_latched = False
         self._subprocess_manager = subprocess_manager
-        # Deliberately untyped and lazy: ordinary startup/full initialize never
-        # imports sidecar.ai.plugins. The explicit Stage-4 plugin-only initialize
-        # or a plugin-authority chat is the only path that constructs it.
-        self._plugin_runtime_registry: Any | None = None
-        self._plugin_runtime_apply_stage8: Any | None = None
         # The stack remains lazy so initialize builds heavy resources exactly once.
-
-    def _plugin_registry(self) -> Any:
-        registry = self._plugin_runtime_registry
-        if registry is None:
-            from sidecar.ai.plugins.runtime_registry import PluginRuntimeRegistry
-
-            registry = PluginRuntimeRegistry(event_sink=self._emit_plugin_runtime_event)
-            self._plugin_runtime_registry = registry
-        return registry
-
-    @staticmethod
-    def _emit_plugin_runtime_event(event: str, data: dict[str, object]) -> None:
-        log_event(
-            logger,
-            logging.INFO,
-            component="ai.container",
-            event=event,
-            message="Plugin runtime state changed",
-            status="ok",
-            data=data,
-        )
-
-    def _plugin_resource_objects(self) -> dict[str, object]:
-        stack = self.stack
-        return {
-            "engine": stack.engine,
-            # RuntimeConfig is the immutable model-selection owner for this
-            # BrainStack; proving its identity complements the engine proof.
-            "model": stack.config,
-            "memory": stack.memory_store,
-            "mcp": stack.mcp_client,
-            "monitor": stack.monitor_manager,
-            "tool": stack.router,
-        }
-
-    def apply_plugin_runtime(
-        self,
-        *,
-        snapshot: object,
-        declarative_content: object,
-        operation: str = "apply",
-    ) -> dict[str, object]:
-        from sidecar.ai.plugins.runtime_apply import apply_plugin_runtime, build_plugin_runtime
-
-        runtime_version = snapshot.get("runtime_schema_version", 1) \
-            if isinstance(snapshot, dict) else 1
-        if runtime_version == 6:  # noqa: PLR2004 - persisted runtime schema dispatch.
-            from sidecar.ai.plugins.runtime_apply_stage8 import PluginRuntimeApplyStage8
-
-            stage8 = self._plugin_runtime_apply_stage8
-            if stage8 is None:
-                stage8 = PluginRuntimeApplyStage8(self._plugin_registry())
-                self._plugin_runtime_apply_stage8 = stage8
-            generation = build_plugin_runtime(
-                snapshot=snapshot,
-                declarative_content=declarative_content,
-                resource_provider=self._plugin_resource_objects,
-            )
-            generation_id = generation.authority.active_generation_id
-            if operation == "prepare":
-                prepared = stage8.prepare(generation)
-                return cast(dict[str, object], prepared["attestation"])
-            if operation == "commit":
-                outcome = stage8.commit(generation_id)
-            elif operation == "abort":
-                outcome = stage8.abort(generation_id)
-                return {"status": "aborted", "active_generation_id": generation_id}
-            elif operation == "reconcile":
-                outcome = stage8.reconcile(generation)
-            else:
-                raise ValueError("runtime_v6_operation_invalid")
-            if outcome.get("ok") is not True:
-                raise ValueError(str(outcome.get("reason") or "runtime_apply_failed"))
-            return cast(dict[str, object], outcome["attestation"])
-
-        publication = apply_plugin_runtime(
-            self._plugin_registry(),
-            snapshot=snapshot,
-            declarative_content=declarative_content,
-            resource_provider=self._plugin_resource_objects,
-        )
-        return publication.attestation
-
-    def admit_plugin_runtime(self, raw_authority: object | None) -> Any:
-        if raw_authority is None or raw_authority == {"mode": "core_only"}:
-            return _CorePluginRuntimeAdmission()
-        from sidecar.ai.plugins.runtime_registry import admit_plugin_runtime
-
-        return admit_plugin_runtime(self._plugin_registry(), raw_authority)
-
-    def _plugin_runtime_overlay_provider(self) -> tuple[str, ...]:
-        registry = self._plugin_runtime_registry
-        if registry is None:
-            return ()
-        return tuple(registry.build_turn_overlays())
-
-    def _plugin_runtime_tool_provider(self) -> tuple[object, ...]:
-        registry = self._plugin_runtime_registry
-        if registry is None:
-            return ()
-        return tuple(registry.build_turn_tool_descriptors())
 
     def assert_request_boundary(
         self,
@@ -599,6 +479,7 @@ class BrainContainer:
         *,
         secrets: dict[str, Any] | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        load_failure_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> BrainStack:
         # Split HERE, not only at the initialize seam: headless
         # (`runtime/headless.py`) hands `configure` a config a user may have
@@ -626,6 +507,11 @@ class BrainContainer:
             )
         )
         staged.callback(_close_candidate_engine, engine_selection.engine)
+        set_load_failure_listener = getattr(
+            engine_selection.engine, "set_load_failure_listener", None,
+        )
+        if callable(set_load_failure_listener):
+            set_load_failure_listener(load_failure_callback)
         turn_diagnostics = TurnDiagnosticsStore()
         if hasattr(engine_selection.engine, "set_turn_diagnostics_store"):
             engine_selection.engine.set_turn_diagnostics_store(turn_diagnostics)
@@ -716,7 +602,6 @@ class BrainContainer:
                 effective_config.feature_flags or {},
                 FEATURE_SKILLS_SYSTEM,
             ),
-            runtime_overlay_provider=self._plugin_runtime_overlay_provider,
         )
 
         mcp_client = MCPClient(
@@ -752,7 +637,6 @@ class BrainContainer:
             memory_store=memory_service,
             harness_snapshot_provider=None,
             monitor_manager=monitor_manager,
-            plugin_runtime_tool_provider=self._plugin_runtime_tool_provider,
         )
         harness_snapshot_builder = HarnessSnapshotBuilder(
             config=effective_config,
@@ -793,6 +677,7 @@ class BrainContainer:
         *,
         secrets: dict[str, Any] | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        load_failure_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> BrainStack:
         """Build and publish a new stack.
 
@@ -809,6 +694,7 @@ class BrainContainer:
                 staged,
                 secrets=secrets,
                 progress_callback=progress_callback,
+                load_failure_callback=load_failure_callback,
             )
             # Publish process defaults only after every candidate resource and
             # dependency has initialized successfully. Active leased turns bind

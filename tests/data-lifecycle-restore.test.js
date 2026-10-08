@@ -71,7 +71,45 @@ async function createPlainArchive(root, createdAt = new Date('2026-08-03T00:00:0
   return { destinationRoot, archivePath: result.archivePath };
 }
 
+async function createNotesArchive(root) {
+  const destinationRoot = path.join(root, 'Jenny Archives');
+  const noteBytes = Buffer.from(JSON.stringify({ version: 1, projectId: 'project_abc', text: 'kept', revision: 1, updatedAt: '', updatedBy: 'user', journal: [] }));
+  const result = await createArchive({
+    destinationRoot,
+    encrypted: false,
+    createdAt: new Date('2026-08-03T00:00:00.000Z'),
+    entries: [
+      { logicalPath: 'notes/project_abc.json', category: 'memory', data: noteBytes },
+      // Not a project id: skipped, never written anywhere.
+      { logicalPath: 'notes/nope.json', category: 'memory', data: noteBytes },
+      // Nested under notes/: skipped.
+      { logicalPath: 'notes/deeper/project_abc.json', category: 'memory', data: noteBytes },
+    ],
+  });
+  return { destinationRoot, archivePath: result.archivePath };
+}
+
 describe('restore service', () => {
+  it('restores per-project notes into project-notes/ and skips entries that are not note files', async () => {
+    const root = makeTempRoot();
+    try {
+      const userDataPath = path.join(root, 'profile');
+      fs.mkdirSync(userDataPath);
+      const { archivePath } = await createNotesArchive(root);
+      const staged = await stageRestore({ archivePath, userDataPath });
+      assert.equal(staged.ok, true, JSON.stringify(staged));
+      const promoted = await promotePendingRestore({ userDataPath });
+      assert.equal(promoted.ok, true, JSON.stringify(promoted));
+      const restored = path.join(userDataPath, 'project-notes', 'project_abc.json');
+      assert.equal(JSON.parse(fs.readFileSync(restored, 'utf8')).text, 'kept');
+      assert.equal(fs.existsSync(path.join(userDataPath, 'project-notes', 'nope.json')), false);
+      assert.equal(fs.existsSync(path.join(userDataPath, 'project-notes', 'deeper')), false);
+      assert.equal(fs.existsSync(path.join(userDataPath, 'notes')), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('stages, promotes, and finalizes a fresh-profile archive restore', async () => {
     const root = makeTempRoot();
     try {

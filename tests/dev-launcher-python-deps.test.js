@@ -13,10 +13,14 @@ const DEPS_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'dev', 'jenny-dev-d
 const SKIP = process.platform === 'win32' ? false : 'Windows PowerShell only';
 
 function runPowerShell(script, env) {
+  const childEnv = { ...process.env, ...env };
+  // A Node child of PowerShell 7 inherits its module path. Windows PowerShell
+  // must discover its own Utility module (including Get-FileHash).
+  delete childEnv.PSModulePath;
   const result = spawnSync(
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-    { encoding: 'utf8', windowsHide: true, env: { ...process.env, ...env }, timeout: 60000 }
+    { encoding: 'utf8', windowsHide: true, env: childEnv, timeout: 60000 }
   );
   assert.equal(result.status, 0, `powershell failed: ${result.stderr || result.stdout}`);
   return result.stdout.trim();
@@ -39,6 +43,7 @@ test('Python dependency fingerprint and stamp checks follow their inputs', { ski
   fs.writeFileSync(path.join(stampDir, 'empty.json'), '');
 
   const script = [
+    `Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility') -ErrorAction Stop`,
     `. ($env:JENNY_TEST_DEPS_SCRIPT)`,
     `$a = $env:JENNY_TEST_REPO_A`,
     `$b = $env:JENNY_TEST_REPO_B`,
@@ -70,6 +75,7 @@ test('Python dependency fingerprint and stamp checks follow their inputs', { ski
     `  noFingerprintProperty = [bool](Test-JennyDepsStampCurrent -StampPath (Join-Path $s 'no-fingerprint.json') -Fingerprint $fpA)`,
     `  emptyFile = [bool](Test-JennyDepsStampCurrent -StampPath (Join-Path $s 'empty.json') -Fingerprint $fpA)`,
     `  nullFingerprint = [bool](Test-JennyDepsStampCurrent -StampPath $stamp -Fingerprint $null)`,
+    `  errors = @($Error | ForEach-Object { $_.ToString() })`,
     `}`,
     `ConvertTo-Json -InputObject $out -Compress`,
   ].join('\n');
@@ -84,7 +90,7 @@ test('Python dependency fingerprint and stamp checks follow their inputs', { ski
     })
   );
 
-  assert.match(result.fpA, /^[0-9A-F]{64}\|Python 3\.11\.9$/);
+  assert.match(result.fpA || '', /^[0-9A-F]{64}\|Python 3\.11\.9$/, JSON.stringify(result));
   assert.equal(result.same, true, 'fingerprint is deterministic');
   assert.equal(result.trimmed, true, 'trailing whitespace on the version is ignored');
   assert.equal(result.contentChanged, true, 'pyproject.toml content changes the fingerprint');

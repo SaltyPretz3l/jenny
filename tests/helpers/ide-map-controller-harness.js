@@ -252,7 +252,6 @@ function makeController(hostEl, extra = {}) {
   return createIdeMapController({
     getDom: () => ({ ideMapHost: hostEl }),
     getIde: () => makeIde(),
-    getFeatureFlags: () => ({ workspace_file_map: true }),
     getWorkspaceRootContext: () => ({ rootId: 'root_a', generation: 1 }),
     onOpenFile: () => {},
     windowRef: windowStubFor(graphA()),

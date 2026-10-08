@@ -1,9 +1,0 @@
-{
-  "contract": "PluginRestrictedHostHealthV4", "contract_version": 4, "frozen": true,
-  "root": {
-    "type": "object", "required": ["health_schema_version", "process_instance_id", "channel_id", "generation_id", "commit_epoch", "lifecycle_epoch", "state", "observed_at", "active_invocations", "queue_depth", "working_set_bytes", "restart_count", "last_reason_code"], "max_keys": 13, "additional_properties": "reject",
-    "properties": {
-      "health_schema_version": { "type": "const", "value": 4 }, "process_instance_id": { "type": "ref", "ref": "operation_id" }, "channel_id": { "type": "ref", "ref": "operation_id" }, "generation_id": { "type": "ref", "ref": "generation_id" }, "commit_epoch": { "type": "ref", "ref": "commit_epoch" }, "lifecycle_epoch": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }, "state": { "type": "enum", "values": ["spawning", "authenticating", "loading", "inactive_ready", "published", "terminating", "terminated", "quarantined"] }, "observed_at": { "type": "ref", "ref": "iso8601_utc" }, "active_invocations": { "type": "integer", "minimum": 0, "maximum": 4 }, "queue_depth": { "type": "integer", "minimum": 0, "maximum": 16 }, "working_set_bytes": { "type": "integer", "minimum": 0, "maximum": 134217728 }, "restart_count": { "type": "integer", "minimum": 0, "maximum": 3 }, "last_reason_code": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$", "max_utf8_bytes": 64 }
-    }
-  }
-}

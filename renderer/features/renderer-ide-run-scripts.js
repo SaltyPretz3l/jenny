@@ -119,12 +119,7 @@
     const isActivePanel = typeof options.isActivePanel === 'function' ? options.isActivePanel : () => false;
     const escapeHtml = typeof options.escapeHtml === 'function'
       ? options.escapeHtml
-      : (value) => String(value == null ? '' : value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     const editorHost = options.editorHost || null;
     const getWorkspaceFsApi = typeof options.getWorkspaceFsApi === 'function' ? options.getWorkspaceFsApi : () => null;
     // Falls back to the real bridge namespace directly so the controller does not
@@ -136,6 +131,9 @@
     // Opens/reveals the bottom panel on the "run" view (controller wires it to
     // bottomPanel.open('run')) so run output is visible there.
     const openRunPanel = typeof options.openRunPanel === 'function' ? options.openRunPanel : noop;
+    // W7c: the terminal bound to the group a run started from, read before the picker takes focus.
+    // Each Run carries its own target from its entry point (a later Run cannot retarget it).
+    const getRunTarget = typeof options.getRunTarget === 'function' ? options.getRunTarget : () => '';
     // Fired on every running-state change so the controller can re-render the
     // statusbar indicator (wired to statusBar.render()).
     const onRunStateChange = typeof options.onRunStateChange === 'function' ? options.onRunStateChange : noop;
@@ -175,10 +173,9 @@
       : { push: (text) => String(text || ''), reset: noop };
     const terminalStreamUtils = resolveModule('rendererTerminalStreamUtils', '../shared/terminal-stream-utils');
 
-    // The run output host is the bottom panel's shared content element (the same
-    // one Terminal + Problems paint into); each guards isActivePanel().
+    // The Run view's own host (row 40 W3: the workbench injects it); guarded by isActivePanel().
     function getMountEl() {
-      return getDom().ideBottomPanelContent || null;
+      return (typeof options.getMountEl === 'function' ? options.getMountEl() : null) || null;
     }
 
     let running = false;
@@ -227,6 +224,14 @@
       onDrop: (stats) => appendClientLog('WARN', 'ide.run.preready_buffer_dropped', stats),
     });
 
+    // F5 exit footer: owns the last finished run's record; Ask Jenny/Run again route out.
+    const taskFooter = resolveModule('rendererIdeRunTaskFooter', './renderer-ide-run-task-footer').createRunTaskFooter?.({
+      actionButton, escapeHtml, isRunning: () => running, now: options.now,
+      getOutput: () => { painter.sync(); return getScrollbackEl()?.textContent || ''; },
+      onRunAgain: (run) => (run.path && editorHost?.isDirty?.(run.path) === true ? saveThenRun(run.path, run.command, run.script) : dispatch(run.command, run.script, run.path)),
+      onAskJenny: typeof options.onAskJenny === 'function' ? options.onAskJenny : noop,
+    }) || { begin: noop, finish: noop, resetForRoot: noop, render: noop, handleClick: () => false, getLastRun: () => null, getRunLabel: () => 'Run' };
+
     function clearStartTimer() {
       if (startTimer) {
         clearTimeout(startTimer);
@@ -253,7 +258,6 @@
       // click handlers separate from the terminal panel sharing this host.
       return '<div class="ide-terminal-panel ide-run-panel">'
         + '<div class="ide-terminal-toolbar">'
-        + '<span class="ide-terminal-title">Run</span>'
         + '<span class="ide-terminal-status" data-ide-run-status></span>'
         + '<span class="ide-terminal-toolbar-actions">'
         + actionButton({
@@ -274,6 +278,7 @@
         + '</span>'
         + '</div>'
         + '<pre class="ide-terminal-scrollback ide-run-scrollback" data-ide-run-scrollback tabindex="0"></pre>'
+        + '<div data-ide-run-footer></div>'
         + '</div>';
     }
 
@@ -344,6 +349,7 @@
       }
       painter.sync(); // collapse any pending frame so the DOM is current
       syncStatus();
+      taskFooter.render(mount.querySelector('[data-ide-run-footer]'));
     }
 
     // A running-state change repaints the run panel (kill/clear toolbar state)
@@ -367,6 +373,7 @@
     }
 
     function finishRun(payload) {
+      taskFooter.finish({ exitCode: payload && !payload.errorCode ? payload.code : null, stopped: payload?.status === 'killed', startFailed: Boolean(payload?.errorCode) });
       running = false;
       activeTaskId = '';
       // The dead process can never finish an escape sequence it left open.
@@ -445,7 +452,7 @@
       }
     }
 
-    async function dispatch(commandString, label) {
+    async function dispatch(commandString, label, filePath = '', target = '') {
       if (disposed) {
         return;
       }
@@ -459,10 +466,11 @@
         return;
       }
       ensureSubscribed();
-      openRunPanel();
+      openRunPanel(target);
       dispatchGeneration += 1;
       const generation = dispatchGeneration;
       resetRunOutput();
+      taskFooter.begin({ script: label, command: commandString, path: filePath });
       appendCleanText('> ' + label + '\n');
       running = true;
       killUnconfirmed = false; // a new run owns the row from here
@@ -478,6 +486,7 @@
           return;
         }
         timedOut = true;
+        taskFooter.finish({ startFailed: true });
         running = false;
         dispatching = false;
         discardPreReadyBuffer(); // a dead dispatch's events must never replay later
@@ -498,6 +507,7 @@
         if (disposed || timedOut || generation !== dispatchGeneration) {
           return;
         }
+        taskFooter.finish({ startFailed: true });
         running = false;
         appendCleanText('\n[run] ' + messageOf(error));
         emitRunStateChange();
@@ -521,6 +531,7 @@
         return;
       }
       if (!result || result.ok === false) {
+        taskFooter.finish({ startFailed: true });
         running = false;
         discardPreReadyBuffer();
       const message = (result && result.message) || jt('ide.runScripts.startFailed', 'Could not start the task.');
@@ -532,6 +543,7 @@
       }
       activeTaskId = String(result.taskId || '');
       if (!activeTaskId) {
+        taskFooter.finish({ startFailed: true });
         running = false;
         discardPreReadyBuffer();
         appendCleanText(jt('ide.runScripts.missingTaskIdOutput', '\n[run] could not start the task (no task id)'));
@@ -581,6 +593,7 @@
           });
       }
       if (running || activeTaskId) {
+        taskFooter.finish({ stopped: true });
         running = false;
         activeTaskId = '';
         ansiStripper.reset();
@@ -600,6 +613,7 @@
     }
 
     function runActiveFile() {
+      const target = getRunTarget();
       const path = editorHost?.getActivePath?.() || '';
       if (!path) {
         return;
@@ -618,10 +632,10 @@
       const label = `${runner} ${baseNameOf(path)}`;
       // The task runs the SAVED file, so persist the visible buffer first. A clean
       // buffer dispatches synchronously, exactly as before.
-      return editorHost?.isDirty?.(path) === true ? saveThenRun(path, command, label) : dispatch(command, label);
+      return editorHost?.isDirty?.(path) === true ? saveThenRun(path, command, label, target) : dispatch(command, label, path, target);
     }
 
-    async function saveThenRun(path, command, label) {
+    async function saveThenRun(path, command, label, target = '') {
       const saved = await Promise.resolve(saveFile(path)).then((ok) => ok === true, () => false);
       if (disposed) {
         return undefined;
@@ -630,15 +644,15 @@
         toast(jt('ide.runScripts.saveBeforeRunFailed', 'Could not save {path}, so it was not run.', { path }));
         return undefined;
       }
-      return dispatch(command, label);
+      return dispatch(command, label, path, target);
     }
 
-    function runScript(name) {
+    function runScript(name, target = '') {
       const scriptName = String(name || '');
       if (!scriptName) {
         return undefined;
       }
-      return dispatch(`npm run ${quoteArg(scriptName, isPosixShell)}`, `npm run ${scriptName}`);
+      return dispatch(`npm run ${quoteArg(scriptName, isPosixShell)}`, `npm run ${scriptName}`, '', target);
     }
 
     // Reads package.json via workspaceFs.readFile and extracts the scripts map.
@@ -687,12 +701,13 @@
     }
 
     async function pickAndRunScript() {
+      const target = getRunTarget();
       const { scripts, error } = await detectScripts();
       if (!scripts.length) {
         toast(scriptUnavailableMessage(error));
         return;
       }
-      openScriptPicker(scripts);
+      openScriptPicker(scripts, target);
     }
 
     /* ---- script picker overlay (clones the quick-open overlay pattern) --- */
@@ -701,6 +716,7 @@
     let pickerInput = null;
     let pickerResults = null;
     let pickerScripts = [];
+    let pickerTarget = '';
     let pickerRows = [];
     let pickerSelected = 0;
 
@@ -777,7 +793,7 @@
       const script = pickerRows[pickerSelected] || pickerRows[0] || null;
       closePicker();
       if (script) {
-        runScript(script.name);
+        runScript(script.name, pickerTarget);
       }
     }
 
@@ -815,7 +831,7 @@
       if (row) {
         const name = row.dataset.ideRunScript || '';
         closePicker();
-        runScript(name);
+        runScript(name, pickerTarget);
         return;
       }
       if (!event.target?.closest?.('.ide-quick-open-panel')) {
@@ -855,8 +871,9 @@
       return pickerEl;
     }
 
-    function openScriptPicker(scripts) {
+    function openScriptPicker(scripts, target = '') {
       pickerScripts = Array.isArray(scripts) ? scripts.slice() : [];
+      pickerTarget = target;
       if (!ensurePicker()) {
         toast(jt('ide.runScripts.pickerUnavailable', 'The script picker is unavailable in this view.'));
         return;
@@ -905,6 +922,9 @@
       if (!isActivePanel()) {
         return;
       }
+      if (taskFooter.handleClick(event)) {
+        return;
+      }
       const action = event.target?.closest?.('[data-ide-run-action]');
       if (!action) {
         return;
@@ -920,7 +940,7 @@
     function bindEvents() {
       ensureSubscribed();
       const mount = getMountEl();
-      // The run view shares #ideBottomPanelContent with Terminal/Problems; binding
+      // The run view owns its host (#wbView-run); binding
       // on the persistent host (not its churned children) keeps the listener alive
       // across innerHTML repaints, and the isActivePanel guard scopes it.
       if (mount && mount !== boundMount) {
@@ -969,12 +989,15 @@
       bindEvents,
       detectScripts,
       dispose,
+      getLastRun: () => taskFooter.getLastRun(),
+      getRunLabel: () => taskFooter.getRunLabel(),
       isRunning,
       kill,
       openScriptPicker,
       pickAndRunScript,
       registerActions,
       renderRunPanel,
+      resetForRoot: () => { taskFooter.resetForRoot(); renderRunPanel(); },
       runActiveFile,
       runScript,
     };

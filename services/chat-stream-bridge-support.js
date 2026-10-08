@@ -6,6 +6,7 @@ const {
 
 const TOOL_CHAT_STREAM_TYPES = new Set(['tool_use', 'tool_result', 'tool_approval_needed', 'tool_approval_withdrawn',
   'user_questions_withdrawn']);
+const TERMINAL_CHAT_STREAM_TYPES = new Set(['complete', 'question_batch', 'plan_proposal', 'error']);
 
 function normalizeEventPayload(event) {
   return event && typeof event === 'object' && !Array.isArray(event) ? { ...event } : {};
@@ -331,32 +332,8 @@ function mergeDeltaPayloads(existing, incoming) {
   return merged;
 }
 
-function isTruthyOption(value) {
-  if (typeof value === 'function') {
-    try {
-      return value() === true;
-    } catch (_error) {
-      return false;
-    }
-  }
-  return value === true;
-}
-
-function normalizeNumber(value) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? Math.trunc(numeric) : null;
-}
-
-function resolveTurnId(payload) {
-  return normalizeToken(payload?.turnId || payload?.turn_id || payload?.requestId || payload?.request_id)
-    || normalizeToken(payload?.streamId);
-}
-
-function resolveEnvelopeIdentity(payload, streamId) {
-  return {
-    requestId: normalizeToken(payload.requestId || payload.request_id || streamId),
-    traceId: normalizeToken(payload.traceId || payload.trace_id || streamId),
-  };
+function isTerminalChatStreamType(type) {
+  return TERMINAL_CHAT_STREAM_TYPES.has(normalizeToken(type));
 }
 
 module.exports = {
@@ -373,8 +350,5 @@ module.exports = {
   buildTerminalContext,
   buildUsageMetadata,
   mergeDeltaPayloads,
-  isTruthyOption,
-  normalizeNumber,
-  resolveTurnId,
-  resolveEnvelopeIdentity,
+  isTerminalChatStreamType,
 };

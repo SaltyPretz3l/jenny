@@ -114,26 +114,6 @@ def test_make_chat_send_worker_sends_terminal_error_when_worker_raises() -> None
     assert response["error"]["data"]["retryable"] is False
 
 
-def test_chat_send_adapter_forwards_prepared_plugin_runtime_admission(monkeypatch) -> None:
-    admission = object()
-    expected_outcome = object()
-    captured: dict[str, object] = {}
-
-    def _capture(**kwargs):
-        captured.update(kwargs)
-        return expected_outcome
-
-    monkeypatch.setattr(server, "runtime_process_chat_send_request", _capture)
-
-    outcome = server._run_chat_send_with_optional_approval(
-        {"jsonrpc": "2.0", "id": 103, "method": "chat.send", "params": {}},
-        plugin_runtime_admission=admission,
-    )
-
-    assert outcome is expected_outcome
-    assert captured["plugin_runtime_admission"] is admission
-
-
 def test_cancel_and_join_live_chat_workers_logs_abandoned(caplog) -> None:
     live = _AliveThread()
     handle = _FakeCancelHandle()

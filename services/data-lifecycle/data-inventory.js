@@ -255,6 +255,7 @@ function collectDataInventory({
     limits
   );
   addFileIfPresent(entries, path.join(userRoot, 'home-calendar.json'), 'calendar/home-calendar.json', 'memory', limits);
+  collectDirectoryFiles(path.join(userRoot, 'project-notes'), 'notes', 'memory', entries, limits);
   if (includeMemoryDatabases) {
     addDatabaseIfPresent(entries, path.join(userRoot, 'sidecar-memory.db'), 'memory/sidecar-memory.db', 'memory', limits);
   }

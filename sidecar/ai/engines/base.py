@@ -34,7 +34,7 @@ from sidecar.ai.engines.engine_events import (
 if TYPE_CHECKING:
     from ..tools.models import GenerationResult, StreamChunk
     from .response_format import ResponseFormat
-    from .vision_input import VisionImage, VisionInput
+    from .vision_input import VisionImage
 
 
 class EngineToolCall(TypedDict, total=False):
@@ -95,9 +95,6 @@ class BaseEngine(ABC):
     - generate: Synchronous text generation
     - stream: Token-by-token streaming generation
     - unload_model: Cleanup (optional)
-
-    Multimodal engines may additionally implement:
-    - generate_with_vision: Generate from text + image(s)
     """
 
     @property
@@ -305,35 +302,6 @@ class BaseEngine(ABC):
         )
         yield result.content  # single chunk with full content
         return result
-
-    def generate_with_vision(
-        self,
-        prompt: str,
-        images: List["VisionInput"],
-        max_tokens: int = 256,
-        temperature: float = 0.7,
-    ) -> "GenerationResult":
-        """
-        Generate a response from text prompt and one or more images.
-
-        Args:
-            prompt: Text prompt describing what to do with the image(s)
-            images: List of image paths or base64-encoded image strings
-            max_tokens: Maximum number of tokens to generate
-            temperature: Sampling temperature
-
-        Returns:
-            GenerationResult whose ``content`` is the generated text and whose
-            ``finish_reason`` is ``"length"`` when the provider stopped at the
-            token budget (``"stop"`` otherwise)
-
-        Raises:
-            NotImplementedError: If engine does not support vision
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support vision input. "
-            f"Supported modalities: {self.supported_modalities}"
-        )
 
     def get_inference_budget_context_length(self) -> Optional[int]:
         """Enforceable provider context bound; catalog estimates do not qualify."""

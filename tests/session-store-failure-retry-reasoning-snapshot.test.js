@@ -1,5 +1,13 @@
 'use strict';
 
+// `failure_retry_reasoning_snapshots` is a legacy session field (schema v22).
+// The capture that wrote it and its `failure_retry_reasoning_carry` flag were
+// deleted (owner, 2026-10-05): the replay half was never built, so the map was
+// data nothing read. Sessions saved while the flag was on must still load and
+// round-trip, so the store keeps normalizing the field; nothing writes it now.
+
+const fs = require('fs');
+const path = require('path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -9,6 +17,7 @@ const {
 const {
   normalizeFailureRetryReasoningSnapshots,
 } = require('../services/backend/session-failure-retry-reasoning');
+const { STORE_SCHEMA_VERSION } = require('../services/backend/session-store-migrations');
 const {
   SessionTurnActorRegistry,
 } = require('../services/backend/session-turn-actor');
@@ -24,13 +33,17 @@ test.afterEach(async () => {
   await cleanupTrackedResources();
 });
 
-test('failure retry reasoning carry is default-off with an environment opt-in', () => {
-  assert.equal(buildFeatureFlags({}).failure_retry_reasoning_carry, false);
+test('the retired carry flag is gone and the store no longer offers a capture', () => {
+  assert.equal(Object.hasOwn(buildFeatureFlags({}), 'failure_retry_reasoning_carry'), false);
   assert.equal(
-    buildFeatureFlags({ JENNY_ENABLE_FAILURE_RETRY_REASONING_CARRY: '1' })
-      .failure_retry_reasoning_carry,
-    true
+    Object.hasOwn(
+      buildFeatureFlags({ JENNY_ENABLE_FAILURE_RETRY_REASONING_CARRY: '1' }),
+      'failure_retry_reasoning_carry'
+    ),
+    false
   );
+  const { store } = freshStore();
+  assert.equal(typeof store.captureFailureRetryReasoning, 'undefined');
 });
 
 function reasoningEntry(id, text, timestamp, thinkingId = '') {
@@ -89,129 +102,6 @@ function snapshotRecord({
     }],
   };
 }
-
-test('capture prefers reasoning_phase events and merges duplicate ids latest-snapshot-wins', () => {
-  const { store } = freshStore();
-  const { id: sessionId } = store.createSession({ title: 'Retry reasoning' });
-  appendAttempt(store, sessionId, {
-    reasoningEntries: [reasoningEntry(
-      'message_entry',
-      'message fallback must not win',
-      '2026-09-04T00:00:01.000Z',
-      'message_thinking'
-    )],
-  });
-  store.appendTurnEvents(sessionId, [
-    {
-      event_id: 'stream_1:reasoning_phase:0',
-      turn_id: 'stream_1',
-      kind: 'reasoning_phase',
-      primary_message_id: 'assistant_stream_1',
-      source_message_ids: ['assistant_stream_1'],
-      payload: {
-        thinking_id: 'phase_a',
-        entries: [
-          { id: 'same', text: 'old', timestamp: '2026-09-04T00:00:02.000Z' },
-          { id: '', text: 'anonymous', timestamp: '2026-09-04T00:00:03.000Z' },
-        ],
-      },
-    },
-    {
-      event_id: 'stream_1:reasoning_phase:1',
-      turn_id: 'stream_1',
-      kind: 'reasoning_phase',
-      primary_message_id: 'assistant_stream_1',
-      source_message_ids: ['assistant_stream_1'],
-      payload: {
-        thinking_id: 'phase_b',
-        entries: [
-          { id: 'same', text: 'latest', timestamp: '2026-09-04T00:00:04.000Z' },
-          { id: 'tail', text: 'tail', timestamp: '2026-09-04T00:00:05.000Z' },
-        ],
-      },
-    },
-  ]);
-
-  const result = store.captureFailureRetryReasoning(sessionId, 'user_1');
-  assert.equal(result.ok, true);
-  assert.equal(result.captured, true);
-
-  const snapshot = store.getSession(sessionId).failure_retry_reasoning_snapshots.user_1;
-  assert.equal(snapshot.version, 1);
-  assert.equal(snapshot.source_assistant_message_id, 'assistant_stream_1');
-  assert.equal(snapshot.source_turn_id, 'stream_1');
-  assert.equal(snapshot.cap_chars, 48_000);
-  assert.deepEqual(snapshot.reasoning_entries.map((entry) => ({
-    id: entry.id,
-    text: entry.text,
-    thinking_id: entry.thinking_id,
-  })), [
-    { id: 'same', text: 'latest', thinking_id: 'phase_b' },
-    { id: '', text: 'anonymous', thinking_id: 'phase_a' },
-    { id: 'tail', text: 'tail', thinking_id: 'phase_b' },
-  ]);
-  assert.equal(snapshot.char_count, 'latest'.length + 'anonymous'.length + 'tail'.length);
-  assert.equal(snapshot.truncated, false);
-});
-
-test('capture falls back to message reasoning entries and keeps the newest 48,000-character tail', () => {
-  const { store } = freshStore();
-  const { id: sessionId } = store.createSession({ title: 'Retry cap' });
-  appendAttempt(store, sessionId, {
-    reasoningEntries: [
-      reasoningEntry('dropped', 'o'.repeat(10_000), '2026-09-04T00:00:01.000Z', 'old_phase'),
-      reasoningEntry('trimmed', 'x'.repeat(30_000), '2026-09-04T00:00:02.000Z', 'middle_phase'),
-      reasoningEntry('new', 'y'.repeat(30_000), '2026-09-04T00:00:03.000Z', 'new_phase'),
-    ],
-  });
-
-  const result = store.captureFailureRetryReasoning(sessionId, 'user_1');
-  const snapshot = store.getSession(sessionId).failure_retry_reasoning_snapshots.user_1;
-
-  assert.equal(result.ok, true);
-  assert.equal(snapshot.cap_chars, 48_000);
-  assert.equal(snapshot.char_count, 48_000);
-  assert.equal(snapshot.truncated, true);
-  assert.equal(snapshot.reasoning_entries.length, 2);
-  assert.equal(snapshot.reasoning_entries[0].id, 'trimmed');
-  assert.equal(snapshot.reasoning_entries[0].text, 'x'.repeat(18_000));
-  assert.equal(snapshot.reasoning_entries[0].thinking_id, 'middle_phase');
-  assert.equal(snapshot.reasoning_entries[1].id, 'new');
-  assert.equal(snapshot.reasoning_entries[1].text, 'y'.repeat(30_000));
-});
-
-test('same-key capture replaces the snapshot and an empty latest attempt removes it', () => {
-  const { store } = freshStore();
-  const { id: sessionId } = store.createSession({ title: 'Retry replacement' });
-  appendAttempt(store, sessionId, {
-    assistantId: 'assistant_stream_1',
-    streamId: 'stream_1',
-    reasoningEntries: [reasoningEntry('one', 'first', '2026-09-04T00:00:01.000Z')],
-  });
-  store.captureFailureRetryReasoning(sessionId, 'user_1');
-
-  appendAttempt(store, sessionId, {
-    assistantId: 'assistant_stream_2',
-    streamId: 'stream_2',
-    reasoningEntries: [reasoningEntry('two', 'second', '2026-09-04T00:00:02.000Z')],
-  });
-  store.captureFailureRetryReasoning(sessionId, 'user_1');
-
-  let snapshots = store.getSession(sessionId).failure_retry_reasoning_snapshots;
-  assert.deepEqual(Object.keys(snapshots), ['user_1']);
-  assert.equal(snapshots.user_1.source_assistant_message_id, 'assistant_stream_2');
-  assert.equal(snapshots.user_1.reasoning_entries[0].text, 'second');
-
-  appendAttempt(store, sessionId, {
-    assistantId: 'assistant_stream_3',
-    streamId: 'stream_3',
-    reasoningEntries: [],
-  });
-  const result = store.captureFailureRetryReasoning(sessionId, 'user_1');
-  snapshots = store.getSession(sessionId).failure_retry_reasoning_snapshots;
-  assert.equal(result.removed, true);
-  assert.deepEqual(snapshots, {});
-});
 
 test('normalization keeps four snapshots with deterministic oldest eviction', () => {
   const tiedAt = '2026-09-04T00:00:00.000Z';
@@ -295,37 +185,66 @@ test('production-cap normalization is idempotent and survives a store reload', (
   reloaded.dispose();
 });
 
-test('captured snapshots survive a store reload', () => {
+test('a v22 session file holding snapshots loads, saves and reloads without error', () => {
+  assert.equal(STORE_SCHEMA_VERSION, 24, 'this legacy fixture is written at the current schema');
   const { store, userDataPath } = freshStore();
-  const { id: sessionId } = store.createSession({ title: 'Retry reload' });
-  appendAttempt(store, sessionId, {
-    reasoningEntries: [reasoningEntry('persisted', 'durable', '2026-09-04T00:00:01.000Z')],
-  });
-
-  assert.equal(store.captureFailureRetryReasoning(sessionId, 'user_1').ok, true);
+  const { id: sessionId } = store.createSession({ title: 'Saved with the carry on' });
+  assert.equal(store.flushSession(sessionId), true);
   store.dispose();
-  const reloaded = new ElectronSessionStore(`${userDataPath}\\sessions.json`);
-  const snapshot = reloaded.getSession(sessionId).failure_retry_reasoning_snapshots.user_1;
-  assert.equal(snapshot.reasoning_entries[0].text, 'durable');
-  assert.equal(snapshot.char_count, 7);
+
+  // Rewrite the on-disk record as a build with the carry enabled left it.
+  const sessionFile = path.join(userDataPath, 'sessions', `${sessionId}.json`);
+  const persisted = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+  assert.equal(persisted.schema_version, 24);
+  const legacy = {
+    user_1: snapshotRecord({
+      userId: 'user_1',
+      assistantId: 'assistant_stream_1',
+      turnId: 'stream_1',
+      text: 'durable',
+    }),
+  };
+  persisted.session.failure_retry_reasoning_snapshots = legacy;
+  fs.writeFileSync(sessionFile, JSON.stringify(persisted, null, 2));
+
+  const logs = [];
+  const logger = (level, event) => logs.push({ level, event });
+  const loaded = new ElectronSessionStore(path.join(userDataPath, 'sessions.json'), { logger });
+  assert.equal(loaded.hasPendingMigrations(), false);
+  assert.deepEqual(loaded.getSession(sessionId).failure_retry_reasoning_snapshots, legacy);
+  assert.ok(loaded.renameSession(sessionId, 'Renamed after the carry was retired'));
+  assert.equal(loaded.flushSession(sessionId), true);
+  loaded.dispose();
+
+  const reloaded = new ElectronSessionStore(path.join(userDataPath, 'sessions.json'), { logger });
+  const session = reloaded.getSession(sessionId);
+  assert.equal(session.title, 'Renamed after the carry was retired');
+  assert.deepEqual(session.failure_retry_reasoning_snapshots, legacy);
   reloaded.dispose();
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(sessionFile, 'utf8')).session.failure_retry_reasoning_snapshots,
+    legacy,
+    'the saved file keeps the user-authored legacy map'
+  );
+  assert.equal(logs.some((entry) => entry.level === 'ERROR'), false);
 });
 
-test('flag-off actor reservation does not capture retry reasoning', () => {
+test('a failure-retry reservation writes no reasoning snapshot', () => {
   const { store } = freshStore();
-  const { id: sessionId } = store.createSession({ title: 'Retry flag off' });
+  const { id: sessionId } = store.createSession({ title: 'Retry without capture' });
   appendAttempt(store, sessionId, {
     reasoningEntries: [reasoningEntry('hidden', 'do not capture', '2026-09-04T00:00:01.000Z')],
   });
   const registry = new SessionTurnActorRegistry();
 
+  // A stale caller still passing the deleted arguments must not revive capture.
   const lease = registry.reserveStart({
     sessionId,
     store,
     activeStreams: new Map(),
     editedMessageId: 'user_1',
     failureRetry: true,
-    failureRetryReasoningCarry: false,
+    failureRetryReasoningCarry: true,
   });
 
   assert.deepEqual(store.getSession(sessionId).failure_retry_reasoning_snapshots, {});

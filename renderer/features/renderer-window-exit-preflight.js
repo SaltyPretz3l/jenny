@@ -197,23 +197,6 @@
     }
 
     async function preflightExit(action) {
-      // A session-bound plugin view may own a supervised native process. The
-      // renderer does not acknowledge exit until main proves teardown complete.
-      const pluginSessions = rootRef.rendererPluginSessions?.instance || null;
-      const activePluginSessionId = pluginSessions?.getActiveSessionId?.() || '';
-      if (pluginSessions && activePluginSessionId) {
-        let allowExit;
-        try {
-          allowExit = await pluginSessions.guardLeaveSession(
-            activePluginSessionId, `window_${String(action || 'close')}`,
-          );
-        } catch (_error) {
-          allowExit = false;
-        }
-        if (!allowExit) {
-          return { proceed: false, reason: 'plugin_session_active' };
-        }
-      }
       const intent = normalizeIntent(action);
       const surfaces = listDirtySurfaces();
       const orch = resolveOrchestrator();

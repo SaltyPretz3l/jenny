@@ -783,3 +783,111 @@ test('shell config service persists a once_at reminder with attribution intact',
   assert.equal(reloaded[0].sourceKind, 'assistant');
   assert.equal(reloaded[0].sourceId, 'msg_42');
 });
+
+function createProjectStampService(prefix) {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  trackDirectory(userDataPath);
+  const service = new ShellConfigService({ userDataPath });
+  const commits = [];
+  const commit = service._commitState.bind(service);
+  service._commitState = (state, reason, details) => {
+    commits.push(reason);
+    return commit(state, reason, details);
+  };
+  return { service, commits };
+}
+
+test('follow-up projectId round-trips through upsert and normalizes invalid ids to empty', () => {
+  const { service } = createProjectStampService('jenny-shell-config-followup-project-id-');
+  service.upsertFollowUp({ id: 'task-a', label: 'A', sourceKind: 'agent_task', projectId: 'project_abc' });
+  service.upsertFollowUp({ id: 'task-b', label: 'B', sourceKind: 'agent_task', projectId: '../x' });
+  service.upsertFollowUp({ id: 'task-c', label: 'C', sourceKind: 'agent_task', projectId: 'Project_ABC!' });
+  service.upsertFollowUp({ id: 'task-d', label: 'D', sourceKind: 'agent_task', project_id: 'project_snake' });
+  service.upsertFollowUp({ id: 'task-e', label: 'E', sourceKind: 'agent_task' });
+  const byId = Object.fromEntries(service.getState().followUps.map((entry) => [entry.id, entry.projectId]));
+  assert.deepEqual(byId, {
+    'task-a': 'project_abc',
+    'task-b': '',
+    'task-c': '',
+    'task-d': 'project_snake',
+    'task-e': '',
+  });
+  // An unrelated edit keeps the stamp.
+  service.updateFollowUp('task-a', { label: 'A renamed' });
+  assert.equal(service.getState().followUps.find((entry) => entry.id === 'task-a').projectId, 'project_abc');
+});
+
+test('stampFollowUpProjects changes only projectId, writes once, and a no-op writes nothing', () => {
+  const { service, commits } = createProjectStampService('jenny-shell-config-followup-stamp-');
+  service.upsertFollowUp({ id: 'task-a', label: 'A', sourceKind: 'agent_task', sessionId: 's1' });
+  service.upsertFollowUp({ id: 'task-b', label: 'B', sourceKind: 'agent_task', sessionId: 's2' });
+  const before = service.getState().followUps;
+  commits.length = 0;
+
+  const result = service.stampFollowUpProjects([
+    { id: 'task-a', projectId: 'project_one' },
+    { id: 'task-b', projectId: 'not a project id' },
+    { id: 'missing', projectId: 'project_two' },
+  ]);
+  assert.equal(result.changed, 1);
+  assert.deepEqual(commits, ['follow_up_projects_stamped']);
+  const after = service.getState().followUps;
+  const taskA = after.find((entry) => entry.id === 'task-a');
+  const beforeA = before.find((entry) => entry.id === 'task-a');
+  assert.equal(taskA.projectId, 'project_one');
+  assert.deepEqual({ ...taskA, projectId: '' }, { ...beforeA, projectId: '' });
+  assert.equal(taskA.updatedAt, beforeA.updatedAt);
+  assert.deepEqual(taskA.history, beforeA.history);
+  assert.equal(after.find((entry) => entry.id === 'task-b').projectId, '');
+
+  commits.length = 0;
+  const again = service.stampFollowUpProjects([{ id: 'task-a', projectId: 'project_one' }]);
+  assert.equal(again.changed, 0);
+  assert.deepEqual(commits, []);
+  assert.equal(service.stampFollowUpProjects(null).changed, 0);
+  assert.deepEqual(commits, []);
+});
+
+test('restampAgentTasksForProject moves every agent task of that project and nothing else', () => {
+  const { service, commits } = createProjectStampService('jenny-shell-config-followup-restamp-project-');
+  service.upsertFollowUp({ id: 'rail', label: 'Rail', sourceKind: 'agent_task', sessionId: '', projectId: 'project_gone' });
+  service.upsertFollowUp({ id: 'chat', label: 'Chat', sourceKind: 'agent_task', sessionId: 's1', projectId: 'project_gone' });
+  service.upsertFollowUp({ id: 'other', label: 'Other', sourceKind: 'agent_task', sessionId: 's2', projectId: 'project_keep' });
+  service.upsertFollowUp({ id: 'plain', label: 'Plain', sourceKind: 'assistant_reply', sessionId: 's1', projectId: 'project_gone' });
+  commits.length = 0;
+
+  const result = service.restampAgentTasksForProject('project_gone', 'project_general');
+  assert.equal(result.changed, 2);
+  assert.deepEqual(commits, ['follow_up_projects_stamped']);
+  const byId = Object.fromEntries(service.getState().followUps.map((entry) => [entry.id, entry.projectId]));
+  assert.deepEqual(byId, { rail: 'project_general', chat: 'project_general', other: 'project_keep', plain: 'project_gone' });
+
+  assert.deepEqual(service.restampAgentTasksForProject('project_gone', 'project_general'), { changed: 0 });
+  assert.deepEqual(service.restampAgentTasksForProject('project_keep', 'project_keep'), { changed: 0 });
+  assert.deepEqual(service.restampAgentTasksForProject('nope', 'project_general'), { changed: 0 });
+});
+
+test('restampAgentTasksForSession moves only that chat agent tasks', () => {
+  const { service, commits } = createProjectStampService('jenny-shell-config-followup-restamp-');
+  service.upsertFollowUp({ id: 'task-mine', label: 'Mine', sourceKind: 'agent_task', sessionId: 's1', projectId: 'project_old' });
+  service.upsertFollowUp({ id: 'task-other', label: 'Other', sourceKind: 'agent_task', sessionId: 's2', projectId: 'project_old' });
+  service.upsertFollowUp({ id: 'task-manual', label: 'Manual', sourceKind: 'agent_task', sessionId: '', projectId: 'project_old' });
+  service.upsertFollowUp({ id: 'loop-mine', label: 'Loop', sourceKind: 'assistant_reply', sessionId: 's1' });
+  commits.length = 0;
+
+  assert.deepEqual(service.restampAgentTasksForSession('s1', 'project_new'), { changed: 1 });
+  const byId = Object.fromEntries(service.getState().followUps.map((entry) => [entry.id, entry.projectId]));
+  assert.deepEqual(byId, {
+    'task-mine': 'project_new',
+    'task-other': 'project_old',
+    'task-manual': 'project_old',
+    'loop-mine': '',
+  });
+  assert.equal(commits.length, 1);
+
+  commits.length = 0;
+  assert.deepEqual(service.restampAgentTasksForSession('', 'project_new'), { changed: 0 });
+  assert.deepEqual(service.restampAgentTasksForSession('s1', 'project_new'), { changed: 0 });
+  assert.deepEqual(service.restampAgentTasksForSession('s1', 'bad id'), { changed: 0 });
+  assert.deepEqual(commits, []);
+});

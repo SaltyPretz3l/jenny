@@ -11,7 +11,7 @@ import pytest
 
 from sidecar.ai.tools.builtins import shell as shell_module
 from sidecar.ai.tools.builtins import shell_command_split as split_module
-from sidecar.ai.tools.builtins import shell_security as security_module
+from sidecar.ai.tools.builtins import shell_security_tokens as tokens_module
 from sidecar.ai.tools.builtins.shell_security import (
     find_destructive_executable,
     shell_command_for_tool,
@@ -253,7 +253,7 @@ def test_non_destructive_command_shapes_do_not_match(command: str) -> None:
 def test_posix_escaped_space_redirect_preserves_sensitive_suffix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(security_module, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(tokens_module, "os", SimpleNamespace(name="posix"))
     assert find_destructive_executable(r"echo hi > important\ file.js") == ">"
 
 

@@ -95,7 +95,7 @@ class ProjectDeleteJournal {
     const status = readWithRetry(this._store, null);
     if (status.missing) return emptyDocument();
     // A read error (busy, access denied) says nothing about the bytes.
-    let damage = status.corrupted ? (status.errorCode ? 'unreadable_store' : 'corrupt_store') : '';
+    let damage = status.unreadable ? 'unreadable_store' : (status.corrupted ? 'corrupt_store' : '');
     if (!damage) {
       const validated = validateJournalDocument(status.value);
       if (validated.ok) return validated.document;

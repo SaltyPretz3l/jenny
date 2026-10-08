@@ -202,9 +202,86 @@
     });
   }
 
+  /* Settle re-reads. A run that settles while Home or the Chats panel is on
+   * screen re-reads the digest page: no chrome pass marks that moment, so the
+   * digest would keep the snapshot taken on arrival.
+   *   - A burst of settles is one read. A read already in flight was requested
+   *     before the settle, so `read` waits it out instead of joining it.
+   *   - The renderer hears a run end before the runtime row turns terminal
+   *     (services/session-runtime/scheduler.js settles after the producer
+   *     resolves), so a bounded backoff re-reads until each settled session
+   *     shows a newer terminal row, then stops.
+   *   - Off screen nothing is read: the next arrival reads.
+   * Seen cursors are not touched here; the reader's own read path owns them. */
+  var SETTLE_READ_DELAYS_MS = [250, 1000, 3000];
+
+  /**
+   * @param {{windowRef: object, documentRef: ?object, onScreen: Function,
+   *   digest: Function, read: Function}} deps
+   *   `digest` returns the published digest; `read` re-reads its page.
+   *   `onScreen` says whether Home or the Chats panel is up; a hidden
+   *   document is off screen whatever it says.
+   * @returns {{note: Function, dispose: Function}}
+   */
+  function createSettleReads(deps) {
+    var windowRef = deps.windowRef;
+    var timer = null;
+    var attempt = 0;
+    var settling = {}; // session id -> its latest terminal instant when its run settled
+    var disposed = false;
+
+    function onScreen() {
+      var documentRef = deps.documentRef;
+      return !(documentRef && documentRef.visibilityState === 'hidden') && Boolean(deps.onScreen());
+    }
+
+    function latestTerminal(sessionId) {
+      return deps.digest().latestTerminalBySession[sessionId] || '';
+    }
+
+    function check() {
+      if (disposed) return;
+      Object.keys(settling).forEach(function landed(sessionId) {
+        var latest = latestTerminal(sessionId);
+        if (latest && (!settling[sessionId] || isAfter(latest, settling[sessionId]))) delete settling[sessionId];
+      });
+      if (timer !== null) return; // a newer settle already armed the next read
+      attempt += 1;
+      if (Object.keys(settling).length && attempt < SETTLE_READ_DELAYS_MS.length && onScreen()) arm();
+      else { settling = {}; attempt = 0; }
+    }
+
+    function arm() {
+      if (timer !== null) return;
+      timer = windowRef.setTimeout(function readSettled() {
+        timer = null;
+        Promise.resolve().then(deps.read).then(check, check);
+      }, SETTLE_READ_DELAYS_MS[attempt]);
+    }
+
+    function note(event) {
+      if (disposed || !onScreen()) return;
+      var sessionId = String(event && event.payload && event.payload.sessionId || '').trim();
+      if (sessionId && !Object.prototype.hasOwnProperty.call(settling, sessionId)) settling[sessionId] = latestTerminal(sessionId);
+      attempt = 0;
+      arm();
+    }
+
+    function dispose() {
+      disposed = true;
+      if (timer !== null) windowRef.clearTimeout(timer);
+      timer = null;
+      settling = {};
+    }
+
+    return { note: note, dispose: dispose };
+  }
+
   return {
     buildAwayDigest: buildAwayDigest,
     tokensForStream: tokensForStream,
+    isAfter: isAfter,
+    createSettleReads: createSettleReads,
     RETENTION_MS: RETENTION_MS,
     TERMINAL_STATUSES: Object.freeze(TERMINAL_STATUSES.slice()),
     IN_PROGRESS_STATUSES: Object.freeze(IN_PROGRESS_STATUSES.slice()),

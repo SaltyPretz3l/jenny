@@ -6,6 +6,7 @@ import json
 import urllib.error
 import urllib.request
 from collections.abc import Generator
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from sidecar.ai.engines import admitted as _admitted
@@ -16,6 +17,13 @@ from sidecar.ai.engines.ollama_metadata import (
 )
 from sidecar.ai.engines.ollama_metadata import (
     model_size_billions as _model_size_billions_helper,
+)
+from sidecar.ai.engines.ollama_runtime import (
+    # The runtime emits these terminal reasons; it is this module's single
+    # import site for the stream vocabulary (leaf import fan-out cap).
+    FINISH_REASON_INCOMPLETE,
+    FINISH_REASON_PROVIDER_ERROR,
+    FINISH_REASON_THINKING_BUDGET,
 )
 from sidecar.ai.engines.ollama_runtime import (
     generate as _ollama_generate,
@@ -83,11 +91,9 @@ from sidecar.runtime.ollama_support import (
     EngineConnectionError,
     GenerationError,
     GenerationResult,
-    ModelNotLoadedError,
     ReasoningExtraction,
     ResponseFormat,
     StreamChunk,
-    UnsupportedModalityError,
 )
 
 
@@ -354,62 +360,6 @@ class _OllamaGenerationMixin:
         tools: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         return _build_tools_payload_cached_helper(self, tools)
-
-    def generate_with_vision(
-        self,
-        prompt: str,
-        images: list[_vision_input.VisionInput],
-        max_tokens: int = 256,
-        temperature: float = 0.7,
-    ) -> GenerationResult:
-        if not self._vision:
-            raise UnsupportedModalityError("vision", model=self.model_name or "")
-        self._assert_ready()
-
-        try:
-            encoded = [image.as_base64() for image in _vision_input.normalize_vision_inputs(images)]
-        except _vision_input.VisionInputError as error:
-            raise GenerationError(str(error)) from error
-
-        data: dict[str, Any] = {
-            "model": self.model_name,
-            "prompt": prompt,
-            "images": encoded,
-            "stream": False,
-        }
-        data["options"] = self._build_options(
-            max_tokens,
-            temperature,
-            prompt_tokens_estimate=self._estimate_request_prompt_tokens(data),
-        )
-        # Vision OCR/triage wants the visible answer, not a hidden reasoning pass.
-        # Thinking-capable models (e.g. the gemma4-vision alias) route output to the
-        # `thinking` field and leave `response` empty unless thinking is disabled.
-        # Mirror the chat path: only send `think` for models that support it.
-        if self._thinking:
-            data["think"] = False
-        try:
-            resp = self._post("/api/generate", data)
-            text = str(resp.get("response", "")).strip()
-            if not text:
-                # Defensive: a thinking-capable model that still routed output to
-                # the reasoning channel would otherwise return an empty string.
-                text = str(resp.get("thinking", "")).strip()
-            done_reason = str(resp.get("done_reason", "") or "").strip().lower()
-            return GenerationResult(
-                content=text,
-                finish_reason="length" if done_reason == "length" else "stop",
-            )
-        except urllib.error.URLError as exc:
-            if self._is_timeout_url_error(exc):
-                raise GenerationError(self._timeout_message("Vision generation")) from exc
-            raise EngineConnectionError(self._describe_url_error(exc, "vision generation")) from exc
-        except (EngineConnectionError, ModelNotLoadedError, UnsupportedModalityError):
-            raise
-        except Exception as exc:
-            if self._is_timeout_error(exc):
-                raise GenerationError(self._timeout_message("Vision generation")) from exc
-            raise GenerationError(f"Vision generation failed: {exc}") from exc
 
     def _effective_temperature(self, requested_temperature: float) -> float:
         return _shared_effective_temperature(self, requested_temperature)
@@ -858,6 +808,8 @@ class _OllamaGenerationMixin:
         degraded: bool = False,
     ) -> Generator[StreamChunk, None, GenerationResult]:
         content_parts: list[str] = []
+        finish_reason = FINISH_REASON_INCOMPLETE
+        usage = None
         stream = _ollama_stream(
             self,
             prompt=prompt,
@@ -875,13 +827,31 @@ class _OllamaGenerationMixin:
             kind = getattr(chunk, "kind", "")
             if kind == "content":
                 content_parts.append(str(getattr(chunk, "text", "") or ""))
-            elif kind != "done":
+            elif kind == "done":
+                finish_reason = getattr(chunk, "finish_reason", "")
+                usage = getattr(chunk, "usage", None)
+            else:
                 yield chunk
-        result = self._build_fallback_plain_result(
-            "".join(content_parts),
-            tools=tools,
-            degraded=degraded,
-        )
+        if finish_reason in (
+            FINISH_REASON_INCOMPLETE,
+            FINISH_REASON_PROVIDER_ERROR,
+            FINISH_REASON_THINKING_BUDGET,
+        ):
+            result = GenerationResult(
+                content="".join(content_parts).strip(),
+                finish_reason=finish_reason,
+                usage=usage,
+                degraded_tool_transport=degraded,
+            )
+        else:
+            result = self._build_fallback_plain_result(
+                "".join(content_parts),
+                tools=tools,
+                degraded=degraded,
+            )
+            if finish_reason == "length" and not result.tool_calls:
+                result = replace(result, finish_reason="length")
+            result = replace(result, usage=usage)
         if result.content:
             yield result.content
         return result

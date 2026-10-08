@@ -8,7 +8,7 @@ const ideStateUtils = require('../renderer/features/renderer-ide-state');
 const { buildIdeDom, createBridgeStub, settle } = require('./helpers/ide-tree-harness');
 
 async function createHarness({
-  files = {}, dirs = [], expanded = [], qol = true, activeTabPath = '', confirmDeleteMany,
+  files = {}, dirs = [], expanded = [], activeTabPath = '', confirmDeleteMany,
 } = {}) {
   const domHarness = buildIdeDom();
   const bridge = createBridgeStub({ files, dirs });
@@ -24,7 +24,6 @@ async function createHarness({
     getIde: () => ide,
     getMountEl: () => domHarness.getDom().ideRailPanel,
     isActivePanel: () => true,
-    isQolEnabled: () => qol,
     getWorkspaceFsApi: () => bridge.jennyShell.workspaceFs,
     getMutationContext: async () => ({ rootId: 'root-test', generation: 1, phase: 'ready' }),
     preflightMutation: async () => ({ ready: true, paths: [] }),
@@ -83,25 +82,6 @@ function selectRow(harness, path) {
     ctrlKey: true,
   }));
 }
-
-test('flag off ignores new keys while preserving legacy ArrowDown focus movement', async (t) => {
-  const harness = await createHarness({ files: { 'alpha.js': 'a', 'beta.js': 'b' }, qol: false });
-  t.after(() => harness.dispose());
-  const alpha = getRow(harness, 'alpha.js');
-  alpha.focus();
-
-  pressKey(harness, alpha, 'F2');
-  pressKey(harness, alpha, 'Delete');
-  pressKey(harness, alpha, 'b');
-
-  assert.equal(harness.panel.querySelector('[data-ide-tree-edit-control]'), null);
-  assert.deepEqual(harness.confirmations, []);
-  assert.deepEqual(harness.bridge.calls.delete, []);
-  assert.equal(harness.dom.window.document.activeElement.dataset.ideTreePath, 'alpha.js');
-
-  pressKey(harness, alpha, 'ArrowDown');
-  assert.equal(harness.dom.window.document.activeElement.dataset.ideTreePath, 'beta.js');
-});
 
 test('F2 preselects file stems while dotfiles and directories select their whole names', async (t) => {
   const cases = [
@@ -352,21 +332,6 @@ test('Delete rejects a fully unrendered selection and collapses it to focus', as
     meta: { title: 'Workspace', dedupeKey: 'ide:tree:kbd' },
   }]);
   assert.deepEqual(harness.tree.selection.getPaths(), ['a.js']);
-});
-
-test('flag off leaves selection untouched when plain ArrowDown moves focus', async (t) => {
-  const harness = await createHarness({
-    files: { 'a.js': 'a', 'b.js': 'b', 'c.js': 'c' }, qol: false,
-  });
-  t.after(() => harness.dispose());
-  harness.tree.selection.replace(['c.js'], 'c.js');
-  const first = getRow(harness, 'a.js');
-  first.focus();
-
-  pressKey(harness, first, 'ArrowDown');
-
-  assert.equal(harness.dom.window.document.activeElement.dataset.ideTreePath, 'b.js');
-  assert.deepEqual(harness.tree.selection.getPaths(), ['c.js']);
 });
 
 test('roving focus falls back to the active row before a selected row', async (t) => {

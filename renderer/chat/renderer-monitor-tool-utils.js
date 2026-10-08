@@ -12,14 +12,7 @@
     return String(value || '').trim();
   }
 
-  function fallbackEscapeHtml(value) {
-    return String(value || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const fallbackEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function normalizeMonitorMetadata(value, normalizeStringImpl) {
     const normalizeString = typeof normalizeStringImpl === 'function'

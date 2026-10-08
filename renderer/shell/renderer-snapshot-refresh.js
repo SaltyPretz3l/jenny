@@ -20,6 +20,17 @@
     return !list || typeof list !== 'object' || list.available === false;
   }
 
+  // What the model carriers render from an available catalog; an unavailable
+  // one renders nothing new, so it has no signature.
+  function catalogSignature(list) {
+    if (isModelListUnavailable(list)) return null;
+    try {
+      return JSON.stringify([list.engine_type, list.active_model, list.data ?? list.models]);
+    } catch (_error) {
+      return null;
+    }
+  }
+
   function createSnapshotRefresh(options = {}) {
     const state = options.state || {};
     const getShell = typeof options.getShell === 'function' ? options.getShell : () => null;
@@ -27,16 +38,25 @@
     const onModelsUpdated = typeof options.onModelsUpdated === 'function'
       ? options.onModelsUpdated
       : null;
-    // A catalog that recovers after an unavailable or failed read needs more
-    // than the snapshot render: the model carriers (pane 0's rebuild in
-    // renderSettings, a second pane's rail) only rebuild on a full render.
+    // A catalog that recovers after an unavailable or failed read, or whose
+    // entries changed, needs more than the snapshot render: the model carriers
+    // (pane 0's rebuild in renderSettings, a second pane's rail) only rebuild
+    // on a full render. The ready handler's own full render can run before a
+    // slow models.list answers (a newer backend status supersedes it), so
+    // the refresh that commits a changed catalog renders in full itself.
     const onModelCatalogRecovered = typeof options.onModelCatalogRecovered === 'function'
       ? options.onModelCatalogRecovered
       : null;
     const setTimer = typeof options.setTimeout === 'function' ? options.setTimeout : globalThis.setTimeout;
     const clearTimer = typeof options.clearTimeout === 'function' ? options.clearTimeout : globalThis.clearTimeout;
+    // Every refresh owns settings and status; only a model-inclusive refresh
+    // owns the catalog. A runtime-only refresh (15 s poll, stream postwork)
+    // that overtakes a slow models.list must not discard it: nothing else
+    // re-reads an available catalog, so the pickers kept the fallback list.
     const refreshGate = asyncFence.createGenerationGate();
+    const modelsGate = asyncFence.createGenerationGate();
     let lastPollSignature = null;
+    let lastCatalogSignature = null;
     let catalogDegraded = false;
     let modelRetryTimer = null;
     let modelRetryAttempt = 0;
@@ -66,21 +86,29 @@
     }
 
     async function refreshSnapshots(refreshOptions = {}) {
+      const includeModels = refreshOptions.includeModels !== false;
       refreshGate.bump();
       const refreshToken = refreshGate.capture();
-      const canCommit = () => refreshGate.isCurrent(refreshToken)
-        && refreshOptions.signal?.aborted !== true
+      if (includeModels) modelsGate.bump();
+      const modelsToken = includeModels ? modelsGate.capture() : null;
+      const callerCurrent = () => refreshOptions.signal?.aborted !== true
         && (!refreshOptions.guard
           || typeof refreshOptions.guard.isCurrent !== 'function'
           || refreshOptions.guard.isCurrent() === true);
-      const commit = (mutation) => {
-        if (!canCommit()) return false;
+      const runtimeCurrent = () => refreshGate.isCurrent(refreshToken) && callerCurrent();
+      const modelsCurrent = () => modelsToken !== null && modelsGate.isCurrent(modelsToken) && callerCurrent();
+      // Overtaken by a runtime-only refresh: skip the settings/status commits
+      // (the newer read owns them) but still read and commit the catalog.
+      const stillUseful = () => runtimeCurrent() || modelsCurrent();
+      const commitWhen = (isCurrent, mutation) => {
+        if (!isCurrent()) return false;
         if (refreshOptions.guard && typeof refreshOptions.guard.mutate === 'function') {
           return refreshOptions.guard.mutate(mutation);
         }
         mutation();
         return true;
       };
+      const commit = (mutation) => commitWhen(runtimeCurrent, mutation);
       const shell = getShell();
       if (!shell) return;
       // Terminal postwork passes noteStep so a slow refresh names its slow call.
@@ -98,23 +126,23 @@
           state.localEngines = settings?.localEngines || null;
           state.preferredEngineType = String(settings?.preferredEngineType || '');
           state.accelerationCatalog = settings?.accelerationCatalog || null;
-        })) return;
+        }) && !stillUseful()) return;
       } catch (_error) {
         // Keep the previous settings snapshot.
       }
       const backendPhase = state.backend?.phase;
       if (backendPhase !== 'ready' && backendPhase !== 'model_unavailable') return;
       if (state.auth?.authenticated !== true) {
-        commit(render);
+        commitWhen(stillUseful, render);
         return;
       }
 
       let status = null;
       try { status = await timed('statusGet', () => shell.status.get()); } catch (_error) { /* keep null */ }
-      if (!commit(() => { state.status = status; })) return;
+      if (!commit(() => { state.status = status; }) && !stillUseful()) return;
 
-      let recovered = false;
-      if (refreshOptions.includeModels !== false) {
+      let fullRender = false;
+      if (includeModels) {
         let models = null;
         let modelsReadSucceeded = false;
         try {
@@ -122,11 +150,14 @@
           modelsReadSucceeded = true;
         } catch (_error) { /* keep null */ }
         const unavailable = !modelsReadSucceeded || isModelListUnavailable(models);
-        // Scheduled even when a newer refresh wins the commit: a newer
-        // runtime-only poll does not read the catalog, so it cannot decide.
+        // Scheduled even when a newer refresh wins the commit: the retry
+        // re-reads whatever the newest catalog is, so it cannot do harm.
         if (unavailable) scheduleModelRetry();
-        if (!commit(() => { state.modelList = models; })) return;
-        recovered = catalogDegraded && !unavailable;
+        if (!commitWhen(modelsCurrent, () => { state.modelList = models; })) return;
+        const signature = catalogSignature(models);
+        fullRender = (catalogDegraded && !unavailable)
+          || (signature !== null && signature !== lastCatalogSignature);
+        if (signature !== null) lastCatalogSignature = signature;
         catalogDegraded = unavailable;
         if (!unavailable) {
           clearModelRetry();
@@ -137,14 +168,14 @@
         }
       }
 
-      if (refreshOptions.includeModels === false) {
+      if (!includeModels) {
         const pollSignature = JSON.stringify([settings, status]);
         if (pollSignature === lastPollSignature) {
           return;
         }
         if (!commit(() => { lastPollSignature = pollSignature; })) return;
       }
-      commit(recovered && onModelCatalogRecovered ? onModelCatalogRecovered : render);
+      commitWhen(stillUseful, fullRender && onModelCatalogRecovered ? onModelCatalogRecovered : render);
     }
 
     // Picker openings refresh ChatGPT metadata and retry unavailable local lists.

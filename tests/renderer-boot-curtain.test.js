@@ -74,12 +74,13 @@ test('index composes one first-child boot surface and removes the auth overlay s
   // status surface.
   assert.equal(documentRef.querySelector('.titlebar')?.nextElementSibling?.id, 'workspace');
   assert.equal(documentRef.getElementById('heroTitle')?.textContent, 'New session');
-  const chromeSource = fs.readFileSync(
-    path.join(__dirname, '..', 'renderer', 'chat', 'renderer-render-pipeline-chrome.js'),
+  // Row 38 item 5: the hero's words live in renderer-hero-model-state.js (heroCopy).
+  const heroSource = fs.readFileSync(
+    path.join(__dirname, '..', 'renderer', 'chat', 'renderer-hero-model-state.js'),
     'utf8'
   );
-  assert.match(chromeSource, /heroTitle\.textContent = (?:jt\('[\w.]+', )?'New session'\)?;/);
-  assert.doesNotMatch(chromeSource, /heroTitle\.textContent = (?:jt\('[\w.]+', )?'New Session'\)?;/);
+  assert.match(heroSource, /title: jt\('chat\.pipelineChrome\.newSession', 'New session'\)/);
+  assert.doesNotMatch(heroSource, /'New Session'/);
   dom.window.close();
 });
 

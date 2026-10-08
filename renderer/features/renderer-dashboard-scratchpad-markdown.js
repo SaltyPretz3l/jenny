@@ -34,14 +34,7 @@
   // ATX heading (# .. ###); deeper levels collapse to level 3.
   const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 
-  function fallbackEscape(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const fallbackEscape = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   // Split a note into a structured, render-ready line model. Every entry keeps
   // its source lineIndex so a checklist toggle can rewrite exactly that line.

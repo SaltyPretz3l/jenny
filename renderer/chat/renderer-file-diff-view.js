@@ -15,14 +15,7 @@
   const CHEVRON_GLYPH = '<svg class="file-diff-chevron icon-mirror-rtl" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
   const EXTERNAL_LINK_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6"/><path d="M11 13l9 -9"/><path d="M15 4h5v5"/></svg>';
 
-  function fallbackEscape(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const fallbackEscape = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function normalizeNonNegative(value) {
     const number = Number(value);
@@ -135,6 +128,10 @@
   }
 
   function buildCountsMarkup(settings, escape) {
+    // An optional caller note explains a summary-only row (a sensitive path).
+    if (settings.truncated === true && settings.note) {
+      return '<span class="file-diff-truncated">' + escape(settings.note) + '</span>';
+    }
     if (settings.truncated === true) {
       return '<span class="file-diff-truncated">' + escape(jt('chat.fileDiff.tooLargeInline', 'too large to show inline')) + '</span>';
     }

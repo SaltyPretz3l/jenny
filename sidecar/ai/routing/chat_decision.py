@@ -64,7 +64,7 @@ from sidecar.runtime.diagnostics import log_event
 logger = logging.getLogger(__name__)
 
 RuntimeOverlayLogContext = _runtime_overlays.RuntimeOverlayLogContext
-append_plan_mode_runtime_system_message = _prompt_modes.append_plan_mode_runtime_overlay
+append_mode_runtime_system_messages = _prompt_modes.append_mode_runtime_overlays
 append_approved_plan_runtime_system_message = _prompt_modes.append_approved_plan_runtime_overlay
 build_prompt_memory_recall_system_message = (
     _runtime_overlays.build_prompt_memory_recall_system_message
@@ -576,9 +576,9 @@ def _build_runtime_overlay_messages(
     session_id: str | None,
 ) -> list[str]:
     runtime_system_messages: list[str] = []
-    append_plan_mode_runtime_system_message(
+    append_mode_runtime_system_messages(
         runtime_system_messages,
-        plan_mode_active=bool(getattr(request_context, "plan_mode", False)),
+        request_context=request_context,
     )
     if not bool(getattr(request_context, "plan_mode", False)):
         append_approved_plan_runtime_system_message(

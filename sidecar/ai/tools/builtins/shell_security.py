@@ -48,17 +48,22 @@ routing to NEEDS_APPROVAL over adding entries to SAFE_EXECUTABLES.
 
 from __future__ import annotations
 
-import base64
-import os
 import re
 import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import PurePosixPath, PureWindowsPath
 
 from sidecar.ai import feature_flags as _feature_flags
 from sidecar.ai.tools.builtins.shell_command_split import split_compound_command
+from sidecar.ai.tools.builtins.shell_security_tokens import (
+    _command_argv,
+    _has_truncating_redirect,
+    _interpreter_payload,
+    _path_basename,
+    _split_powershell_commands,
+    _strip_surrounding_quotes,
+)
 
 FEATURE_STRICT_AUTO_RUN = _feature_flags.FEATURE_STRICT_AUTO_RUN
 
@@ -279,20 +284,16 @@ _INTERPRETER_EXECUTABLES: frozenset[str] = frozenset(
 _SCRIPT_ARGUMENT_LAUNCHERS: frozenset[str] = frozenset(
     _INTERPRETER_EXECUTABLES | {"call", "start"}
 )
-_CONTENT_TRUNCATION_SUFFIXES: tuple[str, ...] = tuple(
-    (
-        ".js .ts .tsx .jsx .py .rb .go .rs .java .c .h .cpp .cs "
-        ".json .yaml .yml .toml .ini .md .html .css .scss .sql .sh .ps1 .bat"
-    ).split()
-)
 _ENVIRONMENT_VARIABLE_RE = re.compile(r"%[A-Za-z_][A-Za-z0-9_]*%")
-_BASE64_TOKEN_RE = re.compile(r"[A-Za-z0-9+/]+={0,2}")
 _MAX_INTERPRETER_UNWRAP_DEPTH = 2
-_MIN_QUOTED_TOKEN_CHARS = 2
-_MIN_POWERSHELL_SWITCH_CHARS = 2
-_MIN_BASE64_TOKEN_CHARS = 4
 _MIN_GIT_CONFIG_GET_ARGS = 2
 
+# Git config keys that launch a program or change what a "read" talks to; set
+# with `-c` they turn a read-only verb into an execution vector.
+_GIT_LAUNCH_KEYS = frozenset({
+    "core.fsmonitor", "core.sshcommand", "core.hookspath", "core.pager", "core.editor",
+    "core.askpass", "credential.helper", "diff.external",
+})
 _GIT_READ_SUBCOMMANDS = frozenset({
     "status", "log", "diff", "show", "rev-parse", "ls-files", "ls-tree",
     "blame", "describe", "cat-file", "shortlog",
@@ -322,27 +323,6 @@ _OPAQUE_START = "opaque:start"
 _OPAQUE_POWERSHELL = "opaque:powershell-eval"
 
 # ── Helpers ───────────────────────────────────────────────────────────
-
-
-def _strip_surrounding_quotes(raw: str) -> str:
-    stripped = raw.strip()
-    if (
-        len(stripped) >= _MIN_QUOTED_TOKEN_CHARS
-        and stripped[0] == stripped[-1]
-        and stripped[0] in {"'", '"'}
-    ):
-        return stripped[1:-1]
-    return stripped
-
-
-def _path_basename(raw: str) -> str:
-    """Resolve a basename through both POSIX and Windows path grammars."""
-    raw = _strip_surrounding_quotes(raw)
-    for cls in (PurePosixPath, PureWindowsPath):
-        name = cls(raw).name
-        if name:
-            raw = name
-    return raw
 
 
 def _executable_name(raw: str) -> str:
@@ -427,6 +407,15 @@ def _classify_git_command(
 ) -> ClassificationResult:
     """Classify a git command by its subcommand."""
     resolved = _skip_git_global_options(argv)
+    global_args = argv[:resolved[1]] if resolved else argv
+    for flag, value in zip(global_args[1:], global_args[2:], strict=False):
+        if flag != "-c":
+            continue
+        key = _strip_surrounding_quotes(value).split("=", 1)[0].lower()
+        if key in _GIT_LAUNCH_KEYS or key.startswith(("uploadpack.", "receive.", "alias.")):
+            return ClassificationResult(
+                CommandVerdict.NEEDS_APPROVAL, f"git launch config: {key}", "git", raw_command
+            )
     if resolved is None:
         return ClassificationResult(
             CommandVerdict.NEEDS_APPROVAL,
@@ -450,10 +439,14 @@ def _classify_git_command(
             or (args[0] in {"--list", "-l"} and len(args) == 1)
         )
     )
+    # `--output[=file]` makes log/diff/show write a file; after `--` it is a path.
+    output_args = [_strip_surrounding_quotes(arg) for arg in argv[index + 1 :]]
+    output_args = output_args[:output_args.index("--")] if "--" in output_args else output_args
+    writes_file = any(arg.split("=", 1)[0] == "--output" for arg in output_args)
     if read_only:
         return ClassificationResult(
-            CommandVerdict.ALLOWED,
-            f"git read subcommand: {subcmd}",
+            CommandVerdict.NEEDS_APPROVAL if writes_file else CommandVerdict.ALLOWED,
+            "git output option writes a file" if writes_file else f"git read subcommand: {subcmd}",
             "git",
             raw_command,
         )
@@ -516,9 +509,11 @@ def _classify_single(command: str, *, powershell: bool = False) -> Classificatio
             command,
         )
     if exe in SAFE_EXECUTABLES:
+        # `env` alone lists variables; with arguments it launches a program.
+        env_launch = exe == "env" and len(argv) > 1
         return ClassificationResult(
-            CommandVerdict.ALLOWED,
-            f"known safe executable: {exe}",
+            CommandVerdict.NEEDS_APPROVAL if env_launch else CommandVerdict.ALLOWED,
+            "env launches a program" if env_launch else f"known safe executable: {exe}",
             exe,
             command,
         )
@@ -528,165 +523,6 @@ def _classify_single(command: str, *, powershell: bool = False) -> Classificatio
         exe,
         command,
     )
-
-
-_STANDALONE_WINDOWS_EXECUTABLE_RE = re.compile(
-    r"^[A-Za-z]:[\\/].+\.(?:exe|bat|cmd|ps1|sh|command)$",
-    re.IGNORECASE,
-)
-
-
-def _command_argv(command: str) -> list[str]:
-    stripped = command.strip()
-    unquoted = _strip_surrounding_quotes(stripped)
-    if _STANDALONE_WINDOWS_EXECUTABLE_RE.fullmatch(unquoted):
-        return [unquoted]
-    try:
-        return shlex.split(stripped, posix=False)
-    except ValueError:
-        return []
-
-
-def _split_powershell_commands(command: str) -> list[str]:
-    """Split PowerShell command words while honoring its quote and escape rules."""
-    segments: list[str] = []
-    current: list[str] = []
-    in_single = False
-    in_double = False
-    i = 0
-    while i < len(command):
-        ch = command[i]
-        if ch == "`" and i + 1 < len(command):
-            if command[i + 1] in "\r\n":
-                i += 3 if command[i + 1 : i + 3] == "\r\n" else 2
-                continue
-            current.extend((ch, command[i + 1]))
-            i += 2
-            continue
-        if ch == "'" and not in_double:
-            in_single = not in_single
-            current.append(ch)
-        elif ch == '"' and not in_single:
-            in_double = not in_double
-            current.append(ch)
-        elif not in_single and not in_double and ch in ";|&\r\n":
-            segment = "".join(current).strip()
-            if segment:
-                segments.append(segment)
-            current = []
-            if command[i : i + 2] in {"&&", "||"}:
-                i += 1
-        else:
-            current.append(ch)
-        i += 1
-    tail = "".join(current).strip()
-    if tail:
-        segments.append(tail)
-    return segments if segments else [command.strip()]
-
-
-def _redirect_target(command: str, target_index: int, *, powershell: bool) -> str | None:
-    remainder = command[target_index:].strip()
-    if not remainder:
-        return None
-    try:
-        argv = shlex.split(remainder, posix=os.name != "nt" and not powershell)
-    except ValueError:
-        return None
-    if not argv:
-        return None
-    return _strip_surrounding_quotes(argv[0])
-
-
-def _has_truncating_redirect(
-    command: str,
-    *,
-    powershell: bool,
-    sensitive_only: bool = True,
-) -> bool:
-    windows_cmd = os.name == "nt" and not powershell
-    escape_char = "`" if powershell else ("^" if windows_cmd else "\\")
-    in_single = False
-    in_double = False
-    escape_run = 0
-    i = 0
-    while i < len(command):
-        ch = command[i]
-        escaped = escape_run % 2 == 1
-        if ch == "'" and not windows_cmd and not in_double and not escaped:
-            in_single = not in_single
-        elif ch == '"' and not in_single and not escaped:
-            in_double = not in_double
-        elif ch == ">" and not in_single and not in_double and not escaped:
-            target_index = i + 2 if command[i : i + 2] == ">>" else i + 1
-            while target_index < len(command) and command[target_index].isspace():
-                target_index += 1
-            if target_index < len(command) and command[target_index] == "&":
-                escape_run = 0
-                i += 1
-                continue
-            if not sensitive_only:
-                return True
-            target = _redirect_target(command, target_index, powershell=powershell)
-            if target is not None and _path_basename(target).lower().endswith(
-                _CONTENT_TRUNCATION_SUFFIXES
-            ):
-                return True
-        escape_run = escape_run + 1 if ch == escape_char else 0
-        i += 1
-    return False
-
-
-def _is_switch_prefix(token: str, canonical: str) -> bool:
-    return len(token) >= _MIN_POWERSHELL_SWITCH_CHARS and canonical.startswith(token)
-
-
-def _looks_like_base64(token: str) -> bool:
-    return len(token) >= _MIN_BASE64_TOKEN_CHARS and _BASE64_TOKEN_RE.fullmatch(token) is not None
-
-
-def _decode_powershell_command(token: str) -> str | None:
-    if not token:
-        return None
-    try:
-        payload = base64.b64decode(token, validate=True)
-        return payload.decode("utf-16-le")
-    except (UnicodeDecodeError, ValueError):
-        return None
-
-
-def _interpreter_payload(
-    argv: list[str],
-    executable: str,
-) -> tuple[str, str, bool] | None:
-    for index, token in enumerate(argv[1:], start=1):
-        switch = _strip_surrounding_quotes(token).lower()
-        if executable == "cmd" and switch not in {"/c", "/k"}:
-            continue
-        if executable in {"bash", "sh", "dash", "zsh"}:
-            if switch.startswith("--") or not switch.startswith("-") or "c" not in switch[1:]:
-                continue
-        if executable == "wsl" and switch not in {"--", "-e", "--exec"}:
-            continue
-        if executable in {"powershell", "pwsh"}:
-            encoded_prefix = _is_switch_prefix(switch, "-encodedcommand")
-            next_token = (
-                _strip_surrounding_quotes(argv[index + 1])
-                if index + 1 < len(argv)
-                else ""
-            )
-            if encoded_prefix and (switch != "-e" or _looks_like_base64(next_token)):
-                decoded = _decode_powershell_command(next_token)
-                if decoded is None:
-                    return "-EncodedCommand", "", True
-                return "-EncodedCommand", decoded, False
-            if not _is_switch_prefix(switch, "-command"):
-                continue
-        remainder = _strip_surrounding_quotes(" ".join(argv[index + 1 :]).strip())
-        if remainder:
-            return switch, remainder, False
-        return None
-    return None
 
 
 def _destructive_git_use(argv: list[str], lowered: list[str]) -> str | None:

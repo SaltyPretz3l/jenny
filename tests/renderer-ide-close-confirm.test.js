@@ -435,3 +435,30 @@ test('a single dirty surface is named by its label', async () => {
   ui.doc.body.querySelector('[data-ide-confirm-action="cancel"]').click();
   assert.equal(await pending, 'cancel');
 });
+
+test('choose renders the labelled actions plus Cancel and resolves the clicked one', async () => {
+  const ui = makeDialog();
+  const pending = ui.dialog.choose({
+    title: 'Leave Propose?',
+    message: 'Some suggested changes are still waiting.',
+    choices: [
+      { action: 'keep', label: 'Keep them', variant: 'primary' },
+      { action: 'discard', label: 'Discard them', variant: 'danger' },
+      { action: 'cancel', label: 'Not allowed to shadow Cancel' },
+      { action: 'Bad Action!', label: 'Dropped' },
+    ],
+  });
+  assert.equal(ui.message(), 'Some suggested changes are still waiting.');
+  assert.deepEqual([...ui.doc.body.querySelectorAll('[data-ide-confirm-action]')].map((node) => node.getAttribute('data-ide-confirm-action')),
+    ['keep', 'discard', 'cancel']);
+  assert.equal(ui.text('discard'), 'Discard them');
+  assert.equal(ui.text('cancel'), 'Cancel');
+  ui.doc.body.querySelector('[data-ide-confirm-action="discard"]').click();
+  assert.equal(await pending, 'discard');
+});
+
+test('choose without any valid choice resolves cancel without opening', async () => {
+  const ui = makeDialog();
+  assert.equal(await ui.dialog.choose({ choices: [{ action: 'cancel' }] }), 'cancel');
+  assert.equal(ui.doc.body.querySelector('[data-ide-confirm-action]'), null);
+});

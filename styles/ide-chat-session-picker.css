@@ -49,8 +49,8 @@
 .ide-chat-dock-session-picker.inv-popover {
   top: calc(100% + var(--space-2));
   inset-inline-start: 0;
-  width: min(320px, calc(var(--ide-chat-dock-width, 380px) - 20px));
-  max-width: calc(var(--ide-chat-dock-width, 380px) - 20px);
+  width: min(320px, calc(100cqi - 20px));
+  max-width: calc(100cqi - 20px);
   padding: var(--space-3);
 }
 

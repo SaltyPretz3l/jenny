@@ -37,6 +37,9 @@
         { keys: ['Ctrl', 'F4'], description: jt('ide.shortcuts.closeActiveTab', 'Close the active tab') },
         { keys: ['Double-click'], description: jt('ide.shortcuts.pinTab', 'Pin or unpin a tab (also on the tab right-click menu)') },
         { keys: ['Ctrl', 'Shift', 'T'], description: jt('ide.shortcuts.reopenClosedTab', 'Reopen the last closed tab') },
+        { keys: ['Ctrl', 'Shift', 'G'], description: jt('ide.shortcuts.chatDockChanges', 'Switch the chat dock between Chat and Changes') },
+        { keys: ['Ctrl', 'B'], description: jt('ide.shortcuts.togglePrimarySide', 'Show or hide the side that holds Files') },
+        { keys: ['Ctrl', '\\'], description: jt('ide.shortcuts.toggleChat', 'Show or hide the Workspace chat') },
         { keys: ['Ctrl', 'PageUp'], description: jt('ide.shortcuts.previousTab', 'Previous tab') },
         { keys: ['Ctrl', 'PageDown'], description: jt('ide.shortcuts.nextTab', 'Next tab') },
       ],
@@ -70,6 +73,7 @@
       entries: [
         { keys: ['Ctrl', 'K'], description: jt('ide.shortcuts.openCommandPalette', 'Open the command palette') },
         { keys: ['Ctrl', '`'], description: jt('ide.shortcuts.toggleBottomPanel', 'Toggle the bottom panel (Terminal / Problems)') },
+        { keys: ['Ctrl', 'Shift', '`'], description: jt('ide.commands.newTerminalDescription', 'Open and start another terminal beside the current one') },
         { keys: ['?'], description: jt('ide.shortcuts.openOverlay', 'Open this shortcuts overlay') },
         { keys: ['Esc'], description: jt('ide.shortcuts.closeOverlay', 'Close the overlay') },
         { keys: ['Esc'], description: jt('ide.shortcuts.exitPreview', 'Leave the Preview surface and return to the editor') },

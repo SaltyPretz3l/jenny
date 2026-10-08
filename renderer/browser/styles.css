@@ -150,6 +150,8 @@ button:disabled, textarea:disabled, input:disabled, select:disabled { cursor: no
 .browser-live-placeholder { margin: 0; color: var(--browser-muted); font-size: .82rem; }
 .browser-live-reasoning { margin-bottom: 10px; color: var(--browser-muted); font-size: .78rem; }
 .browser-live-reasoning p { margin: 8px 0 0; }
+.browser-live-discarded { opacity: 0.7; font-size: .78rem; }
+.browser-live-discarded-body { margin: 8px 0 0 12px; }
 .browser-composer-wrap { width: min(100%, 900px); margin: auto auto 0; padding: 10px clamp(18px, 4vw, 48px) 0; }
 .browser-composer { padding: 11px; border: 1px solid var(--browser-border); border-radius: 16px; background: var(--browser-panel); box-shadow: 0 8px 28px rgb(0 0 0 / .16); }
 .browser-composer-field .inv-text-field-label { display: none; }

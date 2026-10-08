@@ -20,6 +20,19 @@
   // mime, which is what keeps OS/external file drops out. Wire contract - the
   // tree's setData() string must match byte-for-byte; the tests pin both sides.
   const TREE_DRAG_MIME = 'application/x-jenny-tree-path';
+  // A file tab moving between editor groups (row 40 W5); the group views share it.
+  const TAB_MIME = 'application/x-jenny-editor-tab';
+
+  function readTabPayload(event) {
+    try {
+      const value = JSON.parse(event.dataTransfer?.getData?.(TAB_MIME) || 'null');
+      return value && typeof value.path === 'string' && value.path ? { path: value.path, fromGroup: String(value.fromGroup || '') } : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  const hasTabPayload = (event) => event.dataTransfer?.types?.includes?.(TAB_MIME) === true;
 
   function resolveModule(globalName, requirePath) {
     if (globalRef[globalName]) {
@@ -51,6 +64,8 @@
       isPreviewTabId = () => false,
       buildExtraMenuItems = () => [],
       revealInExplorer = noop,
+      // (payload { path, fromGroup }, index): a tab dragged in from another editor group.
+      onDropTab = noop,
       schedulePersist = noop,
       renderTabs = noop,
       showShellErrorToast = noop,
@@ -66,8 +81,13 @@
     let boundStage = null;
     let draggedPath = '';
 
+    // The primary strip's tabs: secondary editor groups (row 40 W5) own theirs.
+    function primaryTabs() {
+      return (getIde().openTabs || []).filter((tab) => !tab.group);
+    }
+
     function tabPaths() {
-      return (getIde().openTabs || []).map((tab) => tab.path);
+      return primaryTabs().map((tab) => tab.path);
     }
 
     function isPinned(path) {
@@ -95,7 +115,7 @@
         return;
       }
       const ide = getIde();
-      const tabs = ide.openTabs || [];
+      const tabs = primaryTabs();
       if (!tabs.length) {
         return;
       }
@@ -272,6 +292,9 @@
           { label: jt('ide.tabs.revealInExplorer', 'Reveal in Explorer View'), action: () => revealInExplorer(path) }
         );
         items.push(...buildExtraMenuItems(path));
+      } else if (isDiffTabId(path)) {
+        // A diff tab can move between editor groups (row 40 W7c): only the move items.
+        items.push(...buildExtraMenuItems(path, { review: true }));
       }
       contextMenu.show({
         rootEl: getDom().ideView || null,
@@ -336,14 +359,35 @@
       }
       draggedPath = tabEl.dataset.ideTab || '';
       event.dataTransfer?.setData?.('text/plain', draggedPath);
+      event.dataTransfer?.setData?.(TAB_MIME, JSON.stringify({ path: draggedPath, fromGroup: '' }));
       if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = 'move';
       }
       tabEl.classList.add('ide-tab--dragging');
+      // A tab dropped into another group leaves this strip before its dragend fires, and
+      // dragend on a detached tab never bubbles here: listen on the tab itself too, or the
+      // stale draggedPath makes the strip ignore the next tab dragged in from a group.
+      tabEl.addEventListener?.('dragend', handleDragEnd, { once: true });
+    }
+
+    // Where a tab dropped on the primary strip lands: before the first tab whose
+    // midpoint is past the pointer (mirrored right-to-left).
+    function dropIndex(event, strip) {
+      const tabs = [...(strip?.querySelectorAll?.('[data-ide-tab]') || [])];
+      const rtl = (strip?.closest?.('[dir]')?.getAttribute('dir') || '').toLowerCase() === 'rtl';
+      return tabs.filter((tab) => {
+        const rect = tab.getBoundingClientRect?.();
+        const mid = rect ? rect.left + rect.width / 2 : 0;
+        return rtl ? event.clientX < mid : event.clientX > mid;
+      }).length;
     }
 
     function handleDragOver(event) {
       if (!draggedPath) {
+        if (hasTabPayload(event)) {
+          event.preventDefault(); // a tab from another group may land here
+          getDom().ideTabStrip?.setAttribute('data-ide-drop', 'tabs');
+        }
         return;
       }
       const tabEl = event.target?.closest?.('[data-ide-tab]');
@@ -363,6 +407,13 @@
       const tabEl = event.target?.closest?.('[data-ide-tab]');
       const strip = getDom().ideTabStrip || null;
       clearDropIndicators(strip);
+      strip?.removeAttribute?.('data-ide-drop');
+      const incoming = draggedPath ? null : readTabPayload(event);
+      if (incoming && incoming.fromGroup) {
+        event.preventDefault();
+        onDropTab(incoming, dropIndex(event, strip));
+        return;
+      }
       if (!draggedPath || !tabEl) {
         return;
       }
@@ -373,9 +424,17 @@
       draggedPath = '';
     }
 
+    // A tab from another group leaving the strip takes its drop mark along (its own
+    // dragend fires on the source group, not here).
+    function handleDragLeave(event) {
+      const strip = getDom().ideTabStrip || null;
+      if (strip && !strip.contains(event.relatedTarget)) strip.removeAttribute('data-ide-drop');
+    }
+
     function handleDragEnd() {
       const strip = getDom().ideTabStrip || null;
       clearDropIndicators(strip);
+      strip?.removeAttribute?.('data-ide-drop');
       strip?.querySelector?.('.ide-tab--dragging')?.classList.remove('ide-tab--dragging');
       draggedPath = '';
     }
@@ -387,7 +446,7 @@
     // suppressor on window claims (and blocks) them. Tab-reorder drags hover the
     // strip, not the stage, and never set the mime either.
     function stageHasTreePayload(event) {
-      return event.dataTransfer?.types?.includes?.(TREE_DRAG_MIME) === true;
+      return event.dataTransfer?.types?.includes?.(TREE_DRAG_MIME) === true || (!draggedPath && hasTabPayload(event));
     }
 
     function handleStageDragOver(event) {
@@ -415,6 +474,12 @@
 
     function handleStageDrop(event) {
       getDom().ideEditorStage?.classList.remove('ide-editor-stage--drop-active');
+      const incoming = draggedPath ? null : readTabPayload(event);
+      if (incoming && incoming.fromGroup) {
+        event.preventDefault();
+        onDropTab(incoming, tabPaths().length); // a tab from another group joins at the end
+        return;
+      }
       const path = event.dataTransfer?.getData?.(TREE_DRAG_MIME);
       if (!path) {
         return;
@@ -437,6 +502,7 @@
         strip.addEventListener('dragstart', handleDragStart);
         strip.addEventListener('dragover', handleDragOver);
         strip.addEventListener('drop', handleDrop);
+        strip.addEventListener('dragleave', handleDragLeave);
         strip.addEventListener('dragend', handleDragEnd);
       }
       // The editor stage is a distinct element from the strip - bind it
@@ -465,6 +531,7 @@
         bound.removeEventListener('dragstart', handleDragStart);
         bound.removeEventListener('dragover', handleDragOver);
         bound.removeEventListener('drop', handleDrop);
+        bound.removeEventListener('dragleave', handleDragLeave);
         bound.removeEventListener('dragend', handleDragEnd);
         bound = null;
       }
@@ -495,6 +562,7 @@
   }
 
   return {
+    TAB_MIME,
     createIdeTabsController,
   };
 });

@@ -16,7 +16,7 @@ from typing import Any, NoReturn
 
 from sidecar.ai.config import MCPServerConfig
 from sidecar.ai.error_codes import CMP_MCP_PROTOCOL_FAILED, CMP_MCP_SERVER_FAILED
-from sidecar.ai.mcp.exceptions import MCPError, mcp_error_data_detail
+from sidecar.ai.mcp.exceptions import OBSERVED_CHANGES_KEY, MCPError, mcp_error_data_detail
 from sidecar.ai.mcp.transport_base import MCPTransport, raise_cancelled_keeping_reply
 from sidecar.ai.mcp.transport_base import raise_if_cancelled as _raise_if_cancelled
 from sidecar.ai.mcp.transport_lifecycle import (
@@ -1006,4 +1006,7 @@ class StdioMCPTransport(MCPTransport):
             response_received=True,
             resource_cleanup=data.get("resource_cleanup") if isinstance(data, dict) else None,
             detail=_sanitize_mcp_detail(mcp_error_data_detail(data)),
+            # Row 34: typed and bounded by MCPError; routing trusts it only
+            # from the builtin server.
+            observed_changes=data.get(OBSERVED_CHANGES_KEY) if isinstance(data, dict) else None,
         )

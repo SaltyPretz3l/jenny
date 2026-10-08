@@ -159,7 +159,7 @@ def test_clean_stop_generation_result_preserves_success_contract() -> None:
 
 @pytest.mark.parametrize(
     ("content", "expected_code"),
-    [("", "CMP-STREAM-INCOMPLETE"), ("fine answer", None)],
+    [("", "CMP-STREAM-INCOMPLETE"), ("\n", "CMP-STREAM-INCOMPLETE"), ("fine answer", None)],
 )
 def test_length_finish_reason_only_fails_closed_without_visible_text(
     content: str,

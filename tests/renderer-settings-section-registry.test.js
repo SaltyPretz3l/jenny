@@ -32,7 +32,7 @@ test('settings section registry preserves ids and defaults', () => {
     'offline',
     'usage',
     'runtime',
-    'plugins',
+    'extensions',
     'account',
     'dataPrivacy',
     'aboutUpdates',
@@ -85,7 +85,7 @@ test('settings section registry exposes six uniform ordered groups', () => {
     ['work', 'Work', ['runtime', 'usage']],
     ['context', 'Context & memory', ['context', 'memories', 'personality']],
     ['app', 'App', ['appearance', 'editor', 'home', 'notifications']],
-    ['system', 'System', ['plugins', 'account']],
+    ['system', 'System', ['extensions', 'account']],
     ['developer', 'Developer', ['advanced']],
   ]);
   assert.ok(groups.every(group => !group.disclosure));
@@ -107,21 +107,21 @@ test('merged pages normalize to hosts and retain companion lifecycle metadata', 
   assert.equal(getSettingsSectionDefinition('runtimeLimits').lazy, true);
 });
 
-test('settings section registry merges skills into plugins and retires tips/proactive sections', () => {
+test('settings section registry merges skills into extensions and retires tips/proactive sections', () => {
   const skills = getSettingsSectionDefinition('skills');
   // Merged-away sections stay hidden-but-known and keep their lazy lifecycle so the
   // host card can ready + refresh them as companions (skills' MCP discovery stays deferred).
   assert.equal(skills.hidden, true);
-  assert.equal(skills.mergedInto, 'plugins');
+  assert.equal(skills.mergedInto, 'extensions');
   assert.equal(skills.lazy, true);
   assert.equal(getSettingsSectionDefinition('tips'), null);
   assert.equal(getSettingsSectionDefinition('proactive'), null);
-  assert.deepEqual(getSettingsCompanionSectionIds('plugins'), ['skills']);
+  assert.deepEqual(getSettingsCompanionSectionIds('extensions'), ['skills']);
   assert.deepEqual(getSettingsCompanionSectionIds('tools'), []);
   assert.deepEqual(getSettingsCompanionSectionIds('proactive'), []);
   assert.deepEqual(getSettingsCompanionSectionIds('models'), []);
   // A persisted/deep-linked hidden section resolves to its host (no blank panel).
-  assert.equal(normalizeSettingsSectionId('skills'), 'plugins');
+  assert.equal(normalizeSettingsSectionId('skills'), 'extensions');
   assert.equal(normalizeSettingsSectionId('tips'), 'models');
 });
 
@@ -135,16 +135,16 @@ test('settings section registry registers Home so it no longer redirects to mode
   assert.equal(home.label, 'Home');
 });
 
-test('settings section registry registers the flag-gated Plugins section in the System group', () => {
-  // Stage 3B Plugin Manager (owner-approved 2026-07-31): registry-static like
-  // every section — flag gating (featureFlags.plugins) happens at runtime via
-  // the sibling controller's data-feature-gated stamp, not in the registry.
-  assert.equal(normalizeSettingsSectionId('plugins'), 'plugins');
-  const plugins = getSettingsSectionDefinition('plugins');
-  assert.equal(plugins.group, 'system');
-  assert.equal(plugins.label, 'Plugins & Extensions');
-  assert.equal(plugins.lazy, false);
-  assert.equal(plugins.hidden, false);
+test('settings section registry registers Extensions in the System group and retires plugins', () => {
+  assert.equal(normalizeSettingsSectionId('extensions'), 'extensions');
+  const extensions = getSettingsSectionDefinition('extensions');
+  assert.equal(extensions.group, 'system');
+  assert.equal(extensions.label, 'Extensions');
+  assert.equal(extensions.lazy, false);
+  assert.equal(extensions.hidden, false);
+  // The retired Plugins page has no definition; an old persisted id opens Extensions.
+  assert.equal(getSettingsSectionDefinition('plugins'), null);
+  assert.equal(normalizeSettingsSectionId('plugins'), 'extensions');
 });
 
 test('settings section registry preserves special nav-item ids for show/hide consumers', () => {

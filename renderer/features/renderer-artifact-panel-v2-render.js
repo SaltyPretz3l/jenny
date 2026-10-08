@@ -153,7 +153,7 @@
       afterRenderV3(artifact, mode);
       if (mode !== 'artifact') {
         const title = panelEl.querySelector('.artifact-panel-title-text');
-        if (title) title.textContent = mode === 'code_review' ? jt("artifactPanelV2Render.codeReview", "Code review") : mode === 'file_preview' ? jt("ide.filePreviewLabel", "File preview") : jt("artifactPanelV2Render.tasks", "Tasks");
+        if (title) title.textContent = mode === 'code_review' ? jt("artifactPanelV2Render.changes", "Changes") : mode === 'file_preview' ? jt("ide.filePreviewLabel", "File preview") : mode === 'notes' ? jt("projectNotes.title", "Notes") : jt("artifactPanelV2Render.tasks", "Tasks");
       }
     }
 

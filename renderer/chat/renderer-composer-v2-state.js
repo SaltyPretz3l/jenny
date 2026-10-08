@@ -25,7 +25,7 @@
   });
 
   const COMPOSER_LIFECYCLE_VALUES = new Set(Object.values(COMPOSER_LIFECYCLE));
-  const RUN_MODE_ORDER = Object.freeze(['ask', 'auto', 'plan']);
+  const RUN_MODE_ORDER = Object.freeze(['ask', 'auto', 'plan', 'propose']);
   const normalizeRunMode = settingsSupport.normalizeRunMode;
   const UNSAFE_JSON_CLONE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 

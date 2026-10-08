@@ -3,13 +3,11 @@
 // Plugin platform retirement, stage 2: the retired ChatGPT plugin's install
 // receipt and desired state, read from the plugin store's files. Cloud models
 // registration reads them before startup builds the sidecar secrets, so the
-// user's old on/off choice holds from the first engine start, also with the
-// plugins flag off or in plugin safe mode. Read-only: the plugin runtime still
-// uninstalls the plugin and drops the receipt later.
+// user's old on/off choice holds from the first engine start. Read-only: the
+// retired plugin store is left on disk (removed by the uninstaller).
 //
-// Plain JSON reads on purpose: no services/plugins module loads here (plugin
-// boundary check; tests/plugins-startup-unchanged.test.js). The layout is the
-// store's: <userData>/plugins/provider-migrations/chatgpt-subscription.json,
+// Plain JSON reads: the plugin platform is gone, so this reads the old store's
+// layout directly: <userData>/plugins/provider-migrations/chatgpt-subscription.json,
 // active-generation.json naming generations/<id>/control-plane.json.
 
 const fs = require('node:fs');

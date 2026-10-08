@@ -66,7 +66,7 @@
       getFileLifecycle, getChooseWorkspaceRoot, buildFileContextMenuItems,
       getSearchPanel, buildPathUtilityMenuItems, schedulePersist,
       getCloseOrchestrator, getConfirmDialog, getWorkspaceRootApi,
-      showShellErrorToast, appendClientLog, getGitFeature, getFeatureFlags, panelDeps,
+      showShellErrorToast, showToastMessage, appendClientLog, getGitFeature, getFeatureFlags, panelDeps,
       getAttachmentsApi, getTerminalPanel, getBottomPanel,
       getProjectSwitcher, peekProjectSwitcher,
     } = ctx || {};
@@ -74,11 +74,8 @@
     const treeDndUtils = resolveModule('rendererIdeTreeDnd', './renderer-ide-tree-dnd');
     const treeImportUtils = resolveModule('rendererIdeTreeImport', './renderer-ide-tree-import');
     const treeMarkup = resolveModule('rendererIdeTreeMarkup', './renderer-ide-tree-markup');
-    const toastUtils = resolveModule('rendererToastUtils', '../shell/renderer-toast-utils');
     const ideStateUtils = resolveModule('rendererIdeState', './renderer-ide-state');
     const explorerPanelDeps = typeof panelDeps === 'function' ? panelDeps('explorer') : {};
-    const isQolEnabled = () => getFeatureFlags?.()?.workspace_explorer_qol === true;
-    const isImportEnabled = () => getFeatureFlags?.()?.workspace_external_import === true;
     let operationGeneration = 0;
     const canOpenInTerminal = () => typeof getTerminalPanel?.()?.sendCommand === 'function';
     async function openInTerminal(relPath) {
@@ -153,12 +150,12 @@
       buildFileContextMenuItems: (path) => buildFileContextMenuItems(path),
       buildDirectoryContextMenuItems: (path, options = {}) => [
         { label: jt('ide.explorer.findInFolder', 'Find in Folder'), action: () => getSearchPanel()?.beginScopedSearch?.(path) },
-        ...(isQolEnabled() && canOpenInTerminal() && options.includeTerminal !== false
+        ...(canOpenInTerminal() && options.includeTerminal !== false
           ? [{ label: jt('ide.explorer.openInTerminal', 'Open in Terminal'), action: () => openInTerminal(path) }]
           : []),
         ...(options.includePathUtilities === false ? [] : buildPathUtilityMenuItems(path, 'directory')),
       ],
-      buildRootContextMenuItems: () => (isQolEnabled() && canOpenInTerminal()
+      buildRootContextMenuItems: () => (canOpenInTerminal()
         ? [{ label: jt('ide.explorer.openInTerminal', 'Open in Terminal'), action: () => openInTerminal('') }]
         : []),
       schedulePersist: () => schedulePersist(),
@@ -177,17 +174,17 @@
       getMutationContext: () => getWorkspaceRootApi()?.captureContext?.(),
       showError: (message, meta) => showShellErrorToast(message, meta), appendClientLog,
       getGitDecoration: (relPath, kind) => getGitFeature()?.getDecoration(relPath, kind),
-      isQolEnabled,
       showUndoToast,
       onRenameCommitted: (rename) => showRenameUndo(rename),
     };
     const tree = treeUtils.createIdeTree?.({ ...treeDeps, ...explorerPanelDeps }) || null;
     function showToast(message, options = {}) {
       try {
-        if (typeof toastUtils?.showToastMessage !== 'function') {
+        // The shell's toast controller, not a module global: rendererToastUtils exports only its factory.
+        if (typeof showToastMessage !== 'function') {
           return showShellErrorToast?.(message);
         }
-        return toastUtils.showToastMessage(message, {
+        return showToastMessage(message, {
           title: jt('ide.explorer.workspace', 'Workspace'),
           tone: 'info',
           ...options,
@@ -217,7 +214,7 @@
         || context.rootEpoch !== tree?.getRootEpoch?.();
     }
     function showRenameUndo(rename) {
-      if (!isQolEnabled() || disposed) return;
+      if (disposed) return;
       const undoContext = {
         generation: operationGeneration,
         rootEpoch: tree?.getRootEpoch?.(),
@@ -241,7 +238,7 @@
     }
     const dnd = treeDndUtils.createIdeTreeDnd?.({
       getDom, getIde: () => getIde(), ...explorerPanelDeps,
-      selection: tree?.selection, isQolEnabled, moveEntry: tree?.moveEntry,
+      selection: tree?.selection, moveEntry: tree?.moveEntry,
       getRootEpoch: tree?.getRootEpoch,
       getApi: getWorkspaceFsApi, getMutationContext: treeDeps.getMutationContext,
       refreshDirectory: tree?.refreshDirectory,
@@ -254,7 +251,6 @@
     }) || null;
     const treeImport = treeImportUtils.createIdeTreeImport?.({
       getDom, getIde: () => getIde(), ...explorerPanelDeps,
-      isImportEnabled,
       getAttachmentsApi: typeof getAttachmentsApi === 'function'
         ? getAttachmentsApi
         : () => globalRef.window?.jennyShell?.attachments || globalRef.jennyShell?.attachments || null,
@@ -319,8 +315,8 @@
     function bindAll() {
       disposed = false;
       tree?.bindEvents();
-      if (isQolEnabled()) dnd?.bindEvents();
-      if (isImportEnabled()) treeImport?.bindEvents();
+      dnd?.bindEvents();
+      treeImport?.bindEvents();
       const eventWindow = globalRef.window || globalRef;
       if (hasProjectSwitcher && !projectsChangedWindow && typeof eventWindow.addEventListener === 'function') {
         projectsChangedWindow = eventWindow;
@@ -331,7 +327,7 @@
         // the pane composition's header/full-render sync only on a change.
         projectsChangedWindow.addEventListener('jenny:focused-chat-changed', handleProjectsChanged);
       }
-      if (!isQolEnabled() || autoRevealBound) {
+      if (autoRevealBound) {
         return;
       }
       const windowRef = globalRef.window || globalRef;

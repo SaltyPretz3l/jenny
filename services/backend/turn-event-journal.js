@@ -234,6 +234,12 @@ class TurnEventJournal {
             this._storageBlocked = true;
             return;
           }
+          if (loaded === null) {
+            this._partitionCount = --partitionCount;
+            this._totalPartitionBytes = startupBytes -= partitionBytes;
+            continue;
+          }
+          startupBytes = this._totalPartitionBytes += loaded.bytes - partitionBytes;
           if (loaded.empty && loaded.identity && !loaded.blocked) {
             try {
               this._deletePartition(loaded.identity.sessionId, loaded.identity.turnId);
@@ -368,12 +374,36 @@ class TurnEventJournal {
       }
       recordCount += 1;
     }
+    if (!blocked && (!raw || !raw.endsWith('\n'))) {
+      try {
+        if (raw) {
+          fs.appendFileSync(partitionPath, '\n', 'utf8');
+          raw += '\n';
+          this._log('WARN', 'turn_journal.tail_newline_repaired', {
+            partition: path.basename(partitionPath).slice(0, 16),
+          });
+        } else {
+          fs.unlinkSync(partitionPath);
+          this._log('WARN', 'turn_journal.empty_partition_reclaimed', {
+            partition: path.basename(partitionPath).slice(0, 16),
+          });
+          return null;
+        }
+      } catch (error) {
+        this._log('WARN', raw ? 'turn_journal.truncated_tail_repair_failed' : 'turn_journal.empty_partition_reclaim_failed', {
+          partition: path.basename(partitionPath).slice(0, 16),
+          errorCode: normalizeId(error?.code) || null,
+        });
+        blocked = true;
+      }
+    }
     if (!identity) {
       this._log('WARN', 'turn_journal.partition_identity_missing', {
         partition: path.basename(partitionPath).slice(0, 16),
       });
       return false;
     }
+    const bytes = Buffer.byteLength(raw, 'utf8');
     const key = this._partitionKey(identity.sessionId, identity.turnId);
     if (path.resolve(partitionPath) !== path.resolve(this._partitionPath(
       identity.sessionId,
@@ -383,14 +413,14 @@ class TurnEventJournal {
       this._log('WARN', 'turn_journal.partition_path_identity_mismatch', {
         partition: path.basename(partitionPath).slice(0, 16),
       });
-      return { blocked: true, empty: false, identity };
+      return { blocked: true, empty: false, identity, bytes };
     }
     this._setTurnEvents(identity.sessionId, identity.turnId, events);
-    this._partitionStats.set(key, { records: recordCount, bytes: Buffer.byteLength(raw, 'utf8') });
+    this._partitionStats.set(key, { records: recordCount, bytes });
     if (blocked) {
       this._blockedPartitions.add(key);
     }
-    return { blocked, empty: events.length === 0, identity };
+    return { blocked, empty: events.length === 0, identity, bytes };
   }
 
   // Precondition: `existingEvents` must already be journal-private (either the

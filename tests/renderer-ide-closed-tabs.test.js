@@ -16,14 +16,24 @@ function ctrlKey(harness, key, init = {}) {
   }));
 }
 
+test('group follow-up: closed-tabs stack keeps only path, view state and a string group', () => {
+  const stack = createIdeClosedTabsStack();
+  stack.push({ path: 'group.js', viewState: { cursor: 7 }, group: 'editor-2', extra: true });
+  assert.deepEqual(stack.pop(), { path: 'group.js', viewState: { cursor: 7 }, group: 'editor-2' });
+  for (const group of [undefined, null, 2, {}]) {
+    stack.push({ path: 'primary.js', group });
+    assert.deepEqual(stack.pop(), { path: 'primary.js', viewState: null, group: '' });
+  }
+});
+
 // ── Pure stack ──────────────────────────────────────────────────────────────
 
 test('closed-tabs stack pops most-recent first (LIFO)', () => {
   const stack = createIdeClosedTabsStack();
   stack.push({ path: 'a.js', viewState: { v: 1 } });
   stack.push({ path: 'b.js', viewState: { v: 2 } });
-  assert.deepEqual(stack.pop(), { path: 'b.js', viewState: { v: 2 } });
-  assert.deepEqual(stack.pop(), { path: 'a.js', viewState: { v: 1 } });
+  assert.deepEqual(stack.pop(), { path: 'b.js', viewState: { v: 2 }, group: '' });
+  assert.deepEqual(stack.pop(), { path: 'a.js', viewState: { v: 1 }, group: '' });
   assert.equal(stack.pop(), null);
 });
 
@@ -43,8 +53,8 @@ test('closed-tabs stack de-dupes a re-closed path to the top with newest state',
   stack.push({ path: 'a.js', viewState: { v: 1 } });
   stack.push({ path: 'b.js' });
   stack.push({ path: 'a.js', viewState: { v: 2 } });
-  assert.deepEqual(stack.pop(), { path: 'a.js', viewState: { v: 2 } });
-  assert.deepEqual(stack.pop(), { path: 'b.js', viewState: null });
+  assert.deepEqual(stack.pop(), { path: 'a.js', viewState: { v: 2 }, group: '' });
+  assert.deepEqual(stack.pop(), { path: 'b.js', viewState: null, group: '' });
   assert.equal(stack.pop(), null);
 });
 
@@ -71,10 +81,10 @@ test('closed-tabs stack peek returns the top entry without mutating', () => {
   assert.equal(stack.peek(), null);
   stack.push({ path: 'a.js', viewState: { v: 1 } });
   stack.push({ path: 'b.js', viewState: { v: 2 } });
-  assert.deepEqual(stack.peek(), { path: 'b.js', viewState: { v: 2 } });
-  assert.deepEqual(stack.peek(), { path: 'b.js', viewState: { v: 2 } });
-  assert.deepEqual(stack.pop(), { path: 'b.js', viewState: { v: 2 } });
-  assert.deepEqual(stack.pop(), { path: 'a.js', viewState: { v: 1 } });
+  assert.deepEqual(stack.peek(), { path: 'b.js', viewState: { v: 2 }, group: '' });
+  assert.deepEqual(stack.peek(), { path: 'b.js', viewState: { v: 2 }, group: '' });
+  assert.deepEqual(stack.pop(), { path: 'b.js', viewState: { v: 2 }, group: '' });
+  assert.deepEqual(stack.pop(), { path: 'a.js', viewState: { v: 1 }, group: '' });
   assert.equal(stack.peek(), null);
 });
 
@@ -83,12 +93,12 @@ test('closed-tabs stack treats whitespace in a path as identity (round trip, dro
   stack.push({ path: ' target.txt' });
   stack.push({ path: 'target.txt' });
   stack.dropPath('target.txt');
-  assert.deepEqual(stack.pop(), { path: ' target.txt', viewState: null }, 'the padded sibling is untouched');
+  assert.deepEqual(stack.pop(), { path: ' target.txt', viewState: null, group: '' }, 'the padded sibling is untouched');
 
   stack.push({ path: ' dir /a.txt' });
   stack.push({ path: 'dir/a.txt' });
   stack.dropUnder(' dir ');
-  assert.deepEqual(stack.pop(), { path: 'dir/a.txt', viewState: null });
+  assert.deepEqual(stack.pop(), { path: 'dir/a.txt', viewState: null, group: '' });
   assert.equal(stack.pop(), null);
 
   stack.push({ path: '   ' });

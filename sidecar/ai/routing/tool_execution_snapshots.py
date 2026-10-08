@@ -9,6 +9,7 @@ import posixpath
 from pathlib import Path
 from typing import Any
 
+from sidecar.ai.routing.propose_live_suggestions import live_suggestion_arguments
 from sidecar.ai.tools.contracts import canonicalize_tool_arguments
 from sidecar.ai.tools.plan_artifact_policy import (
     PLAN_ARTIFACT_WRITE_ARG,
@@ -291,6 +292,8 @@ def freeze_effective_execution_inputs(  # noqa: PLR0913
     trusted_plan_artifact_write: bool | None = None,
     turn_id: str | None = None,
     execution_context: Any | None = None,
+    request_context: Any | None = None,
+    request_outcomes: tuple[Any, ...] | None = None,
 ) -> FrozenExecutionInputs:
     visible_tool_arguments, attribution_arguments = split_visible_execution_arguments(call)
     canonical_arguments = dict(visible_tool_arguments)
@@ -368,6 +371,9 @@ def freeze_effective_execution_inputs(  # noqa: PLR0913
     if call.tool_id == "mermaid_generate":
         effective_tool_arguments["_jenny_read_only"] = bool(read_only)
         injected_arg_keys.append("_jenny_read_only")
+    live_suggestions = live_suggestion_arguments(call.tool_id, request_context, request_outcomes)
+    effective_tool_arguments.update(live_suggestions)
+    injected_arg_keys.extend(live_suggestions)
     if call.tool_id == "todo_read" and isinstance(approved_plan, dict):
         effective_tool_arguments["_jenny_approved_plan"] = approved_plan
         injected_arg_keys.append("_jenny_approved_plan")

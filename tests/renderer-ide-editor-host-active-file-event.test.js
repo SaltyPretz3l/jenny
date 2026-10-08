@@ -45,7 +45,6 @@ function bootHost(t) {
       normalizeEditorLanguage: () => 'plaintext',
     },
     imageHostUtils: {},
-    previewHostUtils: {},
   });
   t.after(() => {
     host.dispose();

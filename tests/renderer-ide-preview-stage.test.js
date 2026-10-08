@@ -1,7 +1,7 @@
 'use strict';
 
-/* Unified Preview stage (renderer/features/renderer-ide-preview-stage.js,
- * workspace_preview_surface). Covers: markdown/mermaid through the shared
+/* Unified Preview stage (renderer/features/renderer-ide-preview-stage.js).
+ * Covers: markdown/mermaid through the shared
  * pipeline, the INVARIANT that workspace HTML always renders in the strict
  * sandboxed iframe (staged jenny-artifact:// src + sandbox="allow-scripts",
  * never srcdoc — srcdoc inherits the parent CSP — and never DOMPurify inline),

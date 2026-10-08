@@ -14,7 +14,7 @@ async function loadRendererTestApp(t, options) {
   return app;
 }
 
-test('completed segmented turns render source-owned articles while rowless siblings keep compat anchors', async (t) => {
+test('completed segmented turns coalesce into one turn article while rowless siblings keep compat anchors', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
   const input = window.document.getElementById('chatInput');
   const sendButton = window.document.getElementById('sendButton');
@@ -85,30 +85,24 @@ test('completed segmented turns render source-owned articles while rowless sibli
   });
   await waitForUi(window, 80);
 
-  const preArticle = timeline.querySelector('article[data-message-id="assistant_turn_compat"]');
-  const toolArticle = timeline.querySelector('article[data-message-id="tool_use_turn_compat"]');
-  const postArticle = timeline.querySelector('article[data-message-id="assistant_turn_compat_seg1"]');
-  assert.ok(preArticle, 'the pre-tool assistant text should keep its assistant article');
-  assert.ok(toolArticle, 'the tool row should render on the tool-use article');
-  assert.ok(postArticle, 'the post-tool assistant text should render on the final assistant article');
+  // The turn activity envelope coalesces the whole turn into the first
+  // assistant article: pre-tool text, the tool row, then post-tool text.
+  const turnArticle = timeline.querySelector('article[data-message-id="assistant_turn_compat"]');
+  assert.ok(turnArticle, 'the turn should render on the first assistant article');
   assert.equal(
     timeline.querySelectorAll('article').length,
-    4,
-    'the user turn plus three source-owned assistant/tool articles should be visible'
+    2,
+    'the user turn plus one coalesced assistant turn article should be visible'
   );
-  assert.match(String(preArticle.getAttribute('data-turn-id') || ''), /turn_compat|stream-turn-compat/);
-  assert.ok(
-    preArticle.querySelector('[data-row-kind="assistant_text"][data-source-message-id="assistant_turn_compat"]'),
-    'the pre-tool assistant text should render inside the pre-tool assistant article'
-  );
-  assert.ok(
-    toolArticle.querySelector('[data-row-kind="tool_call"][data-tool-call-id="call_turn_compat"]'),
-    'the tool call should render inside the tool-use article'
-  );
-  assert.ok(
-    postArticle.querySelector('[data-row-kind="assistant_text"][data-source-message-id="assistant_turn_compat_seg1"]'),
-    'the post-tool assistant text should render inside the post-tool assistant article'
-  );
+  assert.match(String(turnArticle.getAttribute('data-turn-id') || ''), /turn_compat|stream-turn-compat/);
+  const rowOrder = Array.from(turnArticle.querySelectorAll('[data-row-kind]'))
+    .map((row) => `${row.getAttribute('data-row-kind')}:${row.getAttribute('data-source-message-id')}`);
+  assert.deepEqual(rowOrder, [
+    'assistant_text:assistant_turn_compat',
+    'tool_call:tool_use_turn_compat',
+    'assistant_text:assistant_turn_compat_seg1',
+  ]);
+  const toolArticle = turnArticle;
 
   // Trace parity (B6/D1): the completed tool renders as a `tool_call` row that
   // is anchored to the tool_use source message. The tool_result is a SEPARATE

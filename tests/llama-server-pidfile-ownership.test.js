@@ -372,6 +372,47 @@ const RETAINED_RECORD = Object.freeze({
   startedAt: '2026-10-01T00:00:00.000Z',
 });
 
+test('startup refuses to spawn beside an orphan whose cleanup is unconfirmed', async () => {
+  const userDataPath = makeUserDataDir('jenny-pidfile-orphan-start-');
+  writeIdentityPidFile(userDataPath, RETAINED_RECORD);
+  const pidPath = path.join(userDataPath, PID_FILENAME);
+  const before = fs.readFileSync(pidPath);
+  const spawnCalls = [];
+  const syncCalls = [];
+  const writes = [];
+  const logs = [];
+
+  await assert.rejects(startLlamaServer(launchOptions(userDataPath, {
+    port: await getClosedPort(),
+    isProcessAliveImpl: () => true,
+    spawnSyncImpl: (command, args) => {
+      syncCalls.push({ command, args });
+      return { status: 0, stdout: RETAINED_RECORD.command };
+    },
+    spawnImpl: (...args) => {
+      spawnCalls.push(args);
+      throw new Error('unexpected_spawn');
+    },
+    fsImpl: {
+      ...fs,
+      writeFileSync: (...args) => {
+        writes.push(args[0]);
+        return fs.writeFileSync(...args);
+      },
+    },
+    logger: (level, event, details) => logs.push({ level, event, details }),
+  })), { message: 'llama_server_orphan_cleanup_unconfirmed', cleanupUnconfirmed: true });
+
+  assert.ok(syncCalls.some(({ command }) => command === 'taskkill'), 'the confirmed orphan was force-killed');
+  assert.deepEqual(spawnCalls, [], 'no replacement server is spawned');
+  assert.deepEqual(writes, [], 'no api-key file was written');
+  assert.deepEqual(fs.readdirSync(userDataPath), [PID_FILENAME]);
+  assert.deepEqual(fs.readFileSync(pidPath), before, 'the retained record stays byte-identical');
+  assert.deepEqual(logs.find(({ event }) => event === 'llama.server.orphan_cleanup_unconfirmed'), {
+    level: 'WARN', event: 'llama.server.orphan_cleanup_unconfirmed', details: { pid: RETAINED_RECORD.pid },
+  });
+});
+
 function reconcileRetained({ record = RETAINED_RECORD, alive, commandLine }) {
   const userDataPath = makeUserDataDir('jenny-llama-reconcile-');
   writeIdentityPidFile(userDataPath, record);
@@ -439,4 +480,29 @@ test('reconcile kills a still-running server and confirms only a verified exit',
   const survives = reconcileRetained({ alive: () => true, commandLine: RETAINED_RECORD.command });
   assert.equal(survives.result.confirmed, false);
   assert.equal(survives.recorded, RETAINED_RECORD.pid, 'an unverified kill keeps the record');
+});
+
+test('a named pid file is resolved and reaped beside the chat server\'s, never instead of it', () => {
+  const userDataPath = makeUserDataDir('jenny-pidfile-named-');
+  assert.equal(lifecycle.getPidFilePath(userDataPath), path.join(userDataPath, PID_FILENAME));
+  assert.equal(lifecycle.getPidFilePath(userDataPath, 'embedding-server.pid'), path.join(userDataPath, 'embedding-server.pid'));
+  assert.equal(lifecycle.getPidFilePath('', 'embedding-server.pid'), '');
+
+  writeIdentityPidFile(userDataPath, FOREIGN_RECORD);
+  const embeddingPid = path.join(userDataPath, 'embedding-server.pid');
+  fs.writeFileSync(embeddingPid, JSON.stringify({ ...FOREIGN_RECORD, pid: 46100 }), 'utf8');
+  const result = lifecycle.reapStalePidFile({
+    userDataPath,
+    pidFileName: 'embedding-server.pid',
+    isProcessAliveImpl: () => false,
+  });
+  assert.deepEqual(result, { reaped: false, pid: 46100 });
+  assert.equal(fs.existsSync(embeddingPid), false);
+  assert.equal(recordedPid(userDataPath), FOREIGN_RECORD.pid, 'the chat record is untouched');
+
+  assert.deepEqual(lifecycle.reapStalePidFile({ userDataPath, isProcessAliveImpl: () => false }), {
+    reaped: false,
+    pid: FOREIGN_RECORD.pid,
+  });
+  assert.equal(recordedPid(userDataPath), 0, 'the default still reaps the chat record');
 });

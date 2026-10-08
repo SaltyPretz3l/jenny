@@ -167,7 +167,7 @@ async function executeHostedRunCommand(service, {
   const trusted = getTrustedExecutionBinding(executionAuthority);
   const projectRoot = hostedProjectRoot(service, trusted);
   if (projectRoot === null) {
-    return bridgeFailure('run_command', 'Hosted execution failed: project_root_outside_workspace.', TOOL_ERROR_CODES.EXECUTION_FAILED);
+    return bridgeFailure('run_command', 'Hosted execution needs a configured workspace mount and a chat project folder inside it; that scope could not be established (project_root_outside_workspace).', TOOL_ERROR_CODES.EXECUTION_FAILED);
   }
   const stagingRoot = hostedStagingRoot(service);
   if (stagingRoot === null) {

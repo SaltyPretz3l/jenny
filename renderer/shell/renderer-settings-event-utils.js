@@ -21,14 +21,8 @@
     'webSearch.provider': jt('settings.tools.webSearch.providerUpdateFailed', 'Web Search Provider Update Failed'),
     'webSearch.searxngUrl': jt('settings.tools.webSearch.searxngUrlUpdateFailed', 'SearXNG URL Update Failed'),
   });
-  const settingsCoreRenderers = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsCoreRenderers)
-    || (typeof require === 'function' ? require('./renderer-settings-core-renderers') : null)
-    || {};
   const settingsSupport = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsSupport)
     || (typeof require === 'function' ? require('./renderer-settings-support') : null)
-    || {};
-  const settingsSectionBinders = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsSectionBinders)
-    || (typeof require === 'function' ? require('./renderer-settings-section-binders') : null)
     || {};
   const {
     getToolConfigFieldsForRender = function fallbackGetToolConfigFieldsForRender() { return []; },
@@ -462,6 +456,9 @@
 
       // Tools > Approval rules: Remove clears a per-tool policy or deletes a
       // path-scoped rule through tools.*, then refetches the list.
+      const settingsCoreRenderers = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsCoreRenderers)
+        || (typeof require === 'function' ? require('./renderer-settings-core-renderers') : null)
+        || {};
       settingsCoreRenderers.bindApprovalRules?.({
         container: toolsApprovalRulesList,
         api: (typeof window !== 'undefined' && window.jennyShell?.tools) || null,
@@ -508,6 +505,9 @@
           openSettingsSection(sectionId, { source: 'control_tower' });
         }
       }
+      const settingsSectionBinders = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsSectionBinders)
+        || (typeof require === 'function' ? require('./renderer-settings-section-binders') : null)
+        || {};
       const sectionBinders = settingsSectionBinders.createSettingsSectionBinders?.({
         state,
         windowRef: typeof window !== 'undefined' ? window : globalThis,

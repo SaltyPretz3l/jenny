@@ -115,11 +115,6 @@ function createHarness(options = {}) {
     },
   };
   let streamListener = null;
-  let streamEnvelopeListener = null;
-  const streamSubscriptions = {
-    legacy: 0,
-    envelope: 0,
-  };
   const handler = createStreamHandler({
     state,
     thinkingIndicator,
@@ -226,17 +221,9 @@ function createHarness(options = {}) {
   handler.registerStreamHandler({
     chat: {
       onStream(listener) {
-        streamSubscriptions.legacy += 1;
         streamListener = listener;
         return () => {
           streamListener = null;
-        };
-      },
-      onStreamEnvelope(listener) {
-        streamSubscriptions.envelope += 1;
-        streamEnvelopeListener = listener;
-        return () => {
-          streamEnvelopeListener = null;
         };
       },
     },
@@ -246,12 +233,8 @@ function createHarness(options = {}) {
     calls,
     handler,
     multiStreamController,
-    streamSubscriptions,
     async emit(payload) {
       await streamListener(payload);
-    },
-    async emitEnvelope(payload) {
-      await streamEnvelopeListener(payload);
     },
     restore() {
       // Dispose the handler so a still-armed 30 s buffered-event sweep timer

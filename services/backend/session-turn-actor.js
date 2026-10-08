@@ -36,7 +36,7 @@ const {
   resolveCheckpointResumeIdentity,
   sessionMessages,
 } = require('./session-turn-actor-resume');
-const { normalizeId } = require('../shared/normalize'); const { captureFailureRetryReasoningAtReservation } = require('./session-failure-retry-reasoning');
+const { normalizeId } = require('../shared/normalize');
 const DEFAULT_MAX_ACTORS = 512;
 const DEFAULT_QUIESCENCE_TIMEOUT_MS = 5_000;
 const MAX_QUIESCENCE_TIMEOUT_MS = 60_000;
@@ -105,7 +105,7 @@ class SessionTurnActorRegistry {
     store,
     activeStreams,
     interactiveResponse = null,
-    editedMessageId = '', failureRetry = false, failureRetryReasoningCarry = false,
+    editedMessageId = '',
     deferEditValidation = false,
     prompt = '',
     path = '',
@@ -228,7 +228,7 @@ class SessionTurnActorRegistry {
       }
       if (!this._activeTurnMatches(store.getActiveTurn(id), identity)) {
         throw recoveryError('active_turn_claim_unverified_after_flush');
-      } else if (failureRetry === true && failureRetryReasoningCarry === true) captureFailureRetryReasoningAtReservation({ store, identity, userMessageId: editId, log: this._log.bind(this) });
+      }
       // Claim the crash-recovery bracket before consuming a continuation.
       // The safe intermediate state is an orphaned lease with a retryable
       // token, never a consumed token with no durable generation evidence.

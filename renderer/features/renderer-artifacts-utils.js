@@ -169,6 +169,7 @@
       renderFilePreviewSurface = null,
       renderTasksSurface = null,
       renderSubagentsSurface = null,
+      renderNotesSurface = null,
       panelV2 = null,
       sidePanel = null, // split view W3-2 panel owner (shell artifact bridge); absent: the focused session
     } = callbacks;
@@ -540,6 +541,12 @@
         renderTasksSurface(surfaces.split);
         panelV2?.afterRender?.(null);
         return;
+      }
+      if (mode === 'notes') {
+        // Pull: the lazily loaded Notes rail paints the surface; with its module absent the mode resets (like subagents).
+        if (renderNotesSurface?.(surfaces.split) === true) { panelV2?.afterRender?.(null); return; }
+        getArtifactReviewState().mode = 'artifact';
+        syncArtifactReviewLayout();
       }
       if (mode === 'subagents') {
         // Pull: the Subagent Monitor paints only for its live record; with none the mode resets (safety net).

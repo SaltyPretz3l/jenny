@@ -5,7 +5,7 @@ const { JSDOM } = require('jsdom');
 const { createLogRenderer } = require('../renderer/shell/renderer-diagnostics-render-utils');
 const { buildTraceTimingMarkup } = require('../renderer/shell/renderer-observability-markup-utils');
 
-function paintInventory(t, classification = 'plugins_disabled_required', render = createLogRenderer) {
+function paintInventory(t, render = createLogRenderer) {
   const dom = new JSDOM(['diagnosticsRuntimeInventory', 'diagnosticsOverall', 'diagnosticsSourceCoverage',
     'performanceAnomaliesContainer'].map((id) => `<div id="${id}"></div>`).join(''));
   const previous = { document: global.document, window: global.window };
@@ -22,11 +22,6 @@ function paintInventory(t, classification = 'plugins_disabled_required', render 
       renderer: { state: 'observed', count: 1 }, sidecar: { state: 'observed', count: 1 },
     }, integrity: { complete: true } },
     harness: { snapshot: { shell: { companion: { mode: 'planner' } } } },
-    features: { featureFlags: { plugins: true } },
-    pluginPlatformDiagnostics: {
-      platform: { installed_count: 2, stage: 8, revision: 0, recovery: { classification } },
-      distribution: { state: { revision: 0 } },
-    },
   };
   const renderer = render({ state });
   t.after(() => { renderer.dispose(); dom.window.close(); Object.assign(global, previous); });
@@ -39,16 +34,12 @@ function valueFor(host, label) {
   return Array.from(host.querySelectorAll('dt')).find((node) => node.textContent === label)?.nextElementSibling;
 }
 
-test('Inventory uses product recovery wording and retains technical identifiers in titles', (t) => {
+test('Inventory uses product wording, retains technical identifiers in titles and has no plugin rows', (t) => {
   const host = paintInventory(t);
-  const recovery = valueFor(host, 'Recovery');
-  assert.equal(recovery.textContent, 'Plugins must be turned off');
-  assert.equal(recovery.title, 'plugins_disabled_required');
-  assert.doesNotMatch(host.textContent, /Plugins Disabled Required|Companion|stage\s*8|rev\s*0/);
+  assert.doesNotMatch(host.textContent, /Companion/);
   assert.equal(valueFor(host, 'Shell').textContent, 'Planner');
   assert.match(valueFor(host, 'Shell').title, /planner/);
-  assert.match(valueFor(host, 'Plugins').title, /stage.*8.*revision.*0/);
-  assert.equal(valueFor(host, 'Distribution').textContent, 'Revision 0');
+  for (const label of ['Plugins', 'Recovery', 'Distribution']) assert.equal(valueFor(host, label), undefined);
 });
 
 test('Overview inventory, source counts, and performance copy use translation keys', (t) => {
@@ -58,8 +49,6 @@ test('Overview inventory, source counts, and performance copy use translation ke
   const previous = global.jennyI18n;
   const translations = {
     'diagnostics.inventory.workspace': 'Espace',
-    'diagnostics.inventory.recovery': 'Recuperation',
-    'diagnostics.inventory.distribution': 'Diffusion',
     'diagnostics.source.events': 'Evenements',
     'diagnostics.source.droppedCount': '{count} perdus',
     'diagnostics.performance.observedAndTarget': '{observed} mesure / {target} cible',
@@ -72,10 +61,8 @@ test('Overview inventory, source counts, and performance copy use translation ke
     global.jennyI18n = previous;
   });
   const localized = require(paths[0]);
-  const host = paintInventory(t, 'plugins_disabled_required', localized.createLogRenderer);
+  const host = paintInventory(t, localized.createLogRenderer);
   assert.ok(valueFor(host, 'Espace'));
-  assert.ok(valueFor(host, 'Recuperation'));
-  assert.ok(valueFor(host, 'Diffusion'));
   const doc = host.ownerDocument;
   assert.match(doc.getElementById('diagnosticsSourceCoverage').textContent, /Evenements/);
   assert.match(doc.querySelector('.diagnostics-source-drop').textContent, /2 perdus/);

@@ -263,7 +263,7 @@ test('openSession prepares the outgoing chat anchor before publishing the incomi
   }]);
 });
 
-test('openSession fails closed when the outgoing plugin workspace cannot settle', async (t) => {
+test('openSession between old image chats needs no plugin guard and opens no plugin view', async (t) => {
   const previousPluginSessions = globalThis.rendererPluginSessions;
   t.after(() => {
     if (previousPluginSessions === undefined) delete globalThis.rendererPluginSessions;
@@ -277,11 +277,11 @@ test('openSession fails closed when the outgoing plugin workspace cannot settle'
     pendingToolApprovals: new Map(),
     messagesBySession: new Map(),
   };
-  let openCalls = 0;
+  let pluginCalls = 0;
   globalThis.rendererPluginSessions = {
     instance: {
-      guardLeaveSession: async () => false,
-      openSessionView: async () => { openCalls += 1; return { ok: true }; },
+      guardLeaveSession: async () => { pluginCalls += 1; return false; },
+      openSessionView: async () => { pluginCalls += 1; return { ok: true }; },
     },
   };
   const controller = createSessionLifecycleController({
@@ -297,13 +297,8 @@ test('openSession fails closed when the outgoing plugin workspace cannot settle'
     },
   });
 
-  assert.equal(await controller.openSession('session-new', { outgoingSessionId: 'session-old' }), false);
-  assert.equal(openCalls, 0, 'the incoming workspace is not opened after refusal');
-  assert.equal(state.currentSessionId, 'session-old');
-
-  globalThis.rendererPluginSessions.instance.guardLeaveSession = async () => true;
   assert.equal(await controller.openSession('session-new', { outgoingSessionId: 'session-old' }), true);
-  assert.equal(openCalls, 1);
+  assert.equal(pluginCalls, 0, 'old image chats are plain transcripts: no leave guard, no plugin view');
   assert.equal(state.currentSessionId, 'session-new');
 });
 

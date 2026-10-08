@@ -46,7 +46,7 @@ test('prior-run report excludes current status while the active report preserves
 
 test('prior-run Overview labels live health as current-launch status', (t) => {
   const doc = paintOverview(t, { backend: { phase: 'ready' } }, { runId: 'prior' });
-  assert.match(doc.getElementById('diagnosticsSummary').textContent, /Health shows the current launch, not the selected run/);
+  assert.match(doc.getElementById('diagnosticsSummary').textContent, /Health shows the current app launch, not the one picked above/);
 });
 
 test('facade budget measurements and pressure items render through Overview', (t) => {
@@ -64,7 +64,13 @@ test('facade budget measurements and pressure items render through Overview', (t
   assert.match(text, /\$0\.44/);
   assert.match(text, /critical/i);
   assert.match(text, /read_file.*2.*3/);
-  assert.match(text, /Slow operations4/);
+  assert.doesNotMatch(text, /Slow operations4/);
+  const host = doc.getElementById('resourceBudgetsContainer');
+  assert.equal(host.querySelector('[data-state="unavailable"] dd').textContent, 'Not measured on this build');
+  const group = host.querySelector('.diagnostics-budget-group[role="presentation"]');
+  assert.equal(group.textContent, 'Usage');
+  assert.equal(group.querySelector('dt, dd'), null);
+  assert.equal(host.querySelector('[data-tone="error"] dd').textContent, 'Critical');
 });
 
 test('null and absent facade budget measurements never render zero', (t) => {
@@ -75,7 +81,8 @@ test('null and absent facade budget measurements never render zero', (t) => {
   const host = doc.getElementById('resourceBudgetsContainer');
   assert.match(host.textContent, /Cumulative tokens44/);
   assert.doesNotMatch(host.textContent, /\$0\.00|tokens0/);
-  assert.equal(host.querySelectorAll('dd').length, 1);
+  assert.equal(host.querySelectorAll('div:not([data-state="unavailable"]) > dd').length, 1);
+  assert.equal(host.querySelectorAll('[data-state="unavailable"] > dd').length, 5);
 });
 
 for (const count of [0, 2]) {

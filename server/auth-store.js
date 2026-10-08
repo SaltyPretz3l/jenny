@@ -179,7 +179,7 @@ class AuthStore {
       this._validatePermissions();
       if (this._fileStore) {
         const result = this._fileStore.readWithStatus(emptyAuthState());
-        if (result.corrupted) throw new AuthStoreError('AUTH_STORE_CORRUPT', 'Authentication store is unreadable.');
+        if (result.corrupted || result.unreadable) throw new AuthStoreError('AUTH_STORE_CORRUPT', 'Authentication store is unreadable.');
         candidate = result.value;
       } else {
         const existed = fs.existsSync(this.filePath);

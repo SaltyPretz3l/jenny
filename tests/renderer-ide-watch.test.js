@@ -113,7 +113,7 @@ test('ide external changes refresh the cached explorer listings', async (t) => {
   t.after(() => harness.dispose());
   await harness.controller.activateIde();
   await settle();
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   panel.querySelector('[data-ide-tree-path="src"]').click();
   await settle();
   assert.equal(panel.querySelector('[data-ide-tree-path="src/new.js"]'), null);
@@ -138,7 +138,7 @@ test('ide truncated change batch drops every cached listing and relists', async 
   t.after(() => harness.dispose());
   await harness.controller.activateIde();
   await settle();
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   assert.ok(panel.querySelector('[data-ide-tree-path="one.md"]'));
 
   harness.bridge.state.files['two.md'] = '2';

@@ -33,6 +33,11 @@
     terminalStatusVocabulary.TIMEOUT_STATUS || 'timeout',
     terminalStatusVocabulary.UNKNOWN_STATUS || 'unknown',
   ]);
+  // Calm recovery classes (mirrors resolveErrorSeverity in
+  // renderer-error-recovery-utils.js, which this pipeline does not load): a
+  // stop the person or Jenny's own closing caused is the square stopped dot,
+  // never the red "!" (live gate F9 recheck, 2026-10-05).
+  const calmRecoveryClasses = new Set(['app_restart', 'app_restart_rerun', 'run_mode_changed', 'cancelled', 'denied']);
   function createThinkingPipeline(deps) {
     const {
       state,
@@ -115,6 +120,9 @@
         warningSpriteStatuses.has(canonicalTerminalStatus)
         || warningSpriteStatuses.has(canonicalRowStatus)
       ) {
+        return 'cancelled';
+      }
+      if (calmRecoveryClasses.has(String(message?.recovery_class || '').trim().toLowerCase())) {
         return 'cancelled';
       }
       if (

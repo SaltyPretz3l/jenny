@@ -144,9 +144,6 @@
     }
 
     function recordStreamingArticleRebuild(details) {
-      if (state?.features?.featureFlags?.chat_timeline_render_telemetry !== true) {
-        return;
-      }
       const stats = details?.stats || null;
       recordTurnArticleRolloutSignal('streaming_article_rebuild', {
         turnId: details.turnId,

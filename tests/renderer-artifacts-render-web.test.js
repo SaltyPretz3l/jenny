@@ -46,7 +46,7 @@ function makeCtx(t, { content, viewMode = 'preview', editable = false } = {}) {
     getPreferredEditorValue: () => content,
     getArtifactViewMode: () => viewMode,
   };
-  // The flag-on HTML/SVG path mounts a sandbox iframe whose factory arms a
+  // The HTML/SVG preview path mounts a sandbox iframe whose factory arms a
   // REFERENCED 8s settle timeout (DEFAULT_TIMEOUT_MS in
   // renderer-html-artifact-frame-utils.js) and a window 'message' listener, and
   // parks its disposer on the host element. Nothing here called it, so this file
@@ -162,9 +162,9 @@ test('svg kind renders non-svg text inert (sanitizer passes plain text through)'
   assert.equal(surface.previewContent.querySelector('svg'), null);
 });
 
-/* ── HTML Artifact Preview Step 4: flag-gated exec-html routing ── */
+/* ── HTML Artifact Preview Step 4: exec-html routing ── */
 
-function makeExecCtx(t, { flag, content = '<div>x</div><script>go()</script>', language = 'html', fileName = 'chart.html' } = {}) {
+function makeExecCtx(t, { content = '<div>x</div><script>go()</script>', language = 'html', fileName = 'chart.html' } = {}) {
   const built = makeCtx(t, { content });
   built.ctx.artifact = {
     id: 'exec1',
@@ -172,17 +172,14 @@ function makeExecCtx(t, { flag, content = '<div>x</div><script>go()</script>', l
     artifactType: 'generated_file',
     generatedFile: { artifactId: 'exec1', fileName, language },
   };
-  if (flag !== undefined) {
-    built.ctx.deps.state.features = { featureFlags: { artifact_html_preview: flag } };
-  }
   return built;
 }
 
-test('flag ON + executable html routes to the sandbox preview (staged-src iframe), not the inline path', async (t) => {
-  const { ctx, surface, stagedDocuments } = makeExecCtx(t, { flag: true });
+test('executable html routes to the sandbox preview (staged-src iframe), not the inline path', async (t) => {
+  const { ctx, surface, stagedDocuments } = makeExecCtx(t);
   renderHtmlArtifactKind(ctx);
   const iframe = surface.previewContent.querySelector('iframe');
-  assert.ok(iframe, 'sandbox iframe missing on the flag-on exec path');
+  assert.ok(iframe, 'sandbox iframe missing on the exec path');
   assert.equal(iframe.getAttribute('sandbox'), 'allow-scripts');
   // srcdoc is forbidden — it inherits the parent CSP and kills the frame
   // handshake (2026-07-10 RCA); the document travels via a staged src.
@@ -194,31 +191,8 @@ test('flag ON + executable html routes to the sandbox preview (staged-src iframe
   assert.ok(surface.previewContent.innerHTML.includes('artifact-html-preview-strip'));
 });
 
-test('flag OFF is byte-identical to a flag-less render: inline DOMPurify path, factory never reached', (t) => {
-  const factoryCalls = [];
-  globalThis.rendererHtmlArtifactFrameUtils = {
-    createHtmlArtifactFrame: (...args) => { factoryCalls.push(args); return { dispose: () => {} }; },
-  };
-  t.after(() => { delete globalThis.rendererHtmlArtifactFrameUtils; });
-
-  const flagOff = makeExecCtx(t, { flag: false });
-  renderHtmlArtifactKind(flagOff.ctx);
-  const flagless = makeExecCtx(t, {});
-  renderHtmlArtifactKind(flagless.ctx);
-
-  assert.equal(flagOff.surface.previewContent.innerHTML, flagless.surface.previewContent.innerHTML,
-    'flag-off must be byte-identical to the pre-feature render');
-  assert.equal(factoryCalls.length, 0, 'the frame factory must never be reached flag-off');
-  assert.equal(flagOff.surface.previewContent.querySelector('iframe'), null);
-  assert.ok(!flagOff.surface.previewContent.innerHTML.includes('artifact-html-preview'),
-    'no preview chrome (strip/stepper) may leak into the flag-off render');
-  assert.ok(!flagOff.surface.previewContent.innerHTML.includes('<script'),
-    'inline path must stay sanitized');
-});
-
-test('inert svg stays on the inline path even with the flag ON', (t) => {
+test('inert svg stays on the inline path', (t) => {
   const { ctx, surface } = makeExecCtx(t, {
-    flag: true,
     content: '<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"></rect></svg>',
     language: 'svg',
     fileName: 'icon.svg',
@@ -228,9 +202,8 @@ test('inert svg stays on the inline path even with the flag ON', (t) => {
   assert.ok(surface.previewContent.querySelector('svg'), 'inert svg renders inline (DOMPurify path)');
 });
 
-test('svg carrying a script routes to the sandbox iframe when the flag is ON', (t) => {
+test('svg carrying a script routes to the sandbox iframe', (t) => {
   const { ctx, surface } = makeExecCtx(t, {
-    flag: true,
     content: '<svg xmlns="http://www.w3.org/2000/svg"><rect/><script>tick()</script></svg>',
     language: 'svg',
     fileName: 'anim.svg',
@@ -241,7 +214,7 @@ test('svg carrying a script routes to the sandbox iframe when the flag is ON', (
   assert.equal(iframe.getAttribute('sandbox'), 'allow-scripts');
 });
 
-test('edit mode keeps the WS2 editor path even with the flag ON', (t) => {
+test('edit mode keeps the WS2 editor path', (t) => {
   const built = makeCtx(t, { content: '<p>x</p>', viewMode: 'edit', editable: true });
   built.ctx.artifact = {
     id: 'exec2',
@@ -249,7 +222,6 @@ test('edit mode keeps the WS2 editor path even with the flag ON', (t) => {
     artifactType: 'generated_file',
     generatedFile: { artifactId: 'exec2', fileName: 'page.html', language: 'html' },
   };
-  built.ctx.deps.state.features = { featureFlags: { artifact_html_preview: true } };
   renderHtmlArtifactKind(built.ctx);
   assert.equal(built.surface.editorShell.classList.contains('hidden'), false);
   assert.equal(built.surface.previewContent.querySelector('iframe'), null);

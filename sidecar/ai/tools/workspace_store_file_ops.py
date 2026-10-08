@@ -6,7 +6,7 @@ import os
 import stat as stat_module
 from pathlib import Path
 
-from sidecar.ai.error_codes import CMP_TOOL_IO_FAILED
+from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED, CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace_path_identity import NodeIdentity
 
@@ -80,6 +80,39 @@ def fsync_directory(path: Path) -> None:
         os.close(fd)
 
 
+def read_fd_bounded(fd: int, limit: int) -> bytes:
+    """Read an open descriptor to EOF, failing once it passes ``limit`` bytes."""
+
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = os.read(fd, min(64 * 1024, limit + 1 - total))
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > limit:
+            raise ToolExecutionFailure(
+                code=CMP_TOOL_CAP_EXCEEDED,
+                message="workspace store read exceeds byte limit",
+                retryable=False,
+            )
+
+
+def unlink_link_object(path: Path, identity: NodeIdentity) -> None:
+    """Remove a link object itself (a directory junction needs rmdir on Windows)."""
+
+    try:
+        path.unlink()
+    except IsADirectoryError:
+        path.rmdir()
+    except PermissionError:
+        if stat_module.S_ISDIR(identity.mode):
+            path.rmdir()
+        else:
+            raise
+
+
 def _cleanup_created(
     path: Path,
     expected: NodeIdentity | None,
@@ -107,4 +140,10 @@ def _failure(message: str) -> ToolExecutionFailure:
     return ToolExecutionFailure(code=CMP_TOOL_IO_FAILED, message=message, retryable=True)
 
 
-__all__ = ["create_empty_regular_leaf", "fsync_directory", "link_exclusive"]
+__all__ = [
+    "create_empty_regular_leaf",
+    "fsync_directory",
+    "link_exclusive",
+    "read_fd_bounded",
+    "unlink_link_object",
+]

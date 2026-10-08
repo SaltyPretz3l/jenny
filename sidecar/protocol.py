@@ -13,13 +13,11 @@ CONTENT_LENGTH_HEADER = "Content-Length"
 API_VERSION = "2026-08-17"
 
 INITIALIZE_METHOD = "initialize"
-# Stage-4-reserved initialize `mode` discriminator values (PLUG-D16;
-# sidecar/runtime/initialize_mode.py owns the behavioral guard). Duplicated
-# here as plain literals rather than imported so this module keeps its
-# zero-intra-package-import posture -- keep byte-identical to
-# sidecar.runtime.initialize_mode.FULL_RUNTIME_MODE / PLUGIN_RUNTIME_MODE.
+# Initialize `mode` discriminator value (sidecar/runtime/initialize_mode.py owns
+# the behavioral guard). Duplicated here as a plain literal rather than imported
+# so this module keeps its zero-intra-package-import posture -- keep
+# byte-identical to sidecar.runtime.initialize_mode.FULL_RUNTIME_MODE.
 INITIALIZE_MODE_FULL_RUNTIME = "full_runtime"
-INITIALIZE_MODE_PLUGIN_RUNTIME = "plugin_runtime"
 SHUTDOWN_METHOD = "shutdown"
 BACKGROUND_RUN_METHOD = "background.run"
 CHAT_SEND_METHOD = "chat.send"
@@ -57,6 +55,12 @@ MEMORY_STATUS_METHOD = "memory.status"
 # Desktop project delete: move every memory row of one project to another
 # (General) in one transaction. Never exposed as a tool.
 MEMORY_MOVE_PROJECT_METHOD = "memory.move_project"
+# Semantic catalog (row 41): Electron pumps index_step while the chat model is
+# idle; search/status/purge serve the knowledge tools and Settings. Desktop only.
+CATALOG_INDEX_STEP_METHOD = "catalog.index_step"
+CATALOG_SEARCH_METHOD = "catalog.search"
+CATALOG_STATUS_METHOD = "catalog.status"
+CATALOG_PURGE_METHOD = "catalog.purge"
 SUGGESTIONS_GENERATE_METHOD = "suggestions.generate"
 COMMIT_GENERATE_MESSAGE_METHOD = "commit.generate_message"
 HARDWARE_PROFILE_METHOD = "hardware.profile"
@@ -67,6 +71,8 @@ MCP_INSPECT_METHOD = "mcp.inspect"
 WORKSPACE_LIST_CHANGE_SETS_METHOD = "workspace.list_change_sets"
 WORKSPACE_PREFLIGHT_UNDO_METHOD = "workspace.preflight_undo"
 WORKSPACE_UNDO_CHANGE_SET_METHOD = "workspace.undo_change_set"
+# Re-arms an undone change set after the Changes view Redo put its bytes back.
+WORKSPACE_REAPPLY_CHANGE_SET_METHOD = "workspace.reapply_change_set"
 WORKSPACE_RESTORE_TRASH_ENTRY_METHOD = "workspace.restore_trash_entry"
 # WO-26: user-initiated wall-clock-review surfacing for change sets that have
 # aged past the 365-day wall cap without evicting anything -- listing never
@@ -79,6 +85,9 @@ WORKSPACE_ABANDON_RESTORE_METHOD = "workspace.abandon_restore"
 WORKSPACE_RECONCILE_RUNTIME_PREPARATIONS_METHOD = "workspace.reconcile_runtime_preparations"
 WORKSPACE_CONFIRM_RUNTIME_CHECKPOINT_METHOD = "workspace.confirm_runtime_checkpoint"
 WORKSPACE_RELEASE_RUNTIME_CHECKPOINT_METHOD = "workspace.release_runtime_checkpoint"
+# Plan Plus C4: Electron-consented apply of suggested changes with explicit root
+# authority; one call is one journal change set. Desktop only (not hosted).
+WORKSPACE_APPLY_SUGGESTED_CHANGES_METHOD = "workspace.apply_suggested_changes"
 # Private one-operation peer used only by the desktop Workspace Test Runner.
 WORKSPACE_TEST_RUN_METHOD = "workspace_test.run"
 WORKSPACE_TEST_CANCEL_METHOD = "workspace_test.cancel"
@@ -112,6 +121,10 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
         MEMORY_RECALL_RECENT_METHOD,
         MEMORY_STATUS_METHOD,
         MEMORY_MOVE_PROJECT_METHOD,
+        CATALOG_INDEX_STEP_METHOD,
+        CATALOG_SEARCH_METHOD,
+        CATALOG_STATUS_METHOD,
+        CATALOG_PURGE_METHOD,
         SUGGESTIONS_GENERATE_METHOD,
         COMMIT_GENERATE_MESSAGE_METHOD,
         HARDWARE_PROFILE_METHOD,
@@ -122,6 +135,7 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
         WORKSPACE_LIST_CHANGE_SETS_METHOD,
         WORKSPACE_PREFLIGHT_UNDO_METHOD,
         WORKSPACE_UNDO_CHANGE_SET_METHOD,
+        WORKSPACE_REAPPLY_CHANGE_SET_METHOD,
         WORKSPACE_RESTORE_TRASH_ENTRY_METHOD,
         WORKSPACE_LIST_RECOVERY_REVIEW_METHOD,
         WORKSPACE_ACKNOWLEDGE_RECOVERY_REVIEW_METHOD,
@@ -129,6 +143,7 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
         WORKSPACE_CONFIRM_RUNTIME_CHECKPOINT_METHOD,
         WORKSPACE_RELEASE_RUNTIME_CHECKPOINT_METHOD,
         WORKSPACE_RECONCILE_RUNTIME_PREPARATIONS_METHOD,
+        WORKSPACE_APPLY_SUGGESTED_CHANGES_METHOD,
     }
 )
 
@@ -228,12 +243,7 @@ CONTEXT_COMPACTED_METHOD = "context.compacted"
 CONTEXT_USAGE_METHOD = "context.usage"
 RUNTIME_GAP_CANDIDATE_METHOD = "runtime.gap_candidate"
 RUNTIME_PROGRESS_METHOD = "runtime.progress"
-# Plugin-runtime notification vocabulary is pinned by check_protocol_contract.py.
-# runtime_applied is emitted after plugin-runtime initialization; operation_progress
-# and operation_result remain reserved and currently unemitted.
-PLUGIN_OPERATION_PROGRESS_METHOD = "plugin.operation_progress"
-PLUGIN_OPERATION_RESULT_METHOD = "plugin.operation_result"
-PLUGIN_RUNTIME_APPLIED_METHOD = "plugin.runtime_applied"
+RUNTIME_LOAD_FAILURE_METHOD = "runtime.load_failure"
 
 # Canonical set of notification method names the sidecar is permitted to emit.
 # Any new notification method MUST be added here so `rpc.notification()` can
@@ -264,8 +274,6 @@ ALLOWED_NOTIFICATION_METHODS: frozenset[str] = frozenset(
         CHAT_PLAN_USAGE_METHOD,
         RUNTIME_GAP_CANDIDATE_METHOD,
         RUNTIME_PROGRESS_METHOD,
-        PLUGIN_OPERATION_PROGRESS_METHOD,
-        PLUGIN_OPERATION_RESULT_METHOD,
-        PLUGIN_RUNTIME_APPLIED_METHOD,
+        RUNTIME_LOAD_FAILURE_METHOD,
     }
 )

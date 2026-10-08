@@ -333,12 +333,8 @@
       return result.ok;
     }
 
-    function unmountEntry(entryEl) {
-      if (!entryEl || disposed || entryStore.has(entryEl) || isPinned(entryEl)) return false;
-      var height = measureHeight(entryEl);
-      if (height <= 0) return false;
-      var result = entryStore.applyUnmount(entryEl, height, getLayout());
-      return result.ok;
+    function canUnmountEntry(entryEl) {
+      return Boolean(entryEl) && !disposed && !entryStore.has(entryEl) && !isPinned(entryEl);
     }
 
     function cancelUnmountFrame() {
@@ -357,14 +353,30 @@
       var startedAt = now();
       var processed = 0;
       var didUnmount = false;
+      // Measure the whole batch before writing any placeholder: a geometry read
+      // after a write forces a synchronous style and layout of the entire
+      // timeline, and interleaving them drained ~2 rows per 50 ms frame.
+      var measured = [];
       var iterator = unmountQueue.keys();
       var next = iterator.next();
       while (!next.done && processed < MAX_UNMOUNTS_PER_FRAME && now() - startedAt < MAX_UNMOUNT_WORK_MS) {
         var entryEl = next.value;
         unmountQueue.delete(entryEl);
-        if (visibilityByEntry.get(entryEl) === false && unmountEntry(entryEl)) didUnmount = true;
+        if (visibilityByEntry.get(entryEl) === false && canUnmountEntry(entryEl)) {
+          var height = measureHeight(entryEl);
+          if (height > 0) measured.push({ entryEl: entryEl, height: height });
+        }
         processed += 1;
         next = iterator.next();
+      }
+      var layout = measured.length ? getLayout() : null;
+      for (var index = 0; index < measured.length; index += 1) {
+        // Out of budget: requeue the rest; they are re-measured next frame.
+        if (index > 0 && now() - startedAt >= MAX_UNMOUNT_WORK_MS) {
+          for (; index < measured.length; index += 1) unmountQueue.set(measured[index].entryEl, true);
+          break;
+        }
+        if (entryStore.applyUnmount(measured[index].entryEl, measured[index].height, layout).ok) didUnmount = true;
       }
       if (didUnmount) {
         // Spec 1b item 4 (binding): a large unmount can shrink scrollHeight

@@ -16,6 +16,7 @@ const {
   ResourceBroker,
   capacityResource,
 } = require('../../services/session-runtime/resource-broker');
+const { RuntimeProjectionError, projectWorkRecord } = require('../../services/session-runtime/projections');
 const { RuntimeStore } = require('../../services/session-runtime/store');
 const { SessionRuntimeScheduler } = require('../../services/session-runtime/scheduler');
 const { cleanupTrackedResources, createTrackedTempDir } = require('../helpers/resource-cleanup');
@@ -228,7 +229,7 @@ test('work detail projects attempt and recovery state without durable private co
   assert.equal(result.work.recovery, null);
   assert.deepEqual(Object.keys(result.work), [
     'work_id', 'project_id', 'session_id', 'turn_id', 'purpose', 'status', 'revision',
-    'submission_sequence', 'created_at', 'updated_at', 'admission_wait', 'prompt_preview', 'attempt', 'checkpoint',
+    'submission_sequence', 'created_at', 'updated_at', 'admission_wait', 'resumable', 'prompt_preview', 'attempt', 'checkpoint',
     'control', 'recovery',
   ]);
   const serialized = JSON.stringify(result);
@@ -240,7 +241,7 @@ test('work detail projects attempt and recovery state without durable private co
 
 // FG-007: a restored paused send names what Resume would send. The preview is
 // derived from the visible prompt on the work read; snapshot rows stay
-// index-only (no record read), so they never carry it.
+// prompt-free (a paused row reads its record only for the `resumable` boolean).
 test('work detail carries a short single-line visible-prompt preview and snapshot rows stay record-free', () => {
   const store = createStore();
   const submitPrompt = (suffix, request) => store.submit({ idempotencyKey: `preview_key_${suffix}`,
@@ -515,4 +516,60 @@ test('the refusal reason never changes the acceptance verdict', async () => {
   assert.equal(conflictResult.acceptance, 'unknown');
   assert.equal(conflictResult.error.reason, 'idempotency_conflict');
   assert.equal(conflictResult.error.code, 'CMP-RUNTIME-0006');
+});
+
+// 2026-10-05 live recheck: the queue strip offered Resume on restart-paused
+// work the scheduler refuses (runtime_checkpoint_required). Every summary now
+// carries the scheduler's own answer; a paused row costs one record read and
+// still carries no prompt.
+test('snapshot rows say whether paused work can resume, by the scheduler rule', () => {
+  const root = createTrackedTempDir('jenny-runtime-application-resumable-');
+  const store = new RuntimeStore(root, { createId: idFactory(), now: clock() });
+  const attempt = { attempt_id: 'attempt_1', stream_id: 'stream_1', incarnation: 'incarnation_1',
+    authority_revision: 'private_authority_revision' };
+  const move = (record, options) => store.transition(record.work_id, { expectedRevision: record.revision, ...options }).record;
+  // (a) was running, no checkpoint: the restart below pauses it with nothing to continue from.
+  move(submit(store, '1'), { to: 'running', reason: 'started', attempt });
+  // (b) paused on a checkpoint written by its own attempt.
+  move(move(submit(store, '2'), { to: 'running', reason: 'started', attempt }), { to: 'paused',
+    reason: 'resource_wait', expectedAttempt: attempt, checkpointRef: { schema_version: 1,
+      checkpoint_id: 'checkpoint_2', sha256: 'b'.repeat(64), bytes: 64, source_attempt: attempt } });
+  // (c) never attempted: the restart pauses it and it resumes from its prompt.
+  submit(store, '3');
+  const reopened = new RuntimeStore(root, { createId: idFactory(), now: clock() });
+  // (d) still pending.
+  submit(reopened, '4');
+  const scheduler = new SessionRuntimeScheduler({
+    store: reopened,
+    lanes: new RuntimeLaneAdmission({ limits: { local: { runnable_turns: 1, inference_requests: 1,
+      descendants: 0, descendant_depth: 0 } }, maxRunnableTurns: 1, maxInferenceRequests: 1 }),
+    resolveRoute: () => null, validateWork: () => true, claimCanonical: () => true,
+    startProducer: () => true, pauseProducer: () => true,
+  });
+  const inspection = runtimeFor(reopened);
+  const runtime = { ...inspection, scheduler: { ...inspection.scheduler, canResume: work => scheduler.canResume(work) } };
+  const service = new RuntimeApplicationService({ getRuntime: () => runtime });
+  const expected = { work_1: false, work_2: true, work_3: true, work_4: null };
+
+  for (const request of [{ limit: 100 }, { view: 'runs', limit: 100, finished_since: '2026-09-10T00:00:00.000Z' }]) {
+    const result = service.getSnapshot(request);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.deepEqual(Object.fromEntries(result.work.map(row => [row.work_id, row.resumable])), expected, JSON.stringify(request));
+    assert.deepEqual(Object.fromEntries(result.work.map(row => [row.work_id, row.status])),
+      { work_1: 'paused', work_2: 'paused', work_3: 'paused', work_4: 'pending' });
+    const serialized = JSON.stringify(result);
+    for (const forbidden of ['super-secret-prompt', 'private_authority_revision', 'checkpoint_2']) {
+      assert.equal(serialized.includes(forbidden), false, forbidden);
+    }
+  }
+  for (const [workId, resumable] of Object.entries(expected)) {
+    assert.equal(service.getWork({ work_id: workId }).work.resumable, resumable, workId);
+  }
+  // A runtime whose scheduler cannot answer says so with null, never with a guess.
+  const silent = new RuntimeApplicationService({ getRuntime: () => inspection });
+  assert.equal(silent.getWork({ work_id: 'work_1' }).work.resumable, null);
+  // The projection refuses a claim on work that is not paused, and a non-boolean claim.
+  assert.throws(() => projectWorkRecord({ ...reopened.get('work_4'), resumable: true }), RuntimeProjectionError);
+  assert.throws(() => projectWorkRecord({ ...reopened.get('work_1'), resumable: 'yes' }), RuntimeProjectionError);
+  assert.equal(projectWorkRecord({ ...reopened.get('work_1'), resumable: true }).work.resumable, true);
 });

@@ -40,9 +40,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (defaultPaneModel, paneVisibilityUtils) {
   'use strict';
 
-  function normalizeId(value) {
-    return typeof value === 'string' ? value.trim() : String(value || '').trim();
-  }
+  const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function toPlain(layout) {
     return {

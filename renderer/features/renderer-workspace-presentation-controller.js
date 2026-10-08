@@ -2,7 +2,10 @@
  * policy for model-initiated workspace presentation requests
  * (WORKSPACE_PREVIEW_AND_MAP_PANELS_PLAN.md Phase 7). Subscribes to the
  * one-shot `workspacePresentation.onRequest` push (never transcript metadata,
- * so a request can never replay on reload/rehydrate) and decides between:
+ * so a request can never replay on reload/rehydrate) — relayed by the shell's
+ * always-loaded inbox (renderer-shell-ide-root-service.js), which holds a
+ * request that arrives before this lazy IDE module exists and builds the IDE
+ * in the background to deliver it — and decides between:
  *
  *   apply immediately — only when it is SAFE: the Workspace IDE is the active
  *     view, Monaco has no recent typing, no blocking approval row is pending,
@@ -422,7 +425,11 @@
       if (disposed || unsubscribe) {
         return;
       }
-      const api = requestApi();
+      // The shell's always-loaded inbox (renderer-shell-ide-root-service) owns
+      // the bridge subscription and replays a request held while this lazy
+      // bundle loaded; the bare bridge is the fallback when no shell relays.
+      const inbox = windowRef.jennyWorkspacePresentationInbox;
+      const api = typeof inbox?.onRequest === 'function' ? inbox : requestApi();
       if (typeof api?.onRequest !== 'function') {
         return; // preload surface absent (older shell) — feature degrades off
       }

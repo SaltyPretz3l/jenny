@@ -8,13 +8,13 @@ const { createShellServiceRegistry } = require('../renderer/shell/renderer-shell
 
 const { DEFAULT_STEPS, payload, settle, buildHarness, MODEL_LOADED_PROBE } = require('./helpers/setup-hub-harness');
 
-test('shell registry gates the hub factories but always registers standalone model scenes', () => {
+test('shell registry registers the hub factories and the standalone model scenes', () => {
   const ollamaEngine = () => {};
   const modelLibrary = () => {};
-  function captureModules(enabled) {
+  function captureModules() {
     let captured = null;
     const registry = createShellServiceRegistry({
-      state: { features: { featureFlags: { setup_hub: enabled } } },
+      state: {},
       modules: {
         setupServiceUtils: { createSetupService() { return {}; } },
         setupControllerUtils: {
@@ -31,17 +31,11 @@ test('shell registry gates the hub factories but always registers standalone mod
     return captured;
   }
 
-  const enabled = captureModules(true);
+  const enabled = captureModules();
   assert.equal(enabled.setupHub.createSetupHub, createSetupHub);
   assert.equal(enabled.scenes.setupHub, createSetupHubScene);
   assert.equal(enabled.scenes.ollamaEngine, ollamaEngine);
   assert.equal(enabled.scenes.modelLibrary, modelLibrary);
-
-  const disabled = captureModules(false);
-  assert.deepEqual(disabled.setupHub, {});
-  assert.equal(disabled.scenes.setupHub, undefined);
-  assert.equal(disabled.scenes.ollamaEngine, ollamaEngine);
-  assert.equal(disabled.scenes.modelLibrary, modelLibrary);
 });
 
 test('hub labels stay local while workspace and personality retain their values', async (t) => {
@@ -324,36 +318,6 @@ test('a refused finish can be retried and completed after backend readiness reco
   assert.equal(h.completeCalls, 2);
   assert.equal(h.root.querySelector('[data-step-modal="setup-hub"]'), null);
   assert.equal(h.state.setup.setupComplete, true);
-});
-
-test('flag-off Run-setup-again is not auto-finished out from under the user', async (t) => {
-  // JENNY_ENABLE_SETUP_HUB=0: no hub factory is registered, so resumeSetup()
-  // cannot stand the auto-finish down by assigning activeFlow. The one-shot
-  // stand-down ticket must cover the same microtask instead.
-  const ready = {
-    workspace_root: { ready: true, configured: true },
-    local_model: { ready: true, model_count: 1 },
-  };
-  const allDone = {
-    workspace_root: 'done', local_model: 'done', endpoint: 'done',
-    personality: 'done', skills: 'done', capabilities: 'done',
-  };
-  const h = buildHarness(t, {
-    omitHub: true, steps: allDone, readiness: ready, firstRunCompleted: true, setupComplete: true,
-  });
-  await h.controller.init();
-  await settle();
-  assert.equal(h.completeCalls, 0, 'nothing to finish: it was already complete');
-
-  // Replays handleRunSetupAgain's ordering exactly: reset snapshot, then Resume.
-  h.controller.applySnapshot(payload({
-    steps: allDone, readiness: ready, firstRunCompleted: true, setupComplete: false,
-  }));
-  h.controller.resumeSetup();
-  await settle();
-
-  assert.equal(h.completeCalls, 0, 'the auto-finish stood down for the flag-off Resume');
-  assert.equal(h.state.setup.setupComplete, false, 'the reset the user asked for survives');
 });
 
 test('the hub re-probes on open and shows the model step an active model already satisfies', async (t) => {

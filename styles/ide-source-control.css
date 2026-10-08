@@ -83,6 +83,7 @@
 
 .ide-scm-row {
   transition: background-color var(--transition-fast), color var(--transition-fast);
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -91,7 +92,8 @@
   border-radius: 5px;
 }
 
-.ide-scm-row:hover {
+.ide-scm-row:hover,
+.ide-scm-row:focus-within {
   background: var(--bg-surface-2);
 }
 
@@ -146,16 +148,49 @@
   font-size: var(--font-size-caption);
 }
 
+/* Jenny changed this file (row 40 W6): opens her turn in Changes. Always shown. */
+.ide-scm-jenny {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--bg-surface-2);
+  color: var(--accent);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.ide-scm-jenny:hover {
+  color: var(--text-primary);
+}
+
+.ide-scm-jenny:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Stage/Discard sit over the row's end only while the row is hovered or
+   focused: hidden, they take no width from the file name (a 211 px side cut
+   names to one letter) and, being visibility-hidden, catch no clicks. */
 .ide-scm-row-actions {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
   display: flex;
   align-items: center;
   gap: 2px;
-  flex: 0 0 auto;
+  padding-inline: 4px 2px;
+  border-radius: 5px;
+  background: var(--bg-surface-2);
+  visibility: hidden;
   opacity: 0;
 }
 
 .ide-scm-row:hover .ide-scm-row-actions,
 .ide-scm-row:focus-within .ide-scm-row-actions {
+  visibility: visible;
   opacity: 1;
 }
 

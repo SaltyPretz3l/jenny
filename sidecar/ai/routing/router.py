@@ -149,7 +149,6 @@ class AgentKernel:
         harness_snapshot_provider: Any | None = None,
         monitor_manager: Any | None = None,
         max_iterations: int | None = None,
-        plugin_runtime_tool_provider: Any | None = None,
     ) -> None:
         self._config = config
         self._engine = engine
@@ -158,7 +157,6 @@ class AgentKernel:
         self._memory_store = memory_store
         self._harness_snapshot_provider = harness_snapshot_provider
         self._monitor_manager = monitor_manager
-        self._plugin_runtime_tool_provider = plugin_runtime_tool_provider
         configured_max_iterations = (
             max_iterations
             if max_iterations is not None
@@ -748,6 +746,7 @@ class AgentKernel:
         on_dispatch_ready: Callable[[], None] | None = None,
         restored_inputs: Any | None = None,
         on_frozen_input: Callable[[Any], Any] | None = None,
+        request_outcomes: tuple[Any, ...] | None = None,
     ) -> ToolExecutionOutcome:
         return _te.execute_tool(
             self,
@@ -761,6 +760,7 @@ class AgentKernel:
             runtime=runtime,
             on_dispatch_ready=on_dispatch_ready,
             restored_inputs=restored_inputs, on_frozen_input=on_frozen_input,
+            request_outcomes=request_outcomes,
         )
 
     @staticmethod

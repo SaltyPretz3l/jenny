@@ -11,6 +11,9 @@ const {
 const { normalizeSubagentMetadata } = require('./subagent-report-metadata');
 const { normalizeHomeResultMetadata } = require('./home-calendar-result-metadata');
 const { normalizeSandboxResultMetadata } = require('./sandbox-result-metadata');
+const {
+  normalizeScriptedChangeReview: normalizeScriptedChangeReviewRecord,
+} = require('./scripted-change-review-metadata');
 
 const DIFF_STATUSES = new Set(['created', 'modified', 'deleted', 'renamed', 'unknown']);
 const DIFF_REVIEW_STATES = new Set(['full', 'partial', 'summary_only', 'non_text', 'failed']);
@@ -23,6 +26,11 @@ const DIFF_TRUNCATION_REASONS = new Set([
   'decode_error',
   'diff_generation_failed',
   'unknown',
+  // Row 34 scripted-change capture: summary-only entries (mirrors Python
+  // structured_diff.TRUNCATION_REASONS).
+  'preimage_unavailable',
+  'sensitive_path',
+  'time_limit',
 ]);
 const DIFF_HASH_KINDS = new Set(['raw_bytes', 'diff_input_text']);
 const MAX_DIFF_ID_CHARS = 200;
@@ -501,6 +509,11 @@ function normalizeWorkspaceChangeSetMetadata(value) {
   };
 }
 
+// Row 34 scripted_change_review v1, bounded with this module's safe paths.
+function normalizeScriptedChangeReview(value) {
+  return normalizeScriptedChangeReviewRecord(value, normalizeRelativePath);
+}
+
 function normalizePersistedToolResultMetadata(metadata, options = {}) {
   const source = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
     ? metadata
@@ -513,6 +526,7 @@ function normalizePersistedToolResultMetadata(metadata, options = {}) {
   const userQuestions = normalizeUserQuestionsResultMetadata(source);
   const homeResult = normalizeHomeResultMetadata(source);
   const workspaceChangeSet = normalizeWorkspaceChangeSetMetadata(source.workspace_change_set);
+  const scriptedChangeReview = normalizeScriptedChangeReview(source.scripted_change_review);
   const result = {};
   const workspaceId = String(source.workspace_id || '').trim().toLowerCase();
   if ((diff || diffs.length) && WORKSPACE_ID_PATTERN.test(workspaceId)) {
@@ -527,6 +541,7 @@ function normalizePersistedToolResultMetadata(metadata, options = {}) {
   if (homeResult) Object.assign(result, homeResult);
   Object.assign(result, normalizeSandboxResultMetadata(source));
   if (workspaceChangeSet) result.workspace_change_set = workspaceChangeSet;
+  if (scriptedChangeReview) result.scripted_change_review = scriptedChangeReview;
   // The shell tool stopped the command at its time limit: the tool row reads
   // Timed out from this flag on the turn event as well as the stored result.
   if (source.timed_out === true) result.timed_out = true;
@@ -551,6 +566,7 @@ function normalizeToolResultMetadataForStorage(metadata, options = {}, precomput
   delete result.subagent_report;
   delete result.subagent_batch_report;
   delete result.workspace_change_set;
+  delete result.scripted_change_review;
   // Reuse a supplied normalized result to avoid a second hunk pass; undefined
   // means not supplied, while null explicitly means no structured metadata.
   const structured = precomputedStructured !== undefined
@@ -565,6 +581,7 @@ function normalizeToolResultMetadataForStorage(metadata, options = {}, precomput
 module.exports = {
   normalizeToolResultMetadataForStorage,
   normalizePersistedToolResultMetadata,
+  normalizeScriptedChangeReview,
   normalizeToolResultDiffsMetadata,
   normalizeToolResultDiffMetadata,
 };

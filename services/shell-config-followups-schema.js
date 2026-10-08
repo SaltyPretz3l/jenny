@@ -4,9 +4,11 @@
 // clone + reminder-id helpers, and the per-field normalizers for reminders,
 // follow-ups, follow-up history, schedule shapes, watcher globs, and resource
 // alert thresholds. Extracted from shell-config-state.js as a behavior-
-// preserving one-way slice (depends only on path-utils); shell-config-state.js
-// re-exports the public members so the config barrel stays stable.
+// preserving one-way slice (depends on path-utils and the project id grammar);
+// shell-config-state.js re-exports the public members so the config barrel
+// stays stable.
 const { clipText, normalizeString } = require('./backend/path-utils');
+const { normalizeProjectId } = require('./projects/project-schema');
 
 const RESOURCE_ALERT_THRESHOLD_DEFAULT = 90;
 const RESOURCE_ALERT_THRESHOLD_MIN = 50;
@@ -332,6 +334,9 @@ function normalizeFollowUp(value = {}) {
         : '',
     archivedAt: normalizedArchivedAt,
     sessionId: normalizeString(source.sessionId || source.session_id),
+    // Additive optional field with a safe default: no CONFIG_VERSION bump. Only
+    // agent_task rows are scoped to a project; others keep ''.
+    projectId: normalizeProjectId(source.projectId || source.project_id),
     sourceKind: normalizeFollowUpSourceKind(source.sourceKind || source.source_kind),
     sourceId,
     sourceMeta: normalizeFollowUpSourceMeta(source.sourceMeta || source.source_meta),

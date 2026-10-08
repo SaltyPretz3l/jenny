@@ -174,6 +174,12 @@ class GenerationResult:
     # Set only when an engine actually ran the in-band parser and an explicit
     # candidate failed to parse. Routing must not infer this from response text.
     inband_tool_call_parse_failed: bool = False
+    # Bounded, content-free description of how tool-call extraction went:
+    # ``{"transport": "structured", "entries": [...]}``. The structured transport
+    # sets it on every result; the loop reads ``transport`` to word a repair
+    # hint and logs ``entries`` (tool name, reason, length, error position) when
+    # a call fails to parse. None (the text envelope) when the engine reports none.
+    tool_call_parse_diagnostics: Optional[Dict[str, Any]] = None
     # A native tool call was cut off at the output-token limit, or rejected at a
     # provider tool-call cap under any finish, and dropped, so the result's text
     # is not an answer.

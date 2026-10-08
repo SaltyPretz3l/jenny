@@ -56,11 +56,11 @@ test('a search hit opens the rare fold and flashes the enclosing stacked row', (
   controller.dispose(); app.dispose();
 });
 
-test('merged Skills section routes search hits to its Plugins & Extensions host', () => {
+test('merged Skills section routes search hits to its Extensions host', () => {
   const index = buildSettingsSearchIndex();
   const skillsSectionEntry = index.find((entry) => entry.kind === 'section' && entry.rawSectionId === 'skills');
   assert.ok(skillsSectionEntry, 'skills section entry present');
-  assert.equal(skillsSectionEntry.sectionId, 'plugins');
+  assert.equal(skillsSectionEntry.sectionId, 'extensions');
   assert.equal(index.some((entry) => entry.rawSectionId === 'tips'), false);
   assert.equal(index.some((entry) => entry.rawSectionId === 'proactive'), false);
 });
@@ -506,9 +506,9 @@ test('activateHit falls back to the single-rAF path when getSectionRefreshPromis
   controller.dispose();
 });
 
-// ── Nav-controller integration (feature-flag gate) ─────────────────────────
+// ── Nav-controller integration ─────────────────────────────────────────────
 
-test('createSettingsNavController wires the search input only when settings_search is true', (t) => {
+test('createSettingsNavController wires the search input', (t) => {
   const app = buildNavDom();
   t.after(() => app.dispose());
   const { window } = app.dom;
@@ -528,31 +528,21 @@ test('createSettingsNavController wires the search input only when settings_sear
   const settingsContentScroll = documentRef.querySelector('.settings-content-scroll');
   const input = documentRef.getElementById(searchInputDomId);
   const results = documentRef.getElementById(searchResultsDomId);
-  assert.ok(input && results, 'search markup present regardless of the flag');
+  assert.ok(input && results, 'search markup present');
 
-  // Flag OFF: typing must not populate the results list — the controller never bound.
-  const stateOff = { ui: { activeSettingsSection: 'models' }, features: { featureFlags: { settings_search: false } } };
-  const controllerOff = createSettingsNavController({ state: stateOff, settingsNav, settingsContentScroll });
-  controllerOff.bind();
+  // Typing filters the nav and populates the results list.
+  const state = { ui: { activeSettingsSection: 'models' } };
+  const controller = createSettingsNavController({ state, settingsNav, settingsContentScroll });
+  controller.bind();
   input.value = 'history scope';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
-  assert.equal(results.hidden, true, 'flag off: results list stays hidden, no query ran');
-  assert.equal(results.children.length, 0, 'flag off: no result rows rendered');
-  controllerOff.dispose();
-
-  // Flag ON: the same keystroke now filters the nav and populates results.
-  const stateOn = { ui: { activeSettingsSection: 'models' }, features: { featureFlags: { settings_search: true } } };
-  const controllerOn = createSettingsNavController({ state: stateOn, settingsNav, settingsContentScroll });
-  controllerOn.bind();
-  input.value = 'history scope';
-  input.dispatchEvent(new window.Event('input', { bubbles: true }));
-  assert.equal(results.hidden, false, 'flag on: results list opens for a matching query');
-  assert.ok(results.children.length >= 1, 'flag on: at least one result row rendered');
+  assert.equal(results.hidden, false, 'results list opens for a matching query');
+  assert.ok(results.children.length >= 1, 'at least one result row rendered');
   assert.equal(
     results.querySelector('.settings-search-result-label').textContent,
     'History scope'
   );
-  controllerOn.dispose();
+  controller.dispose();
 });
 
 test('a section hit on a page folded into another lands on its group, not on its hidden anchor card', (t) => {

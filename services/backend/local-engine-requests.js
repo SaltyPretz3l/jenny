@@ -208,8 +208,7 @@ async function prepareLocalEngineChatRequest(service, {
 
 async function startLocalEngineChatStream(service, request, options = {}) {
   const managedRequest = await prepareLocalEngineChatRequest(service, request, options);
-  const { sessionId, normalizedInteractiveResponse, editedMessageId, visiblePrompt, prompt, traceId,
-    failureRetry } = managedRequest;
+  const { sessionId, normalizedInteractiveResponse, editedMessageId, visiblePrompt, prompt, traceId } = managedRequest;
   const sessionKey = String(sessionId || '').trim();
   const cancellation = options?.cancellation;
   if (cancellation?.signal?.aborted) {
@@ -229,8 +228,6 @@ async function startLocalEngineChatStream(service, request, options = {}) {
           activeStreams: service.activeStreams,
           interactiveResponse: normalizedInteractiveResponse,
           editedMessageId,
-          failureRetry: failureRetry === true,
-          failureRetryReasoningCarry: service.featureFlags?.failure_retry_reasoning_carry === true,
           deferEditValidation: false,
           prompt: typeof visiblePrompt === 'string' ? visiblePrompt : prompt,
           path: 'managed',

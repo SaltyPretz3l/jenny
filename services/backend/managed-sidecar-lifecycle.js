@@ -85,6 +85,9 @@ function createSidecarClient(service) {
     if (message && message.method === 'monitor.event') {
       handleMonitorNotification(service, message);
     }
+    if (message && message.method === 'runtime.load_failure') {
+      require('./local-engine-status').applyRuntimeLoadFailure(service, message);
+    }
   };
   service._sidecarClientErrorListener = errorListener;
   service._sidecarClientLateNotificationListener = lateNotificationListener;

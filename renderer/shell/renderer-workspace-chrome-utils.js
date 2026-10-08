@@ -21,7 +21,7 @@
   const { resolveDefaultTitle, selectLinkedRecallSessions } = (typeof globalThis !== 'undefined' && globalThis.stringUtils)
     || (typeof require === 'function' ? require('../shared/string-utils') : null);
 
-  function normalizeId(value) { return String(value || '').trim(); }
+  const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   // The linked sessions recall reads (buildLinkedSessionContext's own rule).
   function resolveRecallSessionIds(activeSummary, linkedIds, sessionsById) {
@@ -154,7 +154,7 @@
     }
 
     // The rail hides outside the chat view; a popover opened from a sidebar
-    // row (the plugin view's row menu) stays with the row instead.
+    // row menu stays with the row instead.
     function hideLinkedSessionPopover(options) {
       if (options?.keepRowAnchored === true && popoverEl && !popoverRailAnchored) return;
       clearPopover();
@@ -406,6 +406,7 @@
       closeBtn.dataset.workspaceClose = id;
       closeBtn.innerHTML = ICON_CLOSE;
       closeBtn.title = jt('shell.workspaceChrome.closeSession', 'Close session');
+      closeBtn.setAttribute('aria-label', jt('shell.workspaceChrome.closeSession', 'Close session'));
       refs.el.appendChild(closeBtn);
       refs.closeBtn = closeBtn;
     }

@@ -26,30 +26,20 @@ this folder holds the deeper documentation. The guides track current source;
 
 ## Extending Jenny
 
-Use skill folders and standalone MCP servers for new extensions. The plugin
-platform is being retired: executable tiers, plugin MCP, workflows, catalogs
-and privileged hosts are unavailable in current source. The retained package
-lifecycle still supports declarative packages and sandboxed panel/artifact
-views; custom unsigned
-packages require the explicit developer profile. These guides describe source
-contracts; confirm package availability in your installed release.
+Extend Jenny with skill folders and standalone MCP servers, both managed in
+Settings › Extensions. There is no plugin system.
 
 - [Skills & personality](SKILLS.md) — author a `SKILL.md`, give it a `/command`,
   choose its scope, and shape Jenny's voice through the personality workspace.
-- [Themes & palettes](THEMES.md) — the two theming paths: a distributable plugin
-  `theme` contribution, or a built-in palette contributed to the shell.
-- [Plugin authoring](plugins/README.md) — the manifest, contribution kinds,
-  packaging, and how to install a plugin you are still developing.
-- [Plugin security & trust model](PLUGIN_SECURITY.md) — retained package trust, signing and retired execution boundaries.
+- [Themes & palettes](THEMES.md) — adding a built-in palette to the shell.
 - [Adding an MCP server](tutorials/02-adding-mcp-server.md) — connect an external
   MCP server and watch its tools appear.
-- [Built-in tools reference](TOOLS.md) — the tool surface a skill or plugin can rely on.
+- [Built-in tools reference](TOOLS.md) — the tool surface a skill can rely on.
 
 ## Building and trust
 
 - [Building & distribution](BUILDING.md) — build from source, what a packaged release contains, provenance.
 - [Security model](SECURITY_MODEL.md) — prompt-injection defense and the Python runtime threat model.
-- [Plugin security & trust model](PLUGIN_SECURITY.md) — package trust and retirement boundaries.
 - [Security policy](../SECURITY.md) — reporting vulnerabilities.
 
 ## Design

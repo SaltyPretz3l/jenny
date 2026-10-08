@@ -107,14 +107,6 @@ def build_dynamic_system_messages(  # noqa: PLR0913
     )
     if invoked_skill_message:
         messages.append({"role": "system", "content": invoked_skill_message})
-    delegated_overlay_builder = getattr(
-        context_builder,
-        "build_delegated_runtime_system_messages",
-        None,
-    )
-    if callable(delegated_overlay_builder):
-        for content in delegated_overlay_builder():
-            messages.append({"role": "system", "content": content})
     return messages
 
 

@@ -48,7 +48,7 @@ EXCLUDED_DIR_NAMES = {
 }
 
 JS_DESIGNATED_DIRS = [
-    "services/main", "services/backend", "services/plugins",
+    "services/main", "services/backend",
     "services/projects", "services/session-runtime",
 ]
 # routing + runtime are the orchestration core; tools + mcp are the
@@ -61,10 +61,6 @@ PY_DESIGNATED_DIRS = [
     "sidecar/ai/tools",
     "sidecar/ai/mcp",
     "sidecar/ai/repo_delta",
-    # Plugin-platform authority surfaces: every non-trivial file in the plugin
-    # control plane (JS) and its sidecar peers (generated contracts, policy)
-    # must be reachable from the test import graph from day one.
-    "sidecar/ai/plugins",
 ]
 
 # Repo subtrees scanned to build the JS require graph. Renderer code runs in a

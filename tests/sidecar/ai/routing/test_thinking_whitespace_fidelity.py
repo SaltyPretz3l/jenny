@@ -68,3 +68,9 @@ def test_tool_loop_drops_whitespace_before_reasoning_starts() -> None:
     _result, thinking_events = _run_thinking_sequence(["   ", "Real"])
 
     assert [event.delta for event in thinking_events] == ["Real"]
+
+
+def test_tool_loop_drops_a_whitespace_only_reasoning_stream() -> None:
+    _result, thinking_events = _run_thinking_sequence(["   "])
+
+    assert thinking_events == []

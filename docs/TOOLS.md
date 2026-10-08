@@ -8,7 +8,7 @@ Tools are grouped by family below. Jump to the relevant section when you need to
 
 | Guide | Tools | Approval | Notes |
 |---|---|---|---|
-| [Filesystem](#filesystem) | `read_file`, `write_file`, `edit_file`, `delete_file`, `move_file`, `glob_files`, `list_dir`, `grep_search`, `workspace_manifest_read` | Mutations require approval; reads are read-only | Workspace root must be set; mutations require a matching `read_file` snapshot |
+| [Filesystem](#filesystem) | `read_file`, `write_file`, `edit_file`, `propose_change`, `delete_file`, `move_file`, `glob_files`, `list_dir`, `grep_search`, `workspace_manifest_read` | Mutations require approval; reads are read-only | Workspace root must be set; mutations require a matching `read_file` snapshot |
 | [Git](#git) | `git_status`, `git_log`, `git_diff`, `git_show` | Read-only | All four are bounded read-only views into a git repo within the workspace |
 | [Web](#web) | `web_search`, `fetch_url` | Read-only with SSRF guards | Off by default; gated by the `web` config toggle |
 | [Python runtime](#python) | `python_execute` | Approval required | Off by default; Windows-only resource-bounded subprocess; no filesystem or network sandbox |
@@ -18,7 +18,7 @@ Tools are grouped by family below. Jump to the relevant section when you need to
 | [Diagnostics](#diagnostics) | `jenny_status`, `tool_search` | Read-only | Runtime status and deferred-tool discovery; not for source-code questions |
 | [Connections](#connections) | `connections_list` | Read-only | On by default; reports configured remote surfaces without probing the network or exposing secrets |
 | [Distillation](#distill) | `run_command` output mode | Existing command approval | Off by default; errors-first compression with `read_file` recovery from a persisted complete capture |
-| [Knowledge](#knowledge) | `knowledge_search`, `knowledge_view`, `knowledge_exec` | Read-only | Off by default; gated by `tools_knowledge_enabled`; deterministic grep/read over user-registered folders — no index, no embeddings |
+| [Knowledge](#knowledge) | `knowledge_search`, `knowledge_view`, `knowledge_exec` | Read-only | Gated by `tools_knowledge_enabled` (registered folders); grep/read over user-registered folders, plus optional search by meaning over the semantic catalog |
 | [Home](#home) | `home`, `task_board` | Writes are auto; `home` deletes need a `confirm` round-trip | On by default; gated by `tools_home_enabled` / `tools_task_board_enabled`; `home` covers the Home calendar, reminders, and a read-only scratchpad view; `task_board` adds durable, identity-addressed `add`/`update`/`complete`/`list` tasks into the same persisted Open Loops store, badged `agent_task`, and requires the model to complete a task when its tracked work is finished |
 | [Skills](#skills) | `load_skill` | Read-only | On by default; gated by `tools_load_skill_enabled`; reads a bundled/user/project skill's `SKILL.md` body by name+scope — the only tool that can reach skill scope roots outside the tools workspace root |
 | [Workspace](#workspace) | `workspace_present`, `preview_test`, `verify`, `image_generate` | Mixed | `workspace_present` and `preview_test` are read-only and on by default; `workspace_present` asks the IDE to show a preview/File Map/change diff (request, not outcome); `preview_test` loads one workspace HTML file in a hidden network-isolated one-shot sandbox and reports render state and console/page errors; `verify` runs one of the user's own saved Test Runner configurations (side-effecting, default off) |
@@ -152,8 +152,22 @@ Apply a targeted search-and-replace edit to an existing file. A prior `read_file
 - **Workspace required:** yes.
 - **Notes:** Gated by `tools_edit_file_enabled`. The `old_string` must be unique unless `replace_all: true` is set explicitly. Match preserves indentation; do not include the line-number prefix from `read_file` output in `old_string`. Changed edits attach bounded structured diff metadata.
 - **No-match recovery:** when `old_string` is not found, the error reports the bounded longest matching prefix, escaped first-difference context, CRLF/LF-only diagnosis, whitespace-only matches, and a bounded line-numbered closest region. The message is assembled by `file_state.build_no_match_message`, which delegates to [`edit_hints.py`](../sidecar/ai/tools/builtins/edit_hints.py).
+- **Multi-edit batches (2026-10-05, Pocket Wild dogfood):** a batch stays atomic, but every item is checked before it fails: the error is "N of M edits failed; no changes were applied." followed by one `Edit N: ...` line per failure, and `metadata.failed_edits` lists their indexes (an item after a failed one is checked against the content without that item applied). A one-failure batch keeps the single `Edit N: ...` message. A no-op item that still matches is skipped and named in the success text.
 - **Parameters:** `file_path`, `old_string`, `new_string` required; `replace_all` optional. A full `read_file` snapshot is injected automatically when one is available (and still enforced strictly then), but is **not** required — the edit applies as long as `old_string` uniquely matches the current file. The model should not set `expected_read_snapshot` itself.
 - **Source:** [`sidecar/ai/tools/builtins/edit_file.py`](../sidecar/ai/tools/builtins/edit_file.py).
+
+### `propose_change`
+
+Propose mode only (Plan Plus): record one suggested change for the user to review. Nothing is written: the file on disk is unchanged until the user accepts the suggestion through the separate apply path.
+
+- **Approval:** none (it writes nothing). Default policy `auto`; never offered outside Propose mode (`availability.propose_mode_only`, mirroring `plan_mode_only`).
+- **Side-effecting:** no; read-only.
+- **Workspace required:** yes. Gated by `tools_edit_file_enabled`, because it validates with edit_file's matching (`sidecar/ai/tools/builtins/edit_matching.py`).
+- **Parameters:** `path`, `kind` (`"replace"` or `"create"`), `old_string` (replace only; must match the current file exactly once), `new_string`, plain-words `title` (cut to 80 characters), `what` and `why` (two sentences each), optional `watch_for` (one sentence), `revises` (the id of the suggestion this one replaces), `group` (a short label, `[A-Za-z0-9][A-Za-z0-9._-]{0,39}`, shared by changes that only work together; Electron applies a group as one change set once every member is accepted) and `depends_on` (up to 10 ids of suggestions that must be applied first; this turn's earlier suggestions are named by their tool call id). Electron also derives dependencies the text proves (an import of a file another suggestion creates, a name another suggestion adds) and shows a declared one as Jenny's assumption. There is no `replace_all` or `edits`. Over-long text is cut at a word boundary with "…", never refused; missing text is stored empty. `old_string` and `new_string` over 262,144 characters are refused ("This change is too large to suggest; split it into smaller suggestions.").
+- **Rules:** a create needs a path that does not exist, with its parent inside the workspace. A change whose `old_string` region intersects a live suggestion is refused unless it `revises` that suggestion; two creates for one path overlap. At most 10 suggestions and 5 files per request. The router injects the private `_jenny_live_suggestions` argument (Electron's `suggested_changes_context` plus this request's earlier successful calls); a model-supplied value is stripped. The no-match error drops "or whether the file was already edited" and says "Suggested changes are not applied: the file on disk is unchanged."
+- **Result:** "Suggested change recorded (not applied; the file is unchanged)." plus `metadata.suggested_change` v1: `schema_version`, `path`, `kind`, `old_string`, `new_string`, `title`, `what`, `why`, `watch_for`, `revises`, `group`, `depends_on`, `facts` (derived import facts, `propose_facts.py`: `import_removed` for an import the change drops and `import_missing` for a newly added relative import whose target is neither in the workspace, checked through the workspace guard without reading, nor a live suggested new file), `base_hash` (`"sha256:"` of the LF-normalized current file, `null` for create) and `diff` (`compute_structured_diff` output; no pre-change snapshot is captured).
+- **Mode:** a Propose request (`chat.send propose_mode: true`) is read-only, adds the `## Propose Mode` overlay from `services/tools/propose-mode-contract.json`, caps `reasoning_effort` at `medium`, and asks once for `propose_change` calls when the turn ends in prose with nothing recorded (`sidecar/ai/routing/propose_presentation.py`, kill switch `JENNY_ENABLE_PLAN_PRESENTATION_ASSIST=0`).
+- **Source:** [`sidecar/ai/tools/builtins/propose_change.py`](../sidecar/ai/tools/builtins/propose_change.py), rules in [`propose_suggestion.py`](../sidecar/ai/tools/builtins/propose_suggestion.py).
 
 ### `delete_file` (alias `Delete`)
 
@@ -207,7 +221,7 @@ Search file contents using a regular expression.
 - **Approval:** none (read-only).
 - **Side-effecting:** no.
 - **Workspace required:** yes.
-- **Notes:** Gated by `tools_grep_enabled`. Bounded by `max_results` (≤500), `context_lines` (≤10), and a total runtime budget. Incomplete scans return matches collected so far plus `scan_complete: false`, scanned/candidate counts, searched root, and a narrowing hint; an incomplete zero-match scan is never presented as “no matches.” Matching runs in a reusable subprocess worker with separate startup and per-file regex budgets.
+- **Notes:** Gated by `tools_grep_enabled`. Bounded by `max_results` (≤500), `context_lines` (≤10), and a total runtime budget. Matched lines longer than 500 characters are shown as a 500-character window around the first match (with `[col N]` and ` [truncated]` markers); context lines are trimmed to their first 500 characters. Incomplete scans return matches collected so far plus `scan_complete: false`, scanned/candidate counts, searched root, and a narrowing hint; an incomplete zero-match scan is never presented as “no matches.” Matching runs in a reusable subprocess worker with separate startup and per-file regex budgets.
 - **Parameters:** `pattern` (required), `path`, `include_glob`, `ignore_case`, `context_lines`, `max_results`.
 - **Source:** [`sidecar/ai/tools/builtins/grep_search.py`](../sidecar/ai/tools/builtins/grep_search.py) owns tool orchestration and the isolated worker protocol; [`grep_search_file.py`](../sidecar/ai/tools/builtins/grep_search_file.py) owns bounded file scanning and output rendering.
 
@@ -245,7 +259,7 @@ Run a shell command from within the workspace root.
 - **Result metadata:** `exit_code` repeats the payload's exit status, so the tool row's status reads *exit N* for a command that ran and exited non-zero and the stored tool result carries it. That result keeps `CMP_TOOL_EXECUTION_FAILED`, but its metadata sets `failure_class: precondition_unmet` (retry `after_fix`) and a `remediation` saying the exit status is the command's own result, not a tool failure (the code's default class is *internal_error*, which made a model report a requested failing test as an internal error; dogfood HB-035). A command a guard refuses before it starts (`CMP-TOOL-0007`) shows as *Blocked*, not *Denied*. A command stopped at its time limit keeps `CMP_TOOL_IO_FAILED` with `timed_out: true`, but its metadata sets `failure_class: limit_exceeded` (retry `changed_args`) and a `remediation` naming the limit, so the model is told to raise `timeout_seconds` or use `run_in_background` instead of retrying unchanged (the code's default class is *transient*); the payload's `message` says the same, and the tool row reads *Timed out* (dogfood B11).
 - **Single-line rule on Windows (2026-09-28, dogfood HB-013):** `cmd.exe /c` executes only the text before the first line break, whatever the quoting, and reports that line's exit code, so a multi-line command used to "succeed" with every later line silently dropped (a `python -c "` program split across lines ran as an empty program, exit 0). When the sidecar launches `cmd.exe`, a command that still contains CR or LF after trimming is refused with `CMP_TOOL_COMMAND_BLOCKED` telling the model to run one command per call (joining dependent steps with `&&`) or to use `run_temp_script`. The router refuses it with the schema prevalidation, before the approval prompt, runtime operation admission, or resource lease, so the refusal leaves nothing to settle and the next tool call in the turn is admitted normally; `run_command_tool` repeats the check before any process starts. Both refusals carry `failure_class: bad_arguments` and `effects: none` (2026-10-05, dogfood HB-039), so the result envelope tells the model to rewrite the call, not "denied, ask the user to change the relevant permission"; the error code stays `CMP_TOOL_COMMAND_BLOCKED`, so the row still reads Blocked. POSIX `/bin/sh -c` and the bridge-owned Linux sandbox/hosted worker run every line and are unchanged. Source: `cmd_exe_multiline_refusal` in [`shell_command_split.py`](../sidecar/ai/tools/builtins/shell_command_split.py), wired in [`tool_call_execution.py`](../sidecar/ai/routing/tool_call_execution.py).
 - **Failure contract:** a failing command carries `CMP_TOOL_EXECUTION_FAILED` (`CMP-TOOL-0008`) like every other tool failure, so the model and the error surfaces never see a failure without a code. When the shell's own stderr says the executable was not recognized (`'x' is not recognized...` on `cmd.exe`, `x: command not found` on POSIX), the payload gains a `hint` naming the resolved absolute path when one exists — and the canonical `powershell.exe` location as a special case — instead of leaving the model to guess a path and burn a turn announcing the retry.
-- **Source:** [`sidecar/ai/tools/builtins/shell.py`](../sidecar/ai/tools/builtins/shell.py); shared owner at [`owned_process.py`](../sidecar/ai/tools/builtins/owned_process.py) with Win32 containment in [`sidecar/runtime/process_job.py`](../sidecar/runtime/process_job.py) — re-exported through [`owned_process_windows.py`](../sidecar/ai/tools/builtins/owned_process_windows.py), which stays this transport's single import site — and the child-side bootstrap in [`_owned_process_bootstrap.py`](../sidecar/_owned_process_bootstrap.py); classifier at [`shell_security.py`](../sidecar/ai/tools/builtins/shell_security.py) with platform separator grammar in [`shell_command_split.py`](../sidecar/ai/tools/builtins/shell_command_split.py).
+- **Source:** [`sidecar/ai/tools/builtins/shell.py`](../sidecar/ai/tools/builtins/shell.py); shared owner at [`owned_process.py`](../sidecar/ai/tools/builtins/owned_process.py) with Win32 containment in [`sidecar/runtime/process_job.py`](../sidecar/runtime/process_job.py) — re-exported through [`owned_process_windows.py`](../sidecar/ai/tools/builtins/owned_process_windows.py), which stays this transport's single import site — and the child-side bootstrap in [`_owned_process_bootstrap.py`](../sidecar/_owned_process_bootstrap.py); classifier at [`shell_security.py`](../sidecar/ai/tools/builtins/shell_security.py), its tokenization helpers (quote stripping, argv and PowerShell splitting, redirect and interpreter-payload detection) in [`shell_security_tokens.py`](../sidecar/ai/tools/builtins/shell_security_tokens.py), with platform separator grammar in [`shell_command_split.py`](../sidecar/ai/tools/builtins/shell_command_split.py).
 - **Windows spawn path:** each owned process is launched by first spawning a small bootstrap child into the Job Object and only then releasing the real target argv to it over stdin, so a target can never start outside its containment. That bootstrap child is re-entered as a fresh interpreter on every spawn, so it is deliberately kept stdlib-only in [`sidecar/_owned_process_bootstrap.py`](../sidecar/_owned_process_bootstrap.py) rather than living under `builtins/` — importing the tool package there charged every git subprocess a full tool-runtime import and silently starved the sub-second git budgets in `repo_delta` and `workspace_manifest`. Gated by `tests/sidecar/test_owned_process_bootstrap_import_cost.py`. The Job Object wrapper itself was moved to the dependency-free `sidecar/runtime/process_job.py` leaf when image-gen provisioning needed the same containment for its `pip`/`venv`/download trees — a second ctypes copy would have been a third implementation in this repo, and handle widths and assignment-failure handling are exactly where duplicates drift into correctness bugs. That leaf is now the repo's ONLY Job Object (2026-07-31): `sidecar/runtime/subprocess_manager.py` had kept a private `_WindowsJobObject` with UNPINNED `restype`s - the exact defect `process_job.py` exists to prevent, since an unpinned `restype` defaults to C `int` and truncates a 64-bit `HANDLE` into a job that reports success and contains nothing. That copy is deleted; the manager and its two other importers (the codex-CLI engine transport, the LSP transport in [`lsp/protocol.py`](../sidecar/ai/tools/builtins/lsp/protocol.py)) all take `WindowsJobObject` from `process_job.py` now.
 
 ### `run_temp_script`
@@ -314,6 +328,7 @@ Every command is parsed by the fail-closed classifier in [`shell_security.py`](.
 - Encoded payloads (base64, hex, urlencode in suspicious positions).
 - Blocked-pattern regex (privilege escalation, system modification, recursion bombs).
 - Ambiguous `git` subcommands (`git checkout`, `git fetch`) without explicit approval.
+- Launch vectors behind safe names (2026-10-08, A11-F1): `env <program>`, `git -c` with a key that launches a program or redirects a read (`core.fsmonitor`, `core.sshCommand`, `core.hooksPath`, `core.pager`, `core.editor`, `core.askpass`, `credential.helper`, `diff.external`, any `uploadpack.*`, `receive.*` or `alias.*`), and `--output[=file]` on a read-only git verb (`log`, `diff`, `show`) all need approval; `env` alone and `--output` after `--` stay allowed.
 
 Approval-required even with `tools_shell_enabled` on:
 
@@ -338,6 +353,8 @@ Approval-required even with `tools_shell_enabled` on:
 - A `run_command` or `run_temp_script` call that fails before launching anything (for example a `cwd` that fails validation) reports `resource_cleanup` `confirmed` with reason `no_native_process_started`, because every child registers with the call's cleanup observation before it spawns. Its workspace lease is released, so the next tool in the turn is admitted (dogfood HB-014). A call that launched a child keeps that child's own cleanup verdict.
 - Approval-plan fingerprint includes the full command string and `cwd`, so command edits between request and approval re-prompt.
 - Change evidence (TR-015, 2026-09-30): a foreground `run_command` or `run_temp_script` whose `cwd` sits in a git repository inside the workspace reports `metadata.workspace_changed` (true or false) from a `git status` diff taken around the call, ignoring `__pycache__`, `.pyc` and test/lint caches. Background jobs, workspaces without git, a live `workspace_change_baseline` (which reports `worktree_observation` instead) and probe errors carry no key. The write-progress streak counts the true case as a save and `verification_gate` as a mutation. `JENNY_ENABLE_SHELL_CHANGE_EVIDENCE=0` disables the probe. B6 (2026-09-30) adds `metadata.source_changed`: true only when content changed on a tracked path or on an untracked path with a source suffix, so `git add`, a commit or a stray output is not a save; the write-progress streak prefers it over `workspace_changed`. A call that leaves new untracked non-source files also reports `metadata.created_untracked_paths` (at most 5 entries; 2+ files under one top-level folder collapse to `folder/ (N files)`) and tells the model in the result: `new_untracked_files` in the JSON result, "New untracked files outside ignored folders: ..." otherwise.
+- Restore point (row 34 S5, 2026-10-05): the user-only `scripted_change_review` of `run_command`, `run_temp_script` and `python_execute` names the turn's restore point (`restore_point`: a Jenny checkpoint ref and time, `head` for a clean tree, or `none` with `not_git`/`disabled`/`failed`/`unavailable`), so the Changes view can put script-changed files back one by one. Routing passes it as the private `_jenny_restore_point` argument after approval freezing; the model never sees it. Source: [`scripted_restore_point.py`](../sidecar/ai/tools/builtins/scripted_restore_point.py), [`auto_checkpoint.py`](../sidecar/ai/routing/auto_checkpoint.py).
+- Scripted-edit note (2026-10-05 gate F4): the model-facing `scripted_edit_note` names the changed paths and says those edits skip the stale-file check and encoding preservation but can still be undone from Changes, then steers source edits to `edit_file`/`write_file`; it no longer claims scripted edits cannot be undone. Source: [`scripted_change_capture.py`](../sidecar/ai/tools/builtins/scripted_change_capture.py).
 
 ## Python
 
@@ -645,15 +662,18 @@ Gated by `artifact_html_preview` (default-on). When the flag is off the artifact
 
 ## Knowledge
 
-A deterministic, vector-free knowledge layer: three read-only tools that
-search and read a set of **user-registered document folders** ("knowledge
-roots"). Everything is filesystem/grep-backed — no index, no vector DB, no
-embeddings (the `no_vector_db` decision stays respected; a semantic tranche
-is a separate owner-gated plan).
+Three read-only tools that search and read a set of **user-registered
+document folders** ("knowledge roots"). Reads and regex search are
+filesystem/grep-backed. Search by meaning is optional: when the user has
+turned on Settings > Tools > Knowledge folders > "Search by meaning" and
+picked an embedding model, a bounded local catalog (roadmap row 41,
+plan) answers `knowledge_search`
+queries; without it the tools behave as before. No external vector DB, no
+bundled or downloaded model.
 
 | Tool | What it does | Approval |
 |---|---|---|
-| `knowledge_search` | Regex search across the registered folders, reusing `grep_search`'s pure-Python worker (per-file timeout subprocess) scoped per root | Read-only |
+| `knowledge_search` | `pattern`: regex search across the registered folders, reusing `grep_search`'s pure-Python worker (per-file timeout subprocess) scoped per root. `query`: what to find in plain words; one query embed (1.5 s deadline) ranks catalog passages, fused with the exact-word matches by reciprocal rank over files. Pass either or both | Read-only |
 | `knowledge_view` | Paginated document read; text streams line windows, pdf/docx/xlsx/pptx/ipynb dispatch to the rich-file inspect adapters | Read-only |
 | `knowledge_exec` | Bounded pure-Python `ls` / `tree` / `find` over the corpus | Read-only |
 
@@ -663,9 +683,19 @@ is a separate owner-gated plan).
   roots in `knowledge_roots`. Both flow from the Electron knowledge registry
   (`services/knowledge-service.js`, `knowledge.json`) through the managed
   sidecar config channel; the Electron surface is gated by the internal
-  `knowledge_layer` feature flag (default **off**).
+  `knowledge_layer` feature flag (default **on**).
 - `workspace_required` is `false` — knowledge roots are independent of the
   tools workspace root.
+- Search by meaning: the builtin tools subprocess gets the catalog's path,
+  loopback embedder URL, model key, query template and dims on argv (no key:
+  the embedder is unauthenticated and loopback-only) and opens the index
+  read-only (`sidecar/ai/semantic/reader.py`); the main sidecar owns the
+  writer. Off, not built yet, or embedder down ⇒ the query's words (3+
+  characters, at most 8) become the regex and the result carries a one-line
+  `note`. Passages come back as `passages[{source, path, locator, text}]`,
+  filtered by `root`/`path`/`include_glob` like the grep path; a hit whose
+  file is no longer a regular file is dropped (the catalog purges deleted
+  files only at the next rescan). Hosted mode never configures the reader.
 - Flag off ⇒ the three descriptors are filtered from the catalog and the
   handlers are never bound; the model cannot see or call them.
 
@@ -761,8 +791,13 @@ opens one recorded Jenny change for review.
 
 Loads one workspace `.html`/`.htm` file in a hidden, sandboxed, one-shot
 window and reports what happened: render state, error-level console messages,
-page errors, and per-event status for up to ten bounded click/type
-interactions at a chosen viewport preset (desktop/mobile/tablet). Built for
+page errors, and per-event status for up to ten bounded
+click/type/hover/focus/press interactions at a chosen viewport preset
+(desktop/mobile/tablet). `hover` moves the pointer over the element, `focus`
+focuses any focusable element (`selector_not_focusable` otherwise), and `press`
+sends one allowlisted key (Enter, Space, Tab, Escape, the four arrow keys; a
+literal `" "` or `Spacebar` is accepted as Space) to
+the focused element, or to a `selector` it focuses first. Built for
 the "I just wrote this HTML artifact — does it actually work?" verification
 loop (tool-contract spec Part 7, W8-S4).
 
@@ -802,7 +837,9 @@ Threat model (deliberately narrower than the retired `browser_*` family):
   when storage has room: four per session, 32 per workspace, at most 2 MiB
   each. At capacity saving is refused while transient model delivery continues.
   No screenshots are automatically deleted. Delivery is distinct from an
-  actual completed visual review.
+  actual completed visual review. Every capture first invalidates the hidden
+  window and waits (bounded, best effort) for a freshly presented frame, so the
+  pixels reflect the post-event state rather than the last composited frame.
 - Source: [`services/tools/builtin/preview-test-tool.js`](../services/tools/builtin/preview-test-tool.js)
   (evidence lines, `observe` and the parity scan in
   [`preview-test-evidence.js`](../services/tools/builtin/preview-test-evidence.js))
@@ -1039,7 +1076,7 @@ Output structure (additive; missing facets are `unavailable`, never thrown):
 
 Diagnostics Overview obtains its bounded Runtime Inventory through the existing `harness.inspect` preload bridge. The snapshot summarizes runtime/model profile, offered tools, memory, skills, workspace, shell, and prompt-experiment state. Missing, malformed, partial, and unavailable facets render explicitly; a failed refresh clears the prior snapshot so the UI cannot preserve a stale healthy claim.
 
-This inventory remains an internal renderer diagnostic surface, not a model-facing tool ID. The former Harness and Dev Tools Settings sections and the internal Codex diagnostic reviewer were removed. The ChatGPT subscription plugin owns the replacement ChatGPT workflow, while the optional Codex CLI product engine continues to use its independent setup/auth/runtime services.
+This inventory remains an internal renderer diagnostic surface, not a model-facing tool ID. The former Harness and Dev Tools Settings sections and the internal Codex diagnostic reviewer were removed. The ChatGPT sign-in (Settings › Models › Cloud models) owns the replacement ChatGPT workflow, while the optional Codex CLI product engine continues to use its independent setup/auth/runtime services.
 
 Legacy `.jenny-diagnostics` folders created by the retired reviewer are user data. Jenny neither reads nor deletes them automatically.
 
@@ -1076,7 +1113,6 @@ The tool takes no arguments and does not probe DNS, open sockets, contact provid
 - the active post-fallback engine and whether it is local or remote;
 - whether `web_search` and `fetch_url` are enabled, including the configured search provider and a sanitized SearXNG base URL when applicable;
 - configured MCP servers using non-stdio transports, with sanitized hosts;
-- plugin network access as `not reported by the host` when the request has no host-provided plugin inventory;
 - background model-catalog and updater traffic that does not carry chat messages; and
 - `Offline lockdown: ON (this session)` as the first line when the current request is locked down.
 
@@ -1364,6 +1400,21 @@ create" rule `home`'s `event_upsert`/`reminder_upsert` follow. `title` and
 `notes` are bounded to the same schema caps a user-authored follow-up gets
 (200 / 4000 characters).
 
+#### Project scope
+
+Tasks are scoped to the chat's project. The tool reads the project from the
+trusted execution authority captured from canonical session ownership
+(`context.projectAuthority.project_id`), never from model arguments, and
+`add` stamps it on the follow-up as `projectId`. `list`, `update` and
+`complete` only see tasks of that project: another project's task id reads as
+the same `not_found` error as a missing id, and a task with no stored project
+(not yet backfilled) is visible to none. The 200-task cap counts only open
+(`active` or `deferred`) tasks in the project, so resolved tasks and other
+projects' tasks never block `add`; `list` still shows the project's resolved
+tasks. A request with no project fails every action with `project_unavailable`
+and writes nothing. Every successful result carries `project_id` in its
+metadata.
+
 #### Why Open Loops and not a new store
 
 `agent_task` was already an allowed `sourceKind` in the follow-up schema
@@ -1400,6 +1451,68 @@ the default in either direction.
 - Tool descriptor and dispatch: [`services/tools/builtin/task-board-tool.js`](../services/tools/builtin/task-board-tool.js).
 - Open Loops mutation methods: [`services/shell-config-followup-actions.js`](../services/shell-config-followup-actions.js).
 - Schema and bounds: [`services/shell-config-followups-schema.js`](../services/shell-config-followups-schema.js).
+- Canonical descriptor: [`services/tools/tool-manifest.json`](../services/tools/tool-manifest.json).
+
+### Project notes
+
+`project_notes` is a third Home-family tool, registered behind the default-on
+`tools_project_notes_enabled` feature flag
+(`JENNY_ENABLE_TOOLS_PROJECT_NOTES_ENABLED=0` rolls it back) and executing in
+Electron through the same `tool.execute_electron` bridge as `home` and
+`task_board`. It gives the model read and edit access to one markdown page per
+project, the same page the user edits in the Notes rail. The Electron-owned
+`ProjectNotesService` is the single persistence owner; the tool never touches
+the note files itself.
+
+#### Actions
+
+- `read`: returns the note text, or "Project notes are empty." when blank.
+  Metadata carries `project_id`, `revision`, and `chars`.
+- `append`: `text` (required, up to 4000 characters) is added at the end of the
+  note, or under a `## Heading` when `heading` (up to 120 characters) is given;
+  a missing heading section is created at the end.
+- `replace`: swaps one exact `old_text` passage for `new_text` (an empty
+  `new_text` deletes the passage). `old_text` must match exactly once.
+- Both writes accept an optional one-line `summary` (up to 140 characters)
+  shown beside the undo control; a short default is stored when it is omitted.
+  Successful writes return the line delta, `revision`, `journal_entry_id`,
+  `summary`, `lines`, and the touched `## ` section `headings` in metadata;
+  `read` returns `revision`, `chars`, `updated_at` and `updated_by`.
+
+#### Project scope
+
+The project is read from the trusted execution authority captured from
+canonical session ownership (`context.projectAuthority.project_id`), exactly
+like `task_board`; the schema has no project parameter and a model-supplied
+project id is never read. A chat with no project fails every action with
+`project_unavailable` and the service is never called.
+
+#### Undo, lease and size cap
+
+Every write is attributed to the assistant and appended to the note's undo
+journal, so it is one-click undoable from the chat and the Notes rail. While
+the user is typing in the Notes rail the editor holds a short edit lease and
+the tool refuses writes with `note_being_edited` rather than racing the user.
+The note is capped at 20,000 characters; a write that would exceed the cap
+fails with `note_full` and changes nothing. Other failure reasons are
+`no_match`, `ambiguous_match`, `invalid_text`, `invalid_input`,
+`unsupported_action`, `service_unavailable`, and `write_failed`. The tool never
+logs note text.
+
+#### Approval policy
+
+The manifest declares per-action side effects (`append` and `replace` are
+side-effecting; `read` is not). The tool is defaulted to `auto` in
+`DEFAULT_TOOL_DEFAULTS`
+([`services/tools/tool-policy-evaluator.js`](../services/tools/tool-policy-evaluator.js))
+and in the sidecar policy table: every write only touches the user's own
+per-project note, is bounded, and is undoable. A user policy rule still
+overrides the default.
+
+#### Source pointers
+
+- Tool descriptor and dispatch: [`services/tools/builtin/project-notes-tool.js`](../services/tools/builtin/project-notes-tool.js).
+- Service and store: [`services/project-notes-service.js`](../services/project-notes-service.js), [`services/project-notes-store.js`](../services/project-notes-store.js).
 - Canonical descriptor: [`services/tools/tool-manifest.json`](../services/tools/tool-manifest.json).
 
 ## Skills
@@ -1510,52 +1623,30 @@ Trivial single-step tasks should not produce a todo list — the tool is meant f
 
 Todos live in sidecar runtime memory for the active session. They are not persisted to disk and do not appear in `turn_events[]`. The list resets when the session ends or when `todo_write` is called with an empty array.
 
-## MCP servers: plugin-declared vs user-configured
+## MCP servers
 
-Both forms add external MCP tools to Jenny, but they have different owners and
-trust lifecycles. A plugin-declared server is part of an installed plugin. A
-user-configured server is a standalone connection the user adds directly to
-their Jenny profile.
+An MCP server is a standalone connection the user adds directly to their Jenny
+profile under Settings › Extensions. The user owns a row in `mcp-servers.json`
+under Jenny's Electron user-data directory, supplies the stdio command and
+arguments or the gated-SSE endpoint, then tests the exact configuration.
 
-| | Plugin-declared MCP | User-configured MCP |
-|---|---|---|
-| Configuration owner | The plugin developer declares an `mcp_descriptor` contribution in the plugin manifest; its signed content is committed with the plugin generation. | The user owns a row in `mcp-servers.json` under Jenny's Electron user-data directory. |
-| Installation | It arrives through the plugin install/update flow and is reviewed in that plugin's detail drawer. | The user supplies the stdio command and arguments or gated-SSE endpoint, then tests the exact configuration. |
-| Trust unit | Jenny applies publisher/package verification, plugin permissions and policy, advisories, quarantine, and the immutable plugin generation. The MCP descriptor remains plugin state. | Jenny records approval for the normalized server configuration and the inspected advertised-tools digest. Only rows that are both approved and enabled are forwarded to the sidecar. |
-| Changes | Updating, rolling back, disabling, quarantining, or uninstalling the plugin moves or removes the descriptor with that plugin generation. | Editing the row invalidates its trust. Material tool-surface drift disables the row and returns it to pending review. |
-| Storage | It is never copied into `mcp-servers.json`. | It remains independent of every plugin generation. |
+Jenny records approval for the normalized server configuration and the
+inspected advertised-tools digest. Only rows that are both approved and
+enabled are forwarded to the sidecar. Editing the row invalidates its trust,
+and material tool-surface drift disables the row and returns it to pending
+review.
 
 ### Who is trusted
 
-Installing a plugin means trusting its verified publisher/package and granting
-the permissions requested by that plugin. Its MCP server participates in that
-plugin's lifecycle; it is not a shortcut around plugin review. Native MCP
-contributions are trusted native applications rather than sandboxes, so their
-host-level authority deserves the same scrutiny as any other installed native
-program.
+The user is the installer and trust decision-maker. Jenny requires inspection
+and approval of the exact server configuration before enablement, binds that
+approval to the advertised tool surface, and requires review again after
+configuration or material tool-surface drift. The server still runs with the
+host permissions of its process; MCP approval does not make third-party code a
+sandbox.
 
-For a standalone server, the user is the installer and trust decision-maker.
-Jenny requires inspection and approval of the exact server configuration
-before enablement, binds that approval to the advertised tool surface, and
-requires review again after configuration or material tool-surface drift. The
-server still runs with the host permissions of its process; MCP approval does
-not make third-party code a sandbox.
-
-See [Adding an MCP server](tutorials/02-adding-mcp-server.md) for the standalone
-`mcp-servers.json` walkthrough and [Plugin Security & Trust
-Model](PLUGIN_SECURITY.md) for the full trust and lifecycle rules.
-
-### Which one to choose
-
-Choose a plugin-declared MCP contribution when the server is an inseparable
-part of a versioned extension and should install, update, roll back, quarantine,
-and uninstall with that extension. Plugin authors declare it; users should not
-copy it into standalone configuration.
-
-Choose user-configured MCP when connecting one Jenny profile to a server the
-user selects and operates independently of any plugin. This is the appropriate
-path for a local stdio server or approved remote endpoint that should remain
-under the user's direct configuration and trust review.
+See [Adding an MCP server](tutorials/02-adding-mcp-server.md) for the
+`mcp-servers.json` walkthrough.
 
 ## Containment hardening (2026-09-15)
 
@@ -1568,3 +1659,8 @@ Fixes from the Astra A7 containment review of the built-in tools; each keeps the
 - `lsp` pins the TypeScript implementation that ships beside the trusted launcher (never a workspace-local copy), disables automatic type acquisition, fails closed when no trusted implementation is found, and refuses to synchronize documents over 2 MiB. Language-server detection lives in `lsp/server_detection.py`. Each tool call holds a lease on its session (`LSPManager.session_for_request`); a lazy daemon sweep closes sessions idle past the timeout, at most four sessions stay live, and closes run outside the manager lock.
 - `python_execute` bootstrap locking no longer reclaims a lock whose owner record is still being published, and same-process waiters honor the bootstrap deadline.
 - `run_command` classification: `>>` needs approval like `>`; Git stays auto-allowed only for an explicit read-only allowlist of verbs and arguments; `find -exec`/`-delete` and `xargs` need approval; caret-escaped CMD payloads, `start` wrappers and dynamic PowerShell evaluation are treated as destructive for the always-ask promise.
+
+Follow-ups from the 2026-10-07 Codex audit wave (landed 2026-10-08):
+
+- Atomic writes (`file_atomic_write.py`, used by `write_file`, `edit_file`, `apply_patch` and rollback) pin the validated parent directory. On POSIX hosts with `dir_fd` support the parent is opened once (`O_NOFOLLOW`), its identity compared with the validated one, and the temporary file is created (`O_EXCL`, mode 0600), replaced and, on failure, unlinked relative to that handle; on Windows the parent and temp identity are re-checked before any content is written, so a parent swapped for a junction after validation leaks at most an empty file name. Temp cleanup is identity-based and always runs.
+- Context bootstrap reads (`context_io.read_bounded_context_text`, used by the prompt builders and `skills`) verify the opened descriptor with the same final-path containment check as the desktop file readers (`file_state.verify_authorized_handle`, now public) before any byte is read, returning `unsafe_path` and closing the descriptor on failure; an authorized root that is itself a junction or symlink is resolved once so its own files still read.

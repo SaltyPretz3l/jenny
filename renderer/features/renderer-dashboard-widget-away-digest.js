@@ -40,12 +40,7 @@
       ? utils.formatRelativeTime(value) : String(value || '');
   }
 
-  function isAfter(left, right) {
-    var leftMs = Date.parse(left);
-    var rightMs = Date.parse(right);
-    if (Number.isNaN(leftMs) || Number.isNaN(rightMs)) return String(left) > String(right);
-    return leftMs > rightMs;
-  }
+  function isAfter(left, right) { return model().isAfter(left, right); }
   function createAwayDigestReader(deps) {
     var options = deps && typeof deps === 'object' ? deps : {};
     var windowRef = options.windowRef || globalThis;
@@ -267,8 +262,9 @@
     function handleDocumentVisibility() {
       if (disposed || !documentRef.visibilityState) return;
       if (documentRef.visibilityState === 'hidden') { commitWatched(true); return; }
-      if ((state.ui && state.ui.activeView === 'home') || panelVisible()) refresh();
+      if (homeOrPanel()) refresh();
     }
+    function homeOrPanel() { return (state.ui && state.ui.activeView === 'home') || panelVisible(); }
 
     function warnTokens(workId, error) {
       if (tokenWarnings.has(workId)) return;
@@ -344,6 +340,7 @@
     function dispose() {
       if (disposed) return;
       disposed = true;
+      settleReads.dispose();
       if (documentRef) documentRef.removeEventListener('visibilitychange', handleDocumentVisibility);
       commitWatched(false);
       listeners = [];
@@ -353,9 +350,12 @@
       tokenWarnings.clear();
     }
     publish(false);
+    var settleReads = model().createSettleReads({ windowRef: windowRef, documentRef: documentRef, onScreen: homeOrPanel,
+      digest: function digest() { return published.digest; },
+      read: function read() { return Promise.resolve(inFlight).then(function reread() { return refresh(); }); } });
     if (documentRef) documentRef.addEventListener('visibilitychange', handleDocumentVisibility);
     return { refresh: refresh, markAllSeen: markAllSeen, noteSessionOpened: noteSessionOpened,
-      onChromePass: onChromePass, showAll: showAll, readTokens: readTokens, subscribe: subscribe,
+      onChromePass: onChromePass, onRunSettled: function onRunSettled(event) { settleReads.note(event); }, showAll: showAll, readTokens: readTokens, subscribe: subscribe,
       getSnapshot: function getSnapshot() { return published; }, dispose: dispose };
   }
 

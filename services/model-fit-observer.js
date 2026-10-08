@@ -29,7 +29,6 @@ function createModelFitObserver({
   store,
   getHardwareProfile = () => null,
   logger = null,
-  flagEnabled = () => true,
   now = () => Date.now(),
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
@@ -168,7 +167,6 @@ function createModelFitObserver({
   async function maybeTrigger(status) {
     if (disposed) return;
     try {
-      if (typeof flagEnabled === 'function' && flagEnabled() !== true) return;
       if (!status || status.phase !== 'ready') return;
       const engine = _str(status.engine || status.engine_type || status.engineType).toLowerCase();
       if (engine !== 'ollama') return;

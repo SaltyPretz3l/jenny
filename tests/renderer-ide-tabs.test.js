@@ -364,3 +364,19 @@ test('stage dragleave keeps the highlight while crossing into a child element', 
   controller.resetForRoot();
   assert.deepEqual(removed, ['ide-editor-stage--drop-active', 'ide-editor-stage--drop-active']);
 });
+
+test('createIdeTabStrip points tabs at deps.ariaControls and defaults to the shared editor stage', () => {
+  const { JSDOM } = require('jsdom');
+  const { createIdeTabStrip } = require('../renderer/features/renderer-ide-tabs');
+  const { escapeHtml } = require('../renderer/shared/string-utils');
+  const dom = new JSDOM('<!doctype html><body><div id="a"></div><div id="b"></div></body>');
+  const [stripA, stripB] = ['a', 'b'].map((id) => dom.window.document.getElementById(id));
+  const openTabs = [{ path: 'x.js', kind: 'file' }, { path: 'y.js', kind: 'file' }];
+  createIdeTabStrip({ getDom: () => ({ ideTabStrip: stripA }), escapeHtml, ariaControls: 'ideGroupStage-editor-2' })
+    .renderTabs({ openTabs, activeTabPath: 'x.js' });
+  createIdeTabStrip({ getDom: () => ({ ideTabStrip: stripB }), escapeHtml })
+    .renderTabs({ openTabs, activeTabPath: 'x.js' });
+  const controlsOf = (strip) => [...strip.querySelectorAll('.ide-tab-label')].map((b) => b.getAttribute('aria-controls'));
+  assert.deepEqual(controlsOf(stripA), ['ideGroupStage-editor-2', 'ideGroupStage-editor-2']);
+  assert.deepEqual(controlsOf(stripB), ['ideEditorStage', 'ideEditorStage']);
+});

@@ -143,9 +143,8 @@ test('deleteNote strips the deleted id from pins in the same write', async () =>
 
 // ---- pin controller ----------------------------------------------------------
 
-function pinState({ pins = [], notes = [{ id: 'note-1', title: 'Alpha', text: 'hello world' }], flag = true }) {
+function pinState({ pins = [], notes = [{ id: 'note-1', title: 'Alpha', text: 'hello world' }] }) {
   return {
-    features: { featureFlags: { scratchpad_pin: flag } },
     homeConfig: { scratchpad: { notes, activeNoteId: notes[0] && notes[0].id, settings: {}, pins } },
   };
 }
@@ -171,16 +170,7 @@ function clickEl(window, el) {
   el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
 }
 
-test('flag-off renders nothing and hides both surfaces', () => {
-  const { layer, tabs, controller } = makeController(pinState({ pins: ['note-1'], flag: false }));
-  controller.render();
-  assert.equal(tabs.querySelectorAll('.pin-tab').length, 0);
-  assert.equal(tabs.hidden, true);
-  assert.equal(layer.querySelectorAll('.scratchpad-pin').length, 0);
-  assert.equal(layer.hidden, true);
-});
-
-test('flag-on with no pins keeps both surfaces empty + hidden', () => {
+test('no pins keeps both surfaces empty + hidden', () => {
   const { layer, tabs, controller } = makeController(pinState({ pins: [] }));
   controller.render();
   assert.equal(tabs.querySelectorAll('.pin-tab').length, 0);

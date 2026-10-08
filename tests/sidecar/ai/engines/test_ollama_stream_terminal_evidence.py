@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.error
 import urllib.request
 from typing import Any
 
@@ -21,10 +22,13 @@ import pytest
 from sidecar.ai.engines.ollama import OllamaEngine
 from sidecar.ai.engines.ollama_telemetry import resolve_ollama_stream_finish_reason
 from sidecar.ai.error_codes import CMP_STREAM_INCOMPLETE
+from sidecar.ai.exceptions import EngineConnectionError
 from sidecar.ai.routing.provider_stream_normalizer import (
     FINISH_REASON_INCOMPLETE,
     FINISH_REASON_PROVIDER_ERROR,
+    FINISH_REASON_THINKING_BUDGET,
 )
+from sidecar.ai.tools.models import GenerationUsage, StreamingEvent
 
 
 def _build_engine() -> OllamaEngine:
@@ -119,7 +123,7 @@ class TestResolveFinishReason:
         # empty-usable shape (all tokens spent on thinking/tool args, nothing
         # produced). A length-terminated turn WITH visible text or tool calls
         # still settles as success — that classification moved from this
-        # resolver to the consumers (tool_loop_finalize / chat_streaming).
+        # resolver to the consumer (tool_loop_finalize).
         assert (
             resolve_ollama_stream_finish_reason(
                 saw_terminal=True, done_reason="length", has_tool_calls=False
@@ -315,3 +319,184 @@ class TestToolStreamTerminalEvidence:
         )
 
         assert result.finish_reason == FINISH_REASON_PROVIDER_ERROR
+
+
+class TestFallbackStreamTerminals:
+    tools = [{"name": "read_file", "parameters": {"type": "object"}}]
+    call_text = '<tool_call>{"name":"read_file","arguments":{"path":"R"}}</tool_call>'
+
+    @pytest.mark.parametrize("content", ["half an ans", call_text])
+    def test_partial_stream_then_eof_reports_incomplete(self, monkeypatch, content) -> None:
+        engine = _build_engine()
+        engine._tool_calls_enabled = False
+        _patch_stream(monkeypatch, [{"message": {"content": content}, "done": False}])
+
+        chunks, result = _drain_tool_stream(
+            engine.stream_with_tools(prompt="hi", tools=self.tools, max_tokens=8)
+        )
+
+        assert result.finish_reason == FINISH_REASON_INCOMPLETE
+        assert result.tool_calls == ()
+        assert result.inband_tool_call_parse_failed is False
+        assert result.content == content
+        assert result.usage is None
+        assert result.degraded_tool_transport is False
+        assert chunks == [content]
+
+    def test_thinking_budget_terminal_is_kept_without_tool_parsing(self, monkeypatch) -> None:
+        from types import SimpleNamespace
+
+        from sidecar.ai.engines import ollama_generation
+
+        engine = _build_engine()
+        engine._tool_calls_enabled = False
+
+        def fake_stream(*_args, **_kwargs):
+            yield SimpleNamespace(kind="content", text=self.call_text)
+            yield SimpleNamespace(
+                kind="done", finish_reason=FINISH_REASON_THINKING_BUDGET, usage={"total": 3}
+            )
+
+        monkeypatch.setattr(ollama_generation, "_ollama_stream", fake_stream)
+
+        chunks, result = _drain_tool_stream(
+            engine.stream_with_tools(prompt="hi", tools=self.tools, max_tokens=8)
+        )
+
+        assert result.finish_reason == FINISH_REASON_THINKING_BUDGET
+        assert result.tool_calls == ()
+        assert result.inband_tool_call_parse_failed is False
+        assert result.content == self.call_text
+        assert result.usage == {"total": 3}
+        assert chunks == [self.call_text]
+
+    @pytest.mark.parametrize("content", ["start", call_text, '<tool_call>{"name":'])
+    def test_inband_error_frame_reports_error(self, monkeypatch, content) -> None:
+        engine = _build_engine()
+        engine._tool_calls_enabled = False
+        _patch_stream(
+            monkeypatch,
+            [
+                {"message": {"content": content}, "done": False},
+                {"error": "runner crashed"},
+                {"message": {"content": "never read"}, "done": True},
+            ],
+        )
+
+        chunks, result = _drain_tool_stream(
+            engine.stream_with_tools(prompt="hi", tools=self.tools, max_tokens=8)
+        )
+
+        assert result.finish_reason == FINISH_REASON_PROVIDER_ERROR
+        assert result.tool_calls == ()
+        assert result.inband_tool_call_parse_failed is False
+        assert result.content == content
+        assert result.usage is None
+        assert chunks == [content]
+
+    @pytest.mark.parametrize("done_reason", ["stop", "length"])
+    @pytest.mark.parametrize("has_call", [False, True])
+    def test_clean_terminal_preserves_parsing_and_usage(
+        self, monkeypatch, done_reason, has_call
+    ) -> None:
+        engine = _build_engine()
+        engine._tool_calls_enabled = False
+        content = "answer " + self.call_text if has_call else "answer"
+        _patch_stream(
+            monkeypatch,
+            [
+                {"message": {"content": content}, "done": False},
+                {
+                    "message": {},
+                    "done": True,
+                    "done_reason": done_reason,
+                    "prompt_eval_count": 3,
+                    "eval_count": 2,
+                },
+            ],
+        )
+
+        chunks, result = _drain_tool_stream(
+            engine.stream_with_tools(prompt="hi", tools=self.tools, max_tokens=8)
+        )
+
+        assert result.finish_reason == ("tool_calls" if has_call else done_reason)
+        assert len(result.tool_calls) == int(has_call)
+        if has_call:
+            assert result.tool_calls[0].tool_id == "read_file"
+            assert result.tool_calls[0].arguments == {"path": "R"}
+        assert result.content == "answer"
+        assert result.inband_tool_call_parse_failed is False
+        assert result.usage is not None
+        assert result.usage.input_tokens == 3
+        assert result.usage.output_tokens == 2
+        assert result.usage.total_tokens == 5
+        assert chunks == ["answer"]
+
+    def test_http_400_fallback_then_eof_reports_degraded_incomplete(
+        self, monkeypatch
+    ) -> None:
+        engine = _build_engine()
+        requests = []
+        response = _FakeStreamingResponse(
+            [{"message": {"content": self.call_text}, "done": False}]
+        )
+
+        def urlopen(request, **_kwargs):
+            requests.append(json.loads(request.data))
+            if len(requests) == 1:
+                raise EngineConnectionError("tool payload rejected") from urllib.error.HTTPError(
+                    request.full_url, 400, "Bad Request", {}, None
+                )
+            return response
+
+        monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+        chunks, result = _drain_tool_stream(
+            engine.stream_with_tools(prompt="hi", tools=self.tools, max_tokens=8)
+        )
+
+        assert result.finish_reason == FINISH_REASON_INCOMPLETE
+        assert result.degraded_tool_transport is True
+        assert result.tool_calls == ()
+        assert result.inband_tool_call_parse_failed is False
+        assert result.content == self.call_text
+        assert result.usage is None
+        assert chunks == [self.call_text]
+        assert len(requests) == 2
+        assert requests[0]["tools"]
+        assert "tools" not in requests[1]
+        assert engine._tool_calls_enabled is True
+        assert engine._tool_call_http_400_streak == 1
+
+    @pytest.mark.parametrize(
+        "finish_reason",
+        [None, FINISH_REASON_INCOMPLETE, FINISH_REASON_PROVIDER_ERROR, "stop", "length", ""],
+    )
+    def test_missing_or_last_done_event_controls_result(self, monkeypatch, finish_reason) -> None:
+        engine = _build_engine()
+        engine._tool_calls_enabled = False
+        usage = GenerationUsage(input_tokens=3, output_tokens=2, total_tokens=5)
+        events = [StreamingEvent(kind="content", text="  answer  ")]
+        if finish_reason is not None:
+            events.extend(
+                [
+                    StreamingEvent(kind="done", finish_reason="stop"),
+                    StreamingEvent(kind="done", finish_reason=finish_reason, usage=usage),
+                ]
+            )
+        monkeypatch.setattr(
+            "sidecar.ai.engines.ollama_generation._ollama_stream",
+            lambda *_args, **_kwargs: iter(events),
+        )
+
+        chunks, result = _drain_tool_stream(
+            engine.stream_with_tools(prompt="hi", tools=self.tools, max_tokens=8)
+        )
+
+        expected = FINISH_REASON_INCOMPLETE if finish_reason is None else finish_reason or "stop"
+        assert result.finish_reason == expected
+        assert result.usage is (None if finish_reason is None else usage)
+        assert result.content == "answer"
+        assert result.tool_calls == ()
+        assert result.inband_tool_call_parse_failed is False
+        assert chunks == ["answer"]

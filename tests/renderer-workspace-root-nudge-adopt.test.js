@@ -32,7 +32,6 @@ function makeDom() {
 
 function makeState(overrides) {
   return {
-    features: { featureFlags: { workspace_root_nudge: true } },
     workspaceRoot: { path: 'D:\\Projects\\Ascend', status: { state: 'ready', message: 'Workspace root is configured.' } },
     currentSessionId: 'sess_old',
     sessions: [{ id: 'sess_old', title: 'Old chat', project_id: 'project_general' }],
@@ -301,7 +300,6 @@ test('app binding mounts "Use <folder>" for a folderless chat and routes the cli
         interactive_sequence_state: 'idle', pending_question_batch: null, linked_session_ids: [],
         updated_at: new Date().toISOString(),
       }],
-      features: { state: { featureFlags: { workspace_root_nudge: true } } },
       workspaceRoot: { state: { workspaceRoot: 'G:/workspace/Ascend', workspaceRootStatus: { state: 'ready', message: 'Workspace root is configured.' } } },
       projects: {
         list: () => ({ ok: true, projects: [] }),

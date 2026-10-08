@@ -233,12 +233,32 @@ function registerCloudModels(ipcMainLike, {
     return { ok: true, state: getState() };
   }
 
+  function chatgptCompletePasted(url) {
+    if (!authService?.completeFromPastedUrl) return { ok: false, reason: 'chatgpt_auth_unavailable', state: getState() };
+    const { ok, reason } = authService.completeFromPastedUrl(url);
+    return { ok, reason, state: getState() };
+  }
+
+  function chatgptExtendPending() {
+    if (!authService?.extendPending) return { ok: false, reason: 'chatgpt_auth_unavailable', state: getState() };
+    const { ok, reason, deadline_ms: deadlineMs } = authService.extendPending();
+    return { ok, reason, deadlineMs, state: getState() };
+  }
+
+  function chatgptPendingLink() {
+    if (!authService?.getPendingAuthorizeUrl) return { ok: false, reason: 'chatgpt_auth_unavailable', state: getState() };
+    return { ok: true, url: authService.getPendingAuthorizeUrl(), state: getState() };
+  }
+
   registerIpcInvokeHandlers(ipcMainLike, {
     'cloudModels.getState': () => getState(),
     'cloudModels.setChatgptEnabled': setChatgptEnabled,
     'cloudModels.chatgptSignIn': () => chatgptSignIn(),
     'cloudModels.chatgptCancel': () => chatgptCancel(),
     'cloudModels.chatgptSignOut': () => chatgptSignOut(),
+    'cloudModels.chatgptCompletePasted': (_event, url) => chatgptCompletePasted(url),
+    'cloudModels.chatgptExtendPending': () => chatgptExtendPending(),
+    'cloudModels.chatgptPendingLink': () => chatgptPendingLink(),
   }, authorization);
 
   function dispose() {
@@ -253,7 +273,8 @@ function registerCloudModels(ipcMainLike, {
     delete backendService._chatgptLegacyChoicePending;
   }
 
-  return { getState, setChatgptEnabled, chatgptSignIn, chatgptCancel, chatgptSignOut, catalog, dispose };
+  return { getState, setChatgptEnabled, chatgptSignIn, chatgptCancel, chatgptSignOut,
+    chatgptCompletePasted, chatgptExtendPending, chatgptPendingLink, catalog, dispose };
 }
 
 module.exports = { registerCloudModels, publicAuthStatus };

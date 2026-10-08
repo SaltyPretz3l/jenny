@@ -31,12 +31,6 @@ const CONSUMED_ELSEWHERE = Object.freeze({
   desktop_execution_policy_version: 'sidecar/ai/execution_policy.py',
 });
 
-// Emitted but no longer read by the sidecar: listed in config.py's
-// _RETIRED_TOP_LEVEL_KEYS only so older payloads load without the unknown-key
-// WARN. Electron still sends it (managed-sidecar-config.js); drop the entry
-// here once Electron stops emitting it.
-const RETIRED_BUT_EMITTED = Object.freeze(['tools_subagent_batch_enabled']);
-
 test.afterEach(async () => {
   await cleanupTrackedResources();
 });
@@ -67,9 +61,7 @@ test('every managed sidecar config key is consumed by the sidecar', () => {
   const emitted = emittedManagedConfigKeys();
   const read = configParserReadKeys();
   assert.ok(emitted.length > 50, `expected the full managed config, got ${emitted.length} keys`);
-  const unread = emitted.filter((key) => !read.has(key)
-    && !Object.hasOwn(CONSUMED_ELSEWHERE, key)
-    && !RETIRED_BUT_EMITTED.includes(key));
+  const unread = emitted.filter((key) => !read.has(key) && !Object.hasOwn(CONSUMED_ELSEWHERE, key));
   assert.deepEqual(unread, [], `emitted but never read by ${CONFIG_PARSER}`);
 });
 
@@ -80,12 +72,5 @@ test('the parity allowlists stay true', () => {
     assert.equal(emitted.has(key), true, `${key} is no longer emitted; drop it from the allowlist`);
     assert.equal(read.has(key), false, `${key} is read by ${CONFIG_PARSER}; drop it from the allowlist`);
     assert.match(readRepoFile(reader), new RegExp(`"${key}"`), `${reader} must name ${key}`);
-  }
-  const retiredLine = readRepoFile(CONFIG_PARSER)
-    .split('\n')
-    .find((line) => line.startsWith('_RETIRED_TOP_LEVEL_KEYS'));
-  for (const key of RETIRED_BUT_EMITTED) {
-    assert.equal(emitted.has(key), true, `${key} is no longer emitted; drop it from the allowlist`);
-    assert.match(retiredLine || '', new RegExp(`"${key}"`), `${key} must stay in _RETIRED_TOP_LEVEL_KEYS`);
   }
 });

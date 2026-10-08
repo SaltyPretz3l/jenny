@@ -576,10 +576,6 @@
   font-weight: 700;
 }
 
-.settings-view .plugins-drop-zone {
-  font-size: var(--font-size-footnote);
-}
-
 /* A form mounted under a group's copy keeps the copy's distance from it. */
 .settings-group-copy + #localProfileSettingsMount {
   margin-block-start: var(--space-7);

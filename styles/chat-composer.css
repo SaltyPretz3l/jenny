@@ -539,6 +539,20 @@
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+#composerRunModeSlot .composer-run-mode-chip.composer-run-mode-propose,
+.chat-pane[data-pane-id="1"] .composer-run-mode-slot .composer-run-mode-chip.composer-run-mode-propose {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 56%, var(--widget-composer-rail-pill-border));
+  background: var(--widget-composer-mode-active-bg);
+}
+
+#composerRunModeSlot .composer-run-mode-chip.composer-run-mode-propose:hover:not(.inv-chip--disabled),
+.chat-pane[data-pane-id="1"] .composer-run-mode-slot .composer-run-mode-chip.composer-run-mode-propose:hover:not(.inv-chip--disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 24%, var(--widget-composer-mode-active-bg));
+}
+
 #composerRunModeSlot .composer-run-mode-chip.composer-run-mode-plan,
 .chat-pane[data-pane-id="1"] .composer-run-mode-slot .composer-run-mode-chip.composer-run-mode-plan {
   color: var(--accent-amber);
@@ -761,6 +775,24 @@
   overflow: hidden;
 }
 
+/* Read-only notice on an old image chat (a retired plugin session). */
+.plugin-session-fallback {
+  margin: var(--space-4) var(--space-6) 0;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+}
+
+.plugin-session-fallback[hidden] {
+  display: none;
+}
+
+.plugin-session-fallback p {
+  margin: 0;
+}
+
 .composer-wrap {
   position: relative;
   align-self: end;
@@ -847,4 +879,80 @@
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
   overflow-y: auto;
+}
+
+/* Row 38 item 7 (variant B): Commands is a slash-command menu, so it shows a
+   "/" glyph and its word instead of a terminal icon. The pill keeps the
+   icon-button chrome; only its content changes. */
+.composer-icon-button.composer-text-button {
+  width: auto;
+  gap: var(--space-2);
+  padding-inline: var(--space-3) var(--space-4);
+}
+
+.composer-button-glyph {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.composer-button-text {
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Row 38 item 3 (variant A): the project pill sits on the bar as quiet text,
+   "in <name>" plus a caret. It always names the open chat's project (General
+   included) because that is where the message lands; the name takes the accent
+   while the Chats filter hides this chat. */
+.composer-settings-group .composer-project-pill.inv-chip {
+  gap: var(--space-1);
+  padding-inline: var(--space-2);
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+.composer-settings-group .composer-project-pill.inv-chip:hover:not(.inv-chip--disabled),
+.composer-settings-group .composer-project-pill.inv-chip.inv-chip--open {
+  border-color: transparent;
+  background: var(--widget-composer-rail-pill-hover-bg);
+}
+
+.composer-project-pill .inv-chip-icon {
+  width: auto;
+  height: auto;
+}
+
+.composer-project-pill-prefix {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.composer-project-pill .inv-chip-label {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.composer-project-pill.composer-project-pill--general .inv-chip-label {
+  color: var(--text-secondary);
+}
+
+.composer-project-pill.composer-project-pill--filtered .inv-chip-label {
+  color: var(--accent-strong);
+}
+
+.composer-project-pill.inv-chip::after {
+  content: "\25BE";
+  color: var(--text-muted);
+  font-size: 0.8em;
+  line-height: 1;
+}
+
+.composer[data-toolbar-compact] .composer-settings-group .composer-project-pill.inv-chip::after {
+  display: none;
 }

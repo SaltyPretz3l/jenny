@@ -104,7 +104,7 @@ test('empty phase evidence collapses into a concise no-samples state', () => {
   assert.match(dom.phasePercentilesTable.innerHTML, /No latency samples yet/);
   assert.doesNotMatch(dom.phasePercentilesTable.innerHTML, /<table/);
   assert.doesNotMatch(dom.phasePercentilesTable.innerHTML, /TBD|EMPTY/);
-  assert.equal(dom.diagnosticsStatus.textContent, 'No latency samples recorded for this run.');
+  assert.equal(dom.diagnosticsStatus.textContent, 'No timings recorded in this app launch yet.');
   assert.equal(dom.phasePercentilesResetButton.disabled, true);
 });
 
@@ -184,6 +184,20 @@ test('Phase 7 harnessSnapshot override switches badge to Degraded when tone is w
   });
   assert.equal(dom.diagnosticsBadge.textContent, 'Degraded');
   assert.match(dom.diagnosticsSummary.textContent, /Degraded: tools disabled for qwen3\.6:latest/);
+});
+
+test('Phase 7 override joins a summary that already ends a sentence without a doubled period', () => {
+  const dom = buildHealthyDom();
+  renderPhasePercentilesPane({
+    ...buildHealthyState(),
+    harnessSnapshot: { runtime: {} },
+    deriveRuntimeHealthState() {
+      return { tone: 'warning', summary: 'qwen3.6’s capability check is out of date. Jenny will check it again.' };
+    },
+    dom,
+  });
+  assert.match(dom.diagnosticsSummary.textContent, /check it again\. Runtime health:/);
+  assert.doesNotMatch(dom.diagnosticsSummary.textContent, /\.\./);
 });
 
 test('Phase 7 override does not fire when tone is success', () => {

@@ -22,19 +22,6 @@
   var STATIC_TIMING = { dtMs: 0, longGap: false };
   var EMPTY_STYLE = { getPropertyValue: function () { return ''; } };
 
-  function getNow() {
-    return typeof performance !== 'undefined' && performance && typeof performance.now === 'function'
-      ? performance.now() : Date.now();
-  }
-
-  function requestFrame(callback) {
-    return typeof requestAnimationFrame === 'function' ? requestAnimationFrame(callback) : 0;
-  }
-
-  function cancelFrame(handle) {
-    if (handle && typeof cancelAnimationFrame === 'function') { cancelAnimationFrame(handle); }
-  }
-
   function createReactiveGridController(options) {
     var opts = options || {};
     var runtime = opts.runtime || moduleRuntime;
@@ -137,13 +124,9 @@
     }
 
     function scheduleMarkReady(entry) {
-      if (!entry.canvas || entry.readyShown || entry.markReadyHandle || staged || disposed || documentHidden) { return; }
-      var canvas = entry.canvas;
-      entry.markReadyHandle = requestFrame(function () {
-        entry.markReadyHandle = 0;
-        if (disposed || entry.canvas !== canvas) { return; }
-        entry.readyShown = true;
-        if (canvas.classList) { canvas.classList.add('surface-canvas-ready'); }
+      runtime.scheduleCanvasReady(entry, {
+        blocked: staged || disposed || documentHidden,
+        isLive: function () { return !disposed; },
       });
     }
 
@@ -177,7 +160,7 @@
 
     function removeEntryCanvas(entry) {
       if (entry.markReadyHandle) {
-        cancelFrame(entry.markReadyHandle);
+        runtime.cancelFrame(entry.markReadyHandle);
         entry.markReadyHandle = 0;
       }
       if (entry.canvas && entry.canvas.parentNode) {
@@ -294,22 +277,22 @@
     }
 
     function stopLoop() {
-      if (frameHandle) { cancelFrame(frameHandle); frameHandle = 0; }
+      if (frameHandle) { runtime.cancelFrame(frameHandle); frameHandle = 0; }
     }
 
     function scheduleFrame() {
       if (!shouldAnimate() || frameHandle) { return; }
-      frameHandle = requestFrame(stepFrame);
+      frameHandle = runtime.requestFrame(stepFrame);
     }
 
     function stepFrame(timestamp) {
       frameHandle = 0;
       if (!shouldAnimate()) { return; }
-      var now = Number.isFinite(timestamp) ? timestamp : getNow();
+      var now = Number.isFinite(timestamp) ? timestamp : runtime.getNow();
       var fullRate = windowFocused && core.isResponding(sceneSimulation, now);
       if (!fullRate && lastPaintAt && now >= lastPaintAt
         && now - lastPaintAt < IDLE_FRAME_MS - FRAME_SLACK_MS) {
-        frameHandle = requestFrame(stepFrame);
+        frameHandle = runtime.requestFrame(stepFrame);
         return;
       }
       lastPaintAt = now;
@@ -323,7 +306,7 @@
     function drawAllStatic() {
       if (disposed || documentHidden) { return; }
       refreshDeviceDpr();
-      drawScene(getNow(), STATIC_TIMING);
+      drawScene(runtime.getNow(), STATIC_TIMING);
     }
 
     function requestRedraw() {
@@ -481,7 +464,7 @@
             sceneSimulation,
             payload.sceneX,
             payload.sceneY,
-            Number.isFinite(payload.timeStamp) ? payload.timeStamp : getNow(),
+            Number.isFinite(payload.timeStamp) ? payload.timeStamp : runtime.getNow(),
             CLICK_IMPULSE_AMPLITUDE,
             'outward',
             'click',

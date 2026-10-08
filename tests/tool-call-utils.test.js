@@ -416,3 +416,19 @@ test('toolRunVerb maps a tool name onto its run verb through the kind aliases', 
   assert.equal(toolRunVerb('some_unknown_tool'), '');
   assert.equal(toolRunVerb(''), '');
 });
+
+test('propose_change reads as a suggestion, never as an edit (Plan Plus)', () => {
+  assert.equal(formatToolCallSummary('propose_change', { path: 'src/app.py' }), 'Suggest change: src/app.py');
+  assert.equal(formatToolCallSummary('propose_change', {}), 'Suggest change');
+});
+
+test('project_notes results label the header meta and failures stay quiet', () => {
+  const toolCallUtils = require('../renderer/chat/tool-call-utils');
+  const meta = (overrides) => ({ result_kind: 'project_notes', status: 'ok', ...overrides });
+  assert.equal(toolCallUtils.formatToolResultMeta('project_notes', meta({ action: 'read' })), 'notes read');
+  assert.equal(toolCallUtils.formatToolResultMeta('project_notes', meta({ action: 'append' })), 'notes updated');
+  assert.equal(toolCallUtils.formatToolResultMeta('project_notes', meta({ action: 'replace' })), 'notes updated');
+  assert.equal(toolCallUtils.formatToolResultMeta('project_notes', meta({ action: 'append', status: 'failed' })), '');
+  assert.equal(toolCallUtils.formatToolResultMeta('project_notes', meta({ action: 'bogus' })), '');
+  assert.equal(toolCallUtils.isToolRunFoldable({ toolName: 'project_notes', status: 'completed' }), false);
+});

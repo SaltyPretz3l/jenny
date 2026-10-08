@@ -78,7 +78,6 @@ function createService({ canonicalTurnEvents = true } = {}) {
     currentModel: 'm3-gate-model',
     featureFlags: {
       canonical_turn_events: canonicalTurnEvents,
-      stream_envelope_v2: true,
       phase_events: true,
     },
     pendingToolApprovals: new Map(),

@@ -15,11 +15,6 @@ import httpx
 from sidecar.ai.engines.base import EngineMessage, clamp_timeout_to_deadline
 from sidecar.ai.engines.engine_events import EngineEvent
 from sidecar.ai.engines.provider_call_finalize import ProviderCallFinalizer
-from sidecar.ai.engines.vision_input import (
-    VisionInput,
-    VisionInputError,
-    normalize_vision_inputs,
-)
 from sidecar.ai.engines.vllm_sse_stream import (
     _iter_bounded_sse_lines,  # noqa: F401 - compatibility re-export
     _iter_cancel_aware_sse_lines,
@@ -60,7 +55,6 @@ from sidecar.runtime.vllm_engine_support import (
     StreamChunk,
     StreamingEvent,
     ThinkingRepetitionGuard,
-    UnsupportedModalityError,
     _build_messages,
     _build_tools_payload,
     _normalize_content,
@@ -226,52 +220,6 @@ class _VLLMGenerationMixin:
             response_format=response_format,
         )
         return result.content
-
-    def generate_with_vision(
-        self,
-        prompt: str,
-        images: list[VisionInput],
-        max_tokens: int = 256,
-        temperature: float = 0.7,
-    ) -> GenerationResult:
-        self._assert_ready()
-        if not self._vision:
-            raise UnsupportedModalityError("vision", model=str(self.model_name or ""))
-
-        try:
-            normalized_images = normalize_vision_inputs(images)
-        except VisionInputError as error:
-            raise GenerationError(str(error)) from error
-        content_blocks: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-        for image in normalized_images:
-            content_blocks.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": image.as_data_uri()},
-                }
-            )
-
-        payload: dict[str, Any] = {
-            "model": self.model_name,
-            "messages": [{"role": "user", "content": content_blocks}],
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-        }
-        body = self._service.post_json("/chat/completions", payload)
-
-        choices = body.get("choices")
-        if not isinstance(choices, list) or not choices:
-            return GenerationResult(content="", finish_reason="stop")
-
-        first = choices[0] if isinstance(choices[0], dict) else {}
-        message = first.get("message", {})
-        if not isinstance(message, dict):
-            return GenerationResult(content="", finish_reason="stop")
-        finish_reason = str(first.get("finish_reason", "") or "").strip().lower()
-        return GenerationResult(
-            content=_normalize_content(message.get("content")).strip(),
-            finish_reason="length" if finish_reason == "length" else "stop",
-        )
 
     def stream(  # noqa: C901, PLR0912, PLR0915 - BaseEngine transport contract.
         self,

@@ -8,7 +8,7 @@ const { createIdeTree } = require('../renderer/features/renderer-ide-tree');
 const ideStateUtils = require('../renderer/features/renderer-ide-state');
 const { buildIdeDom, createBridgeStub, settle } = require('./helpers/ide-tree-harness');
 
-async function createTreeHarness({ files = {}, dirs = [], expanded = [], qol = true } = {}) {
+async function createTreeHarness({ files = {}, dirs = [], expanded = [] } = {}) {
   const domHarness = buildIdeDom();
   const bridge = createBridgeStub({ files, dirs });
   const ide = ideStateUtils.createIdeUiState();
@@ -22,7 +22,6 @@ async function createTreeHarness({ files = {}, dirs = [], expanded = [], qol = t
     getIde: () => ide,
     getMountEl: () => domHarness.getDom().ideRailPanel,
     isActivePanel: () => true,
-    isQolEnabled: () => qol,
     getWorkspaceFsApi: () => bridge.jennyShell.workspaceFs,
     getMutationContext: async () => ({ rootId: 'root-test', generation: 1, phase: 'ready' }),
     preflightMutation: async () => ({ ready: true, paths: [] }),
@@ -46,7 +45,7 @@ async function createTreeHarness({ files = {}, dirs = [], expanded = [], qol = t
   };
 }
 
-async function createWiringHarness({ files = {}, qol = true } = {}) {
+async function createWiringHarness({ files = {} } = {}) {
   const domHarness = buildIdeDom();
   const bridge = createBridgeStub({ files });
   const ide = ideStateUtils.createIdeUiState();
@@ -64,7 +63,6 @@ async function createWiringHarness({ files = {}, qol = true } = {}) {
     showShellErrorToast: () => {},
     appendClientLog: () => {},
     getGitFeature: () => null,
-    getFeatureFlags: () => ({ workspace_explorer_qol: qol }),
     panelDeps: () => ({
       getMountEl: () => domHarness.getDom().ideRailPanel,
       isActivePanel: () => active,
@@ -175,26 +173,18 @@ test('auto-reveal expands the active file without stealing editor focus and yiel
   assert.equal(harness.ide.expandedDirs.has('inactive'), false);
 });
 
-test('auto-reveal is flag-gated and dispose removes the listener and pending timer', async (t) => {
-  const flagOff = await createWiringHarness({ files: { 'src/a.js': 'a' }, qol: false });
+test('dispose removes the auto-reveal listener and pending timer', async (t) => {
   const enabled = await createWiringHarness({ files: { 'src/a.js': 'a' } });
-  t.after(() => {
-    enabled.dispose();
-    flagOff.dispose();
-  });
-  let flagOffCalls = 0;
+  t.after(() => enabled.dispose());
   let enabledCalls = 0;
-  flagOff.tree.revealPath = () => { flagOffCalls += 1; };
   enabled.tree.revealPath = () => { enabledCalls += 1; };
 
-  flagOff.dispatch('src/a.js');
   enabled.dispatch('src/a.js');
   enabled.wiring.disposeAll();
   await settle(120);
   enabled.dispatch('src/a.js');
   await settle(100);
 
-  assert.equal(flagOffCalls, 0);
   assert.equal(enabledCalls, 0);
 });
 
@@ -239,17 +229,11 @@ test('QoL header actions create in the focused directory or file parent', async 
   assert.equal(harness.bridge.calls.createDirectory.at(-1).path, 'src/from-file');
 });
 
-test('QoL header creates at root with no focused row and is absent when flag off', async (t) => {
+test('QoL header creates at root with no focused row', async (t) => {
   const rootHarness = await createTreeHarness();
-  const flagOff = await createTreeHarness({ files: { 'a.js': 'a' }, qol: false });
-  t.after(() => {
-    flagOff.dispose();
-    rootHarness.dispose();
-  });
+  t.after(() => rootHarness.dispose());
 
   clickHeaderAction(rootHarness, 'new-file');
   await commitInlineEdit(rootHarness, 'root.txt');
   assert.equal(rootHarness.bridge.calls.createFile.at(-1).path, 'root.txt');
-  assert.equal(flagOff.panel.innerHTML.includes('data-ide-tree-action="new-file"'), false);
-  assert.equal(flagOff.panel.innerHTML.includes('data-ide-tree-action="new-folder"'), false);
 });

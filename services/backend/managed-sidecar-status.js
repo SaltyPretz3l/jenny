@@ -11,6 +11,7 @@ const {
 const {
   getConfiguredToolsWorkspaceRoot,
 } = require('./managed-sidecar-config');
+const { buildLoadFailure } = require('./load-failure-classifier');
 
 const WORKTREE_TOOL_STATUS_NAMES = new Set([
   'worktree_list',
@@ -392,6 +393,7 @@ function normalizeLocalRuntime(rawLocalRuntime, fallback = {}) {
         : null;
   return {
     contract_version: String(source.contract_version || source.contractVersion || fallback.contractVersion || '2').trim() || '2',
+    load_failure: buildLoadFailure(source.load_failure),
     engine: {
       type: engineType || 'mock',
     },

@@ -275,3 +275,28 @@ class TestRuleActionMatcher:
         snapshot = self._snapshot()
         assert snapshot is not None
         assert snapshot.rules[0].match.action == "delete"
+
+
+def test_project_notes_writes_default_to_auto_and_reads_stay_read_only() -> None:
+    descriptor = _descriptor(
+        name="project_notes",
+        actions={
+            "read": ToolActionSpec(side_effecting=False),
+            "append": ToolActionSpec(side_effecting=True),
+            "replace": ToolActionSpec(side_effecting=True),
+        },
+    )
+
+    def first_pass(action: str):
+        return evaluate_tool_policy(
+            descriptor=descriptor,
+            arguments={"action": action},
+            mode="assist",
+            snapshot=None,
+        )
+
+    assert first_pass("read").reason == "read-only action defaults to auto"
+    for action in ("append", "replace"):
+        written = first_pass(action)
+        assert written.decision == "auto"
+        assert written.reason == "built-in default for project_notes"

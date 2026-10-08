@@ -36,6 +36,16 @@
         "role": "assistant",
         "sequence": 1
       }
+    },
+    {
+      "method": "chat.thinking",
+      "params": {
+        "delta": "tool_call arguments could not be parsed",
+        "thinking_id": "think_req_replay_stop",
+        "kind": "status",
+        "persist": false,
+        "code": "CMP-LOOP-0002"
+      }
     }
   ],
   "expected_turn_events": [

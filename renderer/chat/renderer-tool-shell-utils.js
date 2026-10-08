@@ -43,6 +43,100 @@
     return SPECIALIZED_TOOL_KINDS.has(String(toolKind || '').trim());
   }
 
+  /* ── Changed files (row 34 S5): shared by the detail body and the shells ── */
+
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
+  const SCRIPTED_CHANGE_TOOL_KINDS = new Set(['Bash', 'bash', 'run_command', 'run_temp_script', 'python_execute']);
+
+  function isScriptedChangeTool(toolKind) {
+    return SCRIPTED_CHANGE_TOOL_KINDS.has(String(toolKind || '').trim());
+  }
+
+  function countOf(value) {
+    return Number.isSafeInteger(value) && value > 0 ? value : 0;
+  }
+
+  /*
+   * One .file-diff row per structured diff (metadata.diffs[], else the single
+   * metadata.diff). deps.resolveExpanded(diffId) decides the row's open state;
+   * deps.registerExpanded registers every lazy body with that state, otherwise
+   * only collapsed bodies are registered (the shells' long-standing contract).
+   */
+  function buildFileDiffRowsMarkup(model, deps) {
+    var fileDiffView = deps.fileDiffView || {};
+    if (typeof fileDiffView.buildFileDiffMarkup !== 'function') return '';
+    var bindings = deps.fileDiffBindings || {};
+    var codeHighlight = deps.codeHighlight || {};
+    var metadata = model.metadata || {};
+    var multi = Array.isArray(metadata.diffs) ? metadata.diffs : [];
+    var diffs = multi.length ? multi : (metadata.diff ? [metadata.diff] : []);
+    var input = deps.input || {};
+    return diffs.map(function (diff, index) {
+      var path = String(diff && diff.path || (multi.length ? '' : (input.path || input.file_path)) || '').trim();
+      if (!path) return '';
+      var changeId = String(diff && diff.diff_id || '').trim();
+      var diffId = changeId || [model.sessionId, model.callId, diff && diff.operation_index != null ? diff.operation_index : index, path].map(String).join(':');
+      var languageId = codeHighlight.getLanguageId?.(path) || '';
+      // Sensitive paths are listed, never read: path only (no editor link), and say why.
+      var sensitive = Boolean(diff && diff.truncation_reason === 'sensitive_path');
+      var args = {
+        path: path, diffId: diffId, changeId: sensitive ? '' : changeId, languageId: languageId,
+        languageDot: codeHighlight.getLanguageDot?.(languageId),
+        hunks: Array.isArray(diff && diff.hunks) ? diff.hunks : [],
+        additions: diff && diff.additions, deletions: diff && diff.deletions,
+        truncated: diff && diff.truncated === true,
+        note: sensitive ? jt('chat.toolShell.sensitiveContentsHidden', 'contents not shown: looks like a secrets file') : '',
+        expanded: deps.resolveExpanded(diffId) === true,
+        highlight: codeHighlight.highlightLine,
+        escapeHtml: deps.escapeHtml,
+        actionButton: deps.actionButton,
+      };
+      if (!args.truncated && args.hunks.length && (deps.registerExpanded || !args.expanded)) {
+        bindings.registerFileDiffContext?.(Object.assign({
+          diffId: diffId, sessionId: model.sessionId,
+          materialize: function () { return fileDiffView.buildFileDiffBodyMarkup(args); },
+        }, deps.registerExpanded ? { expanded: args.expanded } : {}));
+      }
+      return fileDiffView.buildFileDiffMarkup(args);
+    }).join('');
+  }
+
+  // Honest states from scripted_change_review: never "no changes".
+  function scriptedChangeNotices(review, diffCount) {
+    var before = [];
+    var after = [];
+    if (!review || typeof review !== 'object' || review.schema_version !== 1) return { before: before, after: after };
+    var changed = countOf(review.changed_path_count) || diffCount;
+    if (review.state === 'unavailable' && review.reason === 'background') {
+      before.push(jt('chat.toolShell.changesCheckedWhenFinished', 'Changes are checked when it finishes'));
+    } else if (review.state === 'unavailable') {
+      before.push(jt('chat.toolShell.changesUnchecked', "Couldn't check which files changed"));
+    } else if (review.state === 'unsupported') {
+      before.push(jt('chat.toolShell.changesNeedGit', 'Change tracking needs a git folder'));
+    } else if (review.certainty === 'background_window' && changed > 0) {
+      before.push(jtn('chat.toolShell.changedWhileRunning', changed, { count: changed },
+        '{count} file changed while it ran (may include other edits)',
+        '{count} files changed while it ran (may include other edits)'));
+    }
+    var omitted = countOf(review.omitted_count);
+    if (omitted > 0) {
+      after.push(jtn('chat.toolShell.moreFilesNotShown', omitted, { count: omitted }, '{count} more file not shown', '{count} more files not shown'));
+    }
+    return { before: before, after: after };
+  }
+
+  /* The Changed files content of a scripted call, or '' when there is nothing to say. */
+  function buildScriptedChangesContent(model, deps) {
+    var rows = buildFileDiffRowsMarkup(model, deps);
+    var diffCount = Array.isArray(model.metadata && model.metadata.diffs) ? model.metadata.diffs.length : 0;
+    var notices = scriptedChangeNotices(model.metadata && model.metadata.scripted_change_review, diffCount);
+    if (!rows && !notices.before.length && !notices.after.length) return '';
+    var note = function (text) { return '<div class="tool-call-empty" data-scripted-change-notice="true">' + deps.escapeHtml(text) + '</div>'; };
+    return notices.before.map(note).join('')
+      + (rows ? '<div class="file-diff-list">' + rows + '</div>' : '')
+      + notices.after.map(note).join('');
+  }
+
   function createToolShellRenderer(deps) {
     const {
       escapeHtml,
@@ -369,6 +463,22 @@
       });
     }
 
+    function diffDeps(model) {
+      return {
+        escapeHtml: escapeHtml, fileDiffView: fileDiffView, fileDiffBindings: fileDiffBindings,
+        codeHighlight: codeHighlight, actionButton: diffActionButton,
+        input: model.input && typeof model.input === 'object' ? model.input : {},
+        resolveExpanded: function (diffId) { return fileDiffBindings.getFileDiffExpanded?.(diffId) === true; },
+        registerExpanded: false,
+      };
+    }
+
+    /* Script tool card: the Changed files section follows the output. */
+    function changedFilesSection(model) {
+      var content = buildScriptedChangesContent(model, diffDeps(model));
+      return content ? section(jt('chat.toolShell.changedFiles', 'Changed files'), content) : '';
+    }
+
     /* ── Shell: Bash / Terminal ── */
 
     function renderBashShell(model) {
@@ -433,6 +543,7 @@
           + badge({ tone: exitTone, text: exitLabel })
           + '</div>');
       }
+      parts.push(changedFilesSection(model));
 
       return shellHeader(model) + shellContent(model, parts.join(''));
     }
@@ -482,32 +593,7 @@
         /* No structured diff — fall back to generic */
         return null;
       }
-      var input = model.input && typeof model.input === 'object' ? model.input : {};
-      var rows = diffs.map(function (diff, index) {
-        var path = String(diff && diff.path || (multi.length ? '' : (input.path || input.file_path)) || '').trim();
-        if (!path) return '';
-        var changeId = String(diff && diff.diff_id || '').trim();
-        var diffId = changeId || [model.sessionId, model.callId, diff && diff.operation_index != null ? diff.operation_index : index, path].map(String).join(':');
-        var languageId = codeHighlight.getLanguageId?.(path) || '';
-        var args = {
-          path: path, diffId: diffId, changeId: changeId, languageId: languageId,
-          languageDot: codeHighlight.getLanguageDot?.(languageId),
-          hunks: Array.isArray(diff && diff.hunks) ? diff.hunks : [],
-          additions: diff && diff.additions, deletions: diff && diff.deletions,
-          truncated: diff && diff.truncated === true,
-          expanded: fileDiffBindings.getFileDiffExpanded?.(diffId) === true,
-          highlight: codeHighlight.highlightLine,
-          escapeHtml: escapeHtml,
-          actionButton: diffActionButton,
-        };
-        if (!args.expanded && !args.truncated && args.hunks.length) {
-          fileDiffBindings.registerFileDiffContext?.({
-            diffId: diffId, sessionId: model.sessionId,
-            materialize: function () { return fileDiffView.buildFileDiffBodyMarkup(args); },
-          });
-        }
-        return fileDiffView.buildFileDiffMarkup(args);
-      }).join('');
+      var rows = buildFileDiffRowsMarkup(model, diffDeps(model));
       return rows ? shellHeader(model) + shellContent(model, '<div class="file-diff-list">' + rows + '</div>') : null;
     }
 
@@ -659,6 +745,8 @@
           className: 'python-output-error',
         }), true));
       }
+      var changedFiles = changedFilesSection(model);
+      if (changedFiles) parts.push(changedFiles);
 
       if (!parts.length) return null;
       return shellHeader(model) + shellContent(model, parts.join(''));
@@ -819,7 +907,9 @@
 
     var SHELL_REGISTRY = {
       Bash: renderBashShell,
+      bash: renderBashShell,
       run_command: renderBashShell,
+      run_temp_script: renderBashShell,
       Monitor: renderMonitorShell,
       monitor: renderMonitorShell,
       Read: renderReadShell,
@@ -870,5 +960,8 @@
   return {
     createToolShellRenderer: createToolShellRenderer,
     hasSpecializedToolShell: hasSpecializedToolShell,
+    isScriptedChangeTool: isScriptedChangeTool,
+    buildFileDiffRowsMarkup: buildFileDiffRowsMarkup,
+    buildScriptedChangesContent: buildScriptedChangesContent,
   };
 });

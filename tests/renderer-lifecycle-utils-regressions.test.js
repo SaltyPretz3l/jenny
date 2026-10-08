@@ -4,12 +4,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
-function deferred() {
-  let resolve;
-  const promise = new Promise((onResolve) => { resolve = onResolve; });
-  return { promise, resolve };
-}
-
 function createHarness(t, options = {}) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>');
   const previous = {
@@ -193,8 +187,8 @@ test('renderer log forwarding invokes only the canonical bridge when it exists',
   assert.equal(legacyCalls, 0, 'a fire-and-forget undefined return must not trigger the legacy bridge');
 });
 
-test('deferred plugin-view leave cannot activate a view after lifecycle disposal', async (t) => {
-  const leaveRequest = deferred();
+test('leaving an old image chat view switches immediately with no plugin round-trip', (t) => {
+  let guardCalls = 0;
   let renderLayoutCalls = 0;
   const state = {
     ui: { activeView: 'plugin', activeSettingsSection: 'models', composerPopoverOpen: false, commandPopoverOpen: false },
@@ -207,21 +201,19 @@ test('deferred plugin-view leave cannot activate a view after lifecycle disposal
     state,
     rendererPluginSessions: {
       instance: {
-        getActiveSessionId: () => 'plugin-session',
-        guardLeaveSession: () => leaveRequest.promise,
+        getActiveSessionId: () => { guardCalls += 1; return 'plugin-session'; },
+        guardLeaveSession: () => { guardCalls += 1; return new Promise(() => {}); },
       },
     },
     callbacks: { renderLayout: () => { renderLayoutCalls += 1; } },
   });
 
   controller.setActiveView('chat');
-  controller.disposeLifecycleController();
-  leaveRequest.resolve(true);
-  await Promise.resolve();
-  await Promise.resolve();
 
-  assert.equal(state.ui.activeView, 'plugin');
-  assert.equal(renderLayoutCalls, 0, 'the stale leave continuation must not repaint after disposal');
+  assert.equal(state.ui.activeView, 'chat');
+  assert.equal(guardCalls, 0, 'no plugin process can exist, so no leave guard is consulted');
+  assert.ok(renderLayoutCalls > 0, 'the view switch repaints synchronously');
+  controller.disposeLifecycleController();
 });
 
 for (const twoPanes of [true, false]) {
@@ -278,3 +270,32 @@ for (const [label, panes, expected] of [
     assert.deepEqual([follows, resumes], [expected, expected]);
   });
 }
+
+test('handleCreateSession always creates a plain chat; a plugin session type is no longer honoured', async (t) => {
+  const state = {
+    ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false, commandPopoverOpen: false },
+    logs: [],
+    sessions: [],
+    currentSessionId: 's0',
+    runtimeDraft: { preferredModel: '', reasoningEffort: 'default', runMode: 'ask', planMode: false, contextPreferences: {} },
+    features: { featureFlags: {} },
+  };
+  const payloads = [];
+  const { controller } = createHarness(t, {
+    state,
+    jennyShell: { sessions: { create: async (payload) => { payloads.push(payload); return { data: { id: 'sess_new' } }; }, list: async () => ({ data: [] }) } },
+    callbacks: {
+      normalizeReasoningEffort: (value) => value,
+      renderAll: () => {},
+      isAnySendBusy: () => false,
+      clearComposerStatusNotice: () => {},
+      setSessionMessages: () => {},
+      setFollowLatest: () => {},
+    },
+  });
+  await controller.handleCreateSession({ sessionType: 'plugin', providerAuthority: { id: 'x' } }).catch(() => {});
+  assert.equal(payloads.length, 1);
+  assert.equal(payloads[0].title, 'New Chat');
+  assert.equal('sessionType' in payloads[0], false);
+  assert.equal('providerAuthority' in payloads[0], false);
+});

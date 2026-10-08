@@ -35,3 +35,107 @@
 .knowledge-folders-error:not(:empty) {
   color: var(--status-error, #d66);
 }
+
+/* "Search by meaning" (semantic_catalog, row 41): one status signal per
+ * folder row and a sub-block under the add row. Dots reuse .status-dot;
+ * cyan breathes while cataloging. No cards: a hairline separates the block. */
+
+.knowledge-catalog-signal {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 2px;
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.knowledge-catalog-dot--working {
+  animation: tool-call-running-breathe 0.8s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-catalog-dot--working {
+    animation: none;
+  }
+}
+
+.knowledge-catalog-block {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--settings-row-hairline);
+}
+
+.knowledge-catalog-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 6px 0 10px;
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+}
+
+.knowledge-catalog-status strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.knowledge-catalog-error {
+  color: var(--text-danger-emphasis);
+}
+
+.knowledge-catalog-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px 16px;
+  margin: 10px 0 4px;
+  font-size: var(--font-size-footnote);
+}
+
+.knowledge-catalog-facts dt {
+  color: var(--text-muted);
+}
+
+.knowledge-catalog-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.knowledge-catalog-model-name {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  word-break: break-all;
+}
+
+.knowledge-catalog-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.knowledge-catalog-link:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.knowledge-catalog-advanced {
+  margin-top: 6px;
+}
+
+.knowledge-catalog-advanced > summary {
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.knowledge-catalog-danger {
+  margin-top: 12px;
+}

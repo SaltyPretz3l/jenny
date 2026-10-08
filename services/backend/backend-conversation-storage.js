@@ -14,12 +14,15 @@ const { initializeApplicationProjects } = require('../projects/application-proje
 function initializeConversationStorage(service, options) {
   const logger = (level, event, details) => service._emitServiceLog(level, event, details);
   const writeDebounceMs = 500;
+  // Flags are assigned later in the service constructor: use the options' flag; unset follows the default.
+  const sessionJournal = options?.featureFlags?.session_journal;
   service.sessionStore = new ElectronSessionStore(
     path.join(options.userDataPath, 'sessions.json'),
     {
       shellConfigService: service.configService,
       logger,
       writeDebounceMs,
+      sessionJournal,
     }
   );
   initializeApplicationProjects(service, options);

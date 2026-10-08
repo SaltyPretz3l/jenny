@@ -21,11 +21,11 @@ function fakeEditorHost(overrides = {}) {
       this.actions.push(descriptor);
       return { dispose() {} };
     },
-    getActivePath() { return overrides.path !== undefined ? overrides.path : 'src/app.js'; },
+    getFocusedPath() { return overrides.path !== undefined ? overrides.path : 'src/app.js'; },
     getSelectedText() { return overrides.code !== undefined ? overrides.code : 'const x = 1;'; },
     getSelectionRange() { return overrides.range !== undefined ? overrides.range : { startLine: 3, endLine: 5 }; },
-    getActiveLanguageId() { return overrides.language || 'javascript'; },
-    getCursorInfo() {
+    getFocusedLanguageId() { return overrides.language || 'javascript'; },
+    getFocusedCursorInfo() {
       return overrides.cursor !== undefined ? overrides.cursor : { lineNumber: 12, column: 3, selectedChars: 0 };
     },
     getMarkers() { return overrides.markers || []; },

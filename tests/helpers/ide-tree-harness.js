@@ -17,6 +17,7 @@ function buildIdeDom() {
         <textarea id="ideEditorFallback" class="hidden"></textarea>
         <div id="ideEmptyState"><p id="ideEmptyStateCopy"></p></div>
         <div id="ideRailPanel"></div>
+        <div id="ideWorkbench"></div>
       </div>
     </div>
   `);
@@ -33,6 +34,7 @@ function buildIdeDom() {
       ideEmptyState: byId('ideEmptyState'),
       ideEmptyStateCopy: byId('ideEmptyStateCopy'),
       ideRailPanel: byId('ideRailPanel'),
+      ideWorkbench: byId('ideWorkbench'),
     }),
   };
 }

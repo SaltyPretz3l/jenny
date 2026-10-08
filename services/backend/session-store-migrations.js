@@ -1,4 +1,4 @@
-// v1..v22 migration chain for the Electron session store payload.
+// v1..v23 migration chain for the Electron session store payload.
 //
 // Each repair function takes a single session record and returns the upgraded
 // version. `migrateStorePayload` runs the chain over every session in a
@@ -26,6 +26,7 @@ const {
   normalizeContextPreferences,
 } = require('./context-preferences');
 const { normalizeFailureRetryReasoningSnapshots } = require('./session-failure-retry-reasoning');
+const { normalizeSuggestedChanges } = require('./suggested-changes-records');
 const {
   createOfficialImagePluginSession,
   enforcePluginOperationMetadataBudget,
@@ -51,8 +52,10 @@ const STALE_PENDING_APPROVAL_TERMINAL_STATE = 'cancelled';
 // bounded origin-aware v2 contract. v20 adds bounded per-session tool
 // category overrides. v21 adds durable project attribution plus bounded
 // canonical runtime-continuation records; legacy project rows belong to General.
-// v22 adds bounded failure-retry reasoning snapshots.
-const STORE_SCHEMA_VERSION = 22;
+// v22 adds bounded failure-retry reasoning snapshots. v23 moves chat files to a
+// base plus append-only journal; the session record itself is unchanged.
+// v24 adds the bounded Electron-owned `suggested_changes` record (Propose mode).
+const STORE_SCHEMA_VERSION = 24;
 // The highest schema version that lived in the legacy monolithic sessions.json
 // file. Anything <= this number triggers a monolithic -> split migration on
 // first read.
@@ -565,6 +568,8 @@ const SESSION_MIGRATION_STEPS = [
   [20, repairSessionForV20],
   [21, repairSessionForV21],
   [22, repairSessionForV22],
+  [23, (session) => session],
+  [24, repairSessionForV24],
 ];
 
 // v16 introduces `compaction_snapshot` (JCA-003 manual-compaction ownership).
@@ -733,6 +738,12 @@ function repairSessionForV22(session = {}) {
   };
 }
 
+function repairSessionForV24(session = {}) {
+  const source = session && typeof session === 'object' && !Array.isArray(session)
+    ? session : {};
+  return { ...source, suggested_changes: normalizeSuggestedChanges(source.suggested_changes) };
+}
+
 function migrateStorePayload(payload, { normalizeMessage } = {}) {
   const source = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
   const observedVersion = Number(source.schema_version);
@@ -812,6 +823,7 @@ module.exports = {
   repairSessionForV20,
   repairSessionForV21,
   repairSessionForV22,
+  repairSessionForV24,
   migrateLegacyImageOperationMessage,
   repairStalePendingApprovalToolUse,
   summarizeMessage,

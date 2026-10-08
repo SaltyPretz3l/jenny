@@ -13,6 +13,32 @@ const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness
 
 const LOADING = 'Jenny is loading qwen3:8b. You can type; Send turns on when it is ready.';
 
+test('in the app: no model disables Send with the hero line; a populated failure keeps composer recovery', async (t) => {
+  const app = await loadRendererApp({ shell: { models: { async list() { return { available: true, data: [] }; } } } });
+  t.after(() => app.dispose());
+  const { window } = app;
+  const state = window.__rendererState;
+  const doc = window.document;
+  doc.getElementById('chatInput').value = 'hello';
+  window.dispatchEvent(new window.CustomEvent('jenny:model-state-changed'));
+  await waitForUi(window);
+  assert.equal(doc.getElementById('composerLoadingLine')?.textContent, 'Send turns on once a model is ready.');
+  assert.equal(doc.getElementById('sendButton').disabled, true);
+  assert.equal(doc.getElementById('sendButton').title, 'Send turns on once a model is ready.');
+  assert.equal(doc.getElementById('sendButton').dataset.modelLoading, 'false');
+  assert.equal(doc.getElementById('chatInput').disabled, false);
+  doc.getElementById('newChatButton').click();
+  await waitForUi(window);
+  const sessionId = state.currentSessionId;
+  state.messagesBySession.set(sessionId, [{ kind: 'user', content: 'existing' }]);
+  await app.shell.__emitBackendStatus({ phase: 'model_unavailable', model_lifecycle: { failure: {
+    cause: 'out_of_memory', model: 'large', context: 40960,
+  } } });
+  await waitForUi(window);
+  assert.match(doc.getElementById('composerLoadingLine')?.textContent, /didn't load/);
+  assert.equal(doc.querySelectorAll('[data-composer-failure-action]').length, 2);
+});
+
 test('describeModelLoading names the model only while one is loading', () => {
   const { describeModelLoading } = composerRender;
   assert.equal(describeModelLoading({ phase: 'model_loading', model_acquisition: { requested_model: 'qwen3:8b' } }), LOADING);
@@ -25,6 +51,37 @@ test('describeModelLoading names the model only while one is loading', () => {
     assert.equal(describeModelLoading({ phase, model_acquisition: { requested_model: 'qwen3:8b' } }), '', phase);
   }
   assert.equal(describeModelLoading(null), '');
+});
+
+test('the failed state is one line with the cause and two plain actions, and it hands the row back when it clears', () => {
+  const backend = { phase: 'model_unavailable', model_lifecycle: { state: 'unavailable', requested_model: 'qwen3:8b', engine: 'ollama',
+    failure: { cause: 'out_of_memory', message: 'memory', context: 40960, at: '2026-10-07T12:00:00.000Z', engine: 'ollama', model: 'qwen3:8b' } } };
+  assert.equal(composerRender.describeModelFailure(backend), "qwen3:8b didn't load · not enough memory");
+  assert.equal(composerRender.describeModelFailure({ phase: 'ready' }), '');
+  assert.equal(composerRender.describeModelFailure(null), '');
+  const dom = new JSDOM('<!doctype html><body><div id="composerModeChips"><span id="composerTurnTimer"></span></div></body>');
+  const doc = dom.window.document;
+  const actions = composerRender.buildModelFailureActions(backend);
+  const line = composerRender.syncComposerLoadingLine(doc, composerRender.describeModelFailure(backend), actions);
+  assert.equal(line.dataset.tone, 'failed');
+  assert.equal(line.querySelector('span').textContent, "qwen3:8b didn't load · not enough memory");
+  const buttons = [...line.querySelectorAll('button[data-composer-failure-action]')];
+  assert.deepEqual(buttons.map((button) => [button.dataset.composerFailureAction, button.textContent.trim()]), [['loadSmaller', 'Load at 32K'], ['models', 'Other models']]);
+  assert.equal(buttons[0].dataset.composerFailureModel, 'qwen3:8b');
+  assert.equal(composerRender.syncComposerLoadingLine(doc, composerRender.describeModelFailure(backend), actions), line, 'same node, same markup');
+  const loading = composerRender.syncComposerLoadingLine(doc, LOADING);
+  assert.equal(loading, line);
+  assert.equal(loading.dataset.tone, undefined);
+  assert.equal(loading.textContent, LOADING);
+  assert.equal(composerRender.buildModelFailureActions({ phase: 'ready' }), '');
+  const unreachable = composerRender.buildModelFailureActions({ ...backend, model_lifecycle: { ...backend.model_lifecycle, failure: { ...backend.model_lifecycle.failure, cause: 'engine_unreachable' } } });
+  assert.match(unreachable, /data-composer-failure-action="diagnostics"/);
+  // At or under the lowest Tune step there is no smaller context to offer: the first fix is the fit filter.
+  const floor = composerRender.buildModelFailureActions({ ...backend, model_lifecycle: { ...backend.model_lifecycle, failure: { ...backend.model_lifecycle.failure, context: 4096 } } });
+  doc.body.insertAdjacentHTML('beforeend', `<div id="floor">${floor}</div>`);
+  assert.deepEqual([...doc.querySelectorAll('#floor button')].map((button) => [button.dataset.composerFailureAction, button.textContent.trim()]),
+    [['showFits', 'Show models that fit'], ['models', 'Other models']]);
+  dom.window.close();
 });
 
 test('syncComposerLoadingLine puts one line in the row, before the timer, and clears it', () => {
@@ -62,6 +119,13 @@ test('split view: every pane shows the loading line in its own row, and every pa
   assert.equal(paneOne.querySelector('[data-chat-node="composerLoadingLine"]'), paneLine, 'the same node across updates');
   composerRender.syncComposerLoadingLines(doc, '');
   assert.equal(doc.querySelectorAll('.composer-loading-line').length, 0);
+  // A resolver gives each pane its own words: pane 0's empty chat reads the hero line, pane 1's conversation the failure.
+  composerRender.syncComposerLoadingLines(doc, (paneId) => (paneId === 0
+    ? ['Sending retries the load.', '']
+    : ['large did not load', '<button data-composer-failure-action="retry">Retry</button>']));
+  assert.equal(doc.getElementById('composerLoadingLine').textContent, 'Sending retries the load.');
+  assert.equal(paneOne.querySelector('[data-chat-node="composerLoadingLine"] span').textContent, 'large did not load');
+  assert.equal(paneOne.querySelector('[data-composer-failure-action="retry"]').textContent, 'Retry');
   dom.window.close();
 });
 

@@ -42,7 +42,6 @@ function createShellStub() {
 
 function createHarness(t, {
   titlebarLoad = false,
-  telemetryFlagOn = true,
   systemStats = GPU_STATS,
   callbacks = {},
   sessionActionButton = null,
@@ -60,7 +59,6 @@ function createHarness(t, {
     ui: { activeView: 'chat', appearance: { titlebarLoad } },
     auth: { authenticated: true },
     backend: { phase: 'ready' },
-    features: { featureFlags: { titlebar_gpu_telemetry: telemetryFlagOn } },
     currentSessionId: 'session-1',
     sessions: [],
     systemStats,
@@ -144,10 +142,6 @@ test('fallbacks: CPU without GPU utilization, RAM without a VRAM sample, both on
   noUtil.controller.renderHeader();
   assert.deepEqual(noUtil.readout(), ['CPU 21%', 'VRAM 13.6 GB']);
 
-  const flagOff = createHarness(t, { titlebarLoad: true, telemetryFlagOn: false });
-  flagOff.controller.renderHeader();
-  assert.deepEqual(flagOff.readout(), ['CPU 21%', 'VRAM 13.6 GB'], 'the kill switch drops GPU utilization');
-
   const noVram = createHarness(t, { titlebarLoad: true, systemStats: { ...GPU_STATS, gpuMemory: { available: false, utilAvailable: true, utilPercent: 55 } } });
   noVram.controller.renderHeader();
   assert.deepEqual(noVram.readout(), ['GPU 55%', 'RAM 40%']);
@@ -159,20 +153,6 @@ test('fallbacks: CPU without GPU utilization, RAM without a VRAM sample, both on
   const macArm = createHarness(t, { titlebarLoad: true, systemStats: { ...GPU_STATS, arch: 'arm64', platform: 'darwin', gpuMemory: { available: false, utilAvailable: true, utilPercent: 41.2 } } });
   macArm.controller.renderHeader();
   assert.deepEqual(macArm.readout(), ['GPU 41%', 'RAM 40%']);
-});
-
-// Renderer feature flags hydrate after controllers are constructed: the flag
-// is read per render, so a construction-time capture cannot pin it off.
-test('the titlebar_gpu_telemetry flag hydrating after construction takes effect on the next tick', (t) => {
-  const h = createHarness(t, { titlebarLoad: true, telemetryFlagOn: false });
-  h.controller.renderHeader();
-  assert.deepEqual(h.readout(), ['CPU 21%', 'VRAM 13.6 GB'], 'pre-hydration: no GPU utilization');
-  h.state.features = { featureFlags: { titlebar_gpu_telemetry: true } };
-  h.shell.push(GPU_STATS);
-  assert.deepEqual(h.readout(), ['GPU 93%', 'VRAM 13.6 GB']);
-  h.state.features = { featureFlags: { titlebar_gpu_telemetry: false } };
-  h.shell.push(GPU_STATS);
-  assert.deepEqual(h.readout(), ['CPU 21%', 'VRAM 13.6 GB'], 'the kill switch applies live too');
 });
 
 test('unknown values read as a dash, never a fabricated 0.0%', (t) => {

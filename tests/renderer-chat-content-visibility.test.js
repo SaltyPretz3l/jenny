@@ -475,18 +475,18 @@ test('a turn-article with an unresolved approval gate gets data-cv-exempt="true"
     toolName: 'write_file',
     input: { path: 'x.md' },
   });
+  // The turn activity envelope renders the tool call and its approval gap
+  // inside the turn's article rather than a per-tool article.
+  const timeline = window.document.getElementById('chatTimeline') || window.document.body;
+  const gapArticle = () => timeline.querySelector('[data-row-kind="approval_gap"]')?.closest('article') || null;
   await waitForUiState(
     window,
-    () => Boolean(
-      queryArticle(window, `tool_use_${streamId}_call-cv-gap`)
-        ?.querySelector('[data-row-kind="approval_gap"]')
-    ),
-    { message: 'Timed out waiting for the tool-call turn-article with its approval_gap row to render.' }
+    () => Boolean(gapArticle()),
+    { message: 'Timed out waiting for the turn-article with its approval_gap row to render.' }
   );
 
-  const timeline = window.document.getElementById('chatTimeline') || window.document.body;
-  const toolArticle = timeline.querySelector(`article[data-message-id="tool_use_${streamId}_call-cv-gap"]`);
-  assert.ok(toolArticle, 'tool-call turn-article carrying the approval gap should be present');
+  const toolArticle = gapArticle();
+  assert.ok(toolArticle, 'turn-article carrying the approval gap should be present');
   // Exercise approval exemption independently of the live-row pending marker.
   toolArticle.classList.remove('pending');
   window.rendererTurnShell.syncChatEntryCvExemptAttribute(toolArticle, { pending: false });

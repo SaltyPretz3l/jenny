@@ -165,11 +165,17 @@ function projectSummary(summary) {
     try { admissionWait = Object.freeze({ ...wait, since: new Date(wait.since).toISOString() }); }
     catch (_error) { throw new RuntimeProjectionError(); }
   }
+  // Paused work only: whether the scheduler can resume it (null when unknown).
+  const resumable = Object.hasOwn(summary, 'resumable') ? summary.resumable : null;
+  if (resumable !== null && (summary.status !== 'paused' || typeof resumable !== 'boolean')) {
+    throw new RuntimeProjectionError();
+  }
   return Object.freeze({ work_id: summary.work_id, project_id: summary.project_id,
     session_id: summary.session_id, turn_id: summary.turn_id, purpose: summary.purpose,
     status: summary.status, revision: summary.revision,
     submission_sequence: summary.submission_sequence,
-    created_at: summary.created_at, updated_at: summary.updated_at, admission_wait: admissionWait });
+    created_at: summary.created_at, updated_at: summary.updated_at, admission_wait: admissionWait,
+    resumable });
 }
 
 function nullableCount(value) {

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +11,18 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_EXECUTION_FAILED,
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_IO_FAILED,
+)
+from sidecar.ai.tools.builtins.edit_matching import (  # noqa: F401 - re-exported names
+    EditSpec,
+    _apply_edit,
+    _batch_failure_result,
+    _dominant_newline,
+    _edit_failure,
+    _fold_edits,
+    _FoldContext,
+    _normalize_newlines,
+    _projected_rendered_chars,
+    _render_with_newlines,
 )
 from sidecar.ai.tools.builtins.file_atomic_write import (
     build_write_metadata,
@@ -27,9 +38,9 @@ from sidecar.ai.tools.builtins.file_history import (
 )
 from sidecar.ai.tools.builtins.file_state import (
     attach_structured_diff_metadata,
-    build_no_match_message,
     encode_text_for_existing_file,
     load_existing_text_state_for_mutation,
+    refuse_reserved_internal_path,
 )
 from sidecar.ai.tools.builtins.filesystem import (
     current_max_edit_file_bytes,
@@ -43,15 +54,6 @@ from sidecar.runtime.diagnostics import log_event
 logger = logging.getLogger(__name__)
 
 MAX_EDITS_PER_CALL = 20
-EditSpec = tuple[str, str, bool]
-
-
-@dataclass(frozen=True)
-class _FoldContext:
-    relative_path: str
-    newline_style: str
-    max_final_bytes: int
-    name_failures: bool
 
 
 def edit_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> ToolHandlerResult:
@@ -78,10 +80,12 @@ def edit_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> T
     root = workspace.require_root()
     relative_path = workspace_relative_path(resolved, root)
     normalized_relative = relative_path.replace("\\", "/")
-    if normalized_relative == ".jenny" or normalized_relative.startswith(".jenny/"):
+    try:
+        refuse_reserved_internal_path(normalized_relative, action="edit")
+    except ToolExecutionFailure as error:
         return failure_result(
-            message="Ordinary file tools cannot edit reserved .jenny internal state.",
-            error_code=CMP_TOOL_INVALID_PATH,
+            message=error.message,
+            error_code=error.code,
             metadata={"path": normalized_relative},
         )
     try:
@@ -245,7 +249,7 @@ def _edit_locked(  # noqa: PLR0913
     )
     if isinstance(folded, ToolHandlerResult):
         return folded
-    updated_content, total_replacements, applied_replace_all = folded
+    updated_content, total_replacements, applied_replace_all, skipped = folded
 
     rendered_content = _render_with_newlines(updated_content, newline_style)
     try:
@@ -303,7 +307,9 @@ def _edit_locked(  # noqa: PLR0913
     if prepared is not None and journal is not None:
         metadata["workspace_change_set"] = journal.mark_applied(prepared)
     if is_batch:
-        metadata["edits_applied"] = len(edits)
+        metadata["edits_applied"] = len(edits) - len(skipped)
+    if skipped:
+        metadata["edits_skipped"] = list(skipped)
     if not existing_state.snapshot_validated:
         # Applied without a read snapshot: the unique-target match is the only
         # stale-write guard on this path. Record it so the guarantee that
@@ -330,8 +336,11 @@ def _edit_locked(  # noqa: PLR0913
         logger=logger,
         pre_change_snapshot_root=workspace.pre_change_snapshot_root,
     )
+    skipped_note = "".join(
+        f" Edit {index} made no change and was skipped." for index in skipped
+    )
     return ToolHandlerResult(
-        output=f"The file {relative_path} has been updated.",
+        output=f"The file {relative_path} has been updated.{skipped_note}",
         success=True,
         metadata=metadata,
     )
@@ -382,148 +391,3 @@ def _prepare_edit_recovery(  # noqa: PLR0913 - explicit recovery context.
     except ToolExecutionFailure as error:
         return _checkpoint_failure_result(journal, prepared, relative_path, error)
     return checkpoint, prepared
-
-
-def _fold_edits(
-    edits: tuple[EditSpec, ...],
-    *,
-    content: str,
-    context: _FoldContext,
-) -> tuple[str, int, bool] | ToolHandlerResult:
-    total_replacements = 0
-    applied_replace_all = False
-    for index, (old_string, new_string, replace_all) in enumerate(edits, start=1):
-        normalized_old = _normalize_newlines(old_string)
-        normalized_new = _normalize_newlines(new_string)
-        failure_prefix = f"Edit {index}: " if context.name_failures else ""
-        if old_string == new_string:
-            return failure_result(
-                message=(
-                    f"{failure_prefix}old_string and new_string are identical. "
-                    "No changes were applied."
-                ),
-                error_code=CMP_TOOL_EXECUTION_FAILED,
-                metadata={"path": context.relative_path},
-            )
-        occurrences = content.count(normalized_old)
-        if occurrences == 0:
-            return failure_result(
-                message=(
-                    f"{failure_prefix}"
-                    f"{build_no_match_message(content, normalized_old, context.relative_path)}"
-                ),
-                error_code=CMP_TOOL_EXECUTION_FAILED,
-                metadata={"path": context.relative_path},
-            )
-        if occurrences > 1 and not replace_all:
-            return failure_result(
-                message=(
-                    f"{failure_prefix}Found {occurrences} matches in {context.relative_path}. "
-                    "Provide more surrounding context or set replace_all to true."
-                ),
-                error_code=CMP_TOOL_EXECUTION_FAILED,
-                metadata={"path": context.relative_path, "occurrences": occurrences},
-            )
-
-        replacement_count = occurrences if replace_all else 1
-        projected_chars = _projected_rendered_chars(
-            content,
-            normalized_old,
-            normalized_new,
-            replacement_count=replacement_count,
-            newline_style=context.newline_style,
-        )
-        if projected_chars > context.max_final_bytes:
-            return failure_result(
-                message=(
-                    f"{failure_prefix}Could not edit {context.relative_path}: "
-                    "final content exceeds byte limit"
-                ),
-                error_code=CMP_TOOL_CAP_EXCEEDED,
-                metadata={"path": context.relative_path},
-            )
-        content = _apply_edit(
-            content,
-            normalized_old,
-            normalized_new,
-            replace_all=replace_all,
-        )
-        total_replacements += replacement_count
-        applied_replace_all = applied_replace_all or replace_all
-    return content, total_replacements, applied_replace_all
-
-
-def _projected_rendered_chars(
-    content: str,
-    old_string: str,
-    new_string: str,
-    *,
-    replacement_count: int,
-    newline_style: str,
-) -> int:
-    projected_chars = len(content) + replacement_count * (len(new_string) - len(old_string))
-    # Rendered CRLF content adds one byte per normalized newline.
-    newline_overhead = len(newline_style) - 1
-    if newline_overhead > 0:
-        current_newlines = content.count("\n")
-        old_newlines = old_string.count("\n")
-        new_newlines = new_string.count("\n")
-        projected_newlines = current_newlines + replacement_count * (new_newlines - old_newlines)
-        projected_chars += max(projected_newlines, 0) * newline_overhead
-    return projected_chars
-
-
-def _normalize_newlines(value: str) -> str:
-    return value.replace("\r\n", "\n").replace("\r", "\n")
-
-
-def _apply_edit(
-    content: str,
-    old_string: str,
-    new_string: str,
-    *,
-    replace_all: bool,
-) -> str:
-    if new_string != "":
-        if replace_all:
-            return content.replace(old_string, new_string)
-        return content.replace(old_string, new_string, 1)
-
-    spans: list[tuple[int, int]] = []
-    search_from = 0
-    while True:
-        start = content.find(old_string, search_from)
-        if start == -1:
-            break
-        end = start + len(old_string)
-        if (
-            not old_string.endswith("\n")
-            and (start == 0 or content[start - 1] == "\n")
-            and content[end : end + 1] == "\n"
-        ):
-            end += 1
-        spans.append((start, end))
-        if not replace_all:
-            break
-        search_from = start + len(old_string)
-
-    updated = content
-    for start, end in reversed(spans):
-        updated = f"{updated[:start]}{new_string}{updated[end:]}"
-    return updated
-
-
-def _dominant_newline(value: str) -> str:
-    crlf = value.count("\r\n")
-    stripped = value.replace("\r\n", "")
-    lf = stripped.count("\n")
-    cr = stripped.count("\r")
-    counts = [("\r\n", crlf), ("\n", lf), ("\r", cr)]
-    counts.sort(key=lambda item: item[1], reverse=True)
-    return counts[0][0] if counts[0][1] > 0 else "\n"
-
-
-def _render_with_newlines(value: str, newline_style: str) -> str:
-    if newline_style == "\n":
-        return value
-    return value.replace("\n", newline_style)

@@ -498,3 +498,42 @@ def test_base64_without_decode_is_still_checked_segment_by_segment() -> None:
     # `base64` unknown → NEEDS_APPROVAL via the default path.
     result = classify_command("base64 foo.txt")
     assert result.verdict is CommandVerdict.NEEDS_APPROVAL
+
+
+# ── Launch vectors behind safe names (A11-F1) ────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("cmd", "reason"),
+    [
+        ("env bash -c 'echo hi'", "shell-exec"),  # the earlier shell-exec rule wins
+        ("env ls -la", "env launches a program"),
+        ("env python script.py", "env launches a program"),
+        ("git -c core.fsmonitor=./evil status", "git launch config: core.fsmonitor"),
+        ("git -c core.sshCommand=evil log", "git launch config: core.sshcommand"),
+        ("git -c credential.helper=evil status", "git launch config: credential.helper"),
+        ("git -c uploadpack.allowAnySHA1InWant=true log", "git launch config: uploadpack.allowanysha1inwant"),
+        ("git -c alias.st=!evil status", "git launch config: alias.st"),
+        ("git log --output=/tmp/out", "git output option writes a file"),
+        ("git diff --output out.patch", "git output option writes a file"),
+        ("git show --output=x HEAD", "git output option writes a file"),
+    ],
+)
+def test_launch_vectors_need_approval(cmd: str, reason: str) -> None:
+    result = classify_command(cmd)
+    assert result.verdict is CommandVerdict.NEEDS_APPROVAL, f"{cmd!r} -> {result}"
+    assert result.reason == reason
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "env",
+        "git -c color.ui=always status",
+        "git -C . -c diff.renames=true log",
+        "git log -- --output",
+    ],
+)
+def test_launch_lookalikes_stay_allowed(cmd: str) -> None:
+    result = classify_command(cmd)
+    assert result.verdict is CommandVerdict.ALLOWED, f"{cmd!r} -> {result}"

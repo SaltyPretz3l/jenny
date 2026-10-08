@@ -132,7 +132,7 @@ test('context menu copies the relative path and reveals in explorer', async (t) 
   await settle();
   assert.ok(harness.state.ui.ide.expandedDirs.has('src'));
   assert.ok(harness.state.ui.ide.expandedDirs.has('src/deep'));
-  const row = harness.getDom().ideRailPanel.querySelector('[data-ide-tree-path="src/deep/x.js"]');
+  const row = harness.viewHost('explorer').querySelector('[data-ide-tree-path="src/deep/x.js"]');
   assert.ok(row, 'file row revealed');
   assert.equal(row.tabIndex, 0);
 });

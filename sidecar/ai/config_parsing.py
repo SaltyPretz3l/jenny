@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import re
 from itertools import islice
 from typing import Any
 
@@ -15,6 +17,7 @@ from sidecar.ai.config_models import (
     MCPServerAuth,
     MCPServerConfig,
     RuntimeConfig,
+    SemanticCatalogConfig,
     ToolPolicyRule,
     ToolPolicyRuleMatch,
     ToolPolicySnapshot,
@@ -662,3 +665,80 @@ def _identity_value(identity: dict[str, Any], snake_key: str, camel_key: str) ->
     if camel_key in identity:
         return identity.get(camel_key)
     return None
+
+
+# ---- semantic catalog (row 41) ---------------------------------------------
+
+_SEMANTIC_BASE_URL_RE = re.compile(
+    r"^http://(?:127\.0\.0\.1|localhost|\[::1\]):(?P<port>[0-9]{1,5})/v1$"
+)
+_SEMANTIC_MODEL_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9:._-]{0,127}$")
+_SEMANTIC_PLACEHOLDER_RE = re.compile(r"\{[^{}]*\}")
+_SEMANTIC_ALLOWED_PLACEHOLDERS = frozenset({"{text}", "{title}"})
+SEMANTIC_TEMPLATE_MAX_CHARS = 512
+SEMANTIC_MAX_DIMS = 4096
+_MAX_TCP_PORT = 65535
+
+
+def _semantic_template(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or len(value) > SEMANTIC_TEMPLATE_MAX_CHARS:
+        raise ValueError(field_name)
+    placeholders = set(_SEMANTIC_PLACEHOLDER_RE.findall(value))
+    if "{text}" not in placeholders or not placeholders <= _SEMANTIC_ALLOWED_PLACEHOLDERS:
+        raise ValueError(field_name)
+    return value
+
+
+def _semantic_base_url(value: Any) -> str:
+    match = _SEMANTIC_BASE_URL_RE.match(value) if isinstance(value, str) else None
+    if match is None or not 1 <= int(match.group("port")) <= _MAX_TCP_PORT:
+        raise ValueError("base_url")
+    return str(value)
+
+
+def _semantic_dims(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("dims")
+    if not 0 <= value <= SEMANTIC_MAX_DIMS:
+        raise ValueError("dims")
+    return value
+
+
+def _semantic_fields(raw: dict[str, Any], api_key: Any) -> SemanticCatalogConfig:
+    db_path = raw.get("db_path")
+    if not isinstance(db_path, str) or not db_path.strip() or not os.path.isabs(db_path):
+        raise ValueError("db_path")
+    model_key = raw.get("model_key")
+    if not isinstance(model_key, str) or not _SEMANTIC_MODEL_KEY_RE.match(model_key):
+        raise ValueError("model_key")
+    return SemanticCatalogConfig(
+        enabled=True,
+        db_path=db_path.strip(),
+        base_url=_semantic_base_url(raw.get("base_url")),
+        model_key=model_key,
+        query_template=_semantic_template(raw.get("query_template"), "query_template"),
+        document_template=_semantic_template(raw.get("document_template"), "document_template"),
+        dims=_semantic_dims(raw.get("dims")),
+        api_key=_as_nullable_string(api_key),
+    )
+
+
+def parse_semantic_catalog_config(
+    value: Any, *, api_key: Any = None
+) -> SemanticCatalogConfig | None:
+    """Validate the raw ``semantic_catalog`` dict; absent/disabled/invalid -> None.
+
+    An invalid block logs one WARN naming the offending field only (never the
+    key, the URL or a template body).
+    """
+    if not isinstance(value, dict) or value.get("enabled") is not True:
+        return None
+    try:
+        return _semantic_fields(value, api_key)
+    except ValueError as error:
+        logger.warning(
+            "semantic_catalog config rejected: invalid %s", error.args[0] if error.args else "?"
+        )
+        return None

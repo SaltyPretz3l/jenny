@@ -11,6 +11,8 @@
  * left and homes Changes + Source Control in the secondary sidebar on the
  * right, which stays collapsed until the user reveals it.) */
 
+const { normalizeLayout } = require('../renderer/shared/workbench-layout-model');
+
 const WORKSPACE_IDE_RAIL_WIDTH_DEFAULT = 300;
 const WORKSPACE_IDE_RAIL_WIDTH_MIN = 200;
 // Max reconciled 560 → 600 with the UI drag ceiling (renderer-ide-rail.js
@@ -47,7 +49,11 @@ const WORKSPACE_IDE_BOTTOM_HEIGHT_MAX = 600;
 const WORKSPACE_IDE_BOTTOM_VIEWS = Object.freeze(['terminal', 'problems', 'run', 'test-runner']);
 // The rail-panel whitelist is shared by the primary rail and the secondary
 // sidebar (the secondary sidebar reuses existing panel ids; it never adds one).
-const WORKSPACE_IDE_RAIL_PANELS = Object.freeze(['explorer', 'search', 'changes', 'source-control']);
+// Row 34 S5 retired 'changes' (Jenny's Changes moved to the chat dock's
+// Changes tab). No CONFIG_VERSION bump: like v26's terminal/problems, the
+// whitelist coerces a stale value on every read (railPanel -> explorer,
+// secondaryPanel -> the first secondary panel, the location key is dropped).
+const WORKSPACE_IDE_RAIL_PANELS = Object.freeze(['explorer', 'search', 'source-control']);
 // Editor-stage surfaces (WORKSPACE_PREVIEW_AND_MAP_PANELS_PLAN.md): which
 // stage sibling is visible in #ideEditorStage. Added additively (no
 // CONFIG_VERSION bump — absent keys backfill to the 'editor' default and the
@@ -82,6 +88,12 @@ const WORKSPACE_IDE_RULERS_MAX_COLUMN = 500;
 const WORKSPACE_IDE_ROOT_LRU_MAX = 10;
 const WORKSPACE_IDE_REPLACE_JOURNAL_MAX_APPLIED = 200;
 const WORKSPACE_IDE_REPLACE_JOURNAL_QUERY_MAX = 500;
+// Layout tree (row 40 W3): the persisted `workbenchLayout` key is additive and
+// normalized on every read (the activeStageSurface precedent), so there is no
+// CONFIG_VERSION bump; the legacy layout keys are still dual-written beside it
+// for one release so a rollback build reads a valid layout. The payload cap is
+// checked on the raw JSON before normalizing, a bound on untrusted config.
+const WORKSPACE_IDE_LAYOUT_MAX_CHARS = 16384;
 const WORKSPACE_IDE_ROOT_KEYS = Object.freeze([
   'openTabs',
   'activeTabPath',
@@ -100,9 +112,10 @@ const DEFAULT_WORKSPACE_IDE = Object.freeze({
   activeStageSurface: 'editor',
   previewPath: '',
   replaceJournal: null,
+  workbenchLayout: null,
   // Fresh-profile layout splits the rail (the "Move View" model): Explorer +
-  // Search dock in the primary rail on the LEFT; Jenny's Changes + Source Control
-  // are homed in the secondary sidebar on the RIGHT, which stays COLLAPSED by
+  // Search dock in the primary rail on the LEFT; Source Control is homed in the
+  // secondary sidebar on the RIGHT, which stays COLLAPSED by
   // default (secondaryPanelOpen:false) until the user reveals it via the left
   // rail's toggle. secondaryPanel names the tab shown when it is opened.
   railSide: 'left',
@@ -111,7 +124,7 @@ const DEFAULT_WORKSPACE_IDE = Object.freeze({
   bottomPanelHeight: WORKSPACE_IDE_BOTTOM_HEIGHT_DEFAULT,
   bottomPanelActiveView: 'terminal',
   secondaryPanelOpen: false,
-  secondaryPanel: 'changes',
+  secondaryPanel: 'source-control',
   secondaryWidth: WORKSPACE_IDE_SECONDARY_WIDTH_DEFAULT,
   // Workspace Chat Dock (ide_chat_dock): closed by default; right is the
   // default side. Additive keys — no CONFIG_VERSION bump (normalizeWorkspaceIde
@@ -122,7 +135,6 @@ const DEFAULT_WORKSPACE_IDE = Object.freeze({
   panelLocations: Object.freeze({
     explorer: 'primary',
     search: 'primary',
-    changes: 'secondary',
     'source-control': 'secondary',
   }),
   showGenerated: false,
@@ -236,6 +248,18 @@ function normalizeRulers(value) {
   return [...seen].sort((a, b) => a - b).slice(0, WORKSPACE_IDE_RULERS_MAX_COUNT);
 }
 
+// Layout tree: null for absent, oversize, unserializable or invalid input.
+function normalizeWorkspaceIdeLayout(value) {
+  if (value === undefined || value === null) return null;
+  try {
+    const json = JSON.stringify(value);
+    if (typeof json !== 'string' || json.length > WORKSPACE_IDE_LAYOUT_MAX_CHARS) return null;
+  } catch (_error) {
+    return null;
+  }
+  return normalizeLayout(value);
+}
+
 function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const rawTabs = Array.isArray(source.openTabs) ? source.openTabs : [];
@@ -255,6 +279,12 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
     // `pinned` rides inside each tab object; a string or legacy `{ path }` entry
     // has no `pinned` and hydrates unpinned (default false).
     const openTab = { path: tabPath, pinned: entry?.pinned === true };
+    // Sparse like `viewMode`: the explorer preview flag and the saved view lines
+    // ride only when set (renderer-ide-tab-restore.js reads them back).
+    if (entry?.preview === true) openTab.preview = true;
+    for (const key of ['line', 'top']) {
+      if (Number.isSafeInteger(entry?.[key]) && entry[key] >= 1) openTab[key] = entry[key];
+    }
     // "Exploded View" per-file-tab mode (renderer/features/renderer-ide-state.js
     // getTabViewMode/setTabViewMode/toggleTabViewMode). Unlike `pinned`, this
     // key is sparse/tolerant rather than always-materialized: it is carried
@@ -265,6 +295,12 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
     // byte unaffected.
     if (entry && entry.viewMode === 'exploded') {
       openTab.viewMode = 'exploded';
+    }
+    // Secondary editor group (row 40 W5): sparse like `viewMode`, file tabs only,
+    // additive (no CONFIG_VERSION bump); absent = the primary group.
+    if (typeof entry?.group === 'string' && /^editor-[2-4]$/.test(entry.group)
+      && (entry.kind === undefined || entry.kind === 'file')) {
+      openTab.group = entry.group;
     }
     openTabs.push(openTab);
     if (openTabs.length >= WORKSPACE_IDE_MAX_OPEN_TABS) {
@@ -380,9 +416,13 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
   const trimTrailingWhitespace = source.trimTrailingWhitespace === true;
   const insertFinalNewline = source.insertFinalNewline === true;
   const rulers = normalizeRulers(source.rulers);
+  const workbenchLayout = normalizeWorkspaceIdeLayout(source.workbenchLayout);
   return {
     openTabs,
-    activeTabPath: tabPathsByKey.get(activeTabKey) || '',
+    // The primary active tab is never a secondary-group tab.
+    activeTabPath: openTabs.some((tab) => tab.group && tab.path === tabPathsByKey.get(activeTabKey))
+      ? ''
+      : tabPathsByKey.get(activeTabKey) || '',
     expandedDirs,
     activeStageSurface,
     previewPath,
@@ -414,6 +454,7 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
     trimTrailingWhitespace,
     insertFinalNewline,
     rulers,
+    workbenchLayout,
   };
 }
 

@@ -24,10 +24,13 @@
     const changeId = normalizeId(reviewableChange.changeId);
     const turnId = normalizeId(reviewableChange.turnId);
     const fileKey = normalizeId(reviewableChange.fileKey);
-    const scope = normalizeId(reviewableChange.scope) === 'turn' ? 'turn' : 'change';
+    const rawScope = normalizeId(reviewableChange.scope);
+    const scope = rawScope === 'turn' || rawScope === 'suggested' ? rawScope : 'change';
     if (!turnId || (scope === 'change' && !changeId)) return '';
     const escape = typeof options?.escapeHtml === 'function' ? options.escapeHtml : escapeHtml;
-    const label = jt('chat.codeReview.reviewChanges', 'Review changes');
+    const label = scope === 'suggested'
+      ? jt('chat.codeReview.reviewSuggestion', 'Review suggestion')
+      : jt('chat.codeReview.reviewChanges', 'Review changes');
     const dataset = {
       'jenny-code-review': '',
       scope,
@@ -37,12 +40,15 @@
       dataset['change-id'] = changeId;
       dataset['file-key'] = fileKey;
     }
+    if (scope === 'suggested') dataset['tool-call-id'] = normalizeId(reviewableChange.toolCallId);
     return inventoryActionButton({
       plain: true,
       className: 'jenny-code-review-affordance',
       label,
       ariaLabel: label,
-      title: jt('chat.codeReview.openDiffTitle', 'Review this change in the diff panel'),
+      title: scope === 'suggested'
+        ? jt('chat.codeReview.openSuggestionTitle', 'Review this suggested change before anything is written')
+        : jt('chat.codeReview.openDiffTitle', 'Review this change in the diff panel'),
       dataset,
       trustedHtml: escape(label),
     });

@@ -5,6 +5,7 @@ import json
 import pytest
 
 from sidecar.ai.engines import codex_cli_transport as transport
+from sidecar.ai.tools.tool_call_healing import configure_tool_call_healing
 
 
 def _reply(message: str, *calls: tuple[str, str]) -> str:
@@ -122,3 +123,114 @@ def test_structured_instructions_say_jenny_tools_are_not_bound_by_the_cli_sandbo
     assert "Never refuse a Jenny tool request because your own sandbox is read-only" in instructions
     # They ride on a cmd.exe command line when the CLI is a Windows shim.
     assert not set(instructions) & transport._CMD_METACHARACTERS
+
+
+def test_structured_arguments_accept_raw_newlines_inside_string_values() -> None:
+    raw = '{"path": "game.html", "content": "<html>\n<body>hi</body>\n</html>"}'
+    result = transport._structured_result([_reply("Writing.", ("read_file", raw))], ["read_file"])
+
+    assert result is not None
+    assert [call.arguments for call in result.tool_calls] == [
+        {"path": "game.html", "content": "<html>\n<body>hi</body>\n</html>"}
+    ]
+    assert result.inband_tool_call_parse_failed is False
+
+
+@pytest.fixture
+def _reliability_net():
+    configure_tool_call_healing({"tool_call_reliability_net_enabled": True})
+    yield
+    configure_tool_call_healing(None)
+
+
+def test_structured_arguments_heal_a_near_miss_object_when_the_net_is_on(
+    _reliability_net,
+) -> None:
+    result = transport._structured_result(
+        [_reply("Reading.", ("read_file", '{"path": "a",}'))], ["read_file"]
+    )
+
+    assert result is not None
+    assert [call.arguments for call in result.tool_calls] == [{"path": "a"}]
+
+
+def test_structured_arguments_are_not_healed_when_the_net_is_off() -> None:
+    configure_tool_call_healing(None)
+    result = transport._structured_result(
+        [_reply("Reading.", ("read_file", '{"path": "a",}'))], ["read_file"]
+    )
+
+    assert result is not None
+    assert result.tool_calls == ()
+    assert result.inband_tool_call_parse_failed is True
+
+
+def test_garbage_arguments_stay_malformed_with_redacted_diagnostics() -> None:
+    secret = "SECRET-FILE-CONTENT"
+    raw = '{"path": "a", "content": "' + secret + " <<<not json at all"
+    result = transport._structured_result(
+        [_reply("Writing.", ("read_file", raw), ("read_file", "[1, 2]"), ("bogus", "{}"))],
+        ["read_file"],
+    )
+
+    assert result is not None
+    assert result.tool_calls == ()
+    assert result.inband_tool_call_parse_failed is True
+    diagnostics = result.tool_call_parse_diagnostics
+    assert diagnostics is not None
+    assert diagnostics["transport"] == "structured"
+    entries = diagnostics["entries"]
+    assert [entry["reason"] for entry in entries] == ["json_error", "not_object", "unknown_tool"]
+    assert [entry["tool"] for entry in entries] == ["read_file", "read_file", "<unknown>"]
+    assert entries[0]["arguments_length"] == len(raw)
+    assert isinstance(entries[0]["error"], str) and isinstance(entries[0]["pos"], int)
+    assert secret not in json.dumps(diagnostics)
+
+
+def test_oversized_integer_arguments_stay_malformed_without_raising() -> None:
+    # Past the int digit limit json raises a bare ValueError, not JSONDecodeError.
+    raw = '{"n": ' + "9" * 5000 + "}"
+    result = transport._structured_result([_reply("Reading.", ("read_file", raw))], ["read_file"])
+
+    assert result is not None
+    assert result.tool_calls == ()
+    assert result.inband_tool_call_parse_failed is True
+    entry = result.tool_call_parse_diagnostics["entries"][0]
+    assert entry["reason"] == "json_error"
+    assert entry["error"] == "invalid value"
+
+
+def test_structured_results_mark_the_transport_even_when_every_call_parses() -> None:
+    result = transport._structured_result(
+        [_reply("Reading.", ("read_file", '{"path": "a"}'))], ["read_file"]
+    )
+
+    assert result is not None
+    assert result.tool_call_parse_diagnostics == {"transport": "structured", "entries": []}
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"path": "index.html", "content": "<html><body>partial',  # cut mid-string
+        '{"path": "index.html", "content": "<html></html>"',  # cut before the brace
+        '[{"path": "a.txt", "content": "first"}, {"path": "b.txt", "content": "cut',  # list cut
+    ],
+)
+def test_a_truncated_body_is_never_healed_into_a_partial_write(_reliability_net, raw: str) -> None:
+    # Closing a cut-off string would run write_file with half its content.
+    result = transport._structured_result([_reply("Writing.", ("write_file", raw))], ["write_file"])
+
+    assert result is not None
+    assert result.tool_calls == ()
+    assert result.inband_tool_call_parse_failed is True
+    assert result.tool_call_parse_diagnostics["entries"][0]["reason"] == "json_error"
+
+
+def test_a_repair_that_empties_the_arguments_stays_malformed(_reliability_net) -> None:
+    raw = '{}, "name": "read_file", "arguments": {"path": "x"}'
+    result = transport._structured_result([_reply("Reading.", ("read_file", raw))], ["read_file"])
+
+    assert result is not None
+    assert result.tool_calls == ()
+    assert result.inband_tool_call_parse_failed is True

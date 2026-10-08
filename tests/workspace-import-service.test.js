@@ -29,7 +29,6 @@ function createService(rootPath, extra = {}) {
   const coordinator = extra.coordinator || createCoordinator(rootPath);
   return new WorkspaceImportService({
     rootContextProvider: () => coordinator,
-    isQolEnabled: () => true,
     ...extra,
   });
 }
@@ -310,16 +309,4 @@ test('isolates a failed directory child and removes its partial temp file', asyn
   assert.equal(fs.existsSync(path.join(root, 'clone', 'bad.txt')), false);
   assert.equal(fs.readFileSync(path.join(root, 'clone', 'good.txt'), 'utf8'), 'good');
   assert.deepEqual(await tempResidue(root), []);
-});
-
-test('feature flag refusal is typed and writes nothing', async () => {
-  const root = createTrackedTempDir('jenny-import-');
-  fs.writeFileSync(path.join(root, 'source.txt'), 'source', 'utf8');
-  const service = createService(root, { isQolEnabled: () => false });
-
-  await assert.rejects(
-    service.copyEntry({ from: 'source.txt', to: 'target.txt' }),
-    (error) => error.code === COPY_ERROR_CODES.FEATURE_DISABLED
-  );
-  assert.equal(fs.existsSync(path.join(root, 'target.txt')), false);
 });

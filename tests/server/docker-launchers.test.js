@@ -103,6 +103,16 @@ function runBash(fixture, args, env) {
 
 function bashExecutable() {
   if (process.env.BASH_EXE) return process.env.BASH_EXE;
+  if (process.platform === 'win32') {
+    // The Windows fixture and Node stub need native Git Bash, not WSL's
+    // bash.exe. Git's cmd directory is normally the only Git entry on PATH.
+    for (const directory of (process.env.PATH || '').split(path.delimiter)) {
+      if (!fs.existsSync(path.join(directory, 'git.exe'))) continue;
+      for (const candidate of [path.join(directory, 'bash.exe'), path.resolve(directory, '..', 'bin', 'bash.exe')]) {
+        if (fs.existsSync(candidate)) return candidate;
+      }
+    }
+  }
   return process.platform === 'win32' ? 'bash' : '/bin/bash';
 }
 

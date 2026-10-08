@@ -2,6 +2,9 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { JSDOM } = require('jsdom');
+const { createIdeEditorHost } = require('../renderer/features/renderer-ide-editor-host');
+const monacoUtils = require('../renderer/features/renderer-monaco-editor-utils');
 
 const {
   computeTrimEdits,
@@ -24,15 +27,67 @@ function fakeModel(lines, { eol = '\n' } = {}) {
 }
 
 function fakeHost(model, { activePath = 'a.js', large = false } = {}) {
-  const calls = { formatActive: 0 };
+  const calls = { formatPath: 0 };
   return {
     getModel: () => model,
     getActivePath: () => activePath,
     isLargeFile: () => large,
-    formatActive: () => { calls.formatActive += 1; return Promise.resolve(); },
+    showsPath: (path) => path === activePath,
+    formatPath: () => { calls.formatPath += 1; return Promise.resolve({ supported: true, formatted: true }); },
     _calls: calls,
   };
 }
+
+test('group follow-up: save hygiene formats the path in its group editor', async (t) => {
+  const dom = new JSDOM('<div id="primary"></div><div id="secondary"></div>');
+  const editors = [];
+  const formatted = [];
+  const api = {
+    KeyMod: { CtrlCmd: 2048 }, KeyCode: { KeyS: 49 }, Uri: { parse: (uri) => uri },
+    editor: {
+      create() {
+        const editor = {
+          model: null, setModel(model) { this.model = model; }, getModel() { return this.model; },
+          addCommand() {}, onDidChangeModelContent() {}, saveViewState: () => null,
+          getAction(id) {
+            assert.equal(id, 'editor.action.formatDocument');
+            return { run: async () => { formatted.push(editor.model); } };
+          },
+        };
+        editors.push(editor);
+        return editor;
+      },
+      createModel(text) { return { ...fakeModel([text]), getValue: () => text, getAlternativeVersionId: () => 1, dispose() {} }; },
+    },
+  };
+  const host = createIdeEditorHost({
+    getDom: () => ({ ideEditorHost: dom.window.document.getElementById('primary') }),
+    monacoUtils: { ...monacoUtils, ensureMonacoEditorApi: async () => api },
+  });
+  t.after(() => { host.dispose(); dom.window.close(); });
+  for (const path of ['primary.js', 'group.js', 'hidden.js']) await host.openDocument({ path, content: 'x  ' });
+  host.activateDocument('primary.js');
+  const group = host.createGroupEditor(dom.window.document.getElementById('secondary'));
+  group.setModel(host.getModel('group.js'));
+  const hygiene = createIdeSaveHygiene({
+    editorHost: host, getIde: () => ({ formatOnSave: true, trimTrailingWhitespace: true }),
+  });
+  t.after(() => hygiene.dispose());
+  assert.deepEqual(await hygiene.applySaveHygiene('group.js'), { formatStatus: 'formatted', formatReason: '' });
+  assert.deepEqual(formatted, [host.getModel('group.js')]);
+  assert.equal(host.getModel('group.js')._batches.length, 1);
+  assert.equal(host.getActivePath(), 'primary.js');
+  assert.equal(editors[0].getModel(), host.getModel('primary.js'));
+  assert.deepEqual(await host.formatPath('primary.js'), { supported: true, formatted: true });
+  assert.deepEqual(await host.formatActive(), { supported: true, formatted: true });
+  assert.deepEqual(hygiene.applySaveHygiene('hidden.js'), { formatStatus: 'skipped', formatReason: 'inactive_file' });
+  assert.equal(host.getModel('hidden.js')._batches.length, 1);
+  assert.deepEqual(await host.formatPath('missing.js'), { supported: false, formatted: false });
+  group.getAction = () => null;
+  assert.deepEqual(await host.formatPath('group.js'), { supported: false, formatted: false });
+  host.releaseGroupEditor(group);
+  assert.deepEqual(await host.formatPath('group.js'), { supported: false, formatted: false });
+});
 
 test('computeTrimEdits emits one edit per line with trailing whitespace, none when clean', () => {
   assert.deepEqual(computeTrimEdits(fakeModel(['clean', 'a', ''])), []);
@@ -69,19 +124,20 @@ test('applySaveHygiene applies trim then final-newline as two separate edit batc
   });
   await hygiene.applySaveHygiene('a.js');
   assert.equal(model._batches.length, 2, 'trim and final-newline are pushed as distinct batches');
-  assert.equal(host._calls.formatActive, 0, 'format not run unless enabled');
+  assert.equal(host._calls.formatPath, 0, 'format not run unless enabled');
 });
 
-test('applySaveHygiene runs format only on the active editor', async () => {
+test('applySaveHygiene formats only a path an editor shows', async () => {
   const activeHost = fakeHost(fakeModel(['x']), { activePath: 'a.js' });
   await createIdeSaveHygiene({ editorHost: activeHost, getIde: () => ({ formatOnSave: true }) })
     .applySaveHygiene('a.js');
-  assert.equal(activeHost._calls.formatActive, 1, 'format runs when path is active');
+  assert.equal(activeHost._calls.formatPath, 1, 'format runs when path is active');
 
   const inactiveHost = fakeHost(fakeModel(['x']), { activePath: 'other.js' });
-  await createIdeSaveHygiene({ editorHost: inactiveHost, getIde: () => ({ formatOnSave: true }) })
+  const outcome = createIdeSaveHygiene({ editorHost: inactiveHost, getIde: () => ({ formatOnSave: true }) })
     .applySaveHygiene('a.js');
-  assert.equal(inactiveHost._calls.formatActive, 0, 'format skipped for a non-active save');
+  assert.deepEqual(outcome, { formatStatus: 'skipped', formatReason: 'inactive_file' }, 'an unshown save stays synchronous');
+  assert.equal(inactiveHost._calls.formatPath, 0, 'format skipped for an unshown save');
 });
 
 test('applySaveHygiene skips format + trim on large files but still adds the final newline', async () => {
@@ -91,7 +147,7 @@ test('applySaveHygiene skips format + trim on large files but still adds the fin
     editorHost: host,
     getIde: () => ({ formatOnSave: true, trimTrailingWhitespace: true, insertFinalNewline: true }),
   }).applySaveHygiene('a.js');
-  assert.equal(host._calls.formatActive, 0, 'format skipped on large files');
+  assert.equal(host._calls.formatPath, 0, 'format skipped on large files');
   assert.equal(model._batches.length, 1, 'only the cheap final-newline edit runs');
 });
 
@@ -131,7 +187,7 @@ test('applySaveHygiene stays synchronous when format-on-save is off', () => {
 test('applySaveHygiene reports formatter failure without rejecting the safe-save path', async () => {
   const model = fakeModel(['const x=1']);
   const host = fakeHost(model);
-  host.formatActive = async () => { throw new Error('formatter unavailable'); };
+  host.formatPath = async () => { throw new Error('formatter unavailable'); };
   const logs = [];
   const outcome = await createIdeSaveHygiene({
     editorHost: host,
@@ -151,8 +207,9 @@ test('a delayed formatter cannot edit a replacement model or continue after disp
     const host = {
       getModel: () => current,
       getActivePath: () => 'same.js',
+      showsPath: () => true,
       isLargeFile: () => false,
-      formatActive: () => new Promise((resolve) => { resolveFormat = resolve; }),
+      formatPath: () => new Promise((resolve) => { resolveFormat = resolve; }),
     };
     const hygiene = createIdeSaveHygiene({
       editorHost: host,

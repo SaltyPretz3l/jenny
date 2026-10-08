@@ -38,6 +38,7 @@ from sidecar.runtime.chat import (
 )
 from sidecar.runtime.chat_message_validation import validate_chat_messages
 from sidecar.runtime.chat_normalization import (
+    propose_mode_from_params,
     reasoning_effort_from_params,
     session_start_date_from_params,
 )
@@ -271,6 +272,7 @@ def _validate_chat_send_semantics(
             )
     try:
         reasoning_effort_from_params(params)
+        propose_mode_from_params(params)
         session_start_date_from_params(params)
     except ValueError as error:
         return ChatRequestError(

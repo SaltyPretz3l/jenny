@@ -43,7 +43,7 @@ function harness(t, options = {}) {
   const backend = { ready: false };
   const calls = [];
   const state = {
-    features: { featureFlags: { model_management_ui: true } },
+    features: { featureFlags: {} },
     status: { model: '' },
     offline: { preferredLocalModel: '' },
     ui: { activeSettingsSection: 'models' },

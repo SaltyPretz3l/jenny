@@ -46,7 +46,6 @@ function makeHost() {
       normalizeEditorLanguage: () => 'javascript',
     },
     imageHostUtils: {},
-    previewHostUtils: {},
   });
   return { host, fake, dom };
 }
@@ -107,7 +106,6 @@ function makeFallbackHost() {
       normalizeEditorLanguage: () => 'plaintext',
     },
     imageHostUtils: {},
-    previewHostUtils: {},
     onDirtyChange: (path, dirty) => calls.dirty.push([path, dirty]),
     onModelChange: (path) => calls.model.push(path),
   });

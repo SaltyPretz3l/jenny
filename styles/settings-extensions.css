@@ -1,0 +1,62 @@
+/* Settings > Extensions: skill folders and standalone MCP servers.
+ * Rows and groups use shared settings primitives; this file owns only the
+ * skill and MCP row typography.
+ */
+
+/* Skill descriptions run long: stack the name over "/command · description"
+   instead of the one-line row idiom, and keep the switch column narrow. */
+.skills-settings-row .settings-field-row-text,
+.skills-folders-summary .settings-field-row-text,
+.skills-folders-disclosure .settings-field-row-text {
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.skills-settings-row .inv-toggle,
+.skills-folder-row-controls .inv-toggle {
+  flex: none;
+}
+
+.skills-settings-row .settings-field-row-text small,
+.skills-folders-summary .settings-field-row-text small,
+.skills-folders-disclosure .settings-field-row-text small {
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+.settings-field-row--muted .settings-field-row-text,
+.settings-field-row--muted .settings-field-row-text strong {
+  color: var(--text-muted);
+}
+
+.skills-folders-disclosure {
+  margin-top: var(--space-2);
+  padding-inline-start: var(--space-5);
+}
+
+.skills-folder-row-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.extensions-settings-error {
+  color: var(--text-danger-soft);
+}
+
+/* The shared row primitive styles descriptions but not <small>, so MCP row
+   metadata needs secondary typography. */
+.mcp-servers-row .settings-field-row-text small {
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+#mcpServersHost:empty {
+  display: none;
+}

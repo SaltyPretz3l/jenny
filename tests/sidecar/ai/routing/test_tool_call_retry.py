@@ -17,6 +17,7 @@ import pytest
 from sidecar.ai.engines.response_format import ResponseFormat
 from sidecar.ai.routing import tool_call_retry
 from sidecar.ai.routing.tool_call_retry import (
+    RETRY_BUDGETS,
     RetryDecision,
     apply_reflexive_retry,
     build_corrective_message,
@@ -71,7 +72,7 @@ class TestTriggerA:
             validation_errors=(),
             known_tool_names=KNOWN_TOOLS,
             tool_schemas=TOOL_SCHEMAS,
-            already_retried=False,
+            retries_used={},
             native_tools_active=False,
         )
         assert decision.should_retry is True
@@ -91,7 +92,7 @@ class TestTriggerA:
             validation_errors=(),
             known_tool_names=KNOWN_TOOLS,
             tool_schemas=TOOL_SCHEMAS,
-            already_retried=False,
+            retries_used={},
             native_tools_active=True,
         )
         assert decision.should_retry is False
@@ -112,7 +113,7 @@ class TestTriggerA:
             validation_errors=(),
             known_tool_names=KNOWN_TOOLS,
             tool_schemas=TOOL_SCHEMAS,
-            already_retried=False,
+            retries_used={},
             native_tools_active=False,
         )
         assert decision.should_retry is True
@@ -134,7 +135,7 @@ class TestTriggerA:
             validation_errors=(),
             known_tool_names=KNOWN_TOOLS,
             tool_schemas=TOOL_SCHEMAS,
-            already_retried=False,
+            retries_used={},
             native_tools_active=True,
         )
         assert decision.should_retry is False
@@ -156,7 +157,7 @@ class TestTriggerB:
             ),
             known_tool_names=KNOWN_TOOLS,
             tool_schemas=TOOL_SCHEMAS,
-            already_retried=False,
+            retries_used={},
             native_tools_active=True,
         )
         assert decision.should_retry is True
@@ -177,7 +178,7 @@ class TestTriggerB:
             ),
             known_tool_names=KNOWN_TOOLS,
             tool_schemas=TOOL_SCHEMAS,
-            already_retried=False,
+            retries_used={},
             native_tools_active=False,
         )
         assert isinstance(decision.response_format, ResponseFormat)
@@ -196,7 +197,7 @@ class TestTriggerB:
             ),
             known_tool_names=KNOWN_TOOLS,
             tool_schemas=TOOL_SCHEMAS,
-            already_retried=False,
+            retries_used={},
             native_tools_active=False,
         )
         assert decision.should_retry is True
@@ -221,7 +222,7 @@ class TestRefusals:
             ),
             known_tool_names=KNOWN_TOOLS,
             tool_schemas=TOOL_SCHEMAS,
-            already_retried=True,
+            retries_used=dict(RETRY_BUDGETS),
             native_tools_active=True,
         )
         assert decision.should_retry is False
@@ -233,7 +234,7 @@ class TestRefusals:
             validation_errors=(),
             known_tool_names=KNOWN_TOOLS,
             tool_schemas=TOOL_SCHEMAS,
-            already_retried=False,
+            retries_used={},
             native_tools_active=True,
         )
         assert decision.should_retry is False
@@ -245,7 +246,7 @@ class TestRefusals:
             validation_errors=(),
             known_tool_names=frozenset(),
             tool_schemas={},
-            already_retried=False,
+            retries_used={},
             native_tools_active=True,
         )
         assert decision.should_retry is False
@@ -260,7 +261,7 @@ class TestRefusals:
             ),
             known_tool_names=KNOWN_TOOLS,
             tool_schemas=TOOL_SCHEMAS,
-            already_retried=False,
+            retries_used={},
             native_tools_active=False,
         )
         assert decision.should_retry is False
@@ -434,7 +435,7 @@ class TestParseFailureCounting:
             validation_errors=(),
             tool_payload=tool_payload,
             working_messages=[],
-            already_retried=False,
+            retries_used={},
             request_id="req_pf",
             session_id=None,
         )
@@ -457,7 +458,7 @@ class TestParseFailureCounting:
             validation_errors=(),
             tool_payload=tool_payload,
             working_messages=[],
-            already_retried=True,
+            retries_used=dict(RETRY_BUDGETS),
             request_id="req_pf2",
             session_id=None,
         )
@@ -477,7 +478,7 @@ class TestParseFailureCounting:
             validation_errors=(),
             tool_payload=[{"name": "grep_search", "parameters": {}}],
             working_messages=[],
-            already_retried=False,
+            retries_used={},
             request_id="req_pf3",
             session_id=None,
         )
@@ -497,7 +498,7 @@ class TestParseFailureCounting:
             validation_errors=(),
             tool_payload=[],
             working_messages=[],
-            already_retried=False,
+            retries_used={},
             request_id="req_no_tools_pf",
             session_id=None,
         )
@@ -520,7 +521,7 @@ class TestParseFailureCounting:
             validation_errors=(),
             tool_payload=[{"name": "grep_search", "parameters": {}}],
             working_messages=[],
-            already_retried=False,
+            retries_used={},
             request_id="req_native_pf",
             session_id=None,
         )
@@ -552,3 +553,194 @@ def test_native_probe_failure_assumes_native_and_warns_once_per_engine_class(
     ]
     assert [r.levelno for r in probe_records] == [logging.WARNING, logging.DEBUG]
     assert "_ExplodingProbeEngine" in probe_records[0].getMessage()
+
+
+# ---------------------------------------------------------------------------
+# Transport-aware corrective wording
+# ---------------------------------------------------------------------------
+
+_STRUCTURED = {"transport": "structured", "entries": []}
+_VALIDATION_ERRORS = ({"tool_name": "read_file", "validation_error": "path is required"},)
+
+
+def _evaluate(**overrides: Any) -> RetryDecision:
+    arguments: dict[str, Any] = {
+        "inband_tool_call_parse_failed": True,
+        "surviving_calls": (),
+        "validation_errors": (),
+        "known_tool_names": KNOWN_TOOLS,
+        "tool_schemas": TOOL_SCHEMAS,
+        "retries_used": {},
+        "native_tools_active": False,
+    }
+    arguments.update(overrides)
+    return evaluate_reflexive_retry(**arguments)
+
+
+class TestStructuredTransportWording:
+    def test_structured_parse_failure_restates_the_structured_envelope(self) -> None:
+        decision = _evaluate(parse_diagnostics=_STRUCTURED)
+        body = decision.corrective_message["content"]  # type: ignore[index]
+        assert '"tool_calls"' in body
+        assert '"arguments_json"' in body
+        assert "\\n" in body
+        assert "<tool_call>" not in body
+        assert "grep_search" in body
+
+    def test_text_bridge_wording_is_unchanged(self) -> None:
+        text = _evaluate(parse_diagnostics={"transport": "text", "entries": []})
+        absent = _evaluate()
+        expected = build_corrective_message(
+            error_text=(
+                "Your tool call could not be parsed as JSON, so no tool ran. "
+                "Available tools: grep_search, read_file."
+            ),
+            tool_schema=None,
+        )
+        assert text.corrective_message == expected
+        assert absent.corrective_message == expected
+        assert "<tool_call>" in expected["content"]
+
+    def test_validation_rejection_in_structured_transport_does_not_mention_tags(self) -> None:
+        decision = _evaluate(
+            inband_tool_call_parse_failed=False,
+            validation_errors=_VALIDATION_ERRORS,
+            native_tools_active=True,
+            parse_diagnostics=_STRUCTURED,
+        )
+        body = decision.corrective_message["content"]  # type: ignore[index]
+        assert "path is required" in body
+        assert '"arguments_json"' in body
+        assert "<tool_call>" not in body
+
+    def test_validation_rejection_without_structured_transport_keeps_tags(self) -> None:
+        decision = _evaluate(
+            inband_tool_call_parse_failed=False,
+            validation_errors=_VALIDATION_ERRORS,
+            native_tools_active=True,
+        )
+        assert "<tool_call>" in decision.corrective_message["content"]  # type: ignore[index]
+
+
+# ---------------------------------------------------------------------------
+# Per-trigger budgets
+# ---------------------------------------------------------------------------
+
+
+class TestPerTriggerBudgets:
+    def test_two_unparseable_retries_then_stop(self) -> None:
+        assert _evaluate(retries_used={"unparseable_intent": 1}).should_retry is True
+        assert _evaluate(retries_used={"unparseable_intent": 2}).should_retry is False
+
+    def test_validation_retry_is_single(self) -> None:
+        kwargs: dict[str, Any] = {
+            "inband_tool_call_parse_failed": False,
+            "validation_errors": _VALIDATION_ERRORS,
+            "native_tools_active": True,
+        }
+        assert _evaluate(**kwargs).should_retry is True
+        assert _evaluate(retries_used={"validation_rejection": 1}, **kwargs).should_retry is False
+
+    def test_validation_retry_does_not_consume_the_parse_budget(self) -> None:
+        decision = _evaluate(retries_used={"validation_rejection": 1})
+        assert decision.should_retry is True
+        assert decision.trigger == "unparseable_intent"
+
+    def test_parse_retries_do_not_consume_the_validation_budget(self) -> None:
+        decision = _evaluate(
+            inband_tool_call_parse_failed=False,
+            validation_errors=_VALIDATION_ERRORS,
+            native_tools_active=True,
+            retries_used={"unparseable_intent": 2},
+        )
+        assert decision.should_retry is True
+        assert decision.trigger == "validation_rejection"
+
+    def test_spent_validation_budget_falls_through_to_the_parse_trigger(self) -> None:
+        decision = _evaluate(
+            validation_errors=_VALIDATION_ERRORS,
+            retries_used={"validation_rejection": 1},
+        )
+        assert decision.trigger == "unparseable_intent"
+
+
+class TestRunReflexiveRetryBookkeeping:
+    _PAYLOAD = [{"name": "grep_search", "parameters": TOOL_SCHEMAS["grep_search"]}]
+
+    def _run(self, used: dict[str, int], **extra: Any) -> tuple[bool, Any]:
+        from sidecar.ai.routing.tool_call_retry import run_reflexive_retry
+
+        kernel, _store, _profile_id = _make_kernel_with_profile()
+        return run_reflexive_retry(
+            kernel=kernel,
+            inband_tool_call_parse_failed=True,
+            surviving_calls=(),
+            validation_errors=(),
+            tool_payload=self._PAYLOAD,
+            working_messages=[],
+            retries_used=used,
+            request_id="req_budget",
+            session_id=None,
+            **extra,
+        )
+
+    def test_each_applied_retry_is_counted_against_its_own_trigger(self) -> None:
+        used: dict[str, int] = {}
+        assert self._run(used)[0] is True
+        assert self._run(used)[0] is True
+        assert used == {"unparseable_intent": 2}
+        assert self._run(used)[0] is False
+        assert used == {"unparseable_intent": 2}
+
+    def test_retry_log_carries_diagnostics_and_retry_number(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        diagnostics = {
+            "transport": "structured",
+            "entries": [
+                {
+                    "tool": "read_file",
+                    "reason": "json_error",
+                    "arguments_length": 15000,
+                    "error": "Expecting ',' delimiter",
+                    "pos": 321,
+                }
+            ],
+        }
+        with caplog.at_level(logging.INFO):
+            self._run({}, parse_diagnostics=diagnostics)
+        record = next(r for r in caplog.records if r.event == "ai.router.tool_call_reflexive_retry")
+        data = record.data
+        assert data["transport"] == "structured"
+        assert data["parse_diagnostics"] == diagnostics["entries"]
+        assert data["retry_number"] == 1
+
+    def test_final_failure_logs_once_the_parse_budget_is_spent(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        diagnostics = {
+            "transport": "structured",
+            "entries": [{"tool": "<unknown>", "reason": "unknown_tool", "arguments_length": 2}],
+        }
+        with caplog.at_level(logging.INFO):
+            applied, _fmt = self._run(dict(RETRY_BUDGETS), parse_diagnostics=diagnostics)
+        assert applied is False
+        records = [
+            r for r in caplog.records if r.event == "ai.router.tool_call_parse_retries_exhausted"
+        ]
+        assert len(records) == 1
+        assert records[0].levelno == logging.INFO
+        assert records[0].data["retries"] == RETRY_BUDGETS["unparseable_intent"]
+        assert records[0].data["transport"] == "structured"
+        assert records[0].data["parse_diagnostics"] == diagnostics["entries"]
+
+    def test_no_final_event_while_budget_remains_or_net_is_off(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.INFO):
+            self._run({"unparseable_intent": 1})
+            configure_tool_call_healing(None)
+            self._run(dict(RETRY_BUDGETS))
+        assert not [
+            r for r in caplog.records if r.event == "ai.router.tool_call_parse_retries_exhausted"
+        ]

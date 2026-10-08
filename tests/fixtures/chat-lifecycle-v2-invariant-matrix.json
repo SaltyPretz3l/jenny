@@ -52,7 +52,6 @@
     {"id":"S21","description":"background queue failure then activation","owner":"renderer","evidence":["tests/renderer-send-outbox.test.js"]},
     {"id":"S22","description":"FIFO entries retain immutable context","owner":"renderer","evidence":["tests/renderer-send-outbox.test.js"]},
     {"id":"S23","description":"data saturation followed by control traffic","owner":"sidecar","evidence":["tests/sidecar/runtime/test_multiplexer.py"]},
-    {"id":"S24","description":"envelope mismatch gap and renderer reload","owner":"cross-boundary","evidence":["tests/stream-envelope-receipt-gate.test.js","tests/renderer-stream-envelope-v2.test.js","tests/chat-stream-bridge-v2.test.js","tests/renderer-stream-handler-phase-envelope.test.js"]},
     {"id":"S25","description":"provider iterator ignores close","owner":"sidecar","evidence":["tests/sidecar/ai/engines/test_provider_stream_bounds.py"]},
     {"id":"S26","description":"writer shutdown with pending control frames","owner":"sidecar","evidence":["tests/sidecar/runtime/test_multiplexer.py"]},
     {"id":"S27","description":"terminal aliases traverse every consumer","owner":"cross-boundary","evidence":["tests/chat-terminal-status-vocabulary.test.js"]},

@@ -341,7 +341,7 @@
     };
   }
 
-  function collectModelParts(activeTurn, featureFlags = {}) {
+  function collectModelParts(activeTurn) {
     const rows = readRows(activeTurn);
     const events = readEvents(activeTurn);
     const phases = [];
@@ -388,13 +388,11 @@
       }
     }
 
-    if (featureFlags.stream_envelope_v2 !== true) {
-      for (const event of events) {
-        const phase = normalizePhaseFromEvent(event);
-        const phaseId = normalizeString(phase?.phaseId);
-        if (phases.length === 0 || (phaseId && phaseIndexById.has(phaseId))) {
-          mergePhase(phases, phaseIndexById, phase);
-        }
+    for (const event of events) {
+      const phase = normalizePhaseFromEvent(event);
+      const phaseId = normalizeString(phase?.phaseId);
+      if (phases.length === 0 || (phaseId && phaseIndexById.has(phaseId))) {
+        mergePhase(phases, phaseIndexById, phase);
       }
     }
 

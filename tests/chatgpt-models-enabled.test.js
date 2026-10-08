@@ -1,7 +1,7 @@
 'use strict';
 
 // The "Show ChatGPT models in Composer" choice (plugin platform retirement,
-// stage 2) and the one-time hand-over from the retired ChatGPT plugin.
+// stage 2) and the one-time hand-over from the retired ChatGPT plugin's facts.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -9,7 +9,6 @@ const assert = require('node:assert/strict');
 const {
   chatgptModelsEnabled,
   chatgptChoiceFromRetiredPlugin,
-  createChatgptRetiredChoiceCarrier,
 } = require('../services/backend/chatgpt-models-enabled');
 
 const config = (state) => ({ getState: () => state });
@@ -68,46 +67,4 @@ test('an unreadable plugin store is unknown, not "off"; only a removed receipt s
   assert.equal(chatgptChoiceFromRetiredPlugin({
     receipt: { status: 'removed', auto_enabled: false }, desiredState: null,
   }), false);
-});
-
-const CHATGPT = { publisher_id: 'jenny-official', plugin_id: 'chatgpt-subscription' };
-
-function carrier(state, result = { ok: true }) {
-  const writes = [];
-  const carry = createChatgptRetiredChoiceCarrier({
-    configService: config(state),
-    setChatgptModelsEnabled: async (value) => { writes.push(value); return result; },
-  });
-  return { carry, writes };
-}
-
-test('the carrier saves the plugin choice through the Settings switch owner', async () => {
-  const off = carrier({ chatgptModelsEnabled: null });
-  await off.carry(CHATGPT, { receipt: { status: 'removed' }, desiredState: '' });
-  assert.deepEqual(off.writes, [false]);
-
-  const on = carrier({});
-  await on.carry(CHATGPT, { receipt: null, desiredState: 'active' });
-  assert.deepEqual(on.writes, [true]);
-});
-
-test('the carrier leaves a choice made in Settings, other plugins and unset facts alone', async () => {
-  const chosen = carrier({ chatgptModelsEnabled: true });
-  await chosen.carry(CHATGPT, { receipt: { status: 'removed' }, desiredState: '' });
-  assert.deepEqual(chosen.writes, []);
-
-  const other = carrier({});
-  await other.carry({ publisher_id: 'jenny-official', plugin_id: 'remote-control' },
-    { receipt: { status: 'removed' }, desiredState: '' });
-  assert.deepEqual(other.writes, []);
-
-  const unset = carrier({});
-  await unset.carry(CHATGPT, { receipt: { status: 'installed', auto_enabled: false }, desiredState: '' });
-  assert.deepEqual(unset.writes, []);
-});
-
-test('a refused save throws so the plugin is kept for the next start', async () => {
-  const refused = carrier({}, { ok: false, reason: 'invalid_value' });
-  await assert.rejects(refused.carry(CHATGPT, { receipt: null, desiredState: 'active' }),
-    /invalid_value/);
 });

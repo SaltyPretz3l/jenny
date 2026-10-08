@@ -96,6 +96,27 @@ def test_explicit_shell_mutation_is_verified_even_on_failed_exit():
     assert not workspace_was_mutated([_outcome("run_command", metadata={"workspace_changed": False})])
 
 
+@pytest.mark.parametrize("tool_name", ["run_temp_script", "python_execute"])
+@pytest.mark.parametrize("success", [True, False])
+def test_script_tool_with_workspace_changed_evidence_is_a_mutation(tool_name, success):
+    outcome = _outcome(tool_name, success=success, metadata={"workspace_changed": True})
+    assert workspace_was_mutated([outcome]) is True
+    assert not _gate.already_verified([_outcome("verify", metadata={"status": "passed"}), outcome])
+
+
+@pytest.mark.parametrize("tool_name", ["run_command", "run_temp_script", "python_execute"])
+def test_scripted_tool_without_true_evidence_is_not_a_mutation(tool_name):
+    assert workspace_was_mutated([_outcome(tool_name)]) is False
+    assert workspace_was_mutated([_outcome(tool_name, metadata={"workspace_changed": False})]) is False
+    assert workspace_was_mutated([_outcome(tool_name, metadata={"workspace_changed": "yes"})]) is False
+
+
+def test_gate_trigger_names_are_exactly_the_typed_mutation_tools():
+    from sidecar.ai.routing.mutation_change_set_lifecycle import TYPED_MUTATION_TOOLS
+
+    assert _gate.GATE_TRIGGER_TOOL_NAMES == TYPED_MUTATION_TOOLS
+
+
 def test_failed_verification_cannot_preserve_an_earlier_pass():
     assert not _gate.already_verified([
         _outcome("verify", metadata={"status": "passed"}),

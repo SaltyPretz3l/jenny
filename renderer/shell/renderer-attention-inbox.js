@@ -479,6 +479,8 @@
       anchor.insertAdjacentHTML('afterend', actionButton({
         domId: BADGE_ID, plain: true, className: 'attention-inbox-badge',
         title: jt('chat.attentionInbox.badgeTitle', 'Open what needs you'),
+        // syncBadge() swaps in the counted label; this static one is what check_icon_button_labels.py sees.
+        ariaLabel: jt('chat.attentionInbox.badgeTitle', 'Open what needs you'),
         dataset: { 'i18n-title': 'chat.attentionInbox.badgeTitle' },
         // The health pill's shape, not its class: a dot and a number.
         trustedHtml: '<span class="attention-inbox-badge__dot" aria-hidden="true"></span>'

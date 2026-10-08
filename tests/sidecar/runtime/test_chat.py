@@ -18,21 +18,17 @@ from sidecar.ai.context.builder import (
 from sidecar.ai.engines.base import ModelModality
 from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.ai.error_codes import (
-    CMP_AI_ENGINE_CONNECTION,
     CMP_CTX_BUDGET_EXHAUSTED,
     CMP_TOOL_APPROVAL_DENIED,
     CMP_TOOL_APPROVAL_WINDOW_DROPPED,
 )
-from sidecar.ai.exceptions import EngineConnectionError
 from sidecar.ai.feature_flags import (
     FEATURE_AGENT_EXECUTOR,
     FEATURE_CANONICAL_TURN_EVENTS,
     FEATURE_CONTEXT_COMPACTION,
-    FEATURE_PROMPT_CACHE,
     FEATURE_TOKEN_BUDGET,
 )
-from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, MemoryPolicy
-from sidecar.ai.memory.store import ApprovedMemory
+from sidecar.ai.memory.contracts import MemoryPolicy
 from sidecar.ai.personality import build_personality_system_message
 from sidecar.ai.routing import vision_turn as _vision_turn
 from sidecar.ai.routing.loop_events import (
@@ -58,11 +54,10 @@ from sidecar.ai.routing.tool_observation import (
     ToolObservationStore,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
-from sidecar.ai.tools.models import GenerationResult, GenerationUsage
+from sidecar.ai.tools.models import GenerationUsage
 from sidecar.ai.tools.tool_families import KNOWN_TOOL_FAMILIES
 from sidecar.protocol import (
     CHAT_THINKING_KIND_REASONING,
-    CHAT_THINKING_KIND_STATUS,
     TURN_EVENT_METHOD,
 )
 from sidecar.runtime.approval_plan import (
@@ -82,13 +77,12 @@ from sidecar.runtime.chat import (
     estimate_text_tokens,
     resume_chat_send_response_from_approval_plan,
 )
-from sidecar.runtime.chat_helpers import CHAT_INVALID_PARAMS, _decision_usage_payload
+from sidecar.runtime.chat_helpers import _decision_usage_payload
 from sidecar.runtime.chat_models import ChatRequestContext, TerminalChatStateError
 from sidecar.runtime.chat_resume import (
     _build_live_approval_system_prompt,
     _normalize_volatile_system_prompt_text,
 )
-from sidecar.runtime.chat_streaming import _build_live_stream_messages
 from sidecar.runtime.diagnostics import StructuredLogFormatter
 from sidecar.runtime.execution_context import ExecutionContext
 from sidecar.runtime.multiplexer import SubAgentSlotAllocator
@@ -171,47 +165,8 @@ class _VisionCapableEngine:
     supported_modalities = {ModelModality.TEXT, ModelModality.VISION}
     capabilities = {"text": True, "vision": True}
 
-    def __init__(
-        self,
-        *,
-        finish_reason: str = "stop",
-        max_output_tokens: int | None = None,
-    ) -> None:
-        self.last_prompt = ""
-        self.last_images: list[object] = []
-        self.last_max_tokens: int | None = None
-        self._finish_reason = finish_reason
-        self._max_output_tokens = max_output_tokens
-
     def get_model_max_output_tokens(self) -> int | None:
-        return self._max_output_tokens
-
-    def generate_with_vision(
-        self,
-        prompt: str,
-        images: list[object],
-        max_tokens: int = 256,
-        temperature: float = 0.7,
-    ) -> GenerationResult:
-        _ = temperature
-        self.last_prompt = prompt
-        self.last_images = list(images)
-        self.last_max_tokens = max_tokens
-        return GenerationResult(content="Vision response", finish_reason=self._finish_reason)
-
-
-class _UnreachableVisionEngine:
-    supported_modalities = {ModelModality.TEXT, ModelModality.VISION}
-    capabilities = {"text": True, "vision": True}
-
-    def generate_with_vision(
-        self, prompt: str, images: list[str], max_tokens: int = 256, temperature: float = 0.7
-    ) -> GenerationResult:
-        _ = (prompt, images, max_tokens, temperature)
-        raise EngineConnectionError(
-            "Could not connect to Ollama at http://127.0.0.1:11434: refused",
-            retryable=True,
-        )
+        return None
 
 
 class _TextOnlyEngine:
@@ -226,18 +181,15 @@ class _StubContextBuilder:
         self._runtime_builder = ContextBuilder(None)
         self.last_runtime_system_prompt = ""
         self.last_learned_lessons = None
-        self.last_include_reasoning_status_markers = False
 
     def build_system_prompt(
         self,
         runtime_system_prompt: str,
         learned_lessons=None,
-        include_reasoning_status_markers: bool = False,
         **_kwargs: object,
     ) -> str:
         self.last_runtime_system_prompt = runtime_system_prompt
         self.last_learned_lessons = learned_lessons
-        self.last_include_reasoning_status_markers = include_reasoning_status_markers
         return f"{runtime_system_prompt}\n\nLESSONS:{len(learned_lessons or [])}"
 
     def build_skills_system_message(self, *, tool_statuses=None) -> str:
@@ -268,292 +220,6 @@ class _StubContextBuilder:
             instruction_file_name=None,
             instruction_file_present=False,
         )
-
-
-class _ThinkingStreamEngine:
-    supported_modalities = {ModelModality.TEXT}
-    capabilities = {"text": True, "thinking": True}
-
-    def __init__(self) -> None:
-        self.last_messages: list[dict[str, str]] = []
-        self.last_prompt_cache_enabled = False
-        self.last_reasoning_effort: str | None = None
-
-    def stream(
-        self,
-        prompt: str,
-        max_tokens: int = 16384,
-        temperature: float = 0.7,
-        reasoning_effort: str | None = None,
-        prompt_cache_enabled: bool = False,
-        system: str = "",
-        messages: list[dict[str, str]] | None = None,
-        response_format: object | None = None,
-        cancel_handle: object | None = None,
-    ):
-        _ = prompt, max_tokens, temperature, system, response_format, cancel_handle
-        self.last_messages = list(messages or [])
-        self.last_prompt_cache_enabled = prompt_cache_enabled
-        self.last_reasoning_effort = reasoning_effort
-        yield SimpleNamespace(kind="thinking", text="Checking the request intent.")
-        yield SimpleNamespace(kind="content", text="Ready.")
-        yield SimpleNamespace(kind="done", text="")
-
-    def get_model_max_output_tokens(self) -> int | None:
-        return None
-
-
-class _RepetitiveThinkingStreamEngine:
-    supported_modalities = {ModelModality.TEXT}
-    capabilities = {"text": True, "thinking": True}
-
-    def stream(
-        self,
-        prompt: str,
-        max_tokens: int = 16384,
-        temperature: float = 0.7,
-        reasoning_effort: str | None = None,
-        prompt_cache_enabled: bool = False,
-        system: str = "",
-        messages: list[dict[str, str]] | None = None,
-        response_format: object | None = None,
-        cancel_handle: object | None = None,
-    ):
-        _ = (
-            prompt,
-            max_tokens,
-            temperature,
-            reasoning_effort,
-            prompt_cache_enabled,
-            system,
-            messages,
-            response_format,
-            cancel_handle,
-        )
-        repeated = "Checking the request intent carefully. " * 14  # two guard windows
-        yield SimpleNamespace(kind="thinking", text=repeated)
-        yield SimpleNamespace(kind="thinking", text=repeated)
-        yield SimpleNamespace(kind="thinking", text=repeated)
-        yield SimpleNamespace(kind="thinking", text=repeated)
-        yield SimpleNamespace(kind="thinking", text=repeated)
-        yield SimpleNamespace(kind="content", text="Ready.")
-        yield SimpleNamespace(kind="done", text="")
-
-    def get_model_max_output_tokens(self) -> int | None:
-        return None
-
-
-class _ReasoningOnlyStreamEngine:
-    supported_modalities = {ModelModality.TEXT}
-    capabilities = {"text": True, "thinking": True}
-
-    def stream(
-        self,
-        prompt: str,
-        max_tokens: int = 16384,
-        temperature: float = 0.7,
-        reasoning_effort: str | None = None,
-        prompt_cache_enabled: bool = False,
-        system: str = "",
-        messages: list[dict[str, str]] | None = None,
-        response_format: object | None = None,
-        cancel_handle: object | None = None,
-    ):
-        _ = (
-            prompt,
-            max_tokens,
-            temperature,
-            reasoning_effort,
-            prompt_cache_enabled,
-            system,
-            messages,
-            response_format,
-            cancel_handle,
-        )
-        yield SimpleNamespace(kind="thinking", text="Only private reasoning here.")
-        yield SimpleNamespace(kind="done", text="", finish_reason="reasoning_only")
-
-    def get_model_max_output_tokens(self) -> int | None:
-        return None
-
-
-class _StatusMarkerThinkingStreamEngine:
-    supported_modalities = {ModelModality.TEXT}
-    capabilities = {"text": True, "thinking": True}
-
-    def stream(
-        self,
-        prompt: str,
-        max_tokens: int = 16384,
-        temperature: float = 0.7,
-        reasoning_effort: str | None = None,
-        prompt_cache_enabled: bool = False,
-        system: str = "",
-        messages: list[dict[str, str]] | None = None,
-        response_format: object | None = None,
-        cancel_handle: object | None = None,
-    ):
-        _ = (
-            prompt,
-            max_tokens,
-            temperature,
-            reasoning_effort,
-            prompt_cache_enabled,
-            system,
-            messages,
-            response_format,
-            cancel_handle,
-        )
-        yield SimpleNamespace(
-            kind="thinking",
-            text="⟨STATUS: Analyzing constraints⟩\nChecking the request intent.",
-        )
-        yield SimpleNamespace(kind="content", text="Ready.")
-        yield SimpleNamespace(kind="done", text="")
-
-    def get_model_max_output_tokens(self) -> int | None:
-        return None
-
-
-class _TrailingPartialStatusThinkingStreamEngine:
-    supported_modalities = {ModelModality.TEXT}
-    capabilities = {"text": True, "thinking": True}
-
-    def stream(
-        self,
-        prompt: str,
-        max_tokens: int = 16384,
-        temperature: float = 0.7,
-        reasoning_effort: str | None = None,
-        prompt_cache_enabled: bool = False,
-        system: str = "",
-        messages: list[dict[str, str]] | None = None,
-        response_format: object | None = None,
-        cancel_handle: object | None = None,
-    ):
-        _ = (
-            prompt,
-            max_tokens,
-            temperature,
-            reasoning_effort,
-            prompt_cache_enabled,
-            system,
-            messages,
-            response_format,
-            cancel_handle,
-        )
-        yield SimpleNamespace(kind="thinking", text="⟨STATUS: partial")
-        yield SimpleNamespace(kind="content", text="Ready.")
-        yield SimpleNamespace(kind="done", text="")
-
-    def get_model_max_output_tokens(self) -> int | None:
-        return None
-
-
-class _ContentMarkerLeakStreamEngine:
-    supported_modalities = {ModelModality.TEXT}
-    capabilities = {"text": True, "thinking": True}
-
-    def stream(
-        self,
-        prompt: str,
-        max_tokens: int = 16384,
-        temperature: float = 0.7,
-        reasoning_effort: str | None = None,
-        prompt_cache_enabled: bool = False,
-        system: str = "",
-        messages: list[dict[str, str]] | None = None,
-        response_format: object | None = None,
-        cancel_handle: object | None = None,
-    ):
-        _ = (
-            prompt,
-            max_tokens,
-            temperature,
-            reasoning_effort,
-            prompt_cache_enabled,
-            system,
-            messages,
-            response_format,
-            cancel_handle,
-        )
-        yield SimpleNamespace(
-            kind="content", text="Before âŸ¨STATUS: Drafting final responseâŸ© after."
-        )
-        yield SimpleNamespace(kind="done", text="")
-
-    def get_model_max_output_tokens(self) -> int | None:
-        return None
-
-
-class _ControlTokenLeakStreamEngine:
-    supported_modalities = {ModelModality.TEXT}
-    capabilities = {"text": True, "thinking": True}
-
-    def stream(
-        self,
-        prompt: str,
-        max_tokens: int = 16384,
-        temperature: float = 0.7,
-        reasoning_effort: str | None = None,
-        prompt_cache_enabled: bool = False,
-        system: str = "",
-        messages: list[dict[str, str]] | None = None,
-        response_format: object | None = None,
-        cancel_handle: object | None = None,
-    ):
-        _ = (
-            prompt,
-            max_tokens,
-            temperature,
-            reasoning_effort,
-            prompt_cache_enabled,
-            system,
-            messages,
-            response_format,
-            cancel_handle,
-        )
-        yield SimpleNamespace(kind="content", text="Before <|tool_response> after.")
-        yield SimpleNamespace(kind="content", text="<|tool_response>")
-        yield SimpleNamespace(kind="content", text=" And more.")
-        yield SimpleNamespace(kind="done", text="")
-
-    def get_model_max_output_tokens(self) -> int | None:
-        return None
-
-
-class _NonThinkingContentStreamEngine:
-    supported_modalities = {ModelModality.TEXT}
-    capabilities = {"text": True, "thinking": False}
-
-    def stream(
-        self,
-        prompt: str,
-        max_tokens: int = 16384,
-        temperature: float = 0.7,
-        reasoning_effort: str | None = None,
-        prompt_cache_enabled: bool = False,
-        system: str = "",
-        messages: list[dict[str, str]] | None = None,
-        response_format: object | None = None,
-        cancel_handle: object | None = None,
-    ):
-        _ = (
-            prompt,
-            max_tokens,
-            temperature,
-            reasoning_effort,
-            prompt_cache_enabled,
-            system,
-            messages,
-            response_format,
-            cancel_handle,
-        )
-        yield SimpleNamespace(kind="content", text="Ready.")
-        yield SimpleNamespace(kind="done", text="")
-
-    def get_model_max_output_tokens(self) -> int | None:
-        return None
 
 
 def _build_brain_container(
@@ -2351,695 +2017,6 @@ def test_build_chat_send_response_preserves_thinking_semantics_from_router() -> 
     assert thinking["params"]["persist"] is True
 
 
-def test_live_stream_memory_overlay_stays_within_shared_recall_budget() -> None:
-    class SmallContextEngine:
-        capabilities: dict[str, object] = {}
-
-        def get_model_context_length(self) -> int:
-            return 8208
-
-        def get_model_max_output_tokens(self) -> int:
-            return 1
-
-    bounded_lesson = "The user likes green tea in the afternoon."
-
-    class PromptRecallStore:
-        def recall_memories(
-            self,
-            query: str,
-            *,
-            limit: int,
-            project_id: str,
-            include_general: bool = False,
-        ) -> list[ApprovedMemory]:
-            assert query == "tea"
-            assert project_id == GENERAL_PROJECT_ID
-            assert include_general is True
-            return [
-                ApprovedMemory(
-                    id=1,
-                    session_id="session",
-                    title="Tea routine",
-                    lesson_text=bounded_lesson,
-                    confidence=0.9,
-                    lesson_kind="routine",
-                    source_excerpt="",
-                    content_fingerprint=f"sha256:{1:064x}",
-                    family_key="",
-                    provenance="user_approved",
-                    created_at="2026-01-01T00:00:00+00:00",
-                    updated_at="2026-01-01T00:00:00+00:00",
-                )
-            ]
-
-        def get_recent_memories_by_kind(
-            self, _kind: str, _limit: int, *, project_id: str, include_general: bool = False
-        ) -> list[ApprovedMemory]:
-            assert project_id == GENERAL_PROJECT_ID
-            assert include_general is True
-            return []
-
-    brain_container = SimpleNamespace(
-        stack=SimpleNamespace(
-            config=SimpleNamespace(
-                system_prompt="Base.",
-                feature_flags={FEATURE_TOKEN_BUDGET: True},
-                max_tokens=1,
-            ),
-            engine=SmallContextEngine(),
-            context_builder=ContextBuilder(None),
-            memory_store=PromptRecallStore(),
-        )
-    )
-
-    messages = _build_live_stream_messages(
-        brain_container,
-        [{"role": "user", "content": "hi"}],
-        learned_lessons=None,
-        latest_user_content="tea",
-        request_id="req_stream_overlay_budget",
-        session_id="session_stream_overlay_budget",
-        memory_policy=MemoryPolicy(recall_query="tea"),
-    )
-
-    system_headings = [
-        str(message.get("content") or "").splitlines()[0]
-        for message in messages
-        if message.get("role") == "system"
-    ]
-    assert "## Recalled Memories" in system_headings
-    assert "## Context Pressure Advisory" not in system_headings
-
-
-def test_live_stream_memory_opt_out_never_touches_store() -> None:
-    class TrackingStore:
-        calls = 0
-
-        def recall_memories(self, _query: str, *, limit: int) -> list[ApprovedMemory]:
-            self.calls += 1
-            return []
-
-        def get_recent_memories_by_kind(
-            self, _kind: str, _limit: int
-        ) -> list[ApprovedMemory]:
-            self.calls += 1
-            return []
-
-    store = TrackingStore()
-    brain_container = SimpleNamespace(
-        stack=SimpleNamespace(
-            config=SimpleNamespace(system_prompt="Base.", feature_flags={}, max_tokens=1),
-            engine=SimpleNamespace(capabilities={}),
-            context_builder=ContextBuilder(None),
-            memory_store=store,
-        )
-    )
-
-    messages = _build_live_stream_messages(
-        brain_container,
-        [{"role": "user", "content": "tea"}],
-        learned_lessons=None,
-        latest_user_content="tea",
-        request_id="req-memory-disabled",
-        session_id="session-memory-disabled",
-        memory_policy=MemoryPolicy(enabled=False, recall_query="tea"),
-    )
-
-    assert store.calls == 0
-    assert all("## Recalled Memories" not in str(row.get("content")) for row in messages)
-
-
-def test_live_stream_messages_layer_personality_and_skills_as_runtime_overlays(
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "workspace"
-    skill_dir = workspace / "skills" / "ops"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text(
-        (
-            "---\n"
-            "name: Ops Brief\n"
-            "description: Keep operational notes crisp.\n"
-            "metadata:\n"
-            "  nanobot:\n"
-            "    always: true\n"
-            "---\n"
-            "Prefer concise operational summaries."
-        ),
-        encoding="utf-8",
-    )
-
-    class PlainEngine:
-        capabilities: dict[str, object] = {}
-
-    brain_container = SimpleNamespace(
-        stack=SimpleNamespace(
-            config=SimpleNamespace(
-                system_prompt="Base.",
-                feature_flags={},
-                max_tokens=1,
-                assistant_name="Scout",
-            ),
-            engine=PlainEngine(),
-            context_builder=ContextBuilder(workspace),
-            memory_store=None,
-        )
-    )
-
-    messages = _build_live_stream_messages(
-        brain_container,
-        [{"role": "user", "content": "hi"}],
-        learned_lessons=None,
-        latest_user_content="",
-        request_id="req_stream_dynamic_overlays",
-        session_id="session_stream_dynamic_overlays",
-    )
-
-    system_headings = [
-        str(message.get("content") or "").splitlines()[0]
-        for message in messages
-        if message.get("role") == "system"
-    ]
-    # v3: ONE personality overlay, immediately after the base prompt.
-    assert system_headings[:3] == [
-        "Base.",
-        "## Personality",
-        "## Runtime Skills Overlay",
-    ]
-    for retired in (
-        "## Assistant Identity Overlay",
-        "## Personality Profile Overlay",
-        "## Custom Personality Overlay",
-    ):
-        assert retired not in system_headings
-    personality_rows = [
-        str(message.get("content") or "")
-        for message in messages
-        if str(message.get("content") or "").startswith("## Personality\n")
-    ]
-    assert len(personality_rows) == 1
-    assert personality_rows[0].startswith("## Personality\nYour name is Scout.")
-
-
-def test_build_chat_send_response_streams_live_provider_reasoning_for_thinking_models() -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    engine = _ThinkingStreamEngine()
-    brain_container = _build_brain_container(
-        decision,
-        engine_type="ollama",
-        model="qwen3.5:9b",
-        engine=engine,
-    )
-    written: list[dict[str, object]] = []
-
-    response = build_chat_send_response(
-        "msg-streaming-thinking",
-        {
-            "request_id": "req-streaming-thinking",
-            "mode": "chat",
-            "messages": [{"role": "user", "content": "Explain it"}],
-            "learning_context": {
-                "lessons": [
-                    {
-                        "title": "Respect concise-response requests",
-                        "lesson_text": "Keep concise answers tight.",
-                        "confidence": 0.8,
-                        "lesson_kind": "response_style",
-                    }
-                ]
-            },
-            "reasoning_effort": "high",
-        },
-        approvals_pre_granted=True,
-        brain_container=brain_container,
-        invalid_params_code=-32602,
-        stream_notifications=True,
-        notification_writer=written.append,
-    )
-
-    assert response.notifications == []
-    assert [item["method"] for item in written] == ["chat.thinking", "chat.token", "chat.done"]
-    assert written[0]["params"]["kind"] == CHAT_THINKING_KIND_REASONING
-    assert written[0]["params"]["persist"] is True
-    assert engine.last_reasoning_effort == "high"
-    assert engine.last_messages[0]["role"] == "system"
-    assert "LESSONS:1" in engine.last_messages[0]["content"]
-    assert brain_container.stack.context_builder.last_include_reasoning_status_markers is True
-
-
-def test_build_chat_send_response_suppresses_repetitive_live_thinking_chunks() -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    written: list[dict[str, object]] = []
-
-    response = build_chat_send_response(
-        "msg-streaming-thinking-repetition",
-        {
-            "request_id": "req-streaming-thinking-repetition",
-            "mode": "chat",
-            "messages": [{"role": "user", "content": "Explain it"}],
-        },
-        approvals_pre_granted=True,
-        brain_container=_build_brain_container(
-            decision,
-            engine_type="ollama",
-            model="qwen3.5:9b",
-            engine=_RepetitiveThinkingStreamEngine(),
-        ),
-        invalid_params_code=-32602,
-        stream_notifications=True,
-        notification_writer=written.append,
-    )
-
-    assert response.notifications == []
-    # A synthesized status row may lead; the three reasoning deltas before the
-    # guard trips are what matter.
-    reasoning = [
-        item for item in written if item["params"].get("kind") != "status"
-    ]
-    assert [item["method"] for item in reasoning] == [
-        "chat.thinking",
-        "chat.thinking",
-        "chat.thinking",
-        "chat.token",
-        "chat.done",
-    ]
-    assert reasoning[3]["params"]["delta"] == "Ready."
-
-
-def test_streaming_reasoning_only_done_chunk_surfaces_chat_error() -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    written: list[dict[str, object]] = []
-
-    build_chat_send_response(
-        "msg-streaming-reasoning-only",
-        {
-            "request_id": "req-streaming-reasoning-only",
-            "mode": "chat",
-            "messages": [{"role": "user", "content": "Explain it"}],
-        },
-        approvals_pre_granted=True,
-        brain_container=_build_brain_container(
-            decision,
-            engine_type="ollama",
-            model="qwen3.5:9b",
-            engine=_ReasoningOnlyStreamEngine(),
-        ),
-        invalid_params_code=-32602,
-        stream_notifications=True,
-        notification_writer=written.append,
-    )
-
-    methods = [item["method"] for item in written]
-    assert "chat.error" in methods
-    error_payload = next(item for item in written if item["method"] == "chat.error")
-    assert error_payload["params"]["code"] == "CMP-STREAM-REASONING-ONLY"
-    assert "chat.done" not in methods
-
-
-def test_streaming_ignores_stale_engine_finish_reason_attribute() -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    engine = _ThinkingStreamEngine()
-    # A previous request's verdict left on the shared engine object must not
-    # fail THIS stream (the pre-fix code read engine._last_finish_reason).
-    engine._last_finish_reason = "reasoning_only"
-    written: list[dict[str, object]] = []
-
-    build_chat_send_response(
-        "msg-streaming-stale-attr",
-        {
-            "request_id": "req-streaming-stale-attr",
-            "mode": "chat",
-            "messages": [{"role": "user", "content": "Explain it"}],
-        },
-        approvals_pre_granted=True,
-        brain_container=_build_brain_container(
-            decision,
-            engine_type="ollama",
-            model="qwen3.5:9b",
-            engine=engine,
-        ),
-        invalid_params_code=-32602,
-        stream_notifications=True,
-        notification_writer=written.append,
-    )
-
-    assert [item["method"] for item in written] == ["chat.thinking", "chat.token", "chat.done"]
-
-
-def test_build_chat_send_response_passes_prompt_cache_flag_to_streaming_engine() -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    engine = _ThinkingStreamEngine()
-
-    _ = build_chat_send_response(
-        "msg-streaming-cache",
-        {
-            "request_id": "req-streaming-cache",
-            "mode": "chat",
-            "messages": [{"role": "user", "content": "Explain it"}],
-        },
-        approvals_pre_granted=True,
-        brain_container=_build_brain_container(
-            decision,
-            engine_type="anthropic",
-            model="claude-3-7-sonnet-latest",
-            engine=engine,
-            feature_flags={FEATURE_PROMPT_CACHE: True},
-        ),
-        invalid_params_code=-32602,
-        stream_notifications=True,
-        notification_writer=lambda _item: None,
-    )
-
-    assert engine.last_prompt_cache_enabled is True
-
-
-def test_build_chat_send_response_emits_status_markers_separately_from_reasoning() -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    written: list[dict[str, object]] = []
-
-    response = build_chat_send_response(
-        "msg-streaming-thinking-status",
-        {
-            "request_id": "req-streaming-thinking-status",
-            "mode": "chat",
-            "messages": [{"role": "user", "content": "Explain it"}],
-        },
-        approvals_pre_granted=True,
-        brain_container=_build_brain_container(
-            decision,
-            engine_type="ollama",
-            model="qwen3.5:9b",
-            engine=_StatusMarkerThinkingStreamEngine(),
-        ),
-        invalid_params_code=-32602,
-        stream_notifications=True,
-        notification_writer=written.append,
-    )
-
-    assert response.notifications == []
-    assert [item["method"] for item in written] == [
-        "chat.thinking",
-        "chat.thinking",
-        "chat.token",
-        "chat.done",
-    ]
-    assert written[0]["params"]["kind"] == CHAT_THINKING_KIND_STATUS
-    assert written[0]["params"]["persist"] is False
-    assert written[0]["params"]["delta"] == "Analyzing constraints"
-    assert written[1]["params"]["kind"] == CHAT_THINKING_KIND_REASONING
-    assert written[1]["params"]["persist"] is True
-    assert written[1]["params"]["delta"] == "\nChecking the request intent."
-    assert "⟨STATUS:" not in str(written[1]["params"]["delta"])
-
-
-def test_build_chat_send_response_flushes_partial_status_tail_as_reasoning() -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    written: list[dict[str, object]] = []
-
-    response = build_chat_send_response(
-        "msg-streaming-thinking-partial-status",
-        {
-            "request_id": "req-streaming-thinking-partial-status",
-            "mode": "chat",
-            "messages": [{"role": "user", "content": "Explain it"}],
-        },
-        approvals_pre_granted=True,
-        brain_container=_build_brain_container(
-            decision,
-            engine_type="ollama",
-            model="qwen3.5:9b",
-            engine=_TrailingPartialStatusThinkingStreamEngine(),
-        ),
-        invalid_params_code=-32602,
-        stream_notifications=True,
-        notification_writer=written.append,
-    )
-
-    assert response.notifications == []
-    assert [item["method"] for item in written] == [
-        "chat.token",
-        "chat.thinking",
-        "chat.done",
-    ]
-    assert written[1]["params"]["kind"] == CHAT_THINKING_KIND_REASONING
-    assert written[1]["params"]["persist"] is True
-    assert written[1]["params"]["delta"] == "⟨STATUS: partial"
-
-
-def test_build_chat_send_response_strips_status_markers_from_visible_stream_chunks(
-    tmp_path: Path,
-) -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    written: list[dict[str, object]] = []
-
-    response = build_chat_send_response(
-        "msg-streaming-content-marker-leak",
-        {
-            "request_id": "req-streaming-content-marker-leak",
-            "mode": "chat",
-            "messages": [{"role": "user", "content": "Explain it"}],
-        },
-        approvals_pre_granted=True,
-        brain_container=_build_brain_container(
-            decision,
-            engine_type="ollama",
-            model="qwen3.5:9b",
-            engine=_ContentMarkerLeakStreamEngine(),
-        ),
-        invalid_params_code=-32602,
-        stream_notifications=True,
-        notification_writer=written.append,
-    )
-
-    assert response.notifications == []
-    assert [item["method"] for item in written] == ["chat.token", "chat.done"]
-    assert written[0]["params"]["delta"] == "Before  after."
-    joined_visible_text = "".join(
-        str(item["params"]["delta"]) for item in written if item["method"] == "chat.token"
-    )
-    assert "âŸ¨STATUS:" not in joined_visible_text
-    assert joined_visible_text == "Before  after."
-
-
-def test_build_chat_send_response_strips_control_tokens_from_visible_stream_chunks() -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    written: list[dict[str, object]] = []
-
-    response = build_chat_send_response(
-        "msg-streaming-control-token-leak",
-        {
-            "request_id": "req-streaming-control-token-leak",
-            "mode": "chat",
-            "messages": [{"role": "user", "content": "Explain it"}],
-        },
-        approvals_pre_granted=True,
-        brain_container=_build_brain_container(
-            decision,
-            engine_type="ollama",
-            model="qwen3.5:9b",
-            engine=_ControlTokenLeakStreamEngine(),
-        ),
-        invalid_params_code=-32602,
-        stream_notifications=True,
-        notification_writer=written.append,
-    )
-
-    assert response.notifications == []
-    assert [item["method"] for item in written] == [
-        "chat.token",
-        "chat.token",
-        "chat.done",
-    ]
-    joined_visible_text = "".join(
-        str(item["params"]["delta"]) for item in written if item["method"] == "chat.token"
-    )
-    assert "<|tool_response>" not in joined_visible_text
-    assert joined_visible_text == "Before  after. And more."
-
-
-def test_build_chat_send_response_does_not_enable_marker_prompt_for_non_thinking_engines() -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    brain_container = _build_brain_container(
-        decision,
-        engine_type="mock",
-        model="mock-v1",
-        engine=_NonThinkingContentStreamEngine(),
-    )
-    written: list[dict[str, object]] = []
-
-    response = build_chat_send_response(
-        "msg-streaming-non-thinking-engine",
-        {
-            "request_id": "req-streaming-non-thinking-engine",
-            "mode": "chat",
-            "messages": [{"role": "user", "content": "Explain it"}],
-        },
-        approvals_pre_granted=True,
-        brain_container=brain_container,
-        invalid_params_code=-32602,
-        stream_notifications=True,
-        notification_writer=written.append,
-    )
-
-    assert written == []
-    assert [item["method"] for item in response.notifications] == ["chat.token", "chat.done"]
-    assert response.notifications[0]["params"]["delta"] == "unused"
-    assert brain_container.stack.context_builder.last_include_reasoning_status_markers is False
-
-
-def test_build_chat_send_response_dispatches_vision_requests_without_router(tmp_path: Path) -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    engine = _VisionCapableEngine()
-    brain_container = _build_brain_container(
-        decision,
-        engine_type="mock",
-        model="mock-v1",
-        engine=engine,
-        feature_flags={"vision_unified_turn": False},
-        electron_state_root=str(tmp_path),
-    )
-
-    image_path = _write_temp_image(tmp_path)
-    response = build_chat_send_response(
-        "msg-vision",
-        {
-            "request_id": "req-vision",
-            "mode": "chat",
-            "messages": [{"role": "user", "content": "What is happening in this image?"}],
-            "attachments": [
-                {
-                    "id": "image-1",
-                    "kind": "image",
-                    "assetPath": image_path,
-                    "displayName": "test.png",
-                    "mimeType": "image/png",
-                }
-            ],
-        },
-        approvals_pre_granted=True,
-        brain_container=brain_container,
-        invalid_params_code=-32602,
-    )
-
-    assert len(engine.last_images) == 1
-    assert isinstance(engine.last_images[0], VisionImage)
-    assert engine.last_images[0].mime_type == "image/png"
-    assert "USER:" in engine.last_prompt
-    assert brain_container.stack.router.last_kwargs == {}
-    thinking = _thinking_notification(response)
-    assert thinking["params"]["kind"] == CHAT_THINKING_KIND_STATUS
-    assert thinking["params"]["persist"] is False
-    assert response.notifications[-1]["method"] == "chat.done"
-    assert response.notifications[-1]["params"]["stop_reason"] == "end_turn"
-
-
-class _UnifiedTurnOnlyVisionEngine:
-    """Vision-capable on the wire (ChatGPT input_image) but no legacy single-shot method."""
-
-    supported_modalities = {ModelModality.TEXT, ModelModality.VISION}
-    capabilities = {"text": True, "vision": True}
-
-
-def test_build_chat_send_response_kill_switch_refuses_engines_without_legacy_vision(
-    tmp_path: Path,
-) -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    brain_container = _build_brain_container(
-        decision,
-        engine_type="mock",
-        model="mock-v1",
-        engine=_UnifiedTurnOnlyVisionEngine(),
-        feature_flags={"vision_unified_turn": False},
-        electron_state_root=str(tmp_path),
-    )
-    image_path = _write_temp_image(tmp_path)
-
-    with pytest.raises(ChatRequestError) as excinfo:
-        build_chat_send_response(
-            "msg-vision-kill-switch",
-            {
-                "request_id": "req-vision-kill-switch",
-                "mode": "chat",
-                "messages": [{"role": "user", "content": "What is in this image?"}],
-                "attachments": [
-                    {
-                        "id": "image-1",
-                        "kind": "image",
-                        "assetPath": image_path,
-                        "displayName": "test.png",
-                        "mimeType": "image/png",
-                    }
-                ],
-            },
-            approvals_pre_granted=True,
-            brain_container=brain_container,
-            invalid_params_code=-32602,
-        )
-
-    assert excinfo.value.code == CHAT_INVALID_PARAMS
-    assert excinfo.value.message == _vision_turn.VISION_REFUSAL_MESSAGE
-
-
 def test_build_chat_send_response_rejects_vision_requests_for_text_only_models(
     tmp_path: Path,
 ) -> None:
@@ -3164,129 +2141,6 @@ def test_build_chat_send_response_rejects_missing_vision_asset_paths(tmp_path: P
         raise AssertionError("expected missing image attachment path to fail validation")
 
 
-def _vision_request_params(image_path: str, request_id: str) -> dict[str, object]:
-    return {
-        "request_id": request_id,
-        "mode": "chat",
-        "messages": [{"role": "user", "content": "Describe this image"}],
-        "attachments": [
-            {
-                "id": "image-1",
-                "kind": "image",
-                "assetPath": image_path,
-            }
-        ],
-    }
-
-
-def test_vision_turn_uses_engine_output_budget_not_legacy_256_cap(tmp_path: Path) -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    image_path = _write_temp_image(tmp_path)
-
-    capped_engine = _VisionCapableEngine(max_output_tokens=4096)
-    build_chat_send_response(
-        "msg-vision-budget",
-        _vision_request_params(image_path, "req-vision-budget"),
-        approvals_pre_granted=True,
-        brain_container=_build_brain_container(
-            decision,
-            engine_type="mock",
-            model="mock-v1",
-            engine=capped_engine,
-            feature_flags={"vision_unified_turn": False},
-            electron_state_root=str(tmp_path),
-        ),
-        invalid_params_code=-32602,
-    )
-    assert capped_engine.last_max_tokens == 4096
-
-    unreported_engine = _VisionCapableEngine(max_output_tokens=None)
-    build_chat_send_response(
-        "msg-vision-budget-default",
-        _vision_request_params(image_path, "req-vision-budget-default"),
-        approvals_pre_granted=True,
-        brain_container=_build_brain_container(
-            decision,
-            engine_type="mock",
-            model="mock-v1",
-            engine=unreported_engine,
-            feature_flags={"vision_unified_turn": False},
-            electron_state_root=str(tmp_path),
-        ),
-        invalid_params_code=-32602,
-    )
-    # Mirrors the standard chat path default, not the legacy 256 OCR cap.
-    assert unreported_engine.last_max_tokens == 16384
-
-
-def test_vision_turn_reports_max_tokens_stop_reason_on_length_finish(tmp_path: Path) -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    image_path = _write_temp_image(tmp_path)
-
-    response = build_chat_send_response(
-        "msg-vision-truncated",
-        _vision_request_params(image_path, "req-vision-truncated"),
-        approvals_pre_granted=True,
-        brain_container=_build_brain_container(
-            decision,
-            engine_type="mock",
-            model="mock-v1",
-            engine=_VisionCapableEngine(finish_reason="length"),
-            feature_flags={"vision_unified_turn": False},
-            electron_state_root=str(tmp_path),
-        ),
-        invalid_params_code=-32602,
-    )
-
-    done = response.notifications[-1]
-    assert done["method"] == "chat.done"
-    # A budget-clipped answer must say so instead of pretending end_turn.
-    assert done["params"]["stop_reason"] == "max_tokens"
-
-
-def test_vision_turn_surfaces_engine_connection_error_with_real_message(tmp_path: Path) -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    image_path = _write_temp_image(tmp_path)
-
-    with pytest.raises(ChatRequestError) as exc_info:
-        build_chat_send_response(
-            "msg-vision-unreachable",
-            _vision_request_params(image_path, "req-vision-unreachable"),
-            approvals_pre_granted=True,
-            brain_container=_build_brain_container(
-                decision,
-                engine_type="mock",
-                model="mock-v1",
-                engine=_UnreachableVisionEngine(),
-                feature_flags={"vision_unified_turn": False},
-                electron_state_root=str(tmp_path),
-            ),
-            invalid_params_code=-32602,
-        )
-
-    # Previously swallowed by request_dispatch's generic CHAT_STREAM_FAILED
-    # handler ("chat.send failed while preparing response").
-    error = exc_info.value
-    assert error.code == CMP_AI_ENGINE_CONNECTION
-    assert "Could not connect to Ollama" in error.message
-    assert error.retryable is True
-
-
 
 
 def test_build_chat_send_response_ignores_stale_interactive_conversation_mode_param() -> None:
@@ -3376,60 +2230,6 @@ def test_build_chat_send_response_accepts_vestigial_interactive_response() -> (
     assert brain_container.stack.router.last_kwargs["latest_user_content"] == "Steady"
 
 
-
-
-def test_build_chat_send_response_emits_chat_done_before_post_response_tasks_for_streaming_path(
-    monkeypatch,
-) -> None:
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="unused",
-        approval_request=None,
-        tool_results=(),
-    )
-    brain_container = _build_brain_container(
-        decision,
-        engine_type="mock",
-        model="mock-v1",
-        engine=_ThinkingStreamEngine(),
-    )
-    order: list[str] = []
-
-    def _capture_repo_anchor(**_kwargs: object) -> None:
-        order.append("post_response")
-
-    monkeypatch.setattr(
-        "sidecar.runtime.chat._maybe_refresh_repo_anchor", _capture_repo_anchor
-    )
-
-    response = build_chat_send_response(
-        "msg-memory-stream-order",
-        {
-            "request_id": "req-memory-stream-order",
-            "session_id": "session-stream-order",
-            "messages": [{"role": "user", "content": "Stream this reply"}],
-        },
-        approvals_pre_granted=True,
-        brain_container=brain_container,
-        invalid_params_code=-32602,
-        stream_notifications=True,
-        notification_writer=lambda item: order.append(f"notification:{item['method']}"),
-    )
-
-    assert response.result["status"] == "completed"
-    assert order == [
-        "notification:chat.thinking",
-        "notification:chat.token",
-        "notification:chat.done",
-    ]
-    assert response.post_settlement_callback is not None
-    response.post_settlement_callback()
-    assert order == [
-        "notification:chat.thinking",
-        "notification:chat.token",
-        "notification:chat.done",
-        "post_response",
-    ]
 
 
 def test_build_chat_send_response_emits_router_chat_done_before_post_response_when_text_streamed(
@@ -4390,7 +3190,15 @@ def test_resume_chat_send_response_from_approval_plan_respects_remaining_iterati
         lambda *args, **kwargs: ([(plan.tool_calls[0], 0)], 0),
     )
 
+    order: list[str] = []
+    monkeypatch.setattr(  # row 34 S5: the approved batch takes its restore point first
+        "sidecar.runtime.chat_resume.prepare_resume_restore_point",
+        lambda runtime, remaining, **kw: order.append(
+            f"restore_point:{[c.call_id for c, _ in remaining]}:{kw['session_id']}"),
+    )
+
     def fake_execute_tool_calls_sequentially(**kwargs):
+        order.append("execute")
         assert kwargs["runtime"].logical_turn_id == "logical-resumed-turn"
         from sidecar.ai.routing.loop_event_emit import emit_tool_result
         outcome = ToolExecutionOutcome(tool_name="write_file", output="notes.md saved",
@@ -4442,6 +3250,7 @@ def test_resume_chat_send_response_from_approval_plan_respects_remaining_iterati
     assert captured["max_iterations"] == 0
     assert captured["tool_payload"] == []
     assert len(captured["outcomes"]) == 1
+    assert order == [f"restore_point:['call-write-1']:{plan.session_id}", "execute"]
     assert response.result["status"] == TURN_STATE_COMPLETED
     assert response.result["response_text"] == "I saved notes.md successfully."
     assert response.result["completion_source"] == "model_winddown"
@@ -5080,6 +3889,31 @@ def test_build_chat_send_response_forwards_last_request_input_tokens() -> None:
     assert usage["last_request_input_tokens"] == 140
 
 
+def test_build_chat_send_response_treats_all_zero_usage_as_estimated() -> None:
+    decision = ChatDecision(
+        thinking_text=None,
+        response_text="Ready.",
+        approval_request=None,
+        tool_results=(),
+        usage=GenerationUsage(provider="ollama", model="qwen3.6:35b"),
+    )
+    response = build_chat_send_response(
+        "msg-zero-usage",
+        {
+            "request_id": "req-zero-usage",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+        approvals_pre_granted=True,
+        brain_container=_build_brain_container(decision),
+        invalid_params_code=-32602,
+    )
+
+    usage = _done_notification(response)["params"]["usage"]
+    # A present-but-zero record reads as "no provider usage": estimate instead.
+    assert usage["estimated"] is True
+    assert "last_request_input_tokens" not in usage
+
+
 def test_build_chat_send_response_omits_zero_last_request_input_tokens() -> None:
     decision = ChatDecision(
         thinking_text=None,
@@ -5261,51 +4095,15 @@ def _vision_attachment(asset_path: str) -> dict[str, str]:
     return {"id": "image-1", "kind": "image", "assetPath": asset_path}
 
 
-def test_build_chat_send_response_flag_off_keeps_assist_vision_rejection(
+def test_build_chat_send_response_routes_chat_mode_vision_requests_through_the_router(
     tmp_path: Path,
 ) -> None:
     engine = _VisionCapableEngine()
-    brain_container = _build_brain_container(
-        ChatDecision(None, "unused", None, ()),
-        engine_type="mock",
-        model="mock-v1",
-        engine=engine,
-        feature_flags={"vision_unified_turn": False},
-        electron_state_root=str(tmp_path),
-    )
-
-    with pytest.raises(ChatRequestError, match="Image attachments are only available in chat mode"):
-        build_chat_send_response(
-            "msg-vision-legacy-assist",
-            {
-                "request_id": "req-vision-legacy-assist",
-                "mode": "assist",
-                "messages": [{"role": "user", "content": "Describe this image"}],
-                "attachments": [_vision_attachment(_write_temp_image(tmp_path))],
-            },
-            approvals_pre_granted=True,
-            brain_container=brain_container,
-            invalid_params_code=-32602,
-        )
-
-    assert engine.last_images == []
-
-
-def test_build_chat_send_response_flag_on_never_calls_legacy_vision(
-    tmp_path: Path,
-) -> None:
-    class _RouterOnlyVisionEngine(_VisionCapableEngine):
-        def generate_with_vision(self, *args: object, **kwargs: object) -> GenerationResult:
-            _ = args, kwargs
-            raise AssertionError("legacy vision path must not run")
-
-    engine = _RouterOnlyVisionEngine()
     brain_container = _build_brain_container(
         ChatDecision(None, "routed", None, ()),
         engine_type="mock",
         model="mock-v1",
         engine=engine,
-        feature_flags={"vision_unified_turn": True},
         electron_state_root=str(tmp_path),
     )
 
@@ -5325,29 +4123,9 @@ def test_build_chat_send_response_flag_on_never_calls_legacy_vision(
     assert brain_container.stack.router.last_kwargs
 
 
-def test_vision_anchor_is_sanitized_and_images_only_reach_its_row(
+def test_vision_anchor_is_sanitized_for_the_routed_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    class _CapturingVisionStreamEngine:
-        supported_modalities = {ModelModality.TEXT, ModelModality.VISION}
-        capabilities = {"text": True, "vision": True, "thinking": True}
-
-        def __init__(self) -> None:
-            self.stream_messages: list[list[dict[str, object]]] = []
-
-        def get_model_max_output_tokens(self) -> int | None:
-            return None
-
-        def stream(self, **kwargs: object):
-            messages = kwargs.get("messages")
-            self.stream_messages.append(list(messages) if isinstance(messages, list) else [])
-            yield SimpleNamespace(kind="content", text="Done.")
-            yield SimpleNamespace(kind="done", text="")
-
-        def generate_with_vision(self, *args: object, **kwargs: object) -> GenerationResult:
-            _ = args, kwargs
-            raise AssertionError("legacy vision path must not run")
-
     recorded_contexts: list[ChatRequestContext] = []
 
     def _record_context(**kwargs: object) -> ChatRequestContext:
@@ -5356,8 +4134,11 @@ def test_vision_anchor_is_sanitized_and_images_only_reach_its_row(
         return context
 
     monkeypatch.setattr("sidecar.runtime.chat.ChatRequestContext", _record_context)
-    decision = ChatDecision(None, "unused", None, ())
-    vision_engine = _CapturingVisionStreamEngine()
+    brain_container = _build_brain_container(
+        ChatDecision(None, "unused", None, ()),
+        engine=_VisionCapableEngine(),
+        electron_state_root=str(tmp_path),
+    )
     build_chat_send_response(
         "msg-history-images-vision",
         {
@@ -5374,41 +4155,19 @@ def test_vision_anchor_is_sanitized_and_images_only_reach_its_row(
             "attachments": [_vision_attachment(_write_temp_image(tmp_path))],
         },
         approvals_pre_granted=True,
-        brain_container=_build_brain_container(
-            decision,
-            engine=vision_engine,
-            feature_flags={"vision_unified_turn": True},
-            electron_state_root=str(tmp_path),
-        ),
+        brain_container=brain_container,
         invalid_params_code=-32602,
         stream_notifications=True,
     )
 
-    vision_rows = vision_engine.stream_messages[0]
-    image_rows = [row for row in vision_rows if "images" in row]
-    assert len(image_rows) == 1
-    expected_anchor = "describe [omitted encoded attachment payload]"
-    assert recorded_contexts[0].vision_anchor_text == expected_anchor
-    assert recorded_contexts[0].vision_token_surcharge == _vision_turn.vision_token_surcharge(
-        recorded_contexts[0].vision_images
+    assert brain_container.stack.router.last_kwargs
+    context = recorded_contexts[0]
+    assert context.vision_anchor_text == "describe [omitted encoded attachment payload]"
+    assert len(context.vision_images) == 1
+    assert isinstance(context.vision_images[0], VisionImage)
+    assert context.vision_token_surcharge == _vision_turn.vision_token_surcharge(
+        context.vision_images
     )
-    assert image_rows[0]["content"] == expected_anchor
-    assert isinstance(image_rows[0]["images"][0], VisionImage)
-
-    text_engine = _CapturingVisionStreamEngine()
-    build_chat_send_response(
-        "msg-history-images-text",
-        {
-            "request_id": "req-history-images-text",
-            "mode": "chat",
-            "messages": [{"role": "user", "content": "text only", "images": ["junk"]}],
-        },
-        approvals_pre_granted=True,
-        brain_container=_build_brain_container(decision, engine=text_engine),
-        invalid_params_code=-32602,
-        stream_notifications=True,
-    )
-    assert all("images" not in row for row in text_engine.stream_messages[0])
 
 
 def test_vision_request_rejects_an_empty_sanitized_anchor(
@@ -5487,11 +4246,6 @@ def test_text_only_engine_refuses_vision_before_any_engine_call(tmp_path: Path) 
 
         def get_model_max_output_tokens(self) -> int | None:
             return None
-
-        def generate_with_vision(self, *args: object, **kwargs: object) -> GenerationResult:
-            _ = args, kwargs
-            self.calls += 1
-            return GenerationResult(content="unexpected", finish_reason="stop")
 
         def stream(self, **kwargs: object):
             _ = kwargs

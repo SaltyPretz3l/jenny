@@ -9,14 +9,7 @@
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const documentRef = windowRef.document || null;
 
-  function escapeStatusText(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeStatusText = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function getStatusRowRenderer() {
     return windowRef.inventory && typeof windowRef.inventory.statusRow === 'function'
@@ -81,6 +74,53 @@
       return;
     }
     target.innerHTML = buildStatusRowFallbackMarkup(model);
+  }
+
+  /* Runtime posture is represented by the Chat panel dot and text. Module scope: the Settings chrome
+   * paints it with the composer carriers on every render pass (row 32), the manager on every refresh. */
+  function renderComposerOfflineLabel(offlineState) {
+    const dotNode = documentRef?.getElementById('composerChatPostureDot') || null;
+    if (!dotNode) {
+      return;
+    }
+    const localOnly = offlineState.mode === 'local_only';
+    const postureRow = documentRef?.getElementById('composerChatPosture');
+    if (postureRow) postureRow.hidden = !localOnly;
+    const posture = !localOnly
+      ? 'local'
+      : offlineState.localChatReady
+        ? 'local-only-ready'
+        : 'local-only-error';
+    dotNode.setAttribute('data-posture', posture);
+    dotNode.classList.toggle('status-dot--active', localOnly && offlineState.localChatReady);
+    dotNode.classList.toggle('status-dot--error', localOnly && !offlineState.localChatReady);
+    // Tier C #12: data-state only (not the full applyStatusChip treatment,
+    // which would also add the settings-status-chip class and overwrite
+    // textContent) — this dot is a decorative, textless indicator, so it
+    // gets the loading -> live/error convention additively alongside its
+    // existing status-dot--* classes above. Before the first offline
+    // payload lands this reads 'loading' instead of silently falling
+    // through to the "off" styling those classes produce by default.
+    const chipUtils = getStatusChipUtils();
+    const dotChipState = offlineState.resolved === false
+      ? 'loading'
+      : chipUtils
+        ? chipUtils.resolveAvailabilityChipState({ resolved: true, ok: !(localOnly && !offlineState.localChatReady) })
+        : (localOnly && !offlineState.localChatReady ? 'error' : 'live');
+    dotNode.setAttribute('data-state', dotChipState);
+    const postureTooltip = !localOnly
+      ? (offlineState.resolved === false
+        ? jt('offline.status.runtimePostureLoading', 'Runtime posture is still loading.')
+        : offlineState.localChatReady
+          ? jt('offline.status.localRuntimeReadyNetworkAllowed', 'A local runtime is ready. Force local inference is off, so configured inference providers may use the network.')
+          : jt('offline.status.forceLocalOffNetworkAllowed', 'Force local inference is off. Configured inference providers may use the network.'))
+      : offlineState.localChatReady
+        ? (offlineState.localVisionReady
+          ? jt('offline.status.usingModelWithVision', 'Force local inference: using {model} for chat and current-turn vision.', { model: offlineState.preferredLocalModel })
+          : jt('offline.status.usingModelWithoutVision', 'Force local inference: using {model} for chat. Vision remains unavailable for this model.', { model: offlineState.preferredLocalModel }))
+        : (offlineState.unavailableReason || offlineState.summary || jt('offline.status.forceLocalUnavailable', 'Force local inference is enabled but unavailable.'));
+    const textNode = documentRef?.getElementById('composerChatPostureText');
+    if (textNode) textNode.textContent = postureTooltip;
   }
 
   function createOfflineManager(deps) {
@@ -176,52 +216,6 @@
         return jt('offline.status.selectedModelMissing', 'Selected model {model} is not available in the local catalog.', { model: offlineState.preferredLocalModel });
       }
       return jt('offline.status.noModelSelected', 'No local inference model is selected.');
-    }
-
-    /* Runtime posture is represented by the Chat panel dot and text. */
-    function renderComposerOfflineLabel(offlineState) {
-      const dotNode = documentRef?.getElementById('composerChatPostureDot') || null;
-      if (!dotNode) {
-        return;
-      }
-      const localOnly = offlineState.mode === 'local_only';
-      const postureRow = documentRef?.getElementById('composerChatPosture');
-      if (postureRow) postureRow.hidden = !localOnly;
-      const posture = !localOnly
-        ? 'local'
-        : offlineState.localChatReady
-          ? 'local-only-ready'
-          : 'local-only-error';
-      dotNode.setAttribute('data-posture', posture);
-      dotNode.classList.toggle('status-dot--active', localOnly && offlineState.localChatReady);
-      dotNode.classList.toggle('status-dot--error', localOnly && !offlineState.localChatReady);
-      // Tier C #12: data-state only (not the full applyStatusChip treatment,
-      // which would also add the settings-status-chip class and overwrite
-      // textContent) — this dot is a decorative, textless indicator, so it
-      // gets the loading -> live/error convention additively alongside its
-      // existing status-dot--* classes above. Before the first offline
-      // payload lands this reads 'loading' instead of silently falling
-      // through to the "off" styling those classes produce by default.
-      const chipUtils = getStatusChipUtils();
-      const dotChipState = offlineState.resolved === false
-        ? 'loading'
-        : chipUtils
-          ? chipUtils.resolveAvailabilityChipState({ resolved: true, ok: !(localOnly && !offlineState.localChatReady) })
-          : (localOnly && !offlineState.localChatReady ? 'error' : 'live');
-      dotNode.setAttribute('data-state', dotChipState);
-      const postureTooltip = !localOnly
-        ? (offlineState.resolved === false
-          ? jt('offline.status.runtimePostureLoading', 'Runtime posture is still loading.')
-          : offlineState.localChatReady
-            ? jt('offline.status.localRuntimeReadyNetworkAllowed', 'A local runtime is ready. Force local inference is off, so configured inference providers may use the network.')
-            : jt('offline.status.forceLocalOffNetworkAllowed', 'Force local inference is off. Configured inference providers may use the network.'))
-        : offlineState.localChatReady
-          ? (offlineState.localVisionReady
-            ? jt('offline.status.usingModelWithVision', 'Force local inference: using {model} for chat and current-turn vision.', { model: offlineState.preferredLocalModel })
-            : jt('offline.status.usingModelWithoutVision', 'Force local inference: using {model} for chat. Vision remains unavailable for this model.', { model: offlineState.preferredLocalModel }))
-          : (offlineState.unavailableReason || offlineState.summary || jt('offline.status.forceLocalUnavailable', 'Force local inference is enabled but unavailable.'));
-      const textNode = documentRef?.getElementById('composerChatPostureText');
-      if (textNode) textNode.textContent = postureTooltip;
     }
 
     function renderOfflineManager() {
@@ -353,5 +347,5 @@
     };
   }
 
-  return { createOfflineManager };
+  return { createOfflineManager, renderComposerPosture: renderComposerOfflineLabel };
 });

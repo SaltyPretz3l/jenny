@@ -82,7 +82,6 @@ function makeHost() {
       normalizeEditorLanguage: () => 'javascript',
     },
     imageHostUtils: {},
-    previewHostUtils: {},
   });
   return { host, fake, dom };
 }

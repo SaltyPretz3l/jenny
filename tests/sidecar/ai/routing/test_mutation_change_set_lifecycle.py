@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from argparse import Namespace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,8 @@ from sidecar.ai.config import RuntimeConfig
 from sidecar.ai.mcp.builtin_server import (
     BuiltinTool,
     _build_workspace_guard,
+    _default_tools,
+    _handle_tools_call,
     _prepare_call_arguments,
 )
 from sidecar.ai.routing import mutation_change_set_lifecycle as lifecycle_module
@@ -733,6 +736,153 @@ def test_shell_observation_marks_open_set_partially_undoable(tmp_path: Path) -> 
     record = store.load(identity.workspace_id, CHANGE_SET_ID).record
     assert record["coverage"]["known_unjournaled_events"] == ["call-shell"]
     assert record["coverage"]["partially_undoable"] is True
+
+
+def _open_typed_set(workspace: Path, lifecycle: MutationChangeSetLifecycle) -> None:
+    prepared = lifecycle.prepare_file_change(
+        _arguments("call-write"),
+        tool_name="write_file",
+        target=workspace / "typed.txt",
+        relative_path="typed.txt",
+        new_bytes=b"typed",
+        checkpoint=None,
+    )
+    (workspace / "typed.txt").write_bytes(b"typed")
+    lifecycle.mark_applied(prepared)
+
+
+def _coverage(store: WorkspaceMutationJournalStore, workspace: Path) -> dict[str, Any]:
+    record = store.load(workspace_identity(workspace).workspace_id, CHANGE_SET_ID).record
+    assert record is not None
+    return record["coverage"]
+
+
+@pytest.mark.parametrize("tool_name", ["run_command", "run_temp_script", "python_execute"])
+@pytest.mark.parametrize(("changed", "marked"), [(False, False), (None, True), (True, True)])
+def test_scripted_result_marks_the_set_unless_nothing_changed(
+    tmp_path: Path, tool_name: str, changed: bool | None, marked: bool
+) -> None:
+    workspace, store, lifecycle = _lifecycle(tmp_path)
+    _open_typed_set(workspace, lifecycle)
+    guard = WorkspaceGuard(str(workspace), mutation_journal=lifecycle)
+
+    guard.observe_mutation_tool_result(tool_name, _arguments("call-script"), changed=changed)
+
+    coverage = _coverage(store, workspace)
+    assert coverage["partially_undoable"] is marked
+    assert coverage["known_unjournaled_events"] == (["call-script"] if marked else [])
+
+
+def test_typed_tool_result_is_never_an_unjournaled_event(tmp_path: Path) -> None:
+    workspace, store, lifecycle = _lifecycle(tmp_path)
+    _open_typed_set(workspace, lifecycle)
+    guard = WorkspaceGuard(str(workspace), mutation_journal=lifecycle)
+
+    guard.observe_mutation_tool_result("write_file", _arguments("call-typed"), changed=None)
+
+    assert _coverage(store, workspace)["partially_undoable"] is False
+
+
+def test_scripted_only_turn_opens_no_change_set_until_a_typed_edit(tmp_path: Path) -> None:
+    # Owner decision 2026-10-05: the pre-turn checkpoint is a scripted-only
+    # turn's restore point; an unknown script result waits for a typed set.
+    workspace, store, lifecycle = _lifecycle(tmp_path)
+    unattached = {key: value for key, value in _arguments("call-script").items()
+                  if key != "_jenny_change_set_id"}
+
+    lifecycle.observe_tool_call("python_execute", unattached, changed=None)
+
+    open_result = store.find_open_change_set(
+        workspace, session_id="session-one", turn_id="turn-one"
+    )
+    assert open_result.record is None
+    _open_typed_set(workspace, lifecycle)
+    coverage = _coverage(store, workspace)
+    assert coverage["known_unjournaled_events"] == ["call-script"]
+    assert coverage["partially_undoable"] is True
+
+
+@pytest.mark.parametrize("tool_name", ["run_temp_script", "python_execute"])
+def test_script_tools_get_turn_attribution_without_minting_a_change_set(tool_name: str) -> None:
+    run = SimpleNamespace(
+        request_id="stream-fresh",
+        session_id="session-one",
+        runtime=SimpleNamespace(logical_turn_id="turn-one"),
+    )
+    bind_run_context(run)
+    try:
+        attribution = inject_tool_attribution(
+            tool_name=tool_name,
+            tool_call_id="call-one",
+            session_id="session-one",
+        )
+        assert attribution == {"_jenny_turn_id": "turn-one", "_jenny_tool_call_id": "call-one"}
+        assert current_run_change_set_id() == ""
+    finally:
+        finish_run_change_set(run, approval_paused=False, reason="test_complete")
+
+
+def test_read_only_run_command_does_not_mark_the_turn_partially_undoable(tmp_path: Path) -> None:
+    workspace, store, lifecycle = _lifecycle(tmp_path)
+    for command in (
+        ["git", "init", "-q"],
+        ["git", "config", "user.email", "test@example.com"],
+        ["git", "config", "user.name", "Test"],
+    ):
+        subprocess.run(command, cwd=workspace, check=True)
+    (workspace / "base.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=workspace, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=workspace, check=True)
+    _open_typed_set(workspace, lifecycle)
+    guard = WorkspaceGuard(str(workspace), mutation_journal=lifecycle)
+    tools = _default_tools({"tools_shell_enabled": True})
+
+    response = _handle_tools_call(
+        "status-call",
+        tools,
+        guard,
+        {
+            "name": "run_command",
+            "arguments": {**_arguments("call-status"), "command": "git status"},
+        },
+    )
+
+    assert response["result"]["isError"] is False
+    coverage = _coverage(store, workspace)
+    assert coverage["known_unjournaled_events"] == []
+    assert coverage["partially_undoable"] is False
+
+
+def test_record_with_the_previous_coverage_values_still_loads(tmp_path: Path) -> None:
+    workspace, store, lifecycle = _lifecycle(tmp_path)
+    _open_typed_set(workspace, lifecycle)
+    identity = workspace_identity(workspace)
+    record = store.load(identity.workspace_id, CHANGE_SET_ID).record
+    assert record is not None
+    legacy = dict(record)
+    legacy["coverage"] = {
+        **record["coverage"],
+        "excluded_mutation_classes": ["run_command", "explorer_rename"],
+        "warning": (
+            "Shell mutations are not journaled. "
+            "Explorer rename is not journaled until WO-27 item 2."
+        ),
+    }
+
+    assert store.write_transition(legacy, workspace_root=workspace).ok is True
+    loaded = store.load(identity.workspace_id, CHANGE_SET_ID)
+    assert loaded.ok is True
+    assert loaded.record["coverage"]["warning"].startswith("Shell mutations are not journaled.")
+
+
+def test_new_record_warning_names_shell_and_script_mutations(tmp_path: Path) -> None:
+    workspace, store, lifecycle = _lifecycle(tmp_path)
+    _open_typed_set(workspace, lifecycle)
+
+    warning = _coverage(store, workspace)["warning"]
+
+    assert warning.startswith("Shell and script mutations are not journaled.")
+    assert "Explorer rename is not journaled" in warning
 
 
 def test_resume_after_crash_after_in_progress_flush_before_first_workspace_mutation(

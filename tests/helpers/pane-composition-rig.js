@@ -104,6 +104,8 @@ function createRig(t, options = {}) {
     // Opt-in: pane 0's follow re-latch (renderer/app.js wires the app controller and setFollowLatest).
     ...(options.relatchPrimaryFollow ? { relatchPrimaryFollow: options.relatchPrimaryFollow } : {}),
     getPrimaryShell: () => ({ onPaneSessionChanged: (sessionId) => events.push(['session-changed', 0, sessionId]) }),
+    // Opt-in: pane 0's composer as renderer/app.js hands it over (it may sit in the Workspace dock).
+    ...(options.getPrimaryComposerInput ? { getPrimaryComposerInput: options.getPrimaryComposerInput } : {}),
     // Opt-in: the real session-keyed composer store over a pane-0 #chatInput.
     ...(drafts ? { getComposerSessionState: () => drafts.controller } : {}),
     createResizer: (resizerDeps) => {

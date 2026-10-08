@@ -132,6 +132,62 @@ test('journal v2 recovers a crash-truncated final line but blocks a corrupt comp
   );
 });
 
+test('journal v2 repairs a complete final record without a newline before appending', () => {
+  const journalPath = freshPath();
+  let journal = new TurnEventJournal(journalPath);
+  journal.append('session-tail', 'turn-tail', [{ event_id: 'earlier' }]);
+  journal.append('session-tail', 'turn-tail', [{ event_id: 'last', text: 'caf\u00e9' }]);
+  journal.flush();
+  const [partition] = partitionFiles(journalPath);
+  fs.writeFileSync(partition, fs.readFileSync(partition, 'utf8').slice(0, -1));
+  const logs = [];
+
+  journal = new TurnEventJournal(journalPath, {
+    logger: (level, event, details) => logs.push({ level, event, details }),
+  });
+  assert.equal(journal._totalPartitionBytes, fs.statSync(partition).size);
+  assert.equal(journal._partitionStats.get(journal._partitionKey('session-tail', 'turn-tail')).bytes,
+    fs.statSync(partition).size);
+  journal.append('session-tail', 'turn-tail', [{ event_id: 'new' }]);
+  journal.flush();
+  journal = new TurnEventJournal(journalPath);
+  assert.deepEqual(journal.list('session-tail', 'turn-tail').map((event) => event.event_id), [
+    'earlier', 'last', 'new',
+  ]);
+  assert.equal(journal._totalPartitionBytes, fs.statSync(partition).size);
+  assert.equal(journal._partitionStats.get(journal._partitionKey('session-tail', 'turn-tail')).bytes,
+    fs.statSync(partition).size);
+  assert.ok(logs.some(({ event }) => event === 'turn_journal.tail_newline_repaired'));
+});
+
+test('journal v2 reclaims a torn first record and an already empty partition across restarts', () => {
+  for (const contents of ['{"schema_version":2', '']) {
+    const journalPath = freshPath();
+    let journal = new TurnEventJournal(journalPath);
+    journal.append('session-torn', 'turn-torn', [{ event_id: 'lost' }]);
+    journal.flush();
+    const [partition] = partitionFiles(journalPath);
+    fs.writeFileSync(partition, contents);
+    const logs = [];
+
+    journal = new TurnEventJournal(journalPath, {
+      maxPartitions: 1,
+      logger: (level, event, details) => logs.push({ level, event, details }),
+    });
+    assert.equal(fs.existsSync(partition), false);
+    assert.equal(journal._storageBlocked, false);
+    assert.equal(journal._partitionCount, 0);
+    assert.equal(journal._totalPartitionBytes, 0);
+    assert.ok(logs.some(({ event }) => event === 'turn_journal.empty_partition_reclaimed'));
+    journal.append('session-other', 'turn-other', [{ event_id: 'kept' }]);
+    journal.flush();
+
+    journal = new TurnEventJournal(journalPath, { maxPartitions: 1 });
+    assert.equal(journal._storageBlocked, false);
+    assert.deepEqual(journal.list('session-other', 'turn-other').map((event) => event.event_id), ['kept']);
+  }
+});
+
 test('journal v2 blocks storage when a corrupt partition has no recoverable identity', () => {
   const journalPath = freshPath();
   let journal = new TurnEventJournal(journalPath);

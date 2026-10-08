@@ -56,6 +56,7 @@ KNOWN_DYNAMIC_ENTRYPOINT_IMPORTS: Dict[str, Set[str]] = {
         "sidecar.ai.tools.builtins.delete_file",
         "sidecar.ai.tools.builtins.move_file",
         "sidecar.ai.tools.builtins.edit_file",
+        "sidecar.ai.tools.builtins.propose_change",
         "sidecar.ai.tools.builtins.filesystem",
         "sidecar.ai.tools.builtins.filesystem_listing",
         "sidecar.ai.tools.builtins.git_ops",
@@ -71,7 +72,6 @@ KNOWN_DYNAMIC_ENTRYPOINT_IMPORTS: Dict[str, Set[str]] = {
 
 # Modules intentionally deferred from startup graph (documented explicitly below).
 DEFERRED_MODULE_STATUS: Dict[str, str] = {
-    "sidecar.ai.plugins.policy": "document-deferred",
     # Tool-contract W8 (2026-08-29): the W0 failure_taxonomy/phase_trace "wire"
     # rows were removed once W1/W4 landed their consumers, and the apply_patch
     # machinery chain was DELETED per the recorded W8 adjudication criterion

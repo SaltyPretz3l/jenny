@@ -9,7 +9,14 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 
-const { UpdateService } = require('../services/update-service');
+const { UpdateService: PlatformUpdateService } = require('../services/update-service');
+
+// Tests that do not name a platform exercise the Windows updater path. Left to
+// process.platform, they failed on Linux, where a non-AppImage run has no
+// automatic updates at all.
+class UpdateService extends PlatformUpdateService {
+  constructor(options = {}) { super({ platform: 'win32', ...options }); }
+}
 const {
   cleanupTrackedResources,
   createTrackedTempDir,
@@ -549,4 +556,26 @@ test('UpdateService aborts updater metadata beyond one MiB', async () => {
   await assert.rejects(pending, { code: 'update-metadata-too-large' });
   assert.equal(response.destroyed, true);
   assert.equal(aborted, true);
+});
+
+test('a failed check logs a short cause token and never the message text', async () => {
+  const causes = [];
+  const failures = [
+    [Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }), 'ECONNREFUSED'],
+    [new Error('net::ERR_PROXY_CONNECTION_FAILED'), 'net::ERR_PROXY_CONNECTION_FAILED'],
+    [Object.assign(new Error('rate-limited'), { code: 'rate-limited' }), 'rate-limited'],
+    [new Error('could not reach https://example.invalid/secret'), 'unknown'],
+  ];
+  for (const [failure] of failures) {
+    const service = new UpdateService({
+      app: makeApp({ isPackaged: false }),
+      storePath: path.join(makeTempDir(), 'update-state.json'),
+      platform: 'linux',
+      arch: 'x64',
+      logger: (level, event, details) => { if (event === 'updates.failed') causes.push(details.cause); },
+      releaseClient: async () => { throw failure; },
+    });
+    assert.equal((await service.check()).errorCode, 'CMP-UPD-0001');
+  }
+  assert.deepEqual(causes, failures.map(([, cause]) => cause));
 });

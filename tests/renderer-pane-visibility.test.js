@@ -245,3 +245,14 @@ test('resolvePaneSessionId agrees with isSessionVisibleInPane on every surface',
   }
   assert.equal(checked, SURFACES.length * layouts.length * 3);
 });
+
+test('row 40 W6b: the second pane hosted in the Workspace is live whatever the dock stack does', () => {
+  const panes = normalizePaneLayout({ panes: [{ sessionId: 'a' }, { sessionId: 'b' }], focusedPaneId: 0 });
+  const state = { currentSessionId: 'a', panes, ui: { activeView: 'ide', ideChatDockOpen: false }, features: { featureFlags: { ide_chat_dock: true } } };
+  assert.equal(isSessionVisibleInAnyPane(state, 'b'), false, 'not hosted: the dock gate applies');
+  state.ui.ideSecondChatHosted = true;
+  assert.equal(isSessionVisibleInAnyPane(state, 'b'), true, 'hosted as Chat 2: live');
+  assert.equal(isSessionVisibleInAnyPane(state, 'a'), false, 'pane 0 still follows its own dock stack');
+  state.ui.activeView = 'settings';
+  assert.equal(isSessionVisibleInAnyPane(state, 'b'), false, 'outside the Workspace the flag means nothing');
+});

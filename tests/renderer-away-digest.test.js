@@ -327,3 +327,119 @@ test('a visible active chat is synchronized as watched during a read', async () 
   assert.ok(JSON.parse(h.storage.values.get(SESSION_SEEN_KEY)).s1);
   h.close();
 });
+
+function settledHarness(options = {}) {
+  const now = Date.now();
+  const rows = [
+    work({ work_id: 'w1', session_id: 's1', status: 'running', updated_at: new Date(now - 60000).toISOString() }),
+    work({ work_id: 'w2', session_id: 's1', status: 'pending', updated_at: new Date(now - 50000).toISOString() }),
+  ];
+  const h = harness({ activeView: 'home', sessions: [session('s1', 'Long run')],
+    getSnapshot: () => ({ ok: true, work: rows.map((row) => ({ ...row })) }), ...options });
+  const finish = (workId) => {
+    const row = rows.find((entry) => entry.work_id === workId);
+    row.status = 'completed';
+    row.updated_at = new Date().toISOString();
+  };
+  const fireSettleTimers = async () => {
+    h.timers.timeouts.filter((handle) => !handle.cleared && !handle.fired).forEach((handle) => {
+      handle.fired = true;
+      handle.fn();
+    });
+    await flush();
+  };
+  return { ...h, finish, fireSettleTimers };
+}
+
+test('runs that settle while Home is on screen re-read the digest once per burst', async () => {
+  const h = settledHarness();
+  await h.reader.refresh();
+  h.render();
+  assert.equal(h.body.querySelector('.away-digest__progress').textContent, '2 still in progress');
+  assert.equal(h.rows().length, 0);
+  assert.equal(h.calls.snapshot.length, 1);
+
+  h.finish('w1');
+  h.finish('w2');
+  h.reader.onRunSettled({ kind: 'complete', payload: { sessionId: 's1', streamId: 'stream-1' } });
+  h.reader.onRunSettled({ kind: 'complete', payload: { sessionId: 's1', streamId: 'stream-2' } });
+  await h.fireSettleTimers();
+
+  assert.equal(h.calls.snapshot.length, 1 + 1);
+  assert.equal(h.body.querySelector('.away-digest__progress'), null);
+  assert.ok(h.row('w1'));
+  assert.ok(h.row('w2'));
+  assert.equal(h.storage.values.has(SESSION_SEEN_KEY), false);
+  h.close();
+});
+
+test('a run settling during an in-flight read re-reads after it, never joins it', async () => {
+  let release = null;
+  const h = settledHarness();
+  await h.reader.refresh();
+  const rows = [work({ work_id: 'w1', session_id: 's1', status: 'running' })];
+  h.window.jennyShell.sessionRuntime.getSnapshot = (params) => {
+    h.calls.snapshot.push(params);
+    const answer = { ok: true, work: rows.map((row) => ({ ...row })) };
+    if (h.calls.snapshot.length === 2) return new Promise((resolve) => { release = () => resolve(answer); });
+    return Promise.resolve(answer);
+  };
+  const stale = h.reader.refresh();
+  await flush();
+  rows[0].status = 'completed';
+  rows[0].updated_at = new Date().toISOString();
+  h.reader.onRunSettled({ kind: 'complete', payload: { sessionId: 's1' } });
+  await h.fireSettleTimers();
+  assert.equal(h.calls.snapshot.length, 2);
+  release();
+  await stale;
+  await flush();
+  assert.equal(h.calls.snapshot.length, 3);
+  h.render();
+  assert.equal(h.body.querySelector('.away-digest__progress'), null);
+  assert.ok(h.row('w1'));
+  h.close();
+});
+
+test('a settled run reads nothing while neither Home nor the Chats panel is on screen', async () => {
+  const h = settledHarness({ activeView: 'ide' });
+  h.reader.onRunSettled({ kind: 'complete', payload: { sessionId: 's1' } });
+  h.state.ui.activeView = 'home';
+  h.setVisibility('hidden');
+  h.reader.onRunSettled({ kind: 'error', payload: { sessionId: 's1' } });
+  await h.fireSettleTimers();
+  assert.equal(h.timers.timeouts.length, 0);
+  assert.equal(h.calls.snapshot.length, 0);
+  h.setVisibility('visible');
+  h.reader.onRunSettled({ kind: 'complete', payload: { sessionId: 's1' } });
+  h.reader.dispose();
+  await h.fireSettleTimers();
+  assert.equal(h.timers.timeouts[0].cleared, true);
+  assert.equal(h.calls.snapshot.length, 0);
+  h.window.close();
+});
+
+test('a settle heard before the runtime row turns terminal re-reads on a bounded backoff', async () => {
+  const h = settledHarness();
+  await h.reader.refresh();
+  h.reader.onRunSettled({ kind: 'complete', payload: { sessionId: 's1' } });
+  await h.fireSettleTimers();
+  assert.equal(h.calls.snapshot.length, 2);
+  h.render();
+  assert.equal(h.body.querySelector('.away-digest__progress').textContent, '2 still in progress');
+  h.finish('w1');
+  await h.fireSettleTimers();
+  assert.equal(h.calls.snapshot.length, 3);
+  h.render();
+  assert.equal(h.body.querySelector('.away-digest__progress').textContent, '1 still in progress');
+  assert.ok(h.row('w1'));
+  await h.fireSettleTimers();
+  assert.equal(h.calls.snapshot.length, 3);
+  assert.deepEqual(h.timers.timeouts.map((handle) => handle.delay), [250, 1000]);
+
+  h.reader.onRunSettled({ kind: 'complete', payload: { sessionId: 'gone' } });
+  for (let index = 0; index < 5; index += 1) await h.fireSettleTimers();
+  assert.equal(h.calls.snapshot.length, 3 + 3);
+  assert.deepEqual(h.timers.timeouts.slice(2).map((handle) => handle.delay), [250, 1000, 3000]);
+  h.close();
+});

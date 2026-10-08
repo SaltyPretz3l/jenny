@@ -151,6 +151,14 @@
      * the existing save and reconciliation wiring untouched while it owns
      * the composer pill and popover presentation. */
     const composerModelPickerModule = root.rendererComposerModelPicker || null;
+    const modelFailureActionDeps = { documentRef, windowRef: ctx.windowRef, state, reader: root.jennyModelLoadFailure, registerCleanup,
+      openSettingsSection: (...a) => callbacks.openSettingsSection?.(...a), openLogs: () => callbacks.setActiveView?.('logs'),
+      loadModel: (payload) => ctx.windowRef.jennyShell?.models?.load?.(payload),
+      persistContext: (payload) => ctx.windowRef.jennyShell?.modelTuning?.update?.(payload),
+      startPull: (tag) => controllers.modelLibrarySectionController?.startPull?.(tag), cancelPull: (tag) => controllers.modelLibrarySectionController?.cancelPull?.(tag),
+    };
+    root.rendererComposerModelFailureActions?.bindComposerModelFailureActions?.(modelFailureActionDeps);
+    root.rendererHeroModelState?.bindHeroActions?.(modelFailureActionDeps);
     if (composerModelPickerModule && typeof composerModelPickerModule.createComposerModelPicker === 'function') {
       try {
         const composerModelPicker = composerModelPickerModule.createComposerModelPicker({ state, documentRef });
@@ -184,6 +192,19 @@
         appendClientLog('WARN', 'composer.settings_fit_mount_failed', { message: String(error?.message || error || '') });
       }
     }
+    // Row 38 item 5: a pull tick or a new recommendation repaints once per microtask.
+    let modelRepaintQueued = false;
+    let modelRepaintDisposed = false;
+    const onModelStateChanged = () => {
+      if (modelRepaintQueued || modelRepaintDisposed) return;
+      modelRepaintQueued = true;
+      Promise.resolve().then(() => { modelRepaintQueued = false; if (!modelRepaintDisposed) callbacks.renderAll?.(); });
+    };
+    ctx.windowRef.addEventListener('jenny:model-state-changed', onModelStateChanged);
+    registerCleanup(() => {
+      modelRepaintDisposed = true;
+      ctx.windowRef.removeEventListener('jenny:model-state-changed', onModelStateChanged);
+    });
 
     const composerAttachmentTray = documentRef.querySelector('#attachmentTray');
     const composerAttachmentPreviewPill = documentRef.querySelector('#composerAttachmentPreviewPill');
@@ -236,6 +257,8 @@
             // A model load is the reason Send is off, session or not (F6).
             const modelLoading = composerV2RenderModule.describeModelLoading?.(state.backend);
             if (modelLoading) return modelLoading;
+            const heroView = root.rendererHeroModelState?.deriveHeroView(state);
+            if (heroView?.kind === 'noModel' || heroView?.kind === 'downloading') return root.rendererHeroModelState.heroCopy(heroView).composerLine;
             const sessionId = String(state.currentSessionId || '').trim();
             if (!sessionId) return reasons.NO_SESSION;
             if (!state.auth?.authenticated) return reasons.NOT_AUTHENTICATED;
@@ -436,10 +459,9 @@
     settingsShellController?.ensureSettingsSectionReady?.('proactive');
     settingsShellController?.ensureSettingsSectionReady?.('memories');
 
-    // Model library (Settings > Models "Model library" group, model_management_ui
-    // flag): self-contained sibling controller, no-ops entirely when the flag is
-    // off. Reuses refreshSnapshots (models.list + renderSettings) as the shared
-    // picker-refresh path so the Composer model selector stays in sync.
+    // Model library (Settings > Models "Model library" group): self-contained
+    // sibling controller. Reuses refreshSnapshots (models.list + renderSettings)
+    // as the shared picker-refresh path so the Composer model selector stays in sync.
     const modelTuningConfirmFactory = windowRef.rendererIdeConfirmDialog?.createIdeConfirmDialog;
     const modelTuningHelpOverlayFactory = windowRef.inventoryHelpOverlay?.createHelpOverlay;
     const modelTuningConfirmDialog = typeof modelTuningConfirmFactory === 'function'
@@ -470,7 +492,7 @@
         windowRef.rendererModelTuningDrawerController = null;
       }
     });
-    const modelLibrarySectionController = (windowRef.rendererSettingsModelLibrarySection || {})
+    const modelLibrarySectionController = controllers.modelLibrarySectionController = (windowRef.rendererSettingsModelLibrarySection || {})
       .createModelLibrarySectionController?.({
         state,
         windowRef,
@@ -479,6 +501,7 @@
         showToastMessage: (...a) => callbacks.showToastMessage?.(...a),
         refreshModelPickers: () => Promise.resolve(callbacks.refreshSnapshots?.()).catch(() => null),
         openModelTuning: (modelId, restoreFocusTo, options) => modelTuningDrawerController?.open?.(modelId, restoreFocusTo, options),
+        openDiagnostics: () => callbacks.setActiveView?.('logs'),
       }) || null;
     modelLibrarySectionController?.bind?.();
     modelLibrarySectionController?.render?.();
@@ -498,9 +521,9 @@
       modelLibrarySectionController?.syncFeatureState?.();
     };
 
-    // Workspace-root nudge (Step 7): self-contained sibling controller, no-ops
-    // entirely when workspace_root_nudge is off. No change-event API exists
-    // for the workspace root (grepped), so re-evaluation piggybacks on the
+    // Workspace-root nudge (Step 7): self-contained sibling controller. No
+    // change-event API exists for the workspace root (grepped), so
+    // re-evaluation piggybacks on the
     // same 15s snapshot-refresh cadence as refreshSnapshotsIntervalId above,
     // plus an explicit re-render right after the picker action resolves.
     const workspaceRootNudgeController = (windowRef.rendererWorkspaceRootNudge || {}).createWorkspaceRootNudgeController?.({
@@ -647,8 +670,8 @@
       controllers.workspaceRootNudgeController?.render?.();
       // Same placeholder-flag boot race: the Settings sibling controllers bound
       // in registerShellCleanups before the real knowledge_layer /
-      // ollama_tray_remediation / mcp_management_ui flags landed, so their groups
-      // never mounted. Re-activate now that the real flags are in state.
+      // ollama_tray_remediation flags landed, so their groups never mounted.
+      // Re-activate now that the real flags are in state.
       controllers.reactivateSettingsSections?.();
       // The first setActiveView ran on placeholder flags (top_nav_shell absent);
       // re-apply chrome now that the real flags are in state. The startup
@@ -658,17 +681,15 @@
       // command_palette key and disarmed itself. Re-entrant no-op if bound.
       controllers.commandPaletteController?.bind?.();
       controllers.chatShellController?.bind?.();
-      // bind() first runs in registerShellCleanups, BEFORE the feature state
-      // above is loaded — so the stream subscription latches onto the
-      // placeholder feature flags (no stream_envelope_v2 key). The initial
-      // features.getState() pull does not fire features.onChanged, so resync
-      // the subscription mode explicitly now that the real flags are in state.
-      controllers.chatShellController?.resyncStreamSubscriptionMode?.();
       hydrateCachedLazyShellState();
       await reconcileBackendStatusAfterBindings(ctx);
       if (isDisposed()) return;
       controllers.shellStatusController?.notifyShellHydrated?.();
       // Home and Workspace report their own view readiness; every view also requires shared hydration.
+      if (state.ui.activeView === 'settings') {
+        try { await controllers.settingsShellController?.ensureSettingsPage?.(); } catch (_error) { /* load failure cannot block boot */ }
+        if (isDisposed()) return;
+      }
       if (['chat', 'logs', 'settings'].includes(state.ui.activeView)) {
         controllers.shellStatusController?.notifyBootViewReady?.();
       }

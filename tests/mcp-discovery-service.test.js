@@ -70,13 +70,16 @@ test('sidecar config forwards only enabled approved rows with approved tool dige
   writeConfig(directory, [approvedServer(stdio), { ...pending, enabled: true, trust: pendingTrust(pending) },
     approvedServer(remote)], { mcp_sse_enabled: true });
   const service = new McpDiscoveryService({ userDataPath: directory });
-  assert.deepEqual(service.getSidecarConfig(), { mcp_servers: [{ ...stdio,
-    approved_tools_digest: 'a'.repeat(64) }], mcp_sse_enabled: false });
-  const enabled = service.getSidecarConfig({ httpTransportEnabled: true });
+  const enabled = service.getSidecarConfig();
   assert.equal(enabled.mcp_sse_enabled, true);
   assert.deepEqual(enabled.mcp_servers.map((row) => row.name), ['stdio_ok', 'remote']);
   assert.equal(enabled.mcp_servers[1].approved_tools_digest, 'a'.repeat(64));
   assert.equal('token' in enabled.mcp_servers[1].auth, false);
+
+  const gateOffDirectory = userData();
+  writeConfig(gateOffDirectory, [approvedServer(stdio), approvedServer(remote)], { mcp_sse_enabled: false });
+  assert.deepEqual(new McpDiscoveryService({ userDataPath: gateOffDirectory }).getSidecarConfig(),
+    { mcp_servers: [{ ...stdio, approved_tools_digest: 'a'.repeat(64) }], mcp_sse_enabled: false });
 });
 
 test('CRUD requires exact inspection before approval and invalidates trust after edits', async () => {
@@ -250,15 +253,14 @@ test('inspection normalization drops plaintext credential fields from downstream
       return { ok: true, tools_digest: 'a'.repeat(64) };
     } },
   } });
-  service.backendService.featureFlags = { mcp_http_transport: true };
   service._loadConfig = () => ({ mcp_sse_enabled: true, mcp_servers: [server] });
   assert.equal((await service.testServer({ name: 'remote' })).ok, true);
   assert.deepEqual(inspected.auth, { kind: 'oauth_client_credentials',
     token_url: 'https://auth.example.test/token', client_id: 'client', scope: 'read' });
 });
 
-for (const [documentGate, electronGate] of [[false, false], [false, true], [true, false], [true, true]]) {
-  test(`SSE inspection honors the Electron kill switch, not the document gate (${documentGate}, ${electronGate})`, async () => {
+for (const documentGate of [false, true]) {
+  test(`SSE inspection does not depend on the document gate (${documentGate})`, async () => {
     const directory = userData();
     const server = { name: 'remote', transport: 'sse', url: 'https://example.test/sse',
       auth: { kind: 'bearer', secret_ref: 'mcp:remote' } };
@@ -267,7 +269,6 @@ for (const [documentGate, electronGate] of [[false, false], [false, true], [true
     let secretReads = 0;
     let params;
     const service = new McpDiscoveryService({ userDataPath: directory, backendService: {
-      featureFlags: { mcp_http_transport: electronGate },
       secureStore: { getMcpAuthToken() { secretReads += 1; return 'secret'; } },
       sidecarClient: { connected: true, async request(_method, value) {
         requests += 1; params = value;
@@ -275,17 +276,10 @@ for (const [documentGate, electronGate] of [[false, false], [false, true], [true
       } },
     } });
     const result = await service.testServer({ name: 'remote' });
-    if (electronGate) {
-      assert.equal(result.ok, true);
-      assert.equal(params.mcp_sse_enabled, true);
-      assert.equal(requests, 1);
-      assert.equal(secretReads, 1);
-    } else {
-      assert.equal(result.ok, false);
-      assert.equal(result.error.code, 'CMP-MCP-0002');
-      assert.equal(requests, 0);
-      assert.equal(secretReads, 0);
-    }
+    assert.equal(result.ok, true);
+    assert.equal(params.mcp_sse_enabled, true);
+    assert.equal(requests, 1);
+    assert.equal(secretReads, 1);
   });
 }
 
@@ -320,8 +314,7 @@ test('enabling an approved SSE server turns on the document gate atomically', as
   const document = JSON.parse(fs.readFileSync(path.join(directory, 'mcp-servers.json'), 'utf8'));
   assert.equal(document.mcp_sse_enabled, true);
   assert.equal(document.mcp_servers[0].enabled, true);
-  assert.equal(service.getSidecarConfig().mcp_servers, undefined);
-  assert.equal(service.getSidecarConfig({ httpTransportEnabled: true }).mcp_servers.length, 1);
+  assert.equal(service.getSidecarConfig().mcp_servers.length, 1);
 });
 
 test('server edits preserve omitted credentials and initialization timeout', async () => {

@@ -100,7 +100,7 @@ class WorktreeRegistryService {
 
   _readEntries({ forMutation }) {
     const read = this._store.readWithStatus(_emptyState());
-    if (forMutation && read.corrupted) {
+    if (forMutation && (read.corrupted || read.unreadable)) {
       throw new Error('worktree registry is unreadable or corrupted');
     }
     const raw = read.value;

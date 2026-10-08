@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import math
-import time
-from typing import Any, Callable
+from typing import Any
 
 from sidecar.ai.error_codes import CMP_APPROVAL_REJECTED, CMP_CHAT_INVALID_PARAMS
 from sidecar.ai.feature_flags import FEATURE_AGENT_EXECUTOR, is_feature_flag_enabled
@@ -430,24 +429,6 @@ def _decision_usage_payload(
     return payload
 
 
-def build_vision_prompt(messages: list[dict[str, object]]) -> str:
-    sections: list[str] = []
-    for message in messages:
-        role = str(message.get("role") or "").strip().lower() or "user"
-        content = str(message.get("content") or "").strip()
-        if not content:
-            continue
-        sections.append(f"{role.upper()}:\n{content}")
-    return "\n\n".join(sections).strip()
-
-
-def engine_supports_live_reasoning_stream(engine: Any) -> bool:
-    capabilities = getattr(engine, "capabilities", {})
-    if not isinstance(capabilities, dict) or capabilities.get("thinking") is not True:
-        return False
-    return callable(getattr(engine, "stream", None))
-
-
 def mode_from_params(params: Any, default_mode: str) -> str:
     if not isinstance(params, dict):
         return normalize_mode(default_mode, default=default_mode)
@@ -460,49 +441,6 @@ def mode_from_params(params: Any, default_mode: str) -> str:
 # ---------------------------------------------------------------------------
 # IPC debouncing (H8)
 # ---------------------------------------------------------------------------
-
-
-class DebouncedNotificationWriter:
-    """Wraps a notification writer with time-based debouncing.
-
-    Non-debounced methods (``chat.token``, ``chat.thinking``, ``tool.*``)
-    pass through immediately.  Debounced methods (``budget.update``,
-    ``cost.update``) are batched and emitted at most every *interval_ms*
-    milliseconds.  Call :meth:`flush` before ``chat.done`` to guarantee
-    the final state is always sent.
-    """
-
-    DEBOUNCED_METHODS = frozenset({"budget.update", "cost.update"})
-
-    def __init__(
-        self,
-        writer: Callable[[dict[str, Any]], None],
-        interval_ms: int = 500,
-    ) -> None:
-        self._writer = writer
-        self._interval_s = max(0.1, interval_ms / 1000.0)
-        self._pending: dict[str, dict[str, Any]] = {}
-        self._last_emit_time: float = 0.0
-
-    def __call__(self, item: dict[str, Any]) -> None:
-        method = str(item.get("method", ""))
-        if method not in self.DEBOUNCED_METHODS:
-            self._writer(item)
-            return
-        self._pending[method] = item
-        now = time.monotonic()
-        if now - self._last_emit_time >= self._interval_s:
-            self._flush_pending()
-
-    def flush(self) -> None:
-        """Emit all pending debounced notifications."""
-        self._flush_pending()
-
-    def _flush_pending(self) -> None:
-        for item in self._pending.values():
-            self._writer(item)
-        self._pending.clear()
-        self._last_emit_time = time.monotonic()
 
 
 def _executor_runtime_enabled(feature_flags: dict[str, bool] | None) -> bool:

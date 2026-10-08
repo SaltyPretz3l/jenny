@@ -118,7 +118,8 @@ class PortablePreferencesStore {
   read() {
     const state = this.store.readWithStatus(null);
     if (state.missing) return null;
-    if (state.corrupted || !state.value || state.value.schema_version > PORTABLE_PREFERENCES_VERSION) {
+    if (state.corrupted || state.unreadable || !state.value
+      || state.value.schema_version > PORTABLE_PREFERENCES_VERSION) {
       return null;
     }
     return normalizePortablePreferences(state.value);
@@ -129,6 +130,7 @@ class PortablePreferencesStore {
       ? preferences
       : {};
     const state = this.store.readWithStatus(null);
+    if (state.unreadable) throw new Error('portable_preferences_unreadable');
     if (!state.missing && !state.corrupted
       && Number(state.value?.schema_version) > PORTABLE_PREFERENCES_VERSION) {
       throw new Error('portable_preferences_version_unsupported');

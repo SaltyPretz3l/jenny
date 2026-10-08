@@ -1,7 +1,6 @@
 /**
  * renderer/features/renderer-artifact-version-history-utils.js — derived
- * version history for regenerated artifacts (HTML Artifact Preview,
- * artifact_html_preview).
+ * version history for regenerated artifacts (HTML Artifact Preview).
  *
  * Version groups are derived from projected session artifacts by filename
  * stem, capped at 20, not persisted, and selected through the existing

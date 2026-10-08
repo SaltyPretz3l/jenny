@@ -169,7 +169,7 @@ function sectionHarness(t, options = {}) {
     pick: options.pick || { ok: true, picked: false, path: '' },
   };
   const state = {
-      features: { featureFlags: { model_management_ui: true, llama_server_acceleration: true } },
+      features: { featureFlags: { llama_server_acceleration: true } },
     localEngines: main.service.getLocalEngines(),
     status: { model: options.activeModel || '' },
     offline: { preferredLocalModel: options.preferredLocalModel || '' },

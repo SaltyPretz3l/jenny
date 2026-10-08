@@ -83,6 +83,51 @@ def test_edit_file_replaces_unique_string_and_creates_checkpoint(tmp_path: Path,
     assert checkpoint_path.read_bytes() == original
 
 
+@pytest.mark.parametrize("directory", [".JENNY", ".Jenny", ".jenny"])
+def test_edit_file_refuses_reserved_state_case_insensitively(
+    tmp_path: Path, directory: str,
+) -> None:
+    relative_path = f"{directory}/backups/example.bak"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    original = b"reserved unique content\r\n"
+    target.write_bytes(original)
+
+    result = edit_module.edit_file_tool(
+        {
+            "file_path": relative_path,
+            "old_string": "unique content",
+            "new_string": "changed content",
+        },
+        _guard(tmp_path),
+    )
+
+    assert result.success is False
+    assert result.output == "Ordinary file tools cannot edit reserved .jenny internal state."
+    assert result.error_code == CMP_TOOL_INVALID_PATH
+    assert result.metadata == {"path": relative_path}
+    assert target.read_bytes() == original
+
+
+def test_edit_file_allows_reserved_prefix_lookalike(tmp_path: Path) -> None:
+    target = tmp_path / ".jennyx" / "notes.md"
+    target.parent.mkdir()
+    target.write_bytes(b"hello world\n")
+
+    result = edit_module.edit_file_tool(
+        {
+            "file_path": ".jennyx/notes.md",
+            "old_string": "world",
+            "new_string": "earth",
+        },
+        _guard(tmp_path),
+    )
+
+    assert result.success is True
+    assert target.read_bytes() == b"hello earth\n"
+    assert result.metadata["path"] == ".jennyx/notes.md"
+
+
 def test_edit_file_reports_missing_target_string_as_failed_result(tmp_path: Path) -> None:
     (tmp_path / "notes.txt").write_text("hello world\n", encoding="utf-8")
 

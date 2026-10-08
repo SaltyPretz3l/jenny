@@ -121,7 +121,6 @@ def _normalize_debug_options(value: Any) -> dict[str, bool]:
     result = {
         "disable_thinking": source.get("disable_thinking") is True,
         "lean_context": source.get("lean_context") is True,
-        "plain_chat_mode": source.get("plain_chat_mode") is True,
     }
     return {key: enabled for key, enabled in result.items() if enabled}
 

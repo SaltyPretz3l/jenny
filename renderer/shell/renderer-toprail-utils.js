@@ -106,10 +106,14 @@
       const width = activeTab ? activeTab.offsetWidth : 0;
       if (!activeTab || !width) {
         // Layout not measurable (hidden rail, jsdom) — keep the CSS ::after fallback.
+        // A tabless view (Settings is the gear) must not leave the slider
+        // under the last tab either.
         topRail.removeAttribute('data-indicator-ready');
+        topRailIndicator.hidden = true;
         return;
       }
       topRail.setAttribute('data-indicator-ready', 'true');
+      topRailIndicator.hidden = false;
       // Scroll/resize tracking must not animate — the slide transition is for
       // tab activation only; a scrolling underline that lags its tab reads as
       // drift, not motion.

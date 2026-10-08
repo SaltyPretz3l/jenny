@@ -389,6 +389,27 @@ test('skills.on(changed) closure fires sendBridgeEvent with skills.onChanged + s
   }
 });
 
+// --- projectNotesService.on('changed') → sendBridgeEvent ---
+
+test('projectNotesService is published on the backend service and forwards changed as projectNotes.onChanged', () => {
+  const { created, bridgeEvents } = createRecordingFixture();
+  try {
+    assert.equal(created.backendService.projectNotesService, created.projectNotesService);
+    // Writes are refused for a project the backend does not know; General always exists.
+    assert.deepEqual(created.projectNotesService.save('project_alpha', 'hello', 0), { ok: false, reason: 'project_unavailable' });
+    const note = created.projectNotesService.get('project_general').note;
+    const saved = created.projectNotesService.save('project_general', 'hello', note.revision);
+    assert.equal(saved.ok, true, JSON.stringify(saved));
+    const match = bridgeEvents.find((entry) => entry.name === 'projectNotes.onChanged');
+    assert.ok(match, 'sendBridgeEvent must be called with projectNotes.onChanged');
+    assert.deepEqual(match.payload, {
+      projectId: 'project_general', revision: 1, updatedBy: 'user', journalEntryId: '', reason: 'save',
+    });
+  } finally {
+    created.backendService.dispose?.();
+  }
+});
+
 // --- schedulerService.on('changed') → sendBridgeEvent (line 165) ---
 
 test('schedulerService.on(changed) closure fires sendBridgeEvent with scheduler.onChanged + snapshot', () => {

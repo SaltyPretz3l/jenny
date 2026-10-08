@@ -602,3 +602,24 @@ describe('ToolExecutor', () => {
     assert.equal(result.errorCode, TOOL_ERROR_CODES.DISABLED);
   });
 });
+
+test('a propose-mode-only tool refuses outside a Propose-mode request (Plan Plus)', async () => {
+  const tool = makeMockTool({ name: 'Suggest', readOnly: true, proposeModeOnly: true });
+  const executor = new ToolExecutor({
+    registry: makeRegistry([tool]),
+    permissionStore: makePermissionStore({ Suggest: 'auto' }),
+    pathPolicy: {},
+    shellRunner: makeShellRunner(),
+    logger: noop,
+  });
+
+  const refused = await executor.executePreApproved(
+    { callId: 'call_s1', toolName: 'Suggest', input: {} }, makeContext());
+  const allowed = await executor.executePreApproved(
+    { callId: 'call_s2', toolName: 'Suggest', input: {} }, makeContext({ proposeMode: true }));
+
+  assert.equal(refused.isError, true);
+  assert.equal(refused.errorCode, TOOL_ERROR_CODES.DISABLED);
+  assert.match(refused.content, /only available in Propose mode/);
+  assert.equal(allowed.isError, false);
+});

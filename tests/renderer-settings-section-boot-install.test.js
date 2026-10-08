@@ -8,7 +8,7 @@
 // Panel V2 boot race fixed in 0d0118d:
 //
 //   * The renderer boot seed (renderer-bootstrap-utils.js) does NOT carry the
-//     knowledge_layer / ollama_tray_remediation / mcp_management_ui keys, so
+//     knowledge_layer / ollama_tray_remediation keys, so
 //     they are `undefined` until the async feature payload lands via
 //     ensureComposerFeatureStateLoaded() partway through bootstrapAppShell.
 //   * registerShellCleanups() creates + bind()s the sibling controllers
@@ -53,7 +53,6 @@ function bootOptions() {
           featureFlags: {
             knowledge_layer: true,
             ollama_tray_remediation: true,
-            mcp_management_ui: true,
             plugins: true,
           },
         },
@@ -73,29 +72,29 @@ test('mounts the flag-gated Settings sibling groups after feature-flag hydration
 
   const toolsCard = doc.querySelector('.settings-card[data-settings-section="tools"]');
   const modelsCard = doc.querySelector('.settings-card[data-settings-section="models"]');
-  const pluginsCard = doc.querySelector('.settings-card[data-settings-section="plugins"]');
+  const extensionsCard = doc.querySelector('.settings-card[data-settings-section="extensions"]');
   assert.ok(toolsCard, 'expected the Tools settings card to exist in the shell');
   assert.ok(modelsCard, 'expected the Models settings card to exist in the shell');
-  assert.ok(pluginsCard, 'expected the Plugins & Extensions settings card to exist in the shell');
+  assert.ok(extensionsCard, 'expected the Extensions settings card to exist in the shell');
 
   // Knowledge folders (Tools card, knowledge_layer).
   assert.ok(
     toolsCard.querySelector('#knowledgeFoldersGroup'),
     'Knowledge folders group must mount into the Tools card once knowledge_layer hydrates'
   );
-  // MCP connections (Plugins & Extensions card, mcp_management_ui).
+  // MCP connections (Extensions card).
   assert.ok(
-    pluginsCard.querySelector('#mcpServersGroup'),
-    'MCP servers group must mount into Plugins & Extensions once mcp_management_ui hydrates'
+    extensionsCard.querySelector('#mcpServersGroup'),
+    'MCP servers group must mount into Extensions'
   );
-  const hostOrder = ['pluginsSettingsHost', 'skillsSettingsSection', 'mcpServersHost', 'pluginsSourcesHost'];
+  const hostOrder = ['skillsSettingsSection', 'mcpServersHost'];
   assert.deepEqual(
-    Array.from(pluginsCard.children).filter((node) => hostOrder.includes(node.id)).map((node) => node.id),
+    Array.from(extensionsCard.children).filter((node) => hostOrder.includes(node.id)).map((node) => node.id),
     hostOrder,
-    'plugin groups keep their locked Installed → Skills → MCP → Sources host order'
+    'extension groups keep their Skills → MCP host order'
   );
-  assert.ok(pluginsCard.querySelector('#mcpServersGroup.settings-group--wide'));
-  assert.equal(pluginsCard.querySelectorAll(':scope > .settings-card-header > h3').length, 1);
+  assert.ok(extensionsCard.querySelector('#mcpServersGroup.settings-group--wide'));
+  assert.equal(extensionsCard.querySelectorAll(':scope > .settings-card-header > h3').length, 1);
   // Ollama engine health (Models card, ollama_tray_remediation).
   assert.ok(
     modelsCard.querySelector('#ollamaHealthGroup'),

@@ -168,14 +168,14 @@ test('one pane: pane 0\'s carriers and run-mode slot render byte-identically (pi
     '<option value="default">Use default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>');
   assert.equal(doc.getElementById('composerEffortSelect').value, 'high');
   const slot = doc.getElementById('composerRunModeSlot');
-  assert.equal(slot.children.length, 2, 'the chip, then the popover\'s Ask / Auto / Plan segments');
+  assert.equal(slot.children.length, 2, 'the chip, then the popover\'s Ask / Auto / Plan / Propose segments');
   assert.equal(slot.firstElementChild.id, 'composerRunModeChip');
   assert.equal(slot.firstElementChild.getAttribute('class'), 'inv-chip composer-run-mode-chip composer-run-mode-ask');
   assert.equal(slot.firstElementChild.querySelector('.inv-chip-label').textContent, 'Ask');
   const segments = slot.lastElementChild;
   assert.equal(segments.classList.contains('composer-run-mode-segments'), true);
   assert.deepEqual([...segments.querySelectorAll('[data-run-mode-option]')].map((node) => [node.getAttribute('data-run-mode-option'), node.getAttribute('aria-pressed')]),
-    [['ask', 'true'], ['auto', 'false'], ['plan', 'false']]);
+    [['ask', 'true'], ['auto', 'false'], ['plan', 'false'], ['propose', 'false']]);
 });
 
 test('each pane\'s rail names its own session: select values, pill label, run-mode chip', async (t) => {

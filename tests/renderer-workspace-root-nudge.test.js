@@ -1,7 +1,7 @@
 'use strict';
 
 // Bundled Engine Onboarding v1 slot B, Step 7 — pre-send "no workspace root"
-// nudge (workspace_root_nudge). RED-FIRST: covers flag-off no-op, no-root
+// nudge. RED-FIRST: covers no-root
 // render, root-set no-chip, session-scoped dismiss survives re-render, the
 // action invokes the injected transactional root chooser,
 // and root-becomes-set removing the chip live.
@@ -28,7 +28,6 @@ function makeDom() {
 
 function makeState(overrides) {
   return {
-    features: { featureFlags: { workspace_root_nudge: true } },
     workspaceRoot: { path: '', status: { state: 'missing', message: 'No workspace root is configured yet.' } },
     ...overrides,
   };
@@ -49,14 +48,7 @@ function createHarness(t, { state, windowExtras, chooseWorkspaceRoot } = {}) {
   return { dom, controller, windowRef };
 }
 
-test('flag OFF renders nothing', (t) => {
-  const state = makeState({ features: { featureFlags: { workspace_root_nudge: false } } });
-  const { dom, controller } = createHarness(t, { state });
-  controller.render();
-  assert.equal(dom.window.document.getElementById('workspaceRootNudge'), null);
-});
-
-test('no root + flag ON renders the chip', (t) => {
+test('no root renders the chip', (t) => {
   const { dom, controller } = createHarness(t);
   controller.render();
   const chip = dom.window.document.getElementById('workspaceRootNudge');
@@ -67,6 +59,16 @@ test('no root + flag ON renders the chip', (t) => {
   const dismiss = chip.querySelector('[data-workspace-root-nudge-action="dismiss"]');
   assert.ok(dismiss);
   assert.equal(dismiss.title, 'Dismiss Workspace folder hint');
+});
+
+test('the boot seed (feature state unresolved) mounts no chip until hydration lands', (t) => {
+  const state = makeState({ features: { availabilityResolved: false } });
+  const { dom, controller } = createHarness(t, { state });
+  controller.render();
+  assert.equal(dom.window.document.getElementById('workspaceRootNudge'), null, 'no chip on the seed');
+  state.features.availabilityResolved = true;
+  controller.render();
+  assert.ok(dom.window.document.getElementById('workspaceRootNudge'), 'the chip mounts once hydrated');
 });
 
 test('persisted root hides the chip while its status probe is still checking', (t) => {
@@ -87,6 +89,32 @@ test('configured but invalid root does not show a misleading no-root chip', (t) 
   assert.equal(dom.window.document.getElementById('workspaceRootNudge'), null);
 });
 
+// Promo capture s3-propose (2026-10-07): the first Send of a new chat shows an
+// optimistic summary with no project_id until sessions.create resolves; the
+// backend binds it to the Workspace folder's project, so "no folder" was false.
+test('a new chat still materializing on its first Send (no project yet, preflight) shows no use-folder chip', (t) => {
+  const state = makeState({
+    workspaceRoot: { path: 'C:\\demo\\demo-workspace', status: { state: 'ready', message: 'Workspace root is configured.' } },
+    currentSessionId: 'session_local_1',
+    sessions: [{ id: 'session_local_1', title: 'Fix the chart', session_type: 'chat', message_count: 1,
+      optimistic_local: true, local_draft: false }],
+    sendPreflight: { sessionId: 'session_local_1' },
+  });
+  const { dom, controller } = createHarness(t, { state });
+  controller.render();
+  assert.equal(dom.window.document.getElementById('workspaceRootNudge'), null, 'no chip while the project is still unknown');
+
+  // A canonical record that really is General still gets the hint.
+  state.sendPreflight = null;
+  state.sessions = [{ id: 'session_real_1', title: 'Fix the chart', session_type: 'chat', message_count: 1,
+    project_id: 'project_general', optimistic_local: false, local_draft: false }];
+  state.currentSessionId = 'session_real_1';
+  controller.render();
+  const chip = dom.window.document.getElementById('workspaceRootNudge');
+  assert.ok(chip, 'a materialized General chat still offers the folder');
+  assert.equal(chip.getAttribute('data-nudge-variant'), 'use-folder');
+});
+
 test('dismiss hides for the session (re-render does not resurrect)', (t) => {
   const { dom, controller } = createHarness(t);
   controller.render();
@@ -99,6 +127,26 @@ test('dismiss hides for the session (re-render does not resurrect)', (t) => {
 
   controller.render();
   assert.equal(dom.window.document.getElementById('workspaceRootNudge'), null, 're-render must not resurrect a dismissed chip');
+});
+
+test('a retired plugin session never renders the unbound-chat nudge', (t) => {
+  const session = { id: 'chat_general', project_id: '' };
+  const state = makeState({
+    workspaceRoot: { path: 'C:\\dev\\jenny', status: { state: 'checking', message: 'Checking workspace root.' } },
+    currentSessionId: session.id,
+    sessions: [session],
+  });
+  const { dom, controller } = createHarness(t, { state });
+  controller.render();
+  assert.ok(dom.window.document.getElementById('workspaceRootNudge'), 'an ordinary unbound chat shows the nudge');
+
+  session.session_type = 'plugin';
+  controller.render();
+  assert.equal(dom.window.document.getElementById('workspaceRootNudge'), null, 'a read-only plugin transcript has no nudge');
+
+  delete session.session_type;
+  controller.render();
+  assert.ok(dom.window.document.getElementById('workspaceRootNudge'), 'the same session without session_type still shows the nudge');
 });
 
 test('the action invokes the injected transition chooser, never the legacy bridge mutator', async (t) => {
@@ -173,13 +221,11 @@ test('a fresh controller instance still shows the chip (dismiss is module-state,
 
 test('app binding routes the nudge action through the commit-capable workspace chooser', async () => {
   const app = await loadRendererApp({
-    shell: {
-      features: { state: { featureFlags: { workspace_root_nudge: true } } },
-    },
+    shell: {},
   });
   try {
     const button = app.window.document.querySelector('[data-workspace-root-nudge-action="set-root"]');
-    assert.ok(button, 'configured feature flag should mount the workspace-root nudge');
+    assert.ok(button, 'the workspace-root nudge should mount');
 
     button.click();
     await waitForUi(app.window, 80);
@@ -201,7 +247,6 @@ test('F33: in the full renderer, a folder picked through the nudge provisions a 
       rendererProjectSwitcher: require('../renderer/features/renderer-project-switcher'),
     },
     shell: {
-      features: { state: { featureFlags: { workspace_root_nudge: true } } },
       projects: {
         // Main provisions the folder's project inside the root commit.
         list: ({ state }) => {

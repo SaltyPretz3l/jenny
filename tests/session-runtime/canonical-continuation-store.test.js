@@ -24,7 +24,7 @@ test('schema 21 initializes the hidden header without replacing existing future 
   const migrated = migrateStorePayload({ schema_version: 20, sessions: {
     legacy: { project_id: 'general' }, future: { project_id: 'general', runtime_continuations: future },
   } });
-  assert.equal(migrated.schema_version, 22);
+  assert.equal(migrated.schema_version, 24);
   assert.deepEqual(migrated.sessions.legacy.runtime_continuations,
     { schema_version: 1, entries: [] });
   assert.deepEqual(migrated.sessions.future.runtime_continuations, future);

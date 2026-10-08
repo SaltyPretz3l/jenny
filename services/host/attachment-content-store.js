@@ -15,6 +15,11 @@ const HISTORY_TEXT_BUDGET = 40_000;
 // message reference. Full-volume backup includes these assets.
 function createAttachmentContentStore(userDataPath) {
   const directory = path.join(userDataPath, 'attachments', 'host-text');
+  // Every component under the profile must be real: a linked `attachments` or
+  // `host-text` would otherwise let a sweep delete through it.
+  function directoryAvailable() {
+    return fs.realpathSync(directory) === path.join(fs.realpathSync(userDataPath), 'attachments', 'host-text');
+  }
   function assetPath(id) {
     if (!ID.test(id)) throw new Error('invalid_attachment_id');
     return path.join(directory, `${id}.json`);
@@ -35,14 +40,20 @@ function createAttachmentContentStore(userDataPath) {
     return { bytes, text: decoded.length > MAX_FILE_CHARS ? truncateTextToLimit(decoded, MAX_FILE_CHARS) : decoded };
   }
   function remove(id) {
-    try { fs.unlinkSync(assetPath(id)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    try {
+      if (!directoryAvailable()) throw new Error('attachment_directory_unavailable');
+      fs.unlinkSync(assetPath(id));
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   function prune(referencedIds, now = Date.now()) {
     let entries;
-    try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+    try {
+      if (!directoryAvailable()) return;
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    }
     catch (error) { if (error.code === 'ENOENT') return; throw error; }
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+      if (entry.isSymbolicLink() || !entry.isFile() || !entry.name.endsWith('.json')) continue;
       const id = entry.name.slice(0, -5);
       if (!ID.test(id) || referencedIds.has(id)) continue;
       if (now - fs.lstatSync(assetPath(id)).mtimeMs >= 86_400_000) remove(id);

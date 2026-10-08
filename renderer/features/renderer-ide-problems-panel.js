@@ -12,7 +12,7 @@
  * state says so.
  *
  * Mirrors the source-control panel's delegation pattern: markup strings + one
- * click listener on the shared #ideRailPanel, selector-guarded on data-ide-prb-*
+ * click listener on its own view host, selector-guarded on data-ide-prb-*
  * attributes, with a content-hash render guard so identical renders don't churn
  * the DOM. */
 (function (root, factory) {
@@ -77,23 +77,16 @@
     const getIde = typeof options.getIde === 'function' ? options.getIde : () => ({});
     const escapeHtml = typeof options.escapeHtml === 'function'
       ? options.escapeHtml
-      : (value) => String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     const actionButton = resolveActionButton(options);
     // The editor host owns monacoApi + the jenny-workspace model-URI mapping;
     // the panel reads diagnostics through its getMarkers/onMarkersChanged surface.
     const editorHost = options.editorHost || {};
     const requestRender = typeof options.requestRender === 'function' ? options.requestRender : noop;
-    // Re-homed from the rail into the bottom panel: the controller injects the
-    // mount host (#ideBottomPanelContent) + an active-view check; the fallbacks
-    // keep the old rail behavior for any caller that omits them.
+    // The controller injects the view host (#wbView-problems) + an active-view check.
     const getMountEl = typeof options.getMountEl === 'function'
       ? options.getMountEl
-      : () => getDom().ideRailPanel || null;
+      : () => null;
     const isActivePanel = typeof options.isActivePanel === 'function'
       ? options.isActivePanel
       : () => getIde().railPanel === 'problems';
@@ -235,6 +228,18 @@
       return model().counts;
     }
 
+    // Any marker at all: whether the Problems tab shows (F7), so info and hints stay reachable.
+    function hasMarkers() {
+      const c = getCounts() || {};
+      return Number(c.total) > 0;
+    }
+
+    // Errors + warnings: the Problems tab's badge.
+    function getBadgeCount() {
+      const c = getCounts() || {};
+      return (Number(c.error) || 0) + (Number(c.warning) || 0);
+    }
+
     // Marker change (worker finished, file opened/closed): drop the cache and
     // ask the controller to re-render. renderIde refreshes the active panel
     // (us, if showing) AND the statusbar badge in one pass. A full renderIde
@@ -259,8 +264,7 @@
       if (!target || typeof target.closest !== 'function') {
         return;
       }
-      // Selector-guarded: the explorer/search/changes/source-control panels
-      // delegate on this same #ideRailPanel element.
+      // Selector-guarded on the row attribute.
       const row = target.closest('[data-ide-prb-path]');
       if (!row) {
         return;
@@ -298,6 +302,8 @@
       bindEvents,
       dispose,
       getCounts,
+      getBadgeCount,
+      hasMarkers,
       renderPanel,
     };
   }

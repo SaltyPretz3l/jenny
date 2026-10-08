@@ -487,7 +487,6 @@ describe('registerMainIpcHandlers', () => {
       schedulerService: {},
       linkStatusService: {},
       calendarService: {},
-      chatStreamBridge: {},
       getStartupAuditConfig: () => ({ enabled: false }),
       createStartupAuditMarkHandler: () => () => ({ recorded: true }),
       createStartupAuditMarksBatchHandler: () => () => ({ recorded: true }),
@@ -776,6 +775,31 @@ describe('registerMainIpcHandlers', () => {
     assert.equal(backendCalls.filter(([name]) => name === 'retryStart').length, 1);
     assert.deepEqual(calls, { update: 1, personality: 1, features: 1, skills: 1, dialog: 1 });
   });
+
+  for (const methodPath of ['displayMediaPicker.respond', 'ollamaTray.quitTrayApp']) {
+    test(`${methodPath} composition rejects foreign and subframe senders`, async (t) => {
+      const sender = createTrustedSenderHarness();
+      const calls = [];
+      const action = (...args) => { calls.push(args); return { ok: true }; };
+      t.mock.method(require('../services/backend/ollama-tray-remediation'), 'quitOllamaTrayAppSync', action);
+      const { deps } = buildDeps({
+        authorizeWorkspaceSender: null,
+        getMainWindow: () => sender.mainWindow,
+        backendService: { featureFlags: { ollama_tray_remediation: true } },
+        getDisplayMediaSourceHandler: () => ({ resolvePick: action }),
+      });
+      registerMainIpcHandlers(deps);
+      const handler = deps.ipcMain.invoke.get(invokeChannel(methodPath));
+      for (const event of [sender.foreignEvent, sender.subframeEvent]) {
+        assert.deepEqual(await handler(event, 'pick-1', 'screen-1'), {
+          ok: false, authorized: false, code: 'ipc_sender_unauthorized',
+        });
+      }
+      assert.equal(calls.length, 0);
+      assert.deepEqual(await handler(sender.trustedEvent, 'pick-1', 'screen-1'), { ok: true });
+      assert.deepEqual(calls, methodPath === 'displayMediaPicker.respond' ? [['pick-1', 'screen-1']] : [[{}]]);
+    });
+  }
 
   test('composition keeps root and versioned-file owners lazy but authoritative', () => {
     const recoveryCalls = [];

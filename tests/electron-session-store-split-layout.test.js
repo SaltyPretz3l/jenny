@@ -78,8 +78,12 @@ test('mutating one session does not rewrite other sessions on disk', async () =>
     content: 'only for A',
   });
 
-  // A's file is rewritten; B's file is not.
-  assert.notEqual(fs.statSync(aPath).mtimeMs, baselineA);
+  // A's files are written (its journal now, not the whole base); B's file is not.
+  const sessionsDirPath = path.dirname(aPath);
+  const aTouched = fs.readdirSync(sessionsDirPath)
+    .filter((name) => name.startsWith(`${sessionA.id}.`))
+    .some((name) => fs.statSync(path.join(sessionsDirPath, name)).mtimeMs !== baselineA);
+  assert.equal(aTouched, true);
   assert.equal(fs.statSync(bPath).mtimeMs, baselineB);
 });
 

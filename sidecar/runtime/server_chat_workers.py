@@ -8,7 +8,6 @@ import time
 from typing import Any, Callable
 
 from sidecar.ai.error_codes import (
-    CMP_CHAT_INVALID_PARAMS,
     CMP_CHAT_STREAM_FAILED,
     CMP_PROTO_DUPLICATE_REQUEST_ID,
     CMP_RESOURCE_EXCEEDED,
@@ -35,7 +34,6 @@ logger = logging.getLogger(__name__)
 INVALID_PARAMS_CODE = -32602
 INTERNAL_ERROR_CODE = -32000
 MAX_ERROR_CODE_LENGTH = 32
-MAX_REASON_CODE_LENGTH = 64
 
 
 def _initial_live_run_mode(message: dict[str, Any]) -> LiveRunModeState:
@@ -118,17 +116,11 @@ def runtime_frame_writer(
 
 def _release_paused_worker_ownership(
     *, transport: StdioTransportMultiplexer, request_id: str, cancel_handle: Any,
-    plugin_runtime_admission: Any | None, logger: logging.Logger,
+    logger: logging.Logger,
 ) -> bool:
     """Release every request owner before a successful pause becomes visible."""
 
     released = True
-    if plugin_runtime_admission is not None:
-        try:
-            plugin_runtime_admission.release()
-        except Exception:  # a pause must fail closed on cleanup.
-            released = False
-            logger.exception("failed to release paused chat plugin admission")
     try:
         transport.unregister_turn(request_id, expected_handle=cancel_handle)
     except Exception:  # a pause must fail closed on cleanup.
@@ -161,7 +153,6 @@ def make_chat_send_worker(  # noqa: PLR0913
     request_id: str,
     chat_send_runner: ChatSendRunner,
     logger: logging.Logger,
-    plugin_runtime_admission: Any | None = None,
 ) -> Callable[[], None]:
     def _worker() -> None:
         paused_outcome: ProcessOutcome | None = None
@@ -171,8 +162,6 @@ def make_chat_send_worker(  # noqa: PLR0913
                 "approval_response_waiter_factory": transport.approval_reader_factory,
                 "cancel_handle": cancel_handle,
             }
-            if plugin_runtime_admission is not None:
-                runner_options["plugin_runtime_admission"] = plugin_runtime_admission
             live_run_mode = getattr(cancel_handle, "live_run_mode", None)
             if not isinstance(live_run_mode, LiveRunModeState):
                 live_run_mode = _initial_live_run_mode(message)
@@ -202,16 +191,10 @@ def make_chat_send_worker(  # noqa: PLR0913
                 logger.debug("failed to send chat.send worker error")
         finally:
             if paused_outcome is None:
-                try:
-                    if plugin_runtime_admission is not None:
-                        plugin_runtime_admission.release()
-                finally:
-                    # A failing release must not leak the registration, which
-                    # would reject every later send for the session.
-                    transport.unregister_turn(request_id, expected_handle=cancel_handle)
+                transport.unregister_turn(request_id, expected_handle=cancel_handle)
         if paused_outcome is not None and _release_paused_worker_ownership(
             transport=transport, request_id=request_id, cancel_handle=cancel_handle,
-            plugin_runtime_admission=plugin_runtime_admission, logger=logger,
+            logger=logger,
         ):
             try:
                 send_outcome(paused_outcome, multiplexer=transport)
@@ -293,55 +276,6 @@ def _session_busy_error_response(
     )
 
 
-def _plugin_authority_error_response(
-    message: dict[str, Any],
-    error: Exception,
-) -> dict[str, Any]:
-    raw_code = str(getattr(error, "code", CMP_CHAT_INVALID_PARAMS))
-    code = (
-        raw_code
-        if raw_code.startswith("CMP-") and len(raw_code) <= MAX_ERROR_CODE_LENGTH
-        else CMP_CHAT_INVALID_PARAMS
-    )
-    raw_reason = str(getattr(error, "reason_code", "plugin_authority_invalid"))
-    reason = (
-        raw_reason
-        if raw_reason.replace("_", "").isalnum()
-        and len(raw_reason) <= MAX_REASON_CODE_LENGTH
-        else "plugin_authority_invalid"
-    )
-    return error_response(
-        message.get("id"),
-        code=INVALID_PARAMS_CODE,
-        message="chat.send plugin runtime authority rejected",
-        data={
-            "code": code,
-            "reason": reason,
-            "retryable": getattr(error, "retryable", False) is True,
-        },
-    )
-
-
-def _release_plugin_runtime_admission(admission: Any) -> None:
-    if admission is not None:
-        admission.release()
-
-
-def _resolve_plugin_runtime_admission(
-    message: dict[str, Any],
-    *,
-    transport: StdioTransportMultiplexer,
-    resolver: Callable[[dict[str, Any]], Any] | None,
-) -> tuple[bool, Any]:
-    if resolver is None:
-        return True, None
-    try:
-        return True, resolver(message)
-    except Exception as error:  # noqa: BLE001 - normalized before the wire
-        transport.send_control(_plugin_authority_error_response(message, error))
-        return False, None
-
-
 def _register_chat_turn(  # noqa: PLR0913
     message: dict[str, Any],
     *,
@@ -351,7 +285,6 @@ def _register_chat_turn(  # noqa: PLR0913
     session_id: str | None,
     generation: int | None,
     max_active_workers: int,
-    plugin_runtime_admission: Any,
 ) -> tuple[bool, Any]:
     try:
         cancel_handle = transport.register_turn(
@@ -365,17 +298,14 @@ def _register_chat_turn(  # noqa: PLR0913
         except (AttributeError, TypeError):
             pass
     except DuplicateRequestIdError:
-        _release_plugin_runtime_admission(plugin_runtime_admission)
         transport.send_control(_duplicate_request_id_error_response(message, request_id=request_id))
         return False, None
     except DuplicateSessionTurnError:
-        _release_plugin_runtime_admission(plugin_runtime_admission)
         transport.send_control(
             _session_busy_error_response(message, session_id=str(session_id or ""))
         )
         return False, None
     except ActiveTurnLimitExceededError:
-        _release_plugin_runtime_admission(plugin_runtime_admission)
         transport.send_control(
             _chat_worker_limit_error_response(
                 message,
@@ -396,16 +326,8 @@ def start_chat_send_worker_if_allowed(  # noqa: PLR0913
     chat_send_runner: ChatSendRunner,
     logger: logging.Logger,
     max_active_workers: int,
-    plugin_admission_resolver: Callable[[dict[str, Any]], Any] | None = None,
 ) -> bool:
     prune_finished_chat_workers(worker_threads, active_cancel_handles)
-    admitted, plugin_runtime_admission = _resolve_plugin_runtime_admission(
-        message,
-        transport=transport,
-        resolver=plugin_admission_resolver,
-    )
-    if not admitted:
-        return False
     live_worker_count = len(worker_threads)
     if live_worker_count >= max_active_workers:
         logger.warning(
@@ -416,8 +338,6 @@ def start_chat_send_worker_if_allowed(  # noqa: PLR0913
                 "max_active_workers": max_active_workers,
             },
         )
-        # Release before answering: a transport failure must not leak admission.
-        _release_plugin_runtime_admission(plugin_runtime_admission)
         transport.send_control(
             _chat_worker_limit_error_response(
                 message,
@@ -445,7 +365,6 @@ def start_chat_send_worker_if_allowed(  # noqa: PLR0913
         session_id=session_id,
         generation=generation,
         max_active_workers=max_active_workers,
-        plugin_runtime_admission=plugin_runtime_admission,
     )
     if not registered:
         return False
@@ -465,7 +384,6 @@ def start_chat_send_worker_if_allowed(  # noqa: PLR0913
                 request_id=request_id,
                 chat_send_runner=chat_send_runner,
                 logger=logger,
-                plugin_runtime_admission=plugin_runtime_admission,
             ),
             name=f"sidecar-chat-send-{request_id or 'unknown'}",
             daemon=True,
@@ -481,7 +399,6 @@ def start_chat_send_worker_if_allowed(  # noqa: PLR0913
             transport.unregister_turn(request_id, expected_handle=cancel_handle)
         except Exception:  # noqa: BLE001
             logger.debug("failed to unregister turn after chat.send worker start failure")
-        _release_plugin_runtime_admission(plugin_runtime_admission)
         logger.exception(
             "failed to start chat.send worker",
             extra={

@@ -82,15 +82,16 @@ function preserveCorruptFile(filePath, {
 const READ_RETRY_ATTEMPTS = 3;
 const READ_RETRY_DELAY_MS = 100;
 
-// A read error code (file busy, access denied) says nothing about the bytes, so
-// such a read is retried briefly before the file is reported unreadable. A
-// parse failure is final and is not retried. `store` is a FileJsonStore.
+// A read error (file busy, access denied) says nothing about the bytes, so an
+// `unreadable` read (already retried briefly inside readWithStatus) is tried
+// again over a longer window before it is reported. A parse failure
+// (`corrupted`) is final and is not retried. `store` is a FileJsonStore.
 function readWithRetry(store, defaultValue, {
   attempts = READ_RETRY_ATTEMPTS,
   delayMs = READ_RETRY_DELAY_MS,
 } = {}) {
   let result = store.readWithStatus(defaultValue);
-  for (let attempt = 1; attempt < attempts && result.corrupted && result.errorCode; attempt += 1) {
+  for (let attempt = 1; attempt < attempts && result.unreadable; attempt += 1) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
     result = store.readWithStatus(defaultValue);
   }

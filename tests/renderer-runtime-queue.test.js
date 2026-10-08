@@ -266,3 +266,32 @@ test('a missing host or missing handlers never throws and disables what it canno
   assert.equal(node.querySelector('.runtime-queue__action--resume').disabled, true);
   dom.window.close();
 });
+
+// 2026-10-05 live recheck: a restart-paused row with no checkpoint for its
+// attempt offered a Resume the scheduler refused. The runtime now says whether
+// it can continue; the strip offers Discard alone when it cannot.
+test('a paused row the runtime cannot continue offers Discard alone and says why', () => {
+  const dom = mount();
+  const node = host(dom);
+  const detached = row({ key: 'detached:work_1', position: null, status: 'paused', admitted: true, detached: true,
+    queued: true, resumable: false });
+  const actions = { withdraw() {}, resume() {} };
+  renderRuntimeQueue({ state: state(), host: node, rows: [detached], actions });
+
+  assert.equal(node.querySelector('.runtime-queue__action--resume'), null, 'no Resume the runtime would refuse');
+  const status = node.querySelector('.runtime-queue__status');
+  assert.equal(status.textContent, 'Paused, cannot continue');
+  assert.match(status.title, /no saved checkpoint/);
+  const discard = node.querySelector('.runtime-queue__action--withdraw');
+  assert.equal(discard.textContent, 'Discard');
+  assert.equal(discard.disabled, false);
+
+  // A row that can continue, and a row from a runtime that does not say, keep Resume.
+  for (const resumable of [true, undefined]) {
+    renderRuntimeQueue({ state: state(), host: node, rows: [row({ ...detached, resumable })], actions });
+    assert.ok(node.querySelector('.runtime-queue__action--resume'), `resumable ${resumable} keeps Resume`);
+    assert.equal(node.querySelector('.runtime-queue__status').textContent, 'Paused');
+    assert.equal(node.querySelector('.runtime-queue__status').title, '');
+  }
+  dom.window.close();
+});

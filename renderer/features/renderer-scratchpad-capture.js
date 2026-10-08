@@ -31,7 +31,7 @@
     const textFieldImpl = typeof deps.textField === 'function' ? deps.textField : null;
     const showToastMessage = typeof deps.showToastMessage === 'function' ? deps.showToastMessage : noop;
     const appendClientLog = typeof deps.appendClientLog === 'function' ? deps.appendClientLog : noop;
-    const escapeHtml = typeof deps.escapeHtml === 'function' ? deps.escapeHtml : (value) => String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const escapeHtml = typeof deps.escapeHtml === 'function' ? deps.escapeHtml : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     let rootEl = null;
     let keydownHandler = null;
     let clickHandler = null;

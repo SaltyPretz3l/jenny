@@ -203,12 +203,7 @@
     const appendClientLog = typeof options.appendClientLog === 'function' ? options.appendClientLog : function noop() {};
     const escapeHtml = typeof options.escapeHtml === 'function'
       ? options.escapeHtml
-      : (value) => String(value == null ? '' : value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     const setTimeoutFn = typeof options.setTimeoutFn === 'function'
       ? options.setTimeoutFn
       : (typeof setTimeout === 'function' ? setTimeout : null);

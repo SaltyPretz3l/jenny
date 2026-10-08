@@ -1,6 +1,8 @@
 const fs = require('fs');
 const { logWriteFailed, safeEmitLog } = require('./session-store-logging');
 const { purgeSessionRecoveryCopies } = require('./session-recovery-copies');
+const { deleteSessionJournals } = require('./session-journal-wiring');
+const { skipsReadonlyModeWrite } = require('./session-storage-guards');
 
 // Deletion mechanics for SessionStorageBackend.deleteSession (CTL-008).
 // Extracted to a sibling module to keep session-storage-backend.js under the
@@ -16,25 +18,35 @@ const { purgeSessionRecoveryCopies } = require('./session-recovery-copies');
 // converge. The pre-existing `<storeName>.delete_failed` WARN diagnostic
 // still fires exactly once per failed attempt.
 //
+// A journaled chat also has journal files. The base file is the record of
+// existence: once it is gone the chat is deleted, and a journal that could not
+// be removed only logs `<storeName>.journal_delete_failed` (the legacy prune
+// removes a leftover journal without a base).
+//
 // Returns `true` on success, `{ ok: false, reason: 'delete_failed' }` on a
 // genuine removal failure. Callers must never treat the failure shape as
 // truthy-success (see callers in electron-session-store.js / session-shadow-
 // store.js, which check `=== true` rather than bare truthiness).
 function deleteSessionFromBackend(backend, sessionId) {
+  // A failed split migration only drops the in-memory copy (see the guard).
+  const readonly = skipsReadonlyModeWrite(backend, 'deleteSession');
   const store = backend._sessionStores.get(sessionId);
-  if (store) {
+  if (readonly) {
+    // The legacy file still holds the chat; nothing on disk is touched.
+  } else if (store) {
     try {
       store.delete();
     } catch (error) {
-      logWriteFailed(
-        backend._logger,
-        `${backend._storeName}.delete_failed`,
-        backend._sessionFilePath(sessionId),
-        error
-      );
-      return { ok: false, reason: 'delete_failed' };
+      const filePath = backend._sessionFilePath(sessionId);
+      if (!backend._journal || fs.existsSync(filePath)) {
+        logWriteFailed(backend._logger, `${backend._storeName}.delete_failed`, filePath, error);
+        return { ok: false, reason: 'delete_failed' };
+      }
+      logWriteFailed(backend._logger, `${backend._storeName}.journal_delete_failed`, filePath, error);
     }
     backend._sessionStores.delete(sessionId);
+    // A plain store (kill switch) leaves the journals of an earlier journaling run.
+    deleteSessionJournals(backend, sessionId, backend._sessionFilePath(sessionId));
   } else {
     const filePath = backend._sessionFilePath(sessionId);
     try {
@@ -50,6 +62,7 @@ function deleteSessionFromBackend(backend, sessionId) {
         return { ok: false, reason: 'delete_failed' };
       }
     }
+    deleteSessionJournals(backend, sessionId, filePath);
   }
   backend._loadedSessions.delete(sessionId);
   backend._dirtySessionIds.delete(sessionId);
@@ -59,6 +72,7 @@ function deleteSessionFromBackend(backend, sessionId) {
   backend._scanActiveTurns.delete(sessionId);
   delete backend._cachedIndex.sessions[sessionId];
   backend._scheduleIndexWrite();
+  if (readonly) return true;
   // Best effort: the delete itself already succeeded.
   const purged = purgeSessionRecoveryCopies(backend, sessionId);
   if (purged.failed > 0) {

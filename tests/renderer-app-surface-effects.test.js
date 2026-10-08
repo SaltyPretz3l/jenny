@@ -717,7 +717,8 @@ test('snapshot replay excludes impulses', () => {
   assert.equal(controller.calls.setActivity.length, 1, 'exactly one snapshot replay on commit');
   const snapshot = controller.calls.setActivity[0][0];
   assert.equal(snapshot.phase, 'streaming');
-  assert.equal(snapshot.targetEnergy, surfaceEffects.PHASE_TARGET_ENERGY.streaming);
+  assert.equal(snapshot.targetEnergy,
+    surfaceEffects.PHASE_TARGET_ENERGY.streaming + surfaceEffects.MODEL_HEARTBEAT.streamingFloor);
   assert.equal(controller.calls.handleActivityImpulse.length, 0, 'impulses are never replayed');
 });
 
@@ -837,15 +838,15 @@ test('phase energy mapping', () => {
     manager.publishActivityPhase(phase);
     const snapshot = manager.getStatus().activity;
     assert.equal(snapshot.phase, phase);
-    assert.equal(snapshot.targetEnergy, surfaceEffects.PHASE_TARGET_ENERGY[phase]);
+    const floor = phase === 'streaming' ? surfaceEffects.MODEL_HEARTBEAT.streamingFloor : 0;
+    assert.equal(snapshot.targetEnergy, surfaceEffects.PHASE_TARGET_ENERGY[phase] + floor);
   });
 
 });
 
-test('model heartbeat aggregates streaming cadence at 10Hz, low-passes, clamps, and is flag-reversible', () => {
+test('model heartbeat aggregates streaming cadence at 10Hz, low-passes, and clamps', () => {
   const enabledState = {
     ui: { activeView: 'chat', appearance: { surfaceEffectId: 'none' } },
-    features: { featureFlags: { surface_effect_heartbeat: true } },
   };
   const controller = makeFakeController();
   const { manager, raf, clock } = makeManager({
@@ -885,13 +886,6 @@ test('model heartbeat aggregates streaming cadence at 10Hz, low-passes, clamps, 
   status = manager.getStatus();
   assert.equal(status.heartbeat.boost, 0, 'awaiting-user hush clears streamed cadence energy');
   assert.equal(status.activity.targetEnergy, surfaceEffects.PHASE_TARGET_ENERGY['awaiting-user']);
-
-  enabledState.features.featureFlags.surface_effect_heartbeat = false;
-  manager.publishActivityPhase('streaming');
-  status = manager.getStatus();
-  assert.equal(status.heartbeat.enabled, false);
-  assert.equal(status.activity.targetEnergy, surfaceEffects.PHASE_TARGET_ENERGY.streaming,
-    'env-reversible flag restores the base streaming energy');
 });
 
 test('approval hush feeds the active card into interaction, spawn, and paint regions', () => {

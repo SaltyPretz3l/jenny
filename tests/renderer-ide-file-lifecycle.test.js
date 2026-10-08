@@ -28,6 +28,8 @@ function makeLifecycle({
   canonicalPaths = {},
   readHook = null,
   writeHook = null,
+  moveToGroup,
+  tabRestore = null,
 } = {}) {
   const ide = ideState.createIdeUiState();
 
@@ -119,6 +121,7 @@ function makeLifecycle({
     push(entry) { this.pushCount += 1; return realStack.push(entry); },
     pop() { return realStack.pop(); },
     peek() { return realStack.peek(); },
+    find(path) { return realStack.find(path); },
     dropPath(path) { this.dropPathCalls.push(path); return realStack.dropPath(path); },
     dropUnder(path) { this.dropUnderCalls.push(path); return realStack.dropUnder(path); },
     clear() { return realStack.clear(); },
@@ -143,8 +146,10 @@ function makeLifecycle({
     getIde: () => ide,
     ideStateUtils: ideState,
     editorHost,
+    getTabRestore: () => tabRestore,
     getWorkspaceFsApi: () => api,
     closedTabs,
+    moveToGroup,
     welcome: { drop: () => {}, noteOpened: () => {}, render: () => {} },
     chipPicker: { applyDefaults: () => {} },
     gitFeature: { requestRefresh: () => {} },
@@ -164,6 +169,28 @@ function makeLifecycle({
     readTextCalls, readImageCalls, docs, files,
   };
 }
+
+test('not-found restore opens close quietly while ordinary opens still toast', async () => {
+  let restoring = true;
+  const missing = [];
+  const ctx = makeLifecycle({ tabRestore: {
+    isRestoring: (tab) => restoring || Boolean(tab?.restore),
+    recordMissing: (path) => missing.push(path), tabAction() {}, recordActivation() {}, applyPosition() {},
+  } });
+  ideState.openTab(ctx.ide, 'gone.js');
+  assert.equal(await ctx.lifecycle.openFile('gone.js'), false);
+  assert.equal(ctx.ide.openTabs.length, 0);
+  assert.equal(ctx.toasts.length, 0);
+  assert.deepEqual(missing, ['gone.js']);
+  restoring = false;
+  await ctx.lifecycle.openFile('ordinary.js');
+  assert.equal(ctx.toasts.length, 1);
+  ideState.openTab(ctx.ide, 'later.js');
+  ctx.ide.openTabs[0].restore = { line: 5, top: 3 };
+  await ctx.lifecycle.openFile('later.js');
+  assert.equal(ctx.toasts.length, 1);
+  assert.deepEqual(missing, ['gone.js', 'later.js']);
+});
 
 test('a legacy map:// open routes to the File Map stage — no tab, no file read, no open-failure toast', async () => {
   // Stage-surface contract (WORKSPACE_PREVIEW_AND_MAP_PANELS_PLAN.md): the
@@ -752,6 +779,85 @@ async function openAndCloseOne(ctx, path) {
   ctx.lifecycle.closeTab(path);
   assert.equal(ctx.closedTabs.size(), 1, 'precondition: one closed-tab entry');
 }
+
+test('group follow-up: reopen restores the group before the view state', async () => {
+  const moves = [];
+  const ctx = makeLifecycle({
+    files: new Set(['group.js']),
+    moveToGroup: (path, group) => {
+      assert.equal(ctx.editorHost.hasDocument(path), true);
+      moves.push([path, group]);
+      ideState.getTab(ctx.ide, path).group = group;
+    },
+  });
+  await ctx.lifecycle.openFile('group.js');
+  ideState.getTab(ctx.ide, 'group.js').group = 'editor-2';
+  ctx.lifecycle.closeTab('group.js');
+  assert.equal(ctx.closedTabs.peek().group, 'editor-2');
+  ctx.editorHost.applyViewState = (path, state) => {
+    assert.equal(ideState.getTab(ctx.ide, path).group, 'editor-2');
+    assert.deepEqual(state, { cursor: 1 });
+    ctx.editorHost.applyViewStateCount += 1;
+  };
+  await ctx.lifecycle.reopenClosedTab();
+  assert.deepEqual(moves, [['group.js', 'editor-2']]);
+  assert.equal(ctx.editorHost.applyViewStateCount, 1);
+  assert.equal(ctx.closedTabs.size(), 0);
+  ctx.lifecycle.closeTab('group.js');
+  ctx.files.delete('group.js');
+  await ctx.lifecycle.reopenClosedTab();
+  assert.equal(moves.length, 1, 'failed opens do not move');
+});
+
+test('group follow-up: rename moves the successfully opened replacement to the captured group', async () => {
+  const moves = [];
+  const ctx = makeLifecycle({
+    files: new Set(['old.js', 'new.js']),
+    moveToGroup: (path, group) => {
+      assert.equal(ctx.editorHost.hasDocument(path), true);
+      assert.equal(ideState.getTab(ctx.ide, 'old.js'), null);
+      moves.push([path, group]);
+      ideState.getTab(ctx.ide, path).group = group;
+      return false;
+    },
+  });
+  await ctx.lifecycle.openFile('old.js');
+  ideState.getTab(ctx.ide, 'old.js').group = 'editor-3';
+  assert.equal(await ctx.lifecycle.handleTreeEntryRenamed('old.js', 'new.js', 'file'), true);
+  assert.deepEqual(moves, [['new.js', 'editor-3']]);
+  assert.equal(ideState.getTab(ctx.ide, 'new.js').group, 'editor-3');
+  assert.equal(await ctx.lifecycle.handleTreeEntryRenamed('new.js', 'missing.js', 'file'), false);
+  assert.equal(moves.length, 1, 'failed opens do not move');
+});
+
+test('group follow-up: rename after the close plan closed the tab still restores its group', async () => {
+  const moves = [];
+  const ctx = makeLifecycle({
+    files: new Set(['old.js', 'new.js']),
+    moveToGroup: (path, group) => { moves.push([path, group]); },
+  });
+  await ctx.lifecycle.openFile('old.js');
+  ideState.getTab(ctx.ide, 'old.js').group = 'editor-2';
+  ctx.lifecycle.closeTab('old.js'); // the preflight commit closes through closeTab
+  assert.equal(await ctx.lifecycle.handleTreeEntryRenamed('old.js', 'new.js', 'file', { wasOpen: true }), true);
+  assert.deepEqual(moves, [['new.js', 'editor-2']]);
+  assert.equal(ctx.closedTabs.size(), 0, 'the renamed entry is still dropped');
+});
+
+test('group follow-up: a close between the close plan and the rename does not lose the group', async () => {
+  const moves = [];
+  const ctx = makeLifecycle({
+    files: new Set(['old.js', 'new.js', 'other.js']),
+    moveToGroup: (path, group) => { moves.push([path, group]); },
+  });
+  await ctx.lifecycle.openFile('old.js');
+  await ctx.lifecycle.openFile('other.js');
+  ideState.getTab(ctx.ide, 'old.js').group = 'editor-3';
+  ctx.lifecycle.closeTab('old.js'); // the preflight commit
+  ctx.lifecycle.closeTab('other.js'); // the user closes another tab while the tree refreshes
+  assert.equal(await ctx.lifecycle.handleTreeEntryRenamed('old.js', 'new.js', 'file', { wasOpen: true }), true);
+  assert.deepEqual(moves, [['new.js', 'editor-3']]);
+});
 
 test('a tab-cap refusal keeps the closed-tab entry until a slot is free', async () => {
   const ctx = makeLifecycle({ files: new Set(['back.js']) });

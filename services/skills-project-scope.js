@@ -4,9 +4,11 @@
 // (the `/` picker) and the request-time invocation check, so both agree with
 // the sidecar's request-scoped skills_config (session-execution-authority.js).
 
+const fs = require('fs');
 const path = require('path');
 const { normalizeString } = require('./shared/normalize');
 const { GENERAL_PROJECT_ID, normalizeProjectId } = require('./projects/project-schema');
+const { ensureJennyDirGitignoreSync } = require('./jenny-project-dir');
 
 const GENERAL_SKILLS_AUTHORITY = Object.freeze({ project_id: GENERAL_PROJECT_ID, root_path: null });
 
@@ -37,4 +39,11 @@ function resolveSkillsAuthority(projectAuthority, { sessionId = '', projectId = 
   return GENERAL_SKILLS_AUTHORITY;
 }
 
-module.exports = { GENERAL_SKILLS_AUTHORITY, authorityProjectRoot, resolveSkillsAuthority };
+// Creates a skill scope folder. A project's lives in `.jenny/skills`, so its
+// `.jenny` ignores itself for Git (best effort).
+function createScopeFolder(folderPath, { project = false } = {}) {
+  fs.mkdirSync(folderPath, { recursive: true });
+  if (project) ensureJennyDirGitignoreSync(path.dirname(folderPath));
+}
+
+module.exports = { GENERAL_SKILLS_AUTHORITY, authorityProjectRoot, createScopeFolder, resolveSkillsAuthority };

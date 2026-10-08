@@ -34,10 +34,6 @@ const {
   USAGE_HISTORY_SCHEMA_VERSION,
 } = require('../usage-history-service');
 
-// Plugin schema versions are literals here on purpose: flag-off startup must
-// expose compatibility metadata without importing services/plugins/.
-const PLUGIN_CONTRACT_SET_VERSION = 1;
-const PLUGIN_GENERATION_STORE_VERSION = 1;
 const MCP_SERVERS_SCHEMA_VERSION = 1;
 
 function normalizeVersionValue(value) {
@@ -220,24 +216,6 @@ function getElectronSchemaVersions() {
       version: JENNY_STATUS_SCHEMA_VERSION,
       forward_policy: 'additive_only',
       source: 'services/backend/jenny-status-composer.js',
-    }),
-    makeEntry({
-      id: 'electron.plugin_contract_set',
-      surface: 'Electron plugin V1 contract set',
-      owner: 'electron',
-      kind: 'contract_set',
-      version: PLUGIN_CONTRACT_SET_VERSION,
-      forward_policy: 'frozen_v1_add_new_version',
-      source: 'config/plugins/v1/',
-    }),
-    makeEntry({
-      id: 'electron.plugin_generation_store',
-      surface: 'Electron plugin generation store',
-      owner: 'electron',
-      kind: 'json_schema',
-      version: PLUGIN_GENERATION_STORE_VERSION,
-      forward_policy: 'preserve_future_block_write',
-      source: 'config/plugins/v1/plugin-generation.schema.json',
     }),
     makeEntry({
       id: 'electron.mcp_servers',

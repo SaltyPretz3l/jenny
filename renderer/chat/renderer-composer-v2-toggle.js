@@ -40,7 +40,7 @@
       // Preserve the backend's legacy local_browser preference when writing a full map.
       if (typeof categoryOverrides?.local_browser === 'boolean') categories.local_browser = categoryOverrides.local_browser;
       for (const [id, value] of Object.entries(isMap(connectionOverrides) ? connectionOverrides : {})) {
-        if ((id.startsWith('mcp:') || id.startsWith('plugin:')) && typeof value === 'boolean') connected[id] = value;
+        if (id.startsWith('mcp:') && typeof value === 'boolean') connected[id] = value;
       }
       return { tool_category_overrides: categories, tool_connection_overrides: connected };
     }
@@ -69,11 +69,10 @@
           if (!families.has(entry.surfaceFamily)) families.set(entry.surfaceFamily, { members: [] });
           families.get(entry.surfaceFamily).members.push(member);
         }
-        if (entry.connectionId.startsWith('mcp:') || entry.connectionId.startsWith('plugin:')) {
-          const kind = entry.connectionId.startsWith('mcp:') ? 'mcp' : 'plugin';
+        if (entry.connectionId.startsWith('mcp:')) {
           if (!connections.has(entry.connectionId)) connections.set(entry.connectionId, {
-            label: kind === 'mcp' ? (entry.serverName || entry.connectionId.slice(4)) : entry.connectionId.split(':').at(-1),
-            kind, members: [],
+            label: entry.serverName || entry.connectionId.slice(4),
+            kind: 'mcp', members: [],
           });
           connections.get(entry.connectionId).members.push(member);
         }

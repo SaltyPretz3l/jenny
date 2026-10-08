@@ -570,3 +570,29 @@ test('picker strings resolve through the catalog keys', (t) => {
     ['X:composer.modelPicker.vision', 'X:composer.modelPicker.thinking'],
   );
 });
+
+
+test('pill failure dot wins over loaded, updates the same node, and clears for other models', (t) => {
+  const h = createHarness(t, { catalog: [model('qwen3:8b'), model('other:8b')], preferredModel: 'qwen3:8b', backendModel: 'qwen3:8b' });
+  h.picker.syncPill();
+  const dot = h.pill.querySelector('.composer-model-pill-dot');
+  assert.ok(dot.classList.contains('status-dot--ok'));
+  h.state.backend = { phase: 'model_unavailable', model_lifecycle: { failure: {
+    cause: 'out_of_memory', model: 'QWEN3:8B', context: 40960,
+  } } };
+  h.picker.syncPill();
+  assert.equal(h.pill.querySelector('.composer-model-pill-dot'), dot);
+  assert.equal(dot.className, 'composer-model-pill-dot status-dot status-dot--error');
+  h.state.status.model = '';
+  h.picker.syncPill();
+  assert.equal(h.pill.querySelector('.composer-model-pill-dot'), dot);
+  h.state.backend = { phase: 'ready' };
+  h.state.status.model = 'qwen3:8b';
+  h.picker.syncPill();
+  assert.equal(h.pill.querySelector('.composer-model-pill-dot'), dot);
+  assert.equal(dot.className, 'composer-model-pill-dot status-dot status-dot--ok');
+  h.state.status.model = '';
+  h.state.backend = { phase: 'model_unavailable', model_lifecycle: { failure: { cause: 'timeout', model: 'other:8b' } } };
+  h.picker.syncPill();
+  assert.equal(h.pill.querySelector('.composer-model-pill-dot'), null);
+});

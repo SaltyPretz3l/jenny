@@ -219,7 +219,12 @@ function registerWorkspacePtyIpcHandlers(ipcMainLike, workspacePtyService, autho
     'workspacePty.spawn': (_, payload) => workspacePtyService.spawn(payload),
     'workspacePty.write': (_, payload) => workspacePtyService.write(payload),
     'workspacePty.resize': (_, payload) => workspacePtyService.resize(payload),
-    'workspacePty.kill': (_, payload) => workspacePtyService.kill(payload),
+    // A renderer kill names one session. kill() without an id terminates EVERY
+    // session (the root switch and shutdown call it in main), so an empty id from
+    // the renderer (a terminal that never started) must not reach it.
+    'workspacePty.kill': (_, payload) => (String(payload?.sessionId || '')
+      ? workspacePtyService.kill({ sessionId: String(payload.sessionId) })
+      : { ok: true, killed: false }),
   }, authorization);
 }
 

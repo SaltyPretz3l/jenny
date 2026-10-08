@@ -173,6 +173,13 @@ TAXONOMY: Mapping[str, str] = {
     error_codes.CMP_MEMORY_SCHEMA_MIGRATION: "internal_error",
     error_codes.CMP_MEMORY_FAMILY_UNRESOLVED: "internal_error",
     error_codes.CMP_MEMORY_ROW_QUARANTINED: "internal_error",
+    # Semantic catalog (row 41): wire-only codes; knowledge_search falls back softly.
+    error_codes.CMP_CATALOG_EMBEDDER_UNAVAILABLE: "transient",
+    error_codes.CMP_CATALOG_NOT_CONFIGURED: "unavailable",
+    error_codes.CMP_CATALOG_INDEX_UNAVAILABLE: "unavailable",
+    error_codes.CMP_CATALOG_INVALID_PARAMS: "bad_arguments",
+    error_codes.CMP_CATALOG_CAPACITY_REACHED: "limit_exceeded",
+    error_codes.CMP_CATALOG_EMBEDDER_INVALID_PAYLOAD: "internal_error",
     error_codes.CMP_MCP_RESOURCE_INVALID: "internal_error",
     error_codes.CMP_MCP_TOOL_SURFACE_CHANGED: "internal_error",
     error_codes.CMP_LOOP_MAX_ITERATIONS: "internal_error",

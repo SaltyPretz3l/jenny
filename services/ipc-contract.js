@@ -1,7 +1,6 @@
 /**
  * Type-safe IPC contract for the Jenny preload bridge.
  *
- * JSDoc typedefs for the payload shapes live in ipc-contract-types.js;
  * JENNY_SHELL_BRIDGE_DESCRIPTORS below is the single runtime authority for
  * the JennyShellBridge surface.
  *
@@ -142,6 +141,9 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'cloudModels.chatgptSignIn': invokeMethod('cloud-models:chatgpt-sign-in'),
   'cloudModels.chatgptCancel': invokeMethod('cloud-models:chatgpt-cancel'),
   'cloudModels.chatgptSignOut': invokeMethod('cloud-models:chatgpt-sign-out'),
+  'cloudModels.chatgptCompletePasted': invokeMethod('cloud-models:chatgpt-complete-pasted'),
+  'cloudModels.chatgptExtendPending': invokeMethod('cloud-models:chatgpt-extend-pending'),
+  'cloudModels.chatgptPendingLink': invokeMethod('cloud-models:chatgpt-pending-link'),
   'cloudModels.onChanged': subscribeMethod('cloud-models:changed'),
   'codexCli.getState': invokeMethod('codex-cli:get-state'),
   'codexCli.refresh': invokeMethod('codex-cli:refresh'),
@@ -204,8 +206,16 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'workspaceRecovery.listChangeSets': invokeMethod('workspace-recovery:list-change-sets'),
   'workspaceRecovery.preflightUndo': invokeMethod('workspace-recovery:preflight-undo'),
   'workspaceRecovery.undoChangeSet': invokeMethod('workspace-recovery:undo-change-set'),
+  // Re-arms an undone change set after the Changes view's Redo restored its bytes.
+  'workspaceRecovery.reapplyChangeSet': invokeMethod('workspace-recovery:reapply-change-set'),
   'workspaceRecovery.restoreTrashEntry': invokeMethod('workspace-recovery:restore-trash-entry'),
   'workspaceRecovery.abandonRestore': invokeMethod('workspace-recovery:abandon-restore'),
+  // Row 34 S5 Changes view: per-file checkpoint restore (worktree only) and
+  // the in-memory undo/redo safety copies. User-initiated only.
+  'workspaceRecovery.preflightCheckpointFiles': invokeMethod('workspace-recovery:preflight-checkpoint-files'),
+  'workspaceRecovery.restoreCheckpointFiles': invokeMethod('workspace-recovery:restore-checkpoint-files'),
+  'workspaceRecovery.preflightSafetyCopy': invokeMethod('workspace-recovery:preflight-safety-copy'),
+  'workspaceRecovery.restoreSafetyCopy': invokeMethod('workspace-recovery:restore-safety-copy'),
   'workspaceGit.getStatus': invokeMethod('workspace-git:get-status'),
   'workspaceGit.getDiff': invokeMethod('workspace-git:get-diff'),
   'workspaceGit.getCommitDiff': invokeMethod('workspace-git:get-commit-diff'),
@@ -281,11 +291,24 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'knowledge.removeFolder': invokeMethod('knowledge:remove-folder'),
   'knowledge.chooseFolder': invokeMethod('knowledge:choose-folder'),
   'knowledge.onChanged': subscribeMethod('knowledge:changed'),
+  // catalog.* namespace: Settings › Tools "Search by meaning" (row 41).
+  'catalog.getStatus': invokeMethod('catalog:get-status'),
+  'catalog.updateSettings': invokeMethod('catalog:update-settings'),
+  'catalog.chooseModel': invokeMethod('catalog:choose-model'),
+  'catalog.rebuild': invokeMethod('catalog:rebuild'),
+  'catalog.deleteCatalog': invokeMethod('catalog:delete-catalog'),
+  'catalog.retry': invokeMethod('catalog:retry'),
+  'catalog.onStatus': subscribeMethod('catalog:status'),
   'home.getConfig': invokeMethod('home:get-config'),
   'home.updateConfig': invokeMethod('home:update-config'),
   'home.getAiJournal': invokeMethod('home:get-ai-journal'),
   'home.undoAiEntry': invokeMethod('home:undo-ai-entry'),
   'home.onAiChanged': subscribeMethod('home:ai-changed'),
+  'projectNotes.get': invokeMethod('project-notes:get'),
+  'projectNotes.save': invokeMethod('project-notes:save'),
+  'projectNotes.undo': invokeMethod('project-notes:undo'),
+  'projectNotes.lease': invokeMethod('project-notes:lease'),
+  'projectNotes.onChanged': subscribeMethod('project-notes:changed'),
   'linkStatus.getState': invokeMethod('link-status:get-state'),
   'linkStatus.onChanged': subscribeMethod('link-status:changed'),
   'calendar.getState': invokeMethod('calendar:get-state'),
@@ -386,9 +409,6 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'chat.answerUserQuestions': invokeMethod('chat:answer-user-questions'),
   'chat.declineUserQuestions': invokeMethod('chat:decline-user-questions'),
   'chat.onStream': subscribeMethod('chat:stream'),
-  'chat.onStreamEnvelope': subscribeMethod('chat:stream-envelope'),
-  'chat.onStreamRecoveryRequired': subscribeMethod('chat:stream-recovery-required'),
-  'chat.ackEnvelopeReceipt': invokeMethod('chat:ack-envelope-receipt'),
   'attachments.pick': invokeMethod('attachments:pick'),
   'attachments.prepare': invokeMethod('attachments:prepare'),
   'attachments.getPathForFile': localMethod('getPathForFile'),
@@ -423,6 +443,16 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'backgroundJobs.getState': invokeMethod('background-jobs:get-state'),
   'backgroundJobs.kill': invokeMethod('background-jobs:kill'),
   'backgroundJobs.onChanged': subscribeMethod('background-jobs:changed'),
+  // suggestedChanges.*: Propose-mode suggestions (row 35). Electron owns the
+  // record; accept applies through the sidecar journal. Trusted-sender
+  // authorized in services/main/suggested-changes-ipc-registration.js.
+  'suggestedChanges.list': invokeMethod('suggested-changes:list'),
+  'suggestedChanges.decide': invokeMethod('suggested-changes:decide'),
+  'suggestedChanges.comment': invokeMethod('suggested-changes:comment'),
+  'suggestedChanges.sendComments': invokeMethod('suggested-changes:send-comments'),
+  'suggestedChanges.discardPending': invokeMethod('suggested-changes:discard-pending'),
+  'suggestedChanges.accept': invokeMethod('suggested-changes:accept'),
+  'suggestedChanges.onChanged': subscribeMethod('suggested-changes:changed'),
   'commandSandbox.getState': invokeMethod('command-sandbox:get-state'),
   'commandSandbox.setEnabled': invokeMethod('command-sandbox:set-enabled'),
   'commandSandbox.retry': invokeMethod('command-sandbox:retry'),
@@ -474,30 +504,6 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   // carrying the user's decision (proceed).
   'window.onExitPreflightRequest': subscribeMethod('window:exit-preflight-request'),
   'window.respondExitPreflight': invokeMethod('window:exit-preflight-respond'),
-  // Plugin descriptors are registered behind the default-on `plugins` kill switch.
-  // Handlers authorize the Jenny sender and return structured results; contribution
-  // authority is enforced by the plugin control-plane owner.
-  'plugins.getState': invokeMethod('plugins:get-state'),
-  'plugins.getDetails': invokeMethod('plugins:get-details'),
-  'plugins.getOperation': invokeMethod('plugins:operation'),
-  'plugins.installLocalPackage': invokeMethod('plugins:install-local-package'),
-  'plugins.installLocalPackageFromPath': invokeMethod('plugins:install-local-package-from-path'),
-  'plugins.enable': invokeMethod('plugins:enable'),
-  'plugins.disable': invokeMethod('plugins:disable'),
-  'plugins.setContributionEnabled': invokeMethod('plugins:set-contribution-enabled'),
-  'plugins.updateSettings': invokeMethod('plugins:update-settings'),
-  'plugins.uninstall': invokeMethod('plugins:uninstall'),
-  'plugins.exportAudit': invokeMethod('plugins:export-audit'),
-  'plugins.getDistributionState': invokeMethod('plugins:distribution-state'),
-  'plugins.openView': invokeMethod('plugins:open-view'),
-  'plugins.setViewBounds': invokeMethod('plugins:set-view-bounds'),
-  'plugins.setViewZoom': invokeMethod('plugins:set-view-zoom'),
-  'plugins.closeView': invokeMethod('plugins:close-view'),
-  'plugins.focusView': invokeMethod('plugins:focus-view'),
-  'plugins.viewBridge': invokeMethod('plugins:view-bridge'),
-  'plugins.onViewHostCommand': subscribeMethod('plugins:view-host-command'),
-  'plugins.onChanged': subscribeMethod('plugins:changed'),
-  'plugins.onOperationProgress': subscribeMethod('plugins:operation-progress'),
   'dataLifecycle.getOverview': invokeMethod('data-lifecycle:get-overview'),
   'dataLifecycle.chooseArchiveDestination': invokeMethod('data-lifecycle:choose-archive-destination'),
   'dataLifecycle.createArchive': invokeMethod('data-lifecycle:create-archive'),

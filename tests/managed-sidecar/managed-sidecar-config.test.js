@@ -111,34 +111,6 @@ test('managed sidecar config forwards tool permission snapshot', () => {
   assert.deepEqual(config.tool_policy_snapshot, snapshot);
 });
 
-test('managed runtime keeps the legacy batch input inert but compatible for one release', () => {
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-subagent-batch-'));
-  trackDirectory(userDataPath);
-  let subagentsEnabled = true;
-  const service = createManagedServiceWithConfig(
-    userDataPath,
-    {
-      getState() {
-        return { tools: { subagents: subagentsEnabled } };
-      },
-    },
-    { featureFlags: { subagent_batch: false } }
-  );
-
-  let config = service._buildManagedSidecarConfig();
-  assert.equal(config.tools_subagents_enabled, true);
-  assert.equal(config.tools_subagent_batch_enabled, false);
-
-  service.featureFlags.subagent_batch = true;
-  config = service._buildManagedSidecarConfig();
-  assert.equal(config.tools_subagents_enabled, true);
-  assert.equal(config.tools_subagent_batch_enabled, true);
-  subagentsEnabled = false;
-  config = service._buildManagedSidecarConfig();
-  assert.equal(config.tools_subagents_enabled, false);
-  assert.equal(config.tools_subagent_batch_enabled, false);
-});
-
 test('managed runtime defaults delegate on but preserves an explicit off preference', () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-delegate-default-'));
   trackDirectory(userDataPath);
@@ -353,31 +325,6 @@ test('managed sidecar config derives task capsule flag from Electron feature fla
   assert.equal(config.feature_flags.task_capsule, true);
 });
 
-test('managed sidecar config enables phase events when stream envelope v2 is enabled', () => {
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-config-stream-envelope-v2-'));
-  trackDirectory(userDataPath);
-
-  const service = createManagedServiceWithConfig(
-    userDataPath,
-    {
-      getState() {
-        return {};
-      },
-    },
-    {
-      featureFlags: {
-        stream_envelope_v2: true,
-        phase_events: false,
-      },
-    }
-  );
-
-  const config = service._buildManagedSidecarConfig();
-
-  assert.equal(config.feature_flags.stream_envelope_v2, true);
-  assert.equal(config.feature_flags.phase_events, true);
-});
-
 
 for (const enabled of [false, true]) test(`runtime canonical emission is a copied transport requirement (enabled=${enabled})`, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-runtime-canonical-config-'));
@@ -391,42 +338,7 @@ for (const enabled of [false, true]) test(`runtime canonical emission is a copie
   assert.equal(config.feature_flags.canonical_turn_events, enabled);
   assert.deepEqual(service.featureFlags, flags);
   assert.equal(config.feature_flags.canonical_bridge, false);
-  assert.equal(Object.hasOwn(config.feature_flags, 'canonical_text_primary'), false);
 });
-
-test('canonical text primary requires its opt-in and both resolved Electron flags', () => {
-  for (const canonicalTextPrimary of [false, true]) {
-    for (const canonicalBridge of [false, true]) {
-      for (const canonicalTurnEvents of [false, true]) {
-        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-canonical-text-primary-'));
-        trackDirectory(root);
-        const service = createManagedService(root);
-        const expected = canonicalTextPrimary && canonicalBridge && canonicalTurnEvents;
-        service.featureFlags = {
-          ...(canonicalTextPrimary ? { canonical_text_primary: true } : {}),
-          canonical_bridge: canonicalBridge,
-          canonical_turn_events: canonicalTurnEvents,
-        };
-        service.providerIntegrationRegistry = {
-          getManagedConfigPatch: () => ({
-            feature_flags: { canonical_text_primary: !expected },
-          }),
-        };
-
-        const config = service._buildManagedSidecarConfig();
-
-        assert.equal(
-          Object.hasOwn(config.feature_flags, 'canonical_text_primary'),
-          expected
-        );
-        if (expected) {
-          assert.equal(config.feature_flags.canonical_text_primary, true);
-        }
-      }
-    }
-  }
-});
-
 
 test('ChatGPT runtime config forwards only the current catalog metadata snapshot', () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-chatgpt-catalog-config-'));

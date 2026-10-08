@@ -2,6 +2,40 @@
 // ours when it is proven to descend from the owned root: it was a direct child
 // in a listing taken before the root was stopped, or it is a direct child now.
 // "Parent is dead" and "parent is pid 1" prove nothing about a foreign process.
+const { execFileSync } = require('child_process');
+
+// Ollama's runner images on Windows: `ollama.exe runner`, the older
+// ollama_llama_server.exe, and the bundled lib\ollama\llama-server.exe. Jenny's
+// managed llama-server is the same image name elsewhere, so the path pins it.
+const WINDOWS_RUNNER_QUERY = [
+  "$ErrorActionPreference = 'Stop'",
+  "$procs = @(Get-CimInstance Win32_Process -Filter \"Name = 'ollama.exe' OR Name = 'ollama_llama_server.exe' OR Name = 'llama-server.exe'\" | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath)",
+  "if ($procs.Count -eq 0) { '[]' } else { $procs | ConvertTo-Json -Compress }",
+].join('; ');
+
+function isWindowsOllamaRunner(entry) {
+  const name = entry.name.toLowerCase();
+  if (name === 'ollama.exe' || name === 'ollama_llama_server.exe') return true;
+  return name === 'llama-server.exe' && /[\\/]lib[\\/]ollama[\\/]llama-server\.exe$/i.test(entry.executablePath);
+}
+
+function listWindowsOllamaRunnersSync({ execFileSyncImpl = execFileSync, logger } = {}) {
+  try {
+    const raw = execFileSyncImpl('powershell', ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_RUNNER_QUERY], {
+      encoding: 'utf-8', timeout: 5000, windowsHide: true,
+    });
+    const parsed = JSON.parse(String(raw || '[]').trim() || '[]');
+    return (Array.isArray(parsed) ? parsed : [parsed]).map((record) => ({
+      pid: Number(record?.ProcessId),
+      parentPid: Number(record?.ParentProcessId) || 0,
+      name: String(record?.Name || ''),
+      executablePath: String(record?.ExecutablePath || ''),
+    })).filter((entry) => isValidPid(entry.pid) && isWindowsOllamaRunner(entry));
+  } catch (error) {
+    if (typeof logger === 'function') logger('DEBUG', 'ollama.runner_discovery_failed', { message: String(error?.message || error) });
+    return [];
+  }
+}
 
 function isValidPid(pid) {
   return Number.isInteger(pid) && pid > 0;
@@ -21,8 +55,8 @@ function snapshotOwnedChildPids({ ownedPid, platform, logger, listProcesses }) {
 
 // Kill the owned root's remaining children, best effort. Confirm the live
 // command line on POSIX before signalling because a listed pid may have been
-// reused. Older ollama_llama_server binaries are not listed here and are out
-// of scope.
+// reused. On Windows the listing itself pins the runner identity
+// (listWindowsOllamaRunnersSync).
 async function killOwnedChildRunners({
   ownedPid,
   preStopChildPids = [],
@@ -60,4 +94,4 @@ async function killOwnedChildRunners({
   }
 }
 
-module.exports = { killOwnedChildRunners, snapshotOwnedChildPids };
+module.exports = { killOwnedChildRunners, listWindowsOllamaRunnersSync, snapshotOwnedChildPids };

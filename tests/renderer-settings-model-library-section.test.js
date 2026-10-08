@@ -14,8 +14,29 @@ async function flush() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+test('section publishes the first recommended fit and exposes the shared pull actions', async (t) => {
+  const h = harness(t);
+  let events = 0;
+  h.windowRef.addEventListener('jenny:model-state-changed', () => { events += 1; });
+  await h.controller.refresh({ force: true });
+  assert.deepEqual(h.state.modelRecommendation, { tag: 'recommended:3b', downloadSizeMb: 0 });
+  assert.equal(events, 1);
+  h.controller.render();
+  assert.equal(events, 1, 'unchanged tag does not publish an event');
+  h.controller.startPull('recommended:3b');
+  await flush();
+  assert.equal(Object.values(h.state.modelPulls)[0].tag, 'recommended:3b');
+  await h.controller.cancelPull('recommended:3b');
+  assert.deepEqual(h.state.modelPulls, {});
+  h.windowRef.jennyShell.models.list = async () => ({ data: [{ id: 'recommended:3b', engine_type: 'ollama' }] });
+  const before = events;
+  await h.controller.refresh({ force: true });
+  assert.equal(h.state.modelRecommendation, null, 'an installed recommendation is not a download recommendation');
+  assert.equal(events, before + 1);
+});
+
 test('settings model status is empty with an active model and keeps catalog reasons', async (t) => {
-  const { loadRendererApp } = require('./helpers/renderer-shell-harness');
+  const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
   for (const [model, available, reason, expected] of [
     ['installed:1b', true, '', ''],
     ['installed:1b', false, 'Engine unreachable', 'Loaded model: installed:1b (catalog unavailable: Engine unreachable)'],
@@ -27,6 +48,9 @@ test('settings model status is empty with an active model and keeps catalog reas
       models: { async list() { return { data: [], active_model: model, available, reason }; } },
     } });
     t.after(() => app.dispose());
+    // The Settings page paints on activation (renderAll no longer paints it on the chat view).
+    app.window.document.querySelector('[data-tab-id="settings"]').click();
+    await waitForUi(app.window, 20);
     assert.equal(app.window.document.getElementById('modelStatus').textContent, expected);
     await app.dispose();
   }
@@ -87,12 +111,10 @@ function diagnostics() {
   };
 }
 
-function state(enabled = true) {
+function state() {
   return {
     features: {
-      featureFlags: {
-        model_management_ui: enabled,
-      },
+      featureFlags: {},
     },
     status: { model: '' },
     offline: { preferredLocalModel: '' },
@@ -112,7 +134,7 @@ function harness(t, options = {}) {
     show(config) { calls.push(['contextMenu.show', config]); },
     hide() {},
   };
-  const currentState = options.state || state(true);
+  const currentState = options.state || state();
   const engine = { loadedModel: String(currentState.status?.model || '') };
   let featureChanged = null;
   let progressListener = null;
@@ -204,6 +226,7 @@ function harness(t, options = {}) {
       currentState.status = Object.assign({}, currentState.status, { model: engine.loadedModel });
     },
     openModelTuning: (...args) => calls.push(['tune', ...args]),
+    openDiagnostics: () => calls.push(['diagnostics']),
     setupService,
     inventoryContextMenu,
   };
@@ -240,21 +263,7 @@ test('controller exposes state and engine-settings sync methods', (t) => {
   assert.equal(typeof h.controller.syncEngineSettings, 'function');
 });
 
-test('model management off clears the library hosts without hiding Models or making bridge calls', async (t) => {
-  const h = harness(t, { state: state(false) });
-  h.controller.bind();
-  await flush();
-
-  assert.equal(h.nav.hidden, false);
-  assert.equal(h.nav.hasAttribute('data-feature-gated'), false);
-  assert.equal(h.card.hidden, false);
-  assert.equal(h.card.classList.contains('settings-section-active'), true);
-  assert.deepEqual(h.calls, []);
-  assert.equal(h.document.getElementById('modelLibrarySectionToolbarHost').textContent, '');
-  assert.equal(h.document.getElementById('modelLibrarySectionHost').textContent, '');
-});
-
-test('flag on renders rows, filters through counted chips, and refreshes all isolated sources', async (t) => {
+test('renders rows, filters through counted chips, and refreshes all isolated sources', async (t) => {
   const h = harness(t);
   h.controller.bind();
   await flush();
@@ -282,8 +291,24 @@ test('flag on renders rows, filters through counted chips, and refreshes all iso
   assert.equal(h.calls.filter((entry) => entry[0] === 'list').length, listCallsBefore + 1);
 });
 
+test('the boot seed defers the first source load: startup reads the sources once', async (t) => {
+  const seeded = state();
+  seeded.features.availabilityResolved = false;
+  const h = harness(t, { state: seeded });
+  h.controller.bind();
+  await flush();
+  assert.equal(h.calls.filter((entry) => entry[0] === 'list').length, 0, 'no read on the seed');
+  assert.equal(h.calls.filter((entry) => entry[0] === 'getDiagnostics').length, 0);
+
+  seeded.features.availabilityResolved = true;
+  h.featureChanged()();
+  await flush();
+  assert.equal(h.calls.filter((entry) => entry[0] === 'list').length, 1, 'one read after hydration');
+  assert.equal(h.calls.filter((entry) => entry[0] === 'getDiagnostics').length, 1);
+});
+
 test('GGUF folders render only behind llama-server acceleration', async (t) => {
-  const enabledState = state(true);
+  const enabledState = state();
   enabledState.features.featureFlags.llama_server_acceleration = true;
   enabledState.localEngines = {
     openaiCompatible: { managed: { libraryRoots: ['D:\\models\\gguf'] } },
@@ -295,7 +320,7 @@ test('GGUF folders render only behind llama-server acceleration', async (t) => {
   assert.ok(host);
   assert.match(host.textContent, /D:\\models\\gguf/);
 
-  const disabledState = state(true);
+  const disabledState = state();
   disabledState.features.featureFlags.llama_server_acceleration = false;
   disabledState.localEngines = {
     openaiCompatible: { managed: { libraryRoots: ['D:\\models\\must-not-render'] } },
@@ -307,7 +332,7 @@ test('GGUF folders render only behind llama-server acceleration', async (t) => {
 });
 
 test('the Image engine section renders only behind the image_generate kill switch', async (t) => {
-  const enabledState = state(true);
+  const enabledState = state();
   enabledState.features.featureFlags.tools_image_generate_enabled = true;
   const enabledHarness = harness(t, { state: enabledState });
   enabledHarness.windowRef.jennyShell.imageEngine = {
@@ -333,7 +358,7 @@ test('the Image engine section renders only behind the image_generate kill switc
   assert.equal(enabledHarness.document.getElementById('modelLibraryImageEngineHost'), null);
   assert.equal(subscribed, 0);
 
-  const disabledState = state(true);
+  const disabledState = state();
   disabledState.features.featureFlags.tools_image_generate_enabled = false;
   const disabledHarness = harness(t, { state: disabledState });
   disabledHarness.controller.bind();
@@ -455,7 +480,7 @@ test('row menu disables removal for the loaded model', async (t) => {
   // The standalone Remove button was gated on active !== true; the overflow
   // menu is now the only Remove path, and models.delete rejects the loaded
   // model with model_in_use, so the item must not be offered as enabled.
-  const activeState = state(true);
+  const activeState = state();
   activeState.status.model = 'installed:1b';
   const h = harness(t, { state: activeState });
   h.controller.bind();
@@ -603,7 +628,7 @@ test('use activates through the model lifecycle, persists preference after succe
 
 test('use renders its pending card synchronously before the load settles', async (t) => {
   const loadRequest = deferred();
-  const currentState = state(true);
+  const currentState = state();
   const h = harness(t, {
     state: currentState,
     models: {
@@ -701,7 +726,7 @@ test('an unacknowledged preference echo is reported as a preference failure, not
 });
 
 test('unload succeeds for the canonical active model and refreshes on a stale active card', async (t) => {
-  const activeState = state(true);
+  const activeState = state();
   activeState.status.model = 'installed:1b';
   const active = harness(t, { state: activeState });
   active.controller.bind();
@@ -721,7 +746,7 @@ test('unload succeeds for the canonical active model and refreshes on a stale ac
     'false'
   );
 
-  const staleState = state(true);
+  const staleState = state();
   staleState.status.model = 'installed:1b';
   const stale = harness(t, { state: staleState });
   stale.controller.bind();
@@ -762,26 +787,6 @@ test('controller without a toast dependency completes activation through the liv
     h.card.querySelector('.model-library-section-status').textContent,
     'Now chatting with "installed:1b".'
   );
-});
-
-test('runtime model-management changes populate and clear hosts without hiding Models', async (t) => {
-  const h = harness(t, { state: state(false) });
-  h.state.ui.activeSettingsSection = 'models';
-  h.controller.bind();
-  await flush();
-
-  h.state.features.featureFlags.model_management_ui = true;
-  await h.featureChanged()();
-  assert.equal(h.nav.hidden, false);
-  assert.equal(h.card.hidden, false);
-  assert.equal(h.document.querySelectorAll('.model-row').length, 2);
-
-  h.state.features.featureFlags.model_management_ui = false;
-  await h.featureChanged()();
-  assert.equal(h.nav.hidden, false);
-  assert.equal(h.card.hidden, false);
-  assert.equal(h.document.getElementById('modelLibrarySectionToolbarHost').textContent, '');
-  assert.equal(h.document.getElementById('modelLibrarySectionHost').textContent, '');
 });
 
 test('split hosts populate while full renders preserve the live region and pull-tag focus', async (t) => {
@@ -848,26 +853,6 @@ test('a backdrop click dismisses the section delete modal; a click inside the pa
   assert.equal(h.card.querySelector(modalSelector), null, 'backdrop click dismisses');
   click(h.windowRef, openModal().querySelector('.inv-step-modal'));
   assert.ok(h.card.querySelector(modalSelector), 'panel click keeps the modal');
-});
-
-test('disabling model management clears the status line, including a write that lands afterwards', async (t) => {
-  const h = harness(t);
-  h.controller.bind();
-  await flush();
-  click(h.windowRef, h.card.querySelector('[data-model-library-section-action="pull-tag"]'));
-  const status = h.card.querySelector('.model-library-section-status');
-  assert.match(status.textContent, /tag/i, 'an empty pull tag reports on the status line');
-
-  click(h.windowRef, h.card.querySelector('[data-model-key="recommended:3b"] [data-model-card-action="pull"]'));
-  const startCall = h.calls.find((entry) => entry[0] === 'startOllamaPull');
-  assert.ok(startCall, 'a pull is in flight');
-
-  h.state.features.featureFlags.model_management_ui = false;
-  await h.featureChanged()();
-  assert.equal(status.textContent, '', 'flag off clears the status line');
-  h.progressListener()({ requestId: startCall[1].requestId, status: 'completed', percent: 100 });
-  await flush();
-  assert.equal(status.textContent, '', 'a pull settling after the flag flipped stays off the status line');
 });
 
 test('pull completion performs no stale-card repaint before the terminal refresh', async (t) => {
@@ -971,4 +956,40 @@ test('a feature broadcast with unchanged flags does not reload the sources', asy
   h.state.features.featureFlags.llama_server_acceleration = !h.state.features.featureFlags.llama_server_acceleration;
   await h.featureChanged()();
   assert.ok(h.calls.length > before, 'a flag this section reads flipping reloads the sources');
+});
+
+
+test('failed row routes recovery and repaints when the failure changes or clears', async (t) => {
+  const failure = { cause: 'out_of_memory', context: 40960, message: 'memory exhausted', at: '2026-10-07T12:00:00Z', engine: 'ollama', model: 'qwen3:8b' };
+  const current = state();
+  current.backend = { phase: 'model_unavailable', model_lifecycle: { state: 'unavailable', requested_model: 'qwen3:8b', engine: 'ollama', failure } };
+  const h = harness(t, { state: current, models: { async list() { return { data: [{ id: 'qwen3:8b', engine_type: 'ollama' }] }; } } });
+  h.windowRef.jennyShell.modelTuning = { async update(payload) { h.calls.push(['persist', payload]); return { status: 'applied' }; } };
+  h.controller.bind();
+  await flush();
+  const row = () => [...h.card.querySelectorAll('.model-row')].find((el) => el.querySelector('[data-model-tag="qwen3:8b"]'));
+  assert.equal(row().dataset.loadFailed, 'true');
+  assert.match(row().textContent, /Didn't load/);
+  click(h.windowRef, row().querySelector('[data-model-card-action="loadSmaller"]'));
+  await flush();
+  const persistIndex = h.calls.findIndex(([action]) => action === 'persist');
+  const loadIndex = h.calls.findIndex(([action]) => action === 'load');
+  assert.deepEqual(h.calls[persistIndex], ['persist', { modelId: 'qwen3:8b', contextLength: 32768 }]);
+  assert.ok(loadIndex > persistIndex);
+  assert.equal(h.calls[loadIndex][1].model || h.calls[loadIndex][1], 'qwen3:8b');
+  click(h.windowRef, row().querySelector('[data-model-card-action="showFits"]'));
+  assert.equal(h.card.querySelector('[data-inv-chip="recommended"]').getAttribute('aria-pressed'), 'true');
+  click(h.windowRef, h.card.querySelector('[data-inv-chip="all"]'));
+  current.backend.model_lifecycle.failure = { ...failure, cause: 'timeout', at: '2026-10-07T12:01:00Z' };
+  h.controller.syncFromState();
+  assert.ok(row().querySelector('[data-model-card-action="retry"]'));
+  assert.equal(row().querySelector('[data-model-card-action="loadSmaller"]'), null);
+  current.backend.model_lifecycle.failure = { ...failure, cause: 'engine_unreachable' };
+  h.controller.syncFromState();
+  click(h.windowRef, row().querySelector('[data-model-card-action="diagnostics"]'));
+  assert.ok(h.calls.some(([action]) => action === 'diagnostics'));
+  current.backend = { phase: 'ready' };
+  h.controller.syncFromState();
+  assert.equal(row().dataset.loadFailed, 'false');
+  assert.doesNotMatch(row().textContent, /Didn't load/);
 });

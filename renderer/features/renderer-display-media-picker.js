@@ -65,14 +65,7 @@
   // an <img src>; anything else falls back to a placeholder tile.
   const THUMBNAIL_DATA_URL = /^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$/;
 
-  function defaultEscape(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const defaultEscape = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function createDisplayMediaPicker(deps) {
     const options = deps || {};

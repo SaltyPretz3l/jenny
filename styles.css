@@ -12,7 +12,7 @@
 @import url("./styles/palette-obsidian.css");
 @import url("./styles/palette-darkroom.css");
 @import url("./styles/palette-slate.css");
-/* Third-party: KaTeX typeset base (katex_math). Fonts resolve relative to the
+/* Third-party: KaTeX typeset base. Fonts resolve relative to the
    imported file inside node_modules/katex/dist/ — covered by font-src 'self'. */
 @import url("./node_modules/katex/dist/katex.min.css");
 @import url("./styles/components/buttons.css");
@@ -86,8 +86,7 @@
 @import url("./styles/views-home-setup.css");
 @import url("./styles/ide-view.css");
 @import url("./styles/ide-statusbar-quickpick.css");
-@import url("./styles/ide-bottom-panel.css");
-@import url("./styles/ide-secondary-sidebar.css");
+@import url("./styles/ide-workbench.css");
 @import url("./styles/ide-view-replace.css");
 @import url("./styles/ide-diff-toolbar.css");
 @import url("./styles/ide-chrome.css");
@@ -114,12 +113,15 @@
 @import url("./styles/chat-subagent-monitor.css");
 @import url("./styles/chat-subagent-monitor-detail.css");
 @import url("./styles/ide-chat-dock.css");
+@import url("./styles/changes-view.css");
+@import url("./styles/suggestion-bar.css");
 @import url("./styles/ide-chat-session-picker.css");
 @import url("./styles/settings.css");
 @import url("./styles/context-panel.css");
 @import url("./styles/artifact-panel.css");
 @import url("./styles/chat-panes.css");
 @import url("./styles/task-rail.css");
+@import url("./styles/project-notes-rail.css");
 @import url("./styles/workbench-health-pill.css");
 @import url("./styles/surface-states.css");
 @import url("./styles/origin-chip.css");

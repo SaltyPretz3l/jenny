@@ -52,7 +52,7 @@ const projection = require('../renderer/features/renderer-artifacts-projection.j
 const artifactRender = require('../renderer/features/renderer-artifacts-render.js');
 const { createArtifactSurfaceController } = require('../renderer/features/renderer-artifacts-surface-controller.js');
 
-function makeParityHarness(t, { registryEnabled }) {
+function makeParityHarness(t) {
   const dom = new JSDOM('<body></body>');
   const doc = dom.window.document;
   const previousDocument = globalThis.document;
@@ -88,7 +88,6 @@ function makeParityHarness(t, { registryEnabled }) {
       dirtyContent: '',
       savePending: false,
     },
-    features: { featureFlags: { artifact_renderer_registry: registryEnabled === true } },
   };
   const controller = createArtifactSurfaceController({
     state,
@@ -129,7 +128,7 @@ function snapshotSurface(surface) {
 }
 
 test('surface controller rebinds the live V3 title and writes only its text child', (t) => {
-  const harness = makeParityHarness(t, { registryEnabled: false });
+  const harness = makeParityHarness(t);
   const doc = harness.surface.detailTitle.ownerDocument;
   const root = doc.createElement('aside');
   root.innerHTML = '<button id="artifactReviewDetailTitle"><span class="artifact-panel-title-text">Old</span><span data-chevron>v</span></button>';
@@ -194,51 +193,77 @@ const PARITY_FIXTURES = [
   }, ''],
 ];
 
+// Frozen from the WS2 parity run (registry output equalled the retired
+// legacy dispatch): per kind, the surface visibility, note, kicker, detail
+// mode and a preview marker. Provenance is timezone-dependent, so omitted.
+const PARITY_EXPECTED = {
+  'mermaid generated': {
+    previewHidden: false, editorHidden: true, kicker: 'Mermaid Diagram', detailMode: 'generated',
+    note: 'Mermaid preview with source and edit access below.', marker: 'artifact-preview-mermaid-shell',
+  },
+  'markdown generated': {
+    previewHidden: false, editorHidden: true, kicker: null, detailMode: 'generated',
+    note: null, marker: 'data-artifact-document="markdown"',
+  },
+  'code generated': {
+    previewHidden: true, editorHidden: false, kicker: 'Generated File', detailMode: 'generated',
+    note: 'Stage editor is ready. Save writes changes back to the session scratch file.', marker: '',
+  },
+  image: {
+    previewHidden: false, editorHidden: true, kicker: 'Image', detailMode: 'image',
+    note: 'Previewing the session image at full stage size.', marker: 'artifact-preview-image-shell',
+  },
+  'tool output text': {
+    previewHidden: false, editorHidden: true, kicker: 'Tool Output', detailMode: 'tool',
+    note: '', marker: 'artifact-output-viewer',
+  },
+  'tool output mermaid': {
+    previewHidden: false, editorHidden: true, kicker: 'Tool Output', detailMode: 'tool',
+    note: 'Mermaid tool output with preview and source fallback.', marker: 'artifact-preview-mermaid-shell',
+  },
+};
+
 for (const [label, artifact, content] of PARITY_FIXTURES) {
-  test(`WS2 parity: ${label} renders identically with artifact_renderer_registry off and on`, (t) => {
-    const off = makeParityHarness(t, { registryEnabled: false });
-    off.state.artifacts.dirtyContent = content;
-    off.state.artifacts.loadedArtifactContent = content;
-    off.controller.renderSelectedArtifactDetail(off.surface, artifact);
-    const offSnapshot = snapshotSurface(off.surface);
+  test(`WS2: ${label} renders through the renderer registry`, (t) => {
+    const harness = makeParityHarness(t);
+    harness.state.artifacts.dirtyContent = content;
+    harness.state.artifacts.loadedArtifactContent = content;
+    harness.controller.renderSelectedArtifactDetail(harness.surface, artifact);
+    const snapshot = snapshotSurface(harness.surface);
+    const expected = PARITY_EXPECTED[label];
 
-    const on = makeParityHarness(t, { registryEnabled: true });
-    on.state.artifacts.dirtyContent = content;
-    on.state.artifacts.loadedArtifactContent = content;
-    on.controller.renderSelectedArtifactDetail(on.surface, artifact);
-    const onSnapshot = snapshotSurface(on.surface);
-
-    assert.deepEqual(onSnapshot, offSnapshot, `registry-on output diverged for ${label}`);
-    assert.ok(offSnapshot.previewHTML.length + offSnapshot.note.length > 0, 'fixture rendered nothing at all');
+    assert.ok(snapshot.previewHTML.length + snapshot.note.length > 0, 'fixture rendered nothing at all');
+    assert.equal(snapshot.previewHidden, expected.previewHidden, `${label}: preview visibility`);
+    assert.equal(snapshot.editorHidden, expected.editorHidden, `${label}: editor visibility`);
+    assert.equal(snapshot.detailMode, expected.detailMode, `${label}: detail mode`);
+    assert.equal(snapshot.noteError, false, `${label}: no error note`);
+    if (expected.kicker !== null) assert.equal(snapshot.kicker, expected.kicker, `${label}: kicker`);
+    if (expected.note !== null) assert.equal(snapshot.note, expected.note, `${label}: note`);
+    if (expected.marker) {
+      assert.ok(snapshot.previewHTML.includes(expected.marker), `${label}: preview marker ${expected.marker}`);
+    } else {
+      assert.equal(snapshot.previewHTML, '', `${label}: no preview markup`);
+    }
   });
 }
 
-test('WS2: flag ON routes an html artifact through the sanitized web kind (additive)', (t) => {
+test('WS2: the registry routes an html artifact through the sandboxed preview kind', (t) => {
   const artifact = generatedArtifactFixture({ language: 'html', fileName: 'page.html' });
   const content = '<div class="ok">safe</div><script>alert(1)</script><img src=x onerror="alert(1)">';
 
-  const off = makeParityHarness(t, { registryEnabled: false });
-  off.state.artifacts.dirtyContent = content;
-  off.state.artifacts.loadedArtifactContent = content;
-  off.controller.renderSelectedArtifactDetail(off.surface, artifact);
-  // Legacy: html files hit the generic code/editor branch.
-  assert.equal(off.surface.editorShell.classList.contains('hidden'), false);
-  assert.equal(off.surface.previewContent.classList.contains('hidden'), true);
-
-  const on = makeParityHarness(t, { registryEnabled: true });
-  on.state.artifacts.dirtyContent = content;
-  on.state.artifacts.loadedArtifactContent = content;
-  on.controller.renderSelectedArtifactDetail(on.surface, artifact);
-  const html = on.surface.previewContent.innerHTML;
-  assert.ok(html.includes('artifact-preview-web-shell'), `web shell missing: ${html}`);
-  assert.ok(html.includes('safe'), `sanitized content missing: ${html}`);
-  assert.ok(!html.includes('<script'), `script survived sanitize: ${html}`);
-  assert.ok(!html.includes('onerror'), `event handler survived sanitize: ${html}`);
+  const harness = makeParityHarness(t);
+  harness.state.artifacts.dirtyContent = content;
+  harness.state.artifacts.loadedArtifactContent = content;
+  harness.controller.renderSelectedArtifactDetail(harness.surface, artifact);
+  const html = harness.surface.previewContent.innerHTML;
+  assert.ok(html.includes('data-html-preview-host'), `preview host missing: ${html}`);
+  assert.equal(harness.surface.previewContent.querySelector('script, [onerror]'), null,
+    `executable markup must never land inline in the privileged renderer: ${html}`);
 });
 
 test('the Canvas chrome owns the view control: no in-content view toggles', (t) => {
   const mermaid = generatedArtifactFixture({ language: 'mermaid', fileName: 'diagram.mmd' });
-  const harness = makeParityHarness(t, { registryEnabled: true });
+  const harness = makeParityHarness(t);
   harness.state.artifacts.dirtyContent = 'flowchart TD\n  A-->B';
   harness.state.artifacts.loadedArtifactContent = harness.state.artifacts.dirtyContent;
   harness.controller.renderSelectedArtifactDetail(harness.surface, mermaid);
@@ -246,7 +271,7 @@ test('the Canvas chrome owns the view control: no in-content view toggles', (t) 
 });
 
 test('WS2: setArtifactViewMode round-trips viewModeByKind and keeps the mermaidViewMode alias synced', (t) => {
-  const harness = makeParityHarness(t, { registryEnabled: true });
+  const harness = makeParityHarness(t);
   const { controller, state } = harness;
   assert.equal(controller.getArtifactViewMode('html'), 'preview');
   controller.setArtifactViewMode('html', 'edit');
@@ -270,7 +295,7 @@ test('WS2: setArtifactViewMode round-trips viewModeByKind and keeps the mermaidV
 
 /* ── Finding 1: toolbar Copy resolves the artifact's full source text ── */
 
-function makeCopyHarness(t, { selectedArtifact, registryEnabled = false } = {}) {
+function makeCopyHarness(t, { selectedArtifact } = {}) {
   const dom = new JSDOM('<body></body>');
   const doc = dom.window.document;
   const previousDocument = globalThis.document;
@@ -320,7 +345,6 @@ function makeCopyHarness(t, { selectedArtifact, registryEnabled = false } = {}) 
       dirtyContent: '',
       savePending: false,
     },
-    features: { featureFlags: { artifact_renderer_registry: registryEnabled === true } },
   };
   const controller = createArtifactSurfaceController({
     state,

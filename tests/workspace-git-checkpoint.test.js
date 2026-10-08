@@ -443,6 +443,19 @@ describe('checkpoint transactions (real repo)', () => {
     assert.equal((await git(repo, ['status', '--porcelain=v1'])).stdout, '', 'rollback returns the tree to clean');
   });
 
+  test('allowClean pins HEAD for a clean tree; without it a clean tree is nothing_to_checkpoint', async () => {
+    const repo = await createGitRepo();
+    const svc = createService(repo);
+    const skipped = await svc.createCheckpoint({ session: 'sess_pin' });
+    assert.equal(skipped.created, false);
+    assert.equal(skipped.reason, 'nothing_to_checkpoint');
+    const pinned = await svc.createCheckpoint({ session: 'sess_pin', allowClean: true });
+    assert.equal(pinned.created, true);
+    assert.match(pinned.ref, /^refs\/jenny\/checkpoints\/sess_pin\/\d+$/);
+    const headSha = (await git(repo, ['rev-parse', 'HEAD'])).stdout.trim();
+    assert.equal((await git(repo, ['rev-parse', '--verify', pinned.ref])).stdout.trim(), headSha);
+  });
+
   test('design points 1/2: concurrent creates serialize and receive distinct refs', async () => {
     const repo = await createGitRepo();
     await fs.writeFile(path.join(repo, 'README.md'), 'dirty\n', 'utf8');

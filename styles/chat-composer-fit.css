@@ -104,6 +104,19 @@
   display: none;
 }
 
+/* Commands likewise keeps only its "/" glyph collapsed (row 38 item 7 gave
+   it the word); its aria-label and title still say Commands. */
+.composer[data-toolbar-compact] .composer-toolbar-left .composer-text-button {
+  width: var(--composer-secondary-control-size);
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
+
+.composer[data-toolbar-compact] .composer-toolbar-left .composer-text-button .composer-button-text {
+  display: none;
+}
+
 .composer[data-toolbar-compact] .composer-settings-summary {
   display: inline-flex;
   flex: 0 1 auto;

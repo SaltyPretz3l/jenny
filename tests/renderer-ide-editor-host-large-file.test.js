@@ -67,7 +67,6 @@ function makeHost() {
       normalizeEditorLanguage: () => 'javascript',
     },
     imageHostUtils: {},
-    previewHostUtils: {},
   });
   return { host, fake, dom };
 }
@@ -134,7 +133,6 @@ function makeCountingHost() {
       normalizeEditorLanguage: () => 'javascript',
     },
     imageHostUtils: {},
-    previewHostUtils: {},
   });
   return { host, fake, dom, getClassifyCalls: () => classifyCalls };
 }

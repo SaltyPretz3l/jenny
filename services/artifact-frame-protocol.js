@@ -51,14 +51,11 @@ const DEFAULT_MAX_DOCUMENT_BYTES = 4 * 1024 * 1024;
  * secure:true avoids mixed-content downgrades. Deliberately NOT granted:
  * fetch/CORS/service workers/streams — the scheme exists only as an iframe
  * document source. */
-function registerArtifactFramePrivilegedScheme(protocolRef, additionalSchemes = []) {
+function registerArtifactFramePrivilegedScheme(protocolRef) {
   if (!protocolRef || typeof protocolRef.registerSchemesAsPrivileged !== 'function') {
     return false;
   }
-  protocolRef.registerSchemesAsPrivileged([
-    ARTIFACT_FRAME_PRIVILEGED_SCHEME,
-    ...additionalSchemes,
-  ]);
+  protocolRef.registerSchemesAsPrivileged([ARTIFACT_FRAME_PRIVILEGED_SCHEME]);
   return true;
 }
 

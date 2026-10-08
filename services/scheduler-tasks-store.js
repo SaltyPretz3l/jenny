@@ -12,6 +12,7 @@ const {
 const {
   normalizeScheduledTasks,
 } = require('./scheduler-task-registry');
+const { ensureJennyDirGitignoreSync } = require('./jenny-project-dir');
 
 const TERMINAL_AUTOMATION_STATUSES = new Set(['completed', 'failed', 'cancelled', 'skipped']);
 
@@ -163,6 +164,8 @@ async function readScheduledTasksFileAsync(
 function writeScheduledTasksFile(tasksPath, payload, { fsImpl = fs } = {}) {
   const dirPath = path.dirname(tasksPath);
   fsImpl.mkdirSync(dirPath, { recursive: true });
+  // No-op unless dirPath is a project `.jenny` (the profile fallback is not).
+  ensureJennyDirGitignoreSync(dirPath, { fs: fsImpl });
   const tempPath = `${tasksPath}.${Date.now()}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   try {
     fsImpl.writeFileSync(tempPath, JSON.stringify(payload, null, 2), 'utf8');

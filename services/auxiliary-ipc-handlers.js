@@ -289,10 +289,12 @@ function registerAuxiliaryIpcHandlers({
   linkStatusService,
   calendarService,
   homeAssistantService,
-  chatStreamBridge,
+  projectNotesService = null,
   getWindowState,
   windowExitGuard = null,
   createAuthService = createChatGptAuthServiceDefault,
+  workspaceGitService = null,
+  workspaceIdeService = null,
 } = {}) {
   const fileActions = createArtifactFileActions({ artifactService, dialog, getMainWindow, clipboard, nativeImage });
   const getWindowStatePayload = () => {
@@ -509,6 +511,24 @@ function registerAuxiliaryIpcHandlers({
     'home.undoAiEntry': (_, entryId) =>
       homeAssistantService && typeof homeAssistantService.undo === 'function'
         ? homeAssistantService.undo(entryId)
+        : { ok: false, reason: 'unavailable' },
+    // Per-project note. All decision logic (revision check, lease, cap, undo
+    // refusals) lives in ProjectNotesService; these handlers only marshal.
+    'projectNotes.get': (_, projectId) =>
+      projectNotesService && typeof projectNotesService.get === 'function'
+        ? projectNotesService.get(projectId)
+        : { ok: false, reason: 'unavailable' },
+    'projectNotes.save': (_, projectId, text, baseRevision) =>
+      projectNotesService && typeof projectNotesService.save === 'function'
+        ? projectNotesService.save(projectId, text, baseRevision)
+        : { ok: false, reason: 'unavailable' },
+    'projectNotes.undo': (_, projectId, entryId) =>
+      projectNotesService && typeof projectNotesService.undo === 'function'
+        ? projectNotesService.undo(projectId, entryId)
+        : { ok: false, reason: 'unavailable' },
+    'projectNotes.lease': (_, projectId, held) =>
+      projectNotesService && typeof projectNotesService.lease === 'function'
+        ? projectNotesService.lease(projectId, held)
         : { ok: false, reason: 'unavailable' },
     'linkStatus.getState': () =>
       linkStatusService && typeof linkStatusService.getState === 'function'
@@ -757,17 +777,6 @@ function registerAuxiliaryIpcHandlers({
         : ''
     ),
     'chat.compactNow': (_, sessionId) => backendService.compactContextNow(sessionId),
-    'chat.ackEnvelopeReceipt': (_, record) => {
-      if (chatStreamBridge && typeof chatStreamBridge.recordEnvelopeAck === 'function') {
-        return chatStreamBridge.recordEnvelopeAck(record);
-      }
-      return {
-        ok: false,
-        reason: 'stream_envelope_gate_unavailable',
-        legacy_reopened: true,
-        rehydrate_required: true,
-      };
-    },
     ...createAttachmentIpcHandlers({ backendService, shellConfigService, dialog, getMainWindow,
       prepareAttachmentEntries, attachmentAssetStore, processRef, isChildPath, log }),
     'clipboard.writeText': (_, text) => {
@@ -924,7 +933,9 @@ function registerAuxiliaryIpcHandlers({
     }),
   }, ipcAuthorization);
 
-  registerWorkspaceRecoveryIpcHandlers({ ipcMainLike, backendService, ipcAuthorization });
+  registerWorkspaceRecoveryIpcHandlers({
+    ipcMainLike, backendService, ipcAuthorization, gitService: workspaceGitService, ideService: workspaceIdeService,
+  });
 }
 
 module.exports = {

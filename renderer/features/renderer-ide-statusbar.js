@@ -29,9 +29,8 @@
   const PANEL_ICON = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1"></rect><path d="M2 10h12"></path></svg>';
 
   // Run "Running…" indicator glyph: a play triangle in a ring (inline SVG,
-  // CSP-safe, currentColor). Paired with a small stop square for the kill action.
+  // CSP-safe, currentColor).
   const RUN_ICON = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"></circle><path d="M6.6 5.4 11 8l-4.4 2.6Z" fill="currentColor"></path></svg>';
-  const STOP_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1.2"></rect></svg>';
 
   function resolveModule(globalName, requirePath) {
     if (globalRef[globalName]) {
@@ -52,15 +51,11 @@
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
     const escapeHtml = typeof deps?.escapeHtml === 'function'
       ? deps.escapeHtml
-      : (value) => String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     const callbacks = deps?.callbacks || {};
     const {
       getCursorInfo = () => null,
+      getStatusPath = () => '',
       getActiveLanguageId = () => '',
       getBranch = () => '',
       getDirtyCount = () => 0,
@@ -80,7 +75,7 @@
       onSwitchBranch = noop,
       onOpenProblems = noop,
       onToggleBottomPanel = noop,
-      onKillRun = noop,
+      onOpenRun = noop,
     } = callbacks;
     const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
 
@@ -140,19 +135,18 @@
         : '';
       // Run indicator: shown only while a task launched from "Run this file" /
       // "Run npm script…" is in flight. A non-interactive label span carries the
-      // glyph + "Running…"; the nested action-button is the one-click kill.
+      // glyph + "Running…" and opens the Run view; the Run panel's own Stop is
+      // the only Stop for the task.
+      const runTitle = jt('ide.statusbar.showRunningTask', 'Show the running task');
       const runSegment = getRunning() === true
-        ? `<span class="ide-statusbar-item ide-statusbar-run" title="${escapeHtml(jt('ide.statusbar.taskRunning', 'A task is running'))}">`
-          + `${RUN_ICON}<span class="ide-statusbar-run-label">${escapeHtml(jt('ide.statusbar.running', 'Running…'))}</span>`
-          + actionButton({
-            plain: true,
-            className: 'ide-statusbar-run-kill',
-            title: jt('ide.statusbar.stopRunningTask', 'Stop the running task'),
-            ariaLabel: jt('ide.statusbar.stopRunningTask', 'Stop the running task'),
-            trustedHtml: STOP_ICON,
-            dataset: { 'ide-status-action': 'kill-run' },
-          })
-          + '</span>'
+        ? actionButton({
+          plain: true,
+          className: 'ide-statusbar-item ide-statusbar-action ide-statusbar-run',
+          title: runTitle,
+          ariaLabel: runTitle,
+          trustedHtml: `${RUN_ICON}<span class="ide-statusbar-run-label">${escapeHtml(jt('ide.statusbar.running', 'Running…'))}</span>`,
+          dataset: { 'ide-status-action': 'open-run' },
+        })
         : '';
       const minimapOverrideSegment = ide.minimap !== false && isLargeFile(path)
         ? '<span class="ide-statusbar-item ide-statusbar-effective-note" '
@@ -259,9 +253,11 @@
       const ide = getIde();
       const path = String(ide.activeTabPath || '');
       const visible = Boolean(path) && !isDiffTab(path);
-      const statusVisible = visible && !['image', 'document'].includes(getDocumentKind(path));
+      // The status strip follows a focused editor group (W7); breadcrumbs stay primary.
+      const statusPath = getStatusPath() || (visible ? path : '');
+      const statusVisible = Boolean(statusPath) && !['image', 'document'].includes(getDocumentKind(statusPath));
       if (dom.ideStatusBar) {
-        const markup = statusVisible ? buildStatusMarkup(path) : '';
+        const markup = statusVisible ? buildStatusMarkup(statusPath) : '';
         if (dom.ideStatusBar.__jennyIdeStatusMarkup !== markup) {
           dom.ideStatusBar.innerHTML = markup;
           dom.ideStatusBar.__jennyIdeStatusMarkup = markup;
@@ -297,8 +293,8 @@
         onOpenProblems();
       } else if (action.dataset.ideStatusAction === 'toggle-panel') {
         onToggleBottomPanel();
-      } else if (action.dataset.ideStatusAction === 'kill-run') {
-        onKillRun();
+      } else if (action.dataset.ideStatusAction === 'open-run') {
+        onOpenRun();
       }
     }
 

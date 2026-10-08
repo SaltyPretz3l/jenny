@@ -35,7 +35,7 @@ test('returns pending when snapshot is null', () => {
   const result = deriveRuntimeHealthState(null);
   assert.equal(result.tone, 'pending');
   assert.equal(result.label, 'Pending');
-  assert.match(result.summary, /waiting for first turn/i);
+  assert.equal(result.summary, 'Waiting for your first message.');
 });
 
 test('returns pending when snapshot has no runtime section', () => {
@@ -69,7 +69,7 @@ test('returns danger when any profile is fail-closed (highest precedence)', () =
   ]));
   assert.equal(result.tone, 'danger');
   assert.equal(result.label, 'Blocked');
-  assert.match(result.summary, /fail-closed for broken-model/);
+  assert.equal(result.summary, 'Tool calls from broken-model are blocked: Jenny could not find a safe way to run them. Choose another model or check Models.');
 });
 
 test('returns danger when any profile probe failed', () => {
@@ -77,7 +77,7 @@ test('returns danger when any profile probe failed', () => {
     readyProfile({ model_id: 'broken-model', probe_status: 'failed' }),
   ]));
   assert.equal(result.tone, 'danger');
-  assert.match(result.summary, /probe failed for broken-model/);
+  assert.equal(result.summary, 'Jenny could not check what broken-model can do. Reload the model or choose another.');
 });
 
 test('returns danger when the managed llama-server failed to start, but not for a clean stop', () => {
@@ -86,7 +86,7 @@ test('returns danger when the managed llama-server failed to start, but not for 
   assert.deepEqual(deriveRuntimeHealthState(snapshot), {
     tone: 'danger',
     label: 'Blocked',
-    summary: 'Blocked: local llama-server failed to start (local-coder): llama_server_binary_not_found',
+    summary: 'The local model server could not start (local-coder): llama_server_binary_not_found',
   });
   const clean = snapshotWithProfiles([readyProfile()]);
   clean.runtime.llama_server = { state: 'stopped', alias: 'local-coder', last_error: '' };
@@ -99,7 +99,7 @@ test('returns danger when the managed llama-server crashed without an alias', ()
   assert.deepEqual(deriveRuntimeHealthState(snapshot), {
     tone: 'danger',
     label: 'Blocked',
-    summary: 'Blocked: local llama-server stopped unexpectedly; it restarts on your next message',
+    summary: 'The local model server stopped unexpectedly. It restarts when you send your next message.',
   });
 });
 
@@ -109,7 +109,7 @@ test('returns danger when the managed llama-server crashed with an alias', () =>
   assert.deepEqual(deriveRuntimeHealthState(snapshot), {
     tone: 'danger',
     label: 'Blocked',
-    summary: 'Blocked: local llama-server stopped unexpectedly; it restarts on your next message (local-coder)',
+    summary: 'The local model server stopped unexpectedly (local-coder). It restarts when you send your next message.',
   });
 });
 
@@ -132,7 +132,7 @@ test('fail-closed profile takes precedence over a crashed managed llama-server',
   assert.deepEqual(deriveRuntimeHealthState(snapshot), {
     tone: 'danger',
     label: 'Blocked',
-    summary: 'Blocked: route is fail-closed for closed',
+    summary: 'Tool calls from closed are blocked: Jenny could not find a safe way to run them. Choose another model or check Models.',
   });
 });
 
@@ -142,7 +142,7 @@ test('returns warning when any profile roundtrip did not pass', () => {
   ]));
   assert.equal(result.tone, 'warning');
   assert.equal(result.label, 'Degraded');
-  assert.match(result.summary, /schema roundtrip failed for shaky-model/);
+  assert.equal(result.summary, 'shaky-model failed the tool-format check, so tool calls may not work.');
 });
 
 test('returns warning when any profile probe is expired', () => {
@@ -150,7 +150,7 @@ test('returns warning when any profile probe is expired', () => {
     readyProfile({ model_id: 'stale-model', probe_status: 'expired' }),
   ]));
   assert.equal(result.tone, 'warning');
-  assert.match(result.summary, /profile expired for stale-model/);
+  assert.equal(result.summary, 'stale-model\u2019s capability check is out of date. Jenny will check it again.');
 });
 
 test('returns warning when any profile route is tool_disabled', () => {
@@ -158,7 +158,7 @@ test('returns warning when any profile route is tool_disabled', () => {
     readyProfile({ model_id: 'no-tools', selected_route: 'tool_disabled' }),
   ]));
   assert.equal(result.tone, 'warning');
-  assert.match(result.summary, /tools disabled for no-tools/);
+  assert.equal(result.summary, 'Tools are turned off for no-tools.');
 });
 
 test('returns warning when parse failures exceed successes with at least 5 samples', () => {
@@ -171,7 +171,7 @@ test('returns warning when parse failures exceed successes with at least 5 sampl
     }),
   ]));
   assert.equal(result.tone, 'warning');
-  assert.match(result.summary, /tool-call parse failure rate is high/);
+  assert.equal(result.summary, 'Many tool calls could not be read.');
 });
 
 test('does not fire parse-failure warning below the 5-sample minimum', () => {
@@ -195,7 +195,7 @@ test('returns warning when most recent observations include a turn_failed', () =
     ],
   ));
   assert.equal(result.tone, 'warning');
-  assert.match(result.summary, /recent turn failed \(CMP-LOOP-0017\)/);
+  assert.equal(result.summary, 'A recent reply failed (CMP-LOOP-0017).');
 });
 
 test('renders no error code as no error code when missing', () => {
@@ -224,7 +224,7 @@ test('precedence: fail_closed beats roundtrip-failed and tool_disabled', () => {
     readyProfile({ model_id: 'closed', selected_route: 'fail_closed' }),
   ]));
   assert.equal(result.tone, 'danger');
-  assert.match(result.summary, /fail-closed for closed/);
+  assert.equal(result.summary, 'Tool calls from closed are blocked: Jenny could not find a safe way to run them. Choose another model or check Models.');
 });
 
 test('handles malformed profile entries without throwing', () => {
@@ -242,7 +242,7 @@ test('falls back to unknown model when model_id is missing', () => {
   const result = deriveRuntimeHealthState(snapshotWithProfiles([
     readyProfile({ model_id: '', selected_route: 'fail_closed' }),
   ]));
-  assert.match(result.summary, /fail-closed for unknown model/);
+  assert.equal(result.summary, 'Tool calls from unknown model are blocked: Jenny could not find a safe way to run them. Choose another model or check Models.');
 });
 
 test('does not throw when runtime is an array (defensive)', () => {

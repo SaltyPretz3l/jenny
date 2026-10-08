@@ -12,7 +12,31 @@ function indexRequiresWrite(backend) {
     ));
 }
 
-function flushBackend(backend) {
+// A cleanly closed or asynchronously flushed store (shutdown, backup, uninstall)
+// leaves complete base files, which scripts and other processes read directly.
+// The synchronous flush is a durability barrier on hot paths (it runs on every
+// chat delete) and does not compact. The index compacts after the chat stores.
+function compactSessionStores(backend) {
+    const stores = [...backend._sessionStores.values()];
+    if (backend._indexStore) stores.push(backend._indexStore);
+    for (const store of stores) {
+      try {
+        store.compact?.();
+      } catch (error) {
+        logWriteFailed(
+          backend._logger,
+          `${backend._storeName}.flush_failed`,
+          store.filePath,
+          error
+        );
+      }
+      // A compaction that could not run must not run later from a timer, after
+      // the owner has shut down and the files may belong to someone else.
+      if (backend._disposed) store.cancelScheduledCompaction?.();
+    }
+}
+
+function flushBackend(backend, { compact = false } = {}) {
     if (backend._mode === 'monolithic_readonly' || backend._newerSchemaVersion > 0) {
       return false;
     }
@@ -100,6 +124,7 @@ function flushBackend(backend) {
       }
     }
     reconcileDirtyAfterFlush(backend, flushedSessionIds, failedSessionIds);
+    if (compact) compactSessionStores(backend);
     return wroteAny;
 }
 
@@ -234,6 +259,7 @@ async function flushBackendAsync(backend) {
       }
     }
     reconcileDirtyAfterFlush(backend, flushedSessionIds, failedSessionIds);
+    compactSessionStores(backend);
     return wroteAny;
 }
 

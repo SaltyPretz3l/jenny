@@ -38,9 +38,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (chatSurfaceLiveUtils) {
   'use strict';
 
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function isChatSurfaceLive(state) {
     return (chatSurfaceLiveUtils || {}).isChatSurfaceLive?.(state)
@@ -93,7 +91,10 @@
     }
     if (!wanted) return false;
     for (var index = 0; index < panes.length; index += 1) {
-      if (paneSessionId(panes[index]) === wanted) return isChatSurfaceLive(state);
+      if (paneSessionId(panes[index]) !== wanted) continue;
+      // Row 40 W6b: the Workspace hosts the second pane as Chat 2, live whatever the dock does.
+      if (index > 0 && state.ui && state.ui.activeView === 'ide' && state.ui.ideSecondChatHosted === true) return true;
+      return isChatSurfaceLive(state);
     }
     return false;
   }

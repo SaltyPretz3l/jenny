@@ -266,13 +266,11 @@ def test_hosted_forged_tool_search_does_not_mutate_resolution_or_payload(monkeyp
     assert outcomes[0].error_code == "CMP-TOOL-0039"
 
 
-def test_hosted_dispatch_rejects_plugin_and_background_before_handlers(monkeypatch) -> None:
+def test_hosted_dispatch_rejects_retired_plugin_mode_and_background_before_handlers(
+    monkeypatch,
+) -> None:
     config = _host_runtime_config()
-    calls: list[str] = []
-    container = SimpleNamespace(
-        stack=SimpleNamespace(config=config),
-        apply_plugin_runtime=lambda **_kwargs: calls.append("plugin"),
-    )
+    container = SimpleNamespace(stack=SimpleNamespace(config=config))
     logger = SimpleNamespace(exception=lambda *_args, **_kwargs: None)
 
     monkeypatch.setattr(
@@ -311,8 +309,7 @@ def test_hosted_dispatch_rejects_plugin_and_background_before_handlers(monkeypat
         write_message=lambda _message: None,
         read_message=lambda: {},
     )
-    assert plugin.response["error"]["data"]["reason"] == "host_method_not_allowed"
-    assert calls == []
+    assert plugin.response["error"]["data"]["reason"] == "unknown_initialize_mode"
 
 
 def test_hosted_dispatch_allowlist_is_explicit() -> None:

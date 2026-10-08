@@ -10,9 +10,6 @@ from sidecar.ai.container import BrainContainer
 from sidecar.ai.engines.catalog import models_for_engine, resolve_ollama_base_url
 from sidecar.ai.engines.ollama_model_info import resolve_ollama_model_blob
 from sidecar.ai.error_codes import (
-    CMP_CHAT_INVALID_PARAMS,
-    CMP_PLUGIN_FEATURE_DISABLED,
-    CMP_PLUGIN_OUTCOME_INDETERMINATE,
     CMP_PROTO_VERSION_MISMATCH,
     CMP_SRV_INITIALIZE_FAILED,
 )
@@ -29,12 +26,10 @@ from sidecar.protocol import (
     HARDWARE_PROFILE_METHOD,
     HARDWARE_VRAM_USAGE_METHOD,
     INITIALIZE_METHOD,
-    JSONRPC_VERSION,
     MODELS_LIST_METHOD,
     MODELS_OLLAMA_BLOB_METHOD,
     MODELS_RESIDENT_METHOD,
     MODELS_UNLOAD_METHOD,
-    PLUGIN_RUNTIME_APPLIED_METHOD,
     RUNTIME_PROGRESS_METHOD,
     SHUTDOWN_METHOD,
 )
@@ -53,7 +48,7 @@ from sidecar.runtime.diagnostics import (
     emit_startup_audit_mark,
     log_event,
 )
-from sidecar.runtime.initialize_mode import PLUGIN_RUNTIME_MODE, resolve_initialize_mode
+from sidecar.runtime.initialize_mode import resolve_initialize_mode
 from sidecar.runtime.outcomes import ProcessOutcome
 from sidecar.runtime.request_dispatch_background import process_background_method
 from sidecar.runtime.request_dispatch_commit import process_commit_method
@@ -88,8 +83,6 @@ INVALID_PARAMS_CODE = -32602
 INTERNAL_ERROR_CODE = -32000
 INITIALIZE_FAILED = CMP_SRV_INITIALIZE_FAILED
 PROTOCOL_VERSION_MISMATCH = CMP_PROTO_VERSION_MISMATCH
-MAX_REASON_CODE_LENGTH = 64
-_PLUGIN_RUNTIME_SCHEMA_V6 = 6
 _APPROVAL_PLAN_CACHE = ApprovalPlanCache()
 
 
@@ -239,143 +232,6 @@ def _apply_telemetry_config(params: Any) -> dict[str, Any]:
     return telemetry_status()
 
 
-def _plugin_runtime_initialize_error(
-    message_id: Any,
-    *,
-    code: str,
-    reason: str,
-    rejected_contributions: object = (),
-) -> dict[str, Any]:
-    safe_reason = (
-        reason
-        if reason.replace("_", "").isalnum() and len(reason) <= MAX_REASON_CODE_LENGTH
-        else "runtime_apply_failed"
-    )
-    data: dict[str, Any] = {"code": code, "reason": safe_reason, "retryable": False}
-    if isinstance(rejected_contributions, (list, tuple)) and rejected_contributions:
-        data["rejected_contributions"] = list(rejected_contributions)[:16]
-    return error_response(
-        message_id,
-        code=INVALID_PARAMS_CODE,
-        message="plugin runtime initialize rejected",
-        data=data,
-    )
-
-
-def _process_plugin_runtime_initialize(
-    *,
-    message_id: Any,
-    params: Any,
-    initialized: bool,
-    brain_container: BrainContainer,
-    logger: logging.Logger,
-) -> ProcessOutcome:
-    if not initialized:
-        return ProcessOutcome(
-            initialized=False,
-            shutdown_requested=False,
-            response=_plugin_runtime_initialize_error(
-                message_id,
-                code=CMP_PLUGIN_FEATURE_DISABLED,
-                reason="plugin_runtime_requires_full_initialization",
-            ),
-            notifications=[],
-        )
-    runtime = params.get("plugin_runtime") if isinstance(params, dict) else None
-    snapshot = runtime.get("snapshot") if isinstance(runtime, dict) else None
-    is_v6 = isinstance(snapshot, dict) and snapshot.get("runtime_schema_version") == _PLUGIN_RUNTIME_SCHEMA_V6
-    expected_runtime_keys = (
-        {"snapshot", "declarative_content", "operation"}
-        if is_v6 else {"snapshot", "declarative_content"}
-    )
-    operation = runtime.get("operation") if isinstance(runtime, dict) else None
-    if (
-        not isinstance(params, dict)
-        or set(params) != {"mode", "plugin_runtime"}
-        or not isinstance(runtime, dict)
-        or set(runtime) != expected_runtime_keys
-        or (is_v6 and operation not in {"prepare", "commit", "abort", "reconcile"})
-    ):
-        return ProcessOutcome(
-            initialized=True,
-            shutdown_requested=False,
-            response=_plugin_runtime_initialize_error(
-                message_id,
-                code=CMP_CHAT_INVALID_PARAMS,
-                reason="plugin_runtime_envelope_invalid",
-            ),
-            notifications=[],
-        )
-
-    started_at = perf_counter()
-    try:
-        apply_args: dict[str, Any] = {
-            "snapshot": runtime["snapshot"],
-            "declarative_content": runtime["declarative_content"],
-        }
-        if is_v6:
-            apply_args["operation"] = str(operation)
-        attestation = brain_container.apply_plugin_runtime(**apply_args)
-    except Exception as error:  # noqa: BLE001 - domain errors are shape-normalized below
-        code = str(getattr(error, "code", CMP_PLUGIN_OUTCOME_INDETERMINATE))
-        if not code.startswith("CMP-PLUGIN-"):
-            code = CMP_PLUGIN_OUTCOME_INDETERMINATE
-        reason = str(getattr(error, "reason_code", "runtime_apply_failed"))
-        log_event(
-            logger,
-            logging.WARNING,
-            component="runtime.request_dispatch",
-            event="plugin.runtime.apply_rejected",
-            message="Plugin runtime apply was rejected",
-            status="rejected",
-            data={
-                "reason_code": (
-                    reason if len(reason) <= MAX_REASON_CODE_LENGTH else "runtime_apply_failed"
-                ),
-                "latency_ms": round((perf_counter() - started_at) * 1000, 3),
-            },
-        )
-        return ProcessOutcome(
-            initialized=True,
-            shutdown_requested=False,
-            response=_plugin_runtime_initialize_error(
-                message_id,
-                code=code,
-                reason=reason,
-                rejected_contributions=getattr(error, "rejected_contributions", ()),
-            ),
-            notifications=[],
-        )
-
-    log_event(
-        logger,
-        logging.INFO,
-        component="runtime.request_dispatch",
-        event="plugin.runtime.apply_complete",
-        message="Plugin runtime apply completed",
-        status="ok",
-        data={"latency_ms": round((perf_counter() - started_at) * 1000, 3)},
-    )
-    return ProcessOutcome(
-        initialized=True,
-        shutdown_requested=False,
-        # PluginRuntimeAttestationV1 is frozen. Keep the result/notification
-        # payload exact rather than injecting api_version into the contract.
-        response={
-            "jsonrpc": JSONRPC_VERSION,
-            "id": message_id,
-            "api_version": API_VERSION,
-            "result": attestation,
-        },
-        notifications=[{
-            "jsonrpc": JSONRPC_VERSION,
-            "api_version": API_VERSION,
-            "method": PLUGIN_RUNTIME_APPLIED_METHOD,
-            "params": attestation,
-        }],
-    )
-
-
 def process_message(
     message: dict[str, Any],
     initialized: bool,
@@ -395,7 +251,7 @@ def process_message(
         if method == INITIALIZE_METHOD:
             initialize_started_at = perf_counter()
 
-            # PLUG-D16 fail-closed guard: resolve/validate `mode` before any
+            # Fail-closed guard: resolve/validate `mode` before any
             # state mutation. A rejected mode must not apply logging
             # preferences or validate accept_version -- so this runs first,
             # ahead of both. `initialized=initialized` (the incoming
@@ -417,17 +273,6 @@ def process_message(
                         },
                     ),
                     notifications=[],
-                )
-
-            if mode_resolution.mode == PLUGIN_RUNTIME_MODE:
-                if container_host_policy_is_enforced(brain_container):
-                    return _hosted_method_rejection(message_id)
-                return _process_plugin_runtime_initialize(
-                    message_id=message_id,
-                    params=params,
-                    initialized=initialized,
-                    brain_container=brain_container,
-                    logger=logger,
                 )
 
             # No secret merge here: initialize_response lifts brokered secrets
@@ -482,6 +327,7 @@ def process_message(
                     api_version=API_VERSION,
                     brain_container=brain_container,
                     progress_callback=emit_runtime_progress if request_id else None,
+                    notification_writer=write_message,
                 )
             except Exception as error:
                 logger.exception("initialize failed")
@@ -702,6 +548,17 @@ def process_message(
         )
         if memory_outcome is not None:
             return memory_outcome
+
+        if method.startswith("catalog."):
+            # The semantic catalog loads on its first request, never at startup
+            # (tests/sidecar/test_sidecar_server_import_cost.py).
+            from sidecar.runtime.request_dispatch_catalog import process_catalog_method
+
+            catalog_outcome = process_catalog_method(
+                method, message_id, params, initialized, brain_container, logger
+            )
+            if catalog_outcome is not None:
+                return catalog_outcome
 
         mcp_outcome = process_mcp_method(
             method, message_id, params, initialized, brain_container, logger

@@ -455,21 +455,14 @@ the diagnostic dump and file an issue.
 See the troubleshooting section of
 [Adding an MCP server](../tutorials/02-adding-mcp-server.md#troubleshooting).
 
-### A plugin won't install
+### An old image chat will not accept new messages
 
-**Symptom.** "Install plugin" rejects the package, or an installed plugin
-stays inactive.
+**Symptom.** The chat shows "This chat came from the retired image plugin and
+is read-only."
 
-**Common cause.** The package is malformed, unsigned intake/loading is disabled,
-or it declares a retired contribution kind. Current source refuses new packages
-with plugin MCP, workflows, hooks, engine adapters, restricted execution or
-privileged hosts even when signed. Installed leftovers remain listed, with
-retired contributions inert. Unsigned declarative packages require Jenny to
-start with `JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE=1`.
-
-**Recovery.** Check the message on the Plugins card. For a plugin you are
-building, follow [docs/plugins/PACKAGING_AND_SIGNING.md](../plugins/PACKAGING_AND_SIGNING.md).
-A freshly installed plugin is inactive until you enable it.
+**Cause.** The image plugin was retired, so its chats are kept as read-only
+transcripts. Start a new chat to keep working; image generation now runs
+through the built-in image tool.
 
 ## Data and updates
 

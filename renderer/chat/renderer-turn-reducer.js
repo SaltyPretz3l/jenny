@@ -516,7 +516,18 @@
     const messageId = normalizeId(event && event.primary_message_id) || turn.active_assistant_message_id;
     const rowIndex = turn.assistant_row_index_by_message_id[messageId];
     if (Number.isInteger(rowIndex) && rowIndex >= 0 && rowIndex < turn.rows.length) {
-      return turn.rows[rowIndex];
+      const row = turn.rows[rowIndex];
+      // Parity with projectTurnRows: a canonical text group ends at any other
+      // row kind (reasoning, tool call) or at a phase change, so text that
+      // arrives for the same message after such a row opens a new group with
+      // the next segment index. Reusing the earlier row here left the live
+      // tree one group short and gave the following message an index the
+      // hydrated projection assigns to this message's second group, so both
+      // rows survived the render-message index as distinct identities.
+      const phase = normalizeId(event && event.assistant_phase) || 'final_answer';
+      if (rowIndex === turn.rows.length - 1 && row.assistant_phase === phase) {
+        return row;
+      }
     }
     return createAssistantTextRow(turn, event, messageId);
   }
@@ -601,18 +612,6 @@
     turn.active_assistant_message_id = nextAssistantId;
     if (!turn.primary_assistant_message_id) {
       turn.primary_assistant_message_id = nextAssistantId;
-    }
-  }
-
-  function markLatestAssistantRowsTruncated(turn) {
-    for (let index = turn.rows.length - 1; index >= 0; index -= 1) {
-      const row = turn.rows[index];
-      if (!row || !row.payload || row.primary_message_id !== turn.active_assistant_message_id) {
-        continue;
-      }
-      if (row.kind === 'assistant_text' || row.kind === 'reasoning') {
-        row.payload.truncated = true;
-      }
     }
   }
 
@@ -748,17 +747,13 @@
       if (normalizeId(event.primary_message_id)) {
         turn.active_assistant_message_id = normalizeId(event.primary_message_id);
       }
-      // tool_continuation resets preserve genuine pre-tool commentary — no
-      // "restarted" stamp; every other/absent reason discards (EH-W5 marker).
-      // The one addition: a transcript recorded before the post-1.2.0 flag
-      // collapse can carry discard_scope 'all' under that same reason, and
-      // text main erased has to carry the marker.
-      const resetDiscardScope = resolveStreamResetDiscardScope(event);
-      if (normalizeId(event.reason) !== 'tool_continuation' || resetDiscardScope === 'all') {
-        markLatestAssistantRowsTruncated(turn);
-      }
+      // tool_continuation resets preserve genuine pre-tool commentary; every
+      // other/absent reason discards. A pre-1.2.0-flag-collapse transcript can
+      // carry discard_scope 'all' under that reason, so the scope decides.
       applyStreamResetToTurnRows(turn, {
-        scope: resetDiscardScope,
+        scope: resolveStreamResetDiscardScope(event),
+        reason: normalizeId(event.reason),
+        live: event.live === true,
         // The OUTGOING id: the reset event's primary_message_id (latched just
         // above) still names the slice the pre-reset deltas were keyed by.
         activeAssistantMessageId: turn.active_assistant_message_id,

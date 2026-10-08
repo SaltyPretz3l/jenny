@@ -17,7 +17,7 @@ const RAW_ENTRIES = [
   { name: 'Alpha.js', relPath: 'Alpha.js', kind: 'file', mtimeMs: 10 },
 ];
 
-async function createHarness({ entries = RAW_ENTRIES, qol = true } = {}) {
+async function createHarness({ entries = RAW_ENTRIES } = {}) {
   const domHarness = buildIdeDom();
   const ide = ideStateUtils.createIdeUiState();
   let persistCalls = 0;
@@ -26,7 +26,6 @@ async function createHarness({ entries = RAW_ENTRIES, qol = true } = {}) {
     getIde: () => ide,
     getMountEl: () => domHarness.getDom().ideRailPanel,
     isActivePanel: () => true,
-    isQolEnabled: () => qol,
     schedulePersist: () => { persistCalls += 1; },
     getWorkspaceFsApi: () => ({
       async listDirectory() {
@@ -116,16 +115,6 @@ test('modified mode puts zero and missing mtimes last with a name tie-break', as
   assert.deepEqual(paths.slice(-2), ['alpha.txt', 'README']);
   assert.deepEqual(paths.slice(2, 5), ['zeta.js', 'Alpha.js', 'beta.js']);
   assertDirectoriesFirst(paths);
-});
-
-test('flag off omits the sort button and preserves raw listing order', async (t) => {
-  const entries = RAW_ENTRIES.map((entry) => ({ ...entry }));
-  const harness = await createHarness({ entries, qol: false });
-  t.after(() => harness.dispose());
-
-  assert.equal(sortButton(harness), null);
-  assert.deepEqual(rowNames(harness), entries.map((entry) => entry.relPath));
-  assert.equal(harness.getPersistCalls(), 0);
 });
 
 test('renderer state defaults, normalizes, and serializes explorerSortMode', () => {

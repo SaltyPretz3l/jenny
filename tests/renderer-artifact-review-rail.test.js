@@ -209,3 +209,36 @@ describe('keyboard resizer', () => {
     });
   }
 });
+
+// Row 34 S5 (v2 §6): in split view the code review opens over the pane of the
+// chat that owns it when the panes can't each keep about 40rem beside it.
+describe('split view code review', () => {
+  for (const [name, stageWidth, mode, expected] of [
+    ['narrow panes: over the owning pane', 1600, 'code_review', '1'],
+    ['wide panes: beside both chats', 2400, 'code_review', undefined],
+    ['artifacts keep the shared column', 1600, 'artifact', undefined],
+  ]) {
+    test(name, (t) => {
+      withWindowShim(t, {}, 2600);
+      const state = makeState('s1');
+      state.panes = { panes: [{ paneId: 'p0', sessionId: 's0' }, { paneId: 'p1', sessionId: 's1' }], focusedPaneId: 'p1', splitRatio: 0.5 };
+      const classes = new Set();
+      const chatView = { dataset: { paneCount: '2' }, classList: { toggle(cls, on) { if (on) classes.add(cls); else classes.delete(cls); } } };
+      const removed = [];
+      const panel = {
+        addEventListener() {}, removeEventListener() {}, dataset: {},
+        style: { setProperty() {}, removeProperty(prop) { removed.push(prop); } },
+        classList: { toggle() {} },
+      };
+      const workspace = { getBoundingClientRect: () => ({ width: stageWidth }), style: { setProperty() {} } };
+      const rail = makeRail(state, { dom: { workspace, chatView, artifactReviewPanel: panel } });
+      t.after(() => rail.dispose());
+      rail.bind();
+      rail.openArtifactRail(mode);
+      rail.syncArtifactReviewLayout();
+      assert.equal(chatView.dataset.sidePanelPane, expected);
+      assert.equal(classes.has('artifact-review-open'), expected === undefined, 'over a pane, the shared column closes');
+      if (expected) assert.ok(removed.includes('width'), 'the pane sizes the panel');
+    });
+  }
+});

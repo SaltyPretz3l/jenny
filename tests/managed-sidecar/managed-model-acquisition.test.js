@@ -120,7 +120,6 @@ test('shutdown aborts initialization and skips RPCs queued behind it', async (t)
   t.after(() => fs.rmSync(userDataPath, { recursive: true, force: true }));
   const service = new BackendService({
     userDataPath,
-    backendUrl: 'http://127.0.0.1:1',
     safeStorage: createFakeSafeStorage(),
   });
   const calls = { unload: 0, shutdown: 0, stop: 0, dispose: 0 };

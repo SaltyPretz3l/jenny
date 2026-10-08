@@ -39,15 +39,20 @@ test('ide state opens, activates, and dedupes tabs', () => {
   assert.equal(ide.openTabs.length, 2);
 });
 
-test('transient file previews promote on explicit, dirty, or pinned use and never persist', () => {
+test('transient file previews persist and promote on explicit, dirty, or pinned use', () => {
   const ide = freshIde();
   ideState.openTab(ide, 'preview.js', { transientPreview: true });
   assert.equal(ideState.getTab(ide, 'preview.js').transientPreview, true);
-  assert.deepEqual(ideState.toPersistedState(ide).openTabs, []);
-  assert.equal(ideState.toPersistedState(ide).activeTabPath, '');
+  assert.deepEqual(ideState.toPersistedState(ide).openTabs, [{ path: 'preview.js', preview: true }]);
+  assert.equal(ideState.toPersistedState(ide).activeTabPath, 'preview.js');
+  const roundTrip = freshIde();
+  ideState.applyPersistedState(roundTrip, ideState.toPersistedState(ide));
+  assert.equal(roundTrip.openTabs[0].transientPreview, true);
+  assert.equal(roundTrip.activeTabPath, 'preview.js');
 
   ideState.openTab(ide, 'preview.js');
   assert.equal(ideState.getTab(ide, 'preview.js').transientPreview, undefined);
+  assert.deepEqual(ideState.toPersistedState(ide).openTabs, [{ path: 'preview.js' }]);
 
   ideState.openTab(ide, 'dirty.js', { transientPreview: true });
   ideState.setTabDirty(ide, 'dirty.js', true);
@@ -65,11 +70,13 @@ test('transient file previews promote on explicit, dirty, or pinned use and neve
   const restored = freshIde();
   ideState.applyPersistedState(restored, {
     openTabs: [
-      { path: 'leaked-preview.js', transientPreview: true },
+      { path: 'saved-preview.js', preview: true, line: 12, top: 8 },
       { path: 'durable.js' },
     ],
   });
-  assert.deepEqual(restored.openTabs.map((tab) => tab.path), ['durable.js']);
+  assert.deepEqual(restored.openTabs.map((tab) => tab.path), ['saved-preview.js', 'durable.js']);
+  assert.equal(restored.openTabs[0].transientPreview, true);
+  assert.deepEqual(restored.openTabs[0].restore, { line: 12, top: 8 });
 });
 
 test('ide state closeTab picks the right neighbor, then the left, then empties', () => {
@@ -163,9 +170,10 @@ test('ide state dirty tracking and persisted-subset round-trip', () => {
   ide.bottomPanelOpen = true;
   ide.bottomPanelHeight = 300;
   ide.bottomPanelActiveView = 'problems';
-  ide.panelLocations.changes = 'secondary'; // move changes into the secondary side
+  // Source Control is homed in the secondary side by default; open it. (The tree defines
+  // the primary side as the stack holding Explorer, so Explorer itself cannot be secondary.)
   ide.secondaryPanelOpen = true;
-  ide.secondaryPanel = 'changes';
+  ide.secondaryPanel = 'source-control';
   ide.secondaryWidth = 320;
   ide.openTabs.push({ path: 'src/a.js.diff', kind: 'diff' });
   const persisted = ideState.toPersistedState(ide);
@@ -202,10 +210,11 @@ test('ide state dirty tracking and persisted-subset round-trip', () => {
   assert.equal(restored.bottomPanelHeight, 300);
   assert.equal(restored.bottomPanelActiveView, 'problems');
   assert.equal(restored.secondaryPanelOpen, true);
-  assert.equal(restored.secondaryPanel, 'changes');
+  assert.equal(restored.secondaryPanel, 'source-control');
   assert.equal(restored.secondaryWidth, 320);
-  assert.equal(restored.panelLocations.changes, 'secondary');
   assert.equal(restored.panelLocations.explorer, 'primary');
+  assert.equal(restored.panelLocations.search, 'primary');
+  assert.equal(restored.panelLocations['source-control'], 'secondary');
   assert.deepEqual([...restored.expandedDirs], ['src']);
 
   // Hostile persisted payloads collapse safely.
@@ -261,17 +270,63 @@ test('ide state dirty tracking and persisted-subset round-trip', () => {
   assert.equal(hostile.bottomPanelHeight, 600);
   assert.equal(hostile.bottomPanelActiveView, 'terminal');
   assert.equal(hostile.secondaryPanelOpen, false);
-  // Max widened 480 → 600 (Phase 5 viewport-safe wide resize).
-  assert.equal(hostile.secondaryWidth, 600);
   // panelLocations: an invalid value falls to the panel's DEFAULT home (search ->
-  // primary, the absent `changes` -> secondary), an unknown key is dropped, a
-  // valid value is kept.
+  // primary, the absent `explorer` -> primary) and an unknown key is dropped. The
+  // secondary sidebar is closed here ('yes' is not a literal true), so the layout tree
+  // folds its Source Control into the rail stack: primary, no secondary panel, and the
+  // secondary width falls back to its default (the 9999 clamp is covered below).
+  assert.equal(hostile.secondaryWidth, 260);
   assert.equal(hostile.panelLocations.search, 'primary');
-  assert.equal(hostile.panelLocations.changes, 'secondary');
+  assert.equal(hostile.panelLocations.explorer, 'primary');
   assert.equal(hostile.panelLocations.bogus, undefined);
-  assert.equal(hostile.panelLocations['source-control'], 'secondary');
-  // The active secondary id recomputes to the first located panel (changes).
-  assert.equal(hostile.secondaryPanel, 'changes');
+  assert.equal(hostile.panelLocations['source-control'], 'primary');
+  assert.equal(hostile.secondaryPanel, '');
+  // Max widened 480 -> 600 (Phase 5 viewport-safe wide resize), on an OPEN secondary.
+  const wide = freshIde();
+  ideState.applyPersistedState(wide, { secondaryPanelOpen: true, secondaryWidth: 9999 });
+  assert.equal(wide.secondaryWidth, 600);
+});
+
+test('a persisted pre-S5 slice naming the retired Changes panel coerces like any unknown id', () => {
+  // Jenny's Changes left the rail in row 34 S5 with no CONFIG_VERSION bump; the
+  // renderer mirror must drop a stale `changes` id the same way the service does.
+  assert.deepEqual(ideState.RAIL_PANELS, ['explorer', 'search', 'source-control']);
+  const legacy = freshIde();
+  ideState.applyPersistedState(legacy, {
+    railPanel: 'changes',
+    secondaryPanel: 'changes',
+    secondaryPanelOpen: true,
+    panelLocations: { explorer: 'primary', search: 'primary', changes: 'secondary', 'source-control': 'secondary' },
+  });
+  assert.equal(legacy.railPanel, 'explorer');
+  assert.equal(legacy.secondaryPanel, 'source-control');
+  assert.equal(legacy.secondaryPanelOpen, true);
+  assert.deepEqual(legacy.panelLocations, { explorer: 'primary', search: 'primary', 'source-control': 'secondary' });
+  assert.equal('changes' in ideState.toPersistedState(legacy).panelLocations, false);
+
+  // `changes` was the ONLY secondary panel: the secondary side empties and closes.
+  const lone = freshIde();
+  ideState.applyPersistedState(lone, {
+    railPanel: 'search',
+    secondaryPanel: 'changes',
+    secondaryPanelOpen: true,
+    panelLocations: { explorer: 'primary', search: 'primary', changes: 'secondary', 'source-control': 'primary' },
+  });
+  assert.equal(lone.railPanel, 'search');
+  assert.equal(lone.secondaryPanel, '');
+  assert.equal(lone.secondaryPanelOpen, false);
+  assert.equal('changes' in lone.panelLocations, false);
+
+  // The same coercion runs on any external mutation through normalizePanelLocations.
+  const mutated = freshIde();
+  mutated.panelLocations = { ...mutated.panelLocations, changes: 'secondary' };
+  mutated.secondaryPanel = 'changes';
+  ideState.normalizePanelLocations(mutated);
+  assert.equal('changes' in mutated.panelLocations, false);
+  // The default secondary (Source Control) is closed, so the layout tree folds it into the
+  // rail stack: the secondary side is empty and has no active panel.
+  assert.equal(mutated.secondaryPanel, '');
+  assert.equal(ideState.isPanelActive(mutated, 'changes'), false);
 });
 
 test('pinned flag round-trips through the renderer persisted subset and clamps left on restore', () => {
@@ -324,28 +379,30 @@ test('movePanelLocation re-homes a panel and fixes the active-panel invariants',
   const ide = freshIde();
   // Exercise the move mechanics from an all-primary baseline (every panel in the
   // rail, secondary empty), independent of the split default home.
-  ide.panelLocations = { explorer: 'primary', search: 'primary', changes: 'primary', 'source-control': 'primary' };
+  ide.panelLocations = { explorer: 'primary', search: 'primary', 'source-control': 'primary' };
   ide.secondaryPanel = '';
   ide.secondaryPanelOpen = false;
-  // explorer starts active in the rail; move it to the secondary side.
-  ideState.movePanelLocation(ide, 'explorer', 'secondary');
-  assert.equal(ide.panelLocations.explorer, 'secondary');
-  assert.equal(ide.secondaryPanel, 'explorer', 'becomes the active secondary panel');
+  // The tree defines the primary side as the stack holding Explorer, so Search is the
+  // panel that travels here. Explorer starts active in the rail; move Search out.
+  ideState.movePanelLocation(ide, 'search', 'secondary');
+  assert.equal(ide.panelLocations.search, 'secondary');
+  assert.equal(ide.secondaryPanel, 'search', 'becomes the active secondary panel');
   assert.equal(ide.secondaryPanelOpen, true, 'moving in forces the sidebar open');
-  assert.notEqual(ide.railPanel, 'explorer', 'rail reassigns its active panel');
-  assert.deepEqual(ideState.secondaryPanels(ide), ['explorer']);
-  assert.equal(ideState.isPanelActive(ide, 'explorer'), true);
+  assert.equal(ide.railPanel, 'explorer', 'the rail keeps its active panel');
+  assert.deepEqual(ideState.secondaryPanels(ide), ['search']);
+  assert.equal(ideState.isPanelActive(ide, 'search'), true);
 
   // Move it back to the primary rail; the secondary empties + closes.
-  ideState.movePanelLocation(ide, 'explorer', 'primary');
-  assert.equal(ide.panelLocations.explorer, 'primary');
-  assert.equal(ide.railPanel, 'explorer', 'becomes the active rail panel');
+  ideState.movePanelLocation(ide, 'search', 'primary');
+  assert.equal(ide.panelLocations.search, 'primary');
+  assert.equal(ide.railPanel, 'search', 'becomes the active rail panel');
   assert.equal(ide.secondaryPanel, '');
   assert.equal(ide.secondaryPanelOpen, false, 'last one out closes the secondary');
 
   // Keep >=1 in the rail: move all but one out, then the last move is a no-op.
   ideState.movePanelLocation(ide, 'search', 'secondary');
-  ideState.movePanelLocation(ide, 'changes', 'secondary');
+  ideState.movePanelLocation(ide, 'changes', 'secondary'); // retired id: a no-op
+  assert.equal(ide.panelLocations.changes, undefined);
   ideState.movePanelLocation(ide, 'source-control', 'secondary');
   ideState.movePanelLocation(ide, 'explorer', 'secondary'); // would empty the rail
   assert.deepEqual(ideState.primaryPanels(ide), ['explorer'], 'last primary panel cannot move out');

@@ -1,9 +1,0 @@
-{
-  "contract": "PluginRemoteMcpBindingV1", "contract_version": 1, "frozen": true,
-  "root": {
-    "type": "object", "required": ["binding_schema_version", "publisher_id", "plugin_id", "contribution_id", "artifact_digest", "generation_id", "commit_epoch", "descriptor_digest", "schema_digest", "endpoint_url", "endpoint_origin_digest", "destination_scope", "protocol_versions", "feature_classes", "consent_digest", "auth_profile_ref", "binding_digest"], "max_keys": 17, "additional_properties": "reject",
-    "properties": {
-      "binding_schema_version": { "type": "const", "value": 1 }, "publisher_id": { "type": "ref", "ref": "publisher_id" }, "plugin_id": { "type": "ref", "ref": "plugin_id" }, "contribution_id": { "type": "ref", "ref": "contribution_id" }, "artifact_digest": { "type": "ref", "ref": "sha256_hex" }, "generation_id": { "type": "ref", "ref": "generation_id" }, "commit_epoch": { "type": "ref", "ref": "commit_epoch" }, "descriptor_digest": { "type": "ref", "ref": "sha256_hex" }, "schema_digest": { "type": "ref", "ref": "sha256_hex" }, "endpoint_url": { "type": "ref", "ref": "endpoint_url" }, "endpoint_origin_digest": { "type": "ref", "ref": "sha256_hex" }, "destination_scope": { "type": "enum", "values": ["loopback", "lan", "internet"] }, "protocol_versions": { "type": "array", "max_items": 2, "unique_by": [], "items": { "type": "enum", "values": ["2026-07-28", "2025-11-25"] } }, "feature_classes": { "type": "array", "max_items": 3, "unique_by": [], "items": { "type": "enum", "values": ["tools", "resources", "prompts"] } }, "consent_digest": { "type": "ref", "ref": "sha256_hex" }, "auth_profile_ref": { "type": "ref", "ref": "sha256_hex" }, "binding_digest": { "type": "ref", "ref": "sha256_hex" }
-    }
-  }
-}

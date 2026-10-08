@@ -145,11 +145,18 @@
    * @param {Object} message
    * @returns {'danger'|'calm'}
    */
+  /* Actions a superseded card (its turn rerun or resumed; a newer reply sits
+   * below) never offers: the click guard would only refuse them as stale. */
+  var SUPERSEDED_ACTION_IDS = {
+    retry: true, retry_turn: true, 'retry-tool': true, 'skip-tool': true,
+    resume_paused_reply: true, rerun_interrupted_reply: true,
+  };
+
   function resolveErrorSeverity(message) {
     var m = message && typeof message === 'object' ? message : {};
     var recoveryClass = normalizeToken(m.recoveryClass || m.recovery_class);
     if (recoveryClass === 'cancelled' || recoveryClass === 'denied'
-      || recoveryClass === 'run_mode_changed'
+      || recoveryClass === 'run_mode_changed' || recoveryClass === 'app_restart' || recoveryClass === 'app_restart_rerun'
       || CALM_RUNTIME_WAIT_CLASSES[recoveryClass] === true) return 'calm';
     var status = normalizeToken(m.terminalStatus || m.terminal_status || m.status);
     if (status === 'cancelled' || status === 'aborted' || status === 'denied') return 'calm';
@@ -175,6 +182,8 @@
     open_diagnostics: { icon: 'settings', label: jt('chat.errorRecovery.openDiagnostics', 'Open diagnostics') },
     open_settings: { icon: 'settings', label: jt('chat.errorRecovery.openSettings', 'Open settings') },
     start_new_session: { icon: 'skip', label: jt('chat.errorRecovery.startNewSession', 'Start new session') },
+    resume_paused_reply: { icon: 'retry', label: jt('chat.errorRecovery.resumeReply', 'Resume') },
+    rerun_interrupted_reply: { icon: 'retry', label: jt('chat.errorRecovery.rerunReply', 'Run again') },
   };
 
   /* Secondary navigations that demote to a muted/tertiary style when they
@@ -211,6 +220,8 @@
     setup: 'setup',
     cancelled: 'unknown',
     denied: 'unknown',
+    app_restart: 'unknown',
+    app_restart_rerun: 'unknown',
   };
 
   /* Local fallback titles per error class — mirrors the backend
@@ -455,6 +466,7 @@
   function renderErrorRecovery(opts) {
     var o = opts || {};
     var severity = o.severity === 'calm' ? 'calm' : 'danger';
+    var superseded = o.superseded === true;
     var errorCode = String(o.errorCode || '').trim();
     var message = normalizeActionText(o.message);
     /* Hint/retry heuristics inspect the backend's English text; the translated
@@ -519,6 +531,13 @@
       nextAction,
       nextActionLabel
     );
+    /* A superseded card keeps navigation (logs, settings, diagnostics) but no
+     * retry-like action (live gate F9 recheck, 2026-10-05). */
+    if (superseded) {
+      backendActions = backendActions.filter(function keepSettledAction(action) {
+        return SUPERSEDED_ACTION_IDS[action.id] !== true;
+      });
+    }
     if (backendActions.length) {
       actions = backendActions.map(function mapRecoveryAction(action, index) {
         return buildActionButton(action, {
@@ -526,7 +545,10 @@
           sessionId: sessionId,
           messageId: messageId,
           errorClass: errorClass,
-          primary: severity === 'danger' && index === 0,
+          streamId: streamId,
+          /* Resume / Run again is the only exit on a calm "Jenny closed" card, so it leads. */
+          primary: index === 0 && (severity === 'danger' || action.id === 'resume_paused_reply'
+            || action.id === 'rerun_interrupted_reply'),
         });
       }).filter(Boolean);
       actionIds = backendActions.map(function mapRecoveryActionId(action) {
@@ -575,7 +597,7 @@
 
     /* Local action synthesis only applies to danger cards — calm cards
      * render backend-supplied actions verbatim (W4 adds Regenerate). */
-    if (severity === 'danger' && !isLockdownRefusal) {
+    if (severity === 'danger' && !isLockdownRefusal && !superseded) {
       if (!actions.length && (errorClass === 'transport' || errorClass === 'loop' || retryable)) {
         actions.push(buildActionButton({ id: 'retry', label: applyPrimaryLabel('Retry'), icon: 'retry', title: jt('chat.errorRecovery.retryRequest', 'Retry this request') }, {
           callId: callId,
@@ -638,7 +660,7 @@
     var hasRetryLikeAction = actionIds.some(function isRetryLike(id) {
       return id === 'retry' || id === 'retry_turn' || id === 'retry-tool';
     });
-    if (messageId && !hasRetryLikeAction && (retryable || errorClass === 'provider')) {
+    if (messageId && !hasRetryLikeAction && !superseded && (retryable || errorClass === 'provider')) {
       var universalRetry = buildActionButton({
         id: 'retry',
         label: severity === 'calm' ? jt('chat.errorRecovery.regenerateResponse', 'Regenerate response') : jt('common.retry', 'Retry'),
@@ -660,6 +682,10 @@
       }
     }
     actions = actions.filter(Boolean);
+    /* The calm "Jenny closed" card after its Resume / Run again did its job. */
+    if (superseded && severity === 'calm' && !actions.length) {
+      hint = jt('chat.errorRecovery.settledBelow', 'The reply continues below.');
+    }
 
     /* Cap VISIBLE top-level buttons to 2 (danger cards only — calm cards
      * render backend-supplied actions verbatim, per W4): the leading
@@ -740,9 +766,10 @@
     var ariaLabel = severity === 'calm' ? title : ('Error: ' + title);
     var roleAttrs = ' role="group" aria-label="' + escapeHtml(ariaLabel) + '"';
 
-    return '<div class="chat-error-card chat-error-card--' + severity + '"'
+    return '<div class="chat-error-card chat-error-card--' + severity + (superseded ? ' chat-error-card--settled' : '') + '"'
       + roleAttrs
       + ' data-error-severity="' + severity + '"'
+      + (superseded ? ' data-error-settled="true"' : '')
       + (errorCode ? ' data-error-code="' + escapeHtml(errorCode) + '"' : '')
       + '>'
       + '<div class="chat-error-card-head">'
@@ -823,6 +850,7 @@
       nextAction: m.nextAction || m.next_action,
       recoveryActions: m.recoveryActions || m.recovery_actions,
       suppressedErrors: Array.isArray(m.suppressedErrors) ? m.suppressedErrors : options.suppressedErrors,
+      superseded: m.superseded === true || options.superseded === true,
     });
   }
 

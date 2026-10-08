@@ -223,3 +223,19 @@
     display: none;
   }
 }
+
+/* Row 38 item 7: the artifacts toggle names itself; its icon alone read as a
+   layout control. */
+.chat-timeline-utility-button:has(.chat-timeline-utility-text) {
+  width: auto;
+  grid-auto-flow: column;
+  gap: var(--space-2);
+  padding-inline: var(--space-3) var(--space-4);
+}
+
+.chat-timeline-utility-text {
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}

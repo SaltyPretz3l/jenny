@@ -52,8 +52,10 @@
       getIde = () => ({}),
       ideStateUtils = {},
       editorHost = null,
+      getTabRestore = () => null,
       getWorkspaceFsApi = () => null,
       closedTabs = null,
+      moveToGroup = noop,
       // Thunk-objects mirroring the controller surfaces these used to close over
       // directly, so the moved bodies stay verbatim.
       welcome = null,
@@ -143,13 +145,17 @@
     }
 
     function handleTreeEntryRenamed(fromPath, toPath, kind, { wasOpen = false, preservedPaths = [] } = {}) {
+      const group = ideStateUtils.getTab?.(getIde(), fromPath)?.group || closedTabs?.find?.(fromPath)?.group || '';
       // The close plan normally closed the tabs already (wasOpen), so the fan-out
       // finds none. A commit that was refused or failed leaves tabs on the old
       // path: clean ones close, unsaved ones stay open and are marked stale.
       const affected = closeTabsUnder(fromPath, kind, { preservedPaths, renamed: true });
       closedTabs?.dropUnder(fromPath);
       if (kind !== 'directory' && (wasOpen || affected.length)) {
-        return openFile(toPath);
+        return openFile(toPath).then((opened) => {
+          if (opened && group) moveToGroup(toPath, group);
+          return opened;
+        });
       }
       return false;
     }
@@ -206,7 +212,12 @@
 
     async function openFile(path, options = {}) {
       const ide = getIde();
-      const preview = options?.preview === true;
+      const restore = getTabRestore();
+      const savedTab = ideStateUtils.getTab?.(ide, ideStateUtils.normalizeIdeRelativePath?.(path) || path);
+      const restoring = restore?.isRestoring(savedTab) === true;
+      if (!options?.background && !restoring) restore?.tabAction();
+      const preview = options?.preview === true
+        || (restoring && options?.preview !== false && savedTab?.transientPreview === true);
       // Legacy transient id: the File Map is a stage SURFACE now, never a tab.
       // A stray 'map://workspace' open (older in-memory state, stale caller)
       // routes to the stage instead — without this guard we'd readFile() the
@@ -234,7 +245,7 @@
         if (!api) {
           return false;
         }
-        const intent = fileOperations?.beginOpen(normalized);
+        const intent = fileOperations?.beginOpen(normalized, { background: options?.background === true });
         if (!intent) return false;
         try {
           if (isImagePath(normalized)) {
@@ -271,19 +282,17 @@
           // root's same-path tab, history or toasts.
           if (fileOperations.isOpenContextCurrent?.(intent) === false) return false;
           lastOpenFailure = { path: normalized, code: String(error?.code || '') };
-          // A persisted (or explicitly opened) tab that fails to load — usually a
-          // file deleted/moved on disk, but any read error lands here — is closed
-          // and purged from the reopen stack. Surface a deduped, path-keyed toast
-          // so a tab silently dropped on hydrate is at least acknowledged; known
-          // workspace-file refusals retain their actionable renderer-safe copy.
+          // Failed tabs leave the reopen stack too. Missing restored files feed
+          // one muted summary; other failures retain their actionable toast.
           ideStateUtils.closeTab?.(ide, normalized);
           welcome?.drop(normalized);
           closedTabs?.dropPath(normalized);
-          renderTabs();
-          showShellErrorToast(openFailureMessage(error, normalized), {
+          if (restoring && error?.code === NOT_FOUND_CODE) restore?.recordMissing(normalized);
+          else showShellErrorToast(openFailureMessage(error, normalized), {
             title: jt('ide.fileLifecycle.couldNotOpen', 'Could Not Open'),
             dedupeKey: `ide:vanished:${normalized}`,
           });
+          renderTabs();
           appendClientLog('WARN', 'ide.open_file_failed', {
             code: String(error?.code || ''),
             message: String(error?.message || error || ''),
@@ -291,6 +300,18 @@
           return false;
         }
         createdDoc = true;
+      }
+      // A secondary editor group (row 40 W5) loads its tab's document without
+      // touching the primary group's tab or editor.
+      if (options?.background === true) {
+        // Its tab may have closed while the document loaded: drop the orphan.
+        if (createdDoc && !(ide.openTabs || []).some((tab) => tab.path === normalized)) {
+          editorHost.closeDocument(normalized);
+          fileOperations?.close(normalized);
+          return false;
+        }
+        restore?.applyPosition(ideStateUtils.getTab?.(ide, normalized));
+        return editorHost.hasDocument(normalized);
       }
       fileOperations?.cancelOpenIntents();
       previewToReplace = preview === true ? findReplaceablePreview(ide, normalized) : null;
@@ -307,6 +328,8 @@
       discardTransientPreview(ide, previewToReplace);
       ideStateUtils.openTab?.(ide, normalized, { transientPreview: preview === true });
       editorHost.activateDocument(normalized);
+      restore?.applyPosition(ideStateUtils.getTab?.(ide, normalized));
+      restore?.recordActivation(normalized);
       onEditorDocumentActivated(normalized);
       chipPicker?.applyDefaults(normalized);
       welcome?.noteOpened(normalized);
@@ -316,6 +339,7 @@
     }
 
     function activateTab(path) {
+      getTabRestore()?.tabAction();
       const ide = getIde();
       const resolvedPath = resolveDocumentPath(path);
       if (!editorHost?.hasDocument(resolvedPath)) {
@@ -325,6 +349,8 @@
       fileOperations?.cancelOpenIntents();
       ideStateUtils.setActiveTab?.(ide, resolvedPath);
       editorHost.activateDocument(resolvedPath);
+      getTabRestore()?.applyPosition(ideStateUtils.getTab?.(ide, resolvedPath));
+      getTabRestore()?.recordActivation(resolvedPath);
       onEditorDocumentActivated(resolvedPath);
       renderTabs();
       schedulePersist();
@@ -346,18 +372,25 @@
       if (editorHost.getDocumentKind(path) !== 'file') {
         return;
       }
-      closedTabs.push({ path, viewState: editorHost.getViewState?.(path) || null });
+      closedTabs.push({ path, viewState: editorHost.getViewState?.(path) || null, group: ideStateUtils.getTab?.(getIde(), path)?.group || '' });
     }
 
     function closeTab(path) {
+      getTabRestore()?.tabAction();
       const ide = getIde();
       const resolvedPath = resolveDocumentPath(path);
       recordClosedTab(resolvedPath);
+      // A background (or editor-group) tab closing leaves the primary editor as it is:
+      // re-activating its document would snap its cursor back to the stashed state.
+      const wasActive = ide.activeTabPath === resolvedPath;
       const nextActivePath = ideStateUtils.closeTab?.(ide, resolvedPath) || '';
       editorHost?.closeDocument(resolvedPath);
       fileOperations?.close(resolvedPath);
+      const primaryUnchanged = !wasActive && editorHost?.getActivePath?.() === nextActivePath;
       if (nextActivePath) {
-        if (editorHost?.hasDocument(nextActivePath)) {
+        if (primaryUnchanged) {
+          // Already showing; nothing to re-activate.
+        } else if (editorHost?.hasDocument(nextActivePath)) {
           editorHost.activateDocument(nextActivePath);
         } else {
           openFile(nextActivePath);
@@ -393,6 +426,7 @@
         closedTabs.push(entry);
         reopenRetriedPath = entry.path;
       }
+      if (opened && entry.group) moveToGroup(entry.path, entry.group);
       if (opened && entry.viewState) {
         editorHost?.applyViewState?.(entry.path, entry.viewState);
       }
@@ -414,9 +448,8 @@
       if (ideStateUtils.isDiffTabId?.(path)) {
         return false; // diff tabs are read-only review surfaces
       }
-      if (editorHost.getDocumentKind(path) === 'image'
-        || editorHost.getDocumentKind(path) === 'preview') {
-        return false; // image/markdown previews have no editable buffer
+      if (editorHost.getDocumentKind(path) === 'image') {
+        return false; // image previews have no editable buffer
       }
       if (!fileOperations) {
         if (unattended) {

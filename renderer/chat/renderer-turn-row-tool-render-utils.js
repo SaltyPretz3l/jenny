@@ -18,14 +18,7 @@
     'timeout', 'timed_out', 'interrupted', 'preempted',
   ]);
 
-  function fallbackEscapeHtml(value) {
-    return String(value || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const fallbackEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function fallbackNormalizeId(value) {
     return String(value || '').trim();
@@ -87,6 +80,9 @@
     || (typeof require === 'function' ? require('./renderer-task-spawn-chip') : null);
   const calendarChatBlock = (typeof globalThis !== 'undefined' && globalThis.rendererCalendarChatBlock)
     || (typeof require === 'function' ? require('./renderer-calendar-chat-block') : null);
+  // Resolved per render: index.html loads the notes entry after this module.
+  const projectNotesEntry = () => (typeof globalThis !== 'undefined' && globalThis.rendererProjectNotesEntry)
+    || (typeof require === 'function' ? require('../features/renderer-project-notes-entry') : null);
 
   function getToolStatusSeverity(status, normalizeId) {
     const toolCallUtils = (typeof globalThis !== 'undefined' && globalThis.toolCallUtils)
@@ -504,6 +500,8 @@
           // Resolved per render: the bindings module owns the live-journal set.
           hasLiveJournalEntry: globalThis.rendererCalendarChatBindings?.hasLiveJournalEntry,
         }) : '';
+      const notesBlockMarkup = resultPayload?.metadata?.result_kind === 'project_notes'
+        ? projectNotesEntry()?.buildProjectNotesResultBlockMarkup?.(resultPayload.metadata, { escapeHtml }) || '' : '';
       const displayToolName = toolCallUtils && typeof toolCallUtils.getToolDisplayName === 'function'
         ? toolCallUtils.getToolDisplayName(toolName, payload.tool_display_name)
         : toolName;
@@ -583,7 +581,7 @@
       // A row that shows content beside its header (banner, action link, chip,
       // calendar block, diagram, artifact) never folds into an Answers tool run.
       const runFoldableAttr = renderOptions.transcriptView === 'answers' && [markerBannerMarkup, pdfAddonLinkMarkup, sessionBudgetLinkMarkup, taskSpawnChipMarkup,
-        calendarBlockMarkup, mermaidFallbackMarkup, artifactTeasersMarkup, pendingImageFigureMarkup].some((part) => String(part || '').trim())
+        calendarBlockMarkup, notesBlockMarkup, mermaidFallbackMarkup, artifactTeasersMarkup, pendingImageFigureMarkup].some((part) => String(part || '').trim())
         ? ' data-run-foldable="false"' : '';
       return `
         ${markerBannerMarkup}
@@ -603,7 +601,7 @@
           </div>
           ${summaryParts.pathMarkup}
           </div>
-          ${pdfAddonLinkMarkup}${sessionBudgetLinkMarkup}${taskSpawnChipMarkup}${calendarBlockMarkup}
+          ${pdfAddonLinkMarkup}${sessionBudgetLinkMarkup}${taskSpawnChipMarkup}${calendarBlockMarkup}${notesBlockMarkup}
           ${mermaidFallbackMarkup}
           ${artifactTeasersMarkup}${pendingImageFigureMarkup}
           <div class="tool-call-row-body" id="${escapeHtml(bodyId)}"${expanded ? '' : ' inert'}>

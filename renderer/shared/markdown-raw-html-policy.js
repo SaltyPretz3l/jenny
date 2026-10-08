@@ -47,21 +47,39 @@
 
   // User messages show what was typed. CommonMark reads a backslash before
   // ASCII punctuation as an escape, which ate the "\" of Windows paths such as
-  // C:\repo\.venv in the user bubble (dogfood HB-041). This answer-policy
-  // instance keeps an inline escape as its two typed characters at the
-  // tokenizer, so code spans, fences, table pipes and HTML blocks still follow
-  // the parser's own rules.
+  // C:\repo\.venv in the user bubble (dogfood HB-041). This instance keeps an
+  // inline escape as its two typed characters at the tokenizer, so code spans,
+  // fences and table pipes still follow the parser's own rules. Raw HTML the
+  // user typed is text, not markup (live recheck 2026-10-06: a typed paragraph
+  // tag became a paragraph and a typed button tag vanished): the plain renderer
+  // escapes every HTML token, where an assistant reply keeps allowed tags for
+  // the sanitizer.
   const LITERAL_ESCAPE_RE = /^\\[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/;
   function createUserMarked(markedModule, sharedUseOptions) {
     if (typeof markedModule?.Marked !== 'function') return null;
     const markedUser = new markedModule.Marked();
     markedUser.setOptions({ gfm: true, breaks: false });
     markedUser.use(sharedUseOptions);
-    markedUser.use({ renderer: { html: answerHtmlRenderer } });
-    markedUser.use({ tokenizer: { escape(src) {
-      const match = LITERAL_ESCAPE_RE.exec(src);
-      return match ? { type: 'text', raw: match[0], text: match[0], escaped: false } : false;
-    } } });
+    markedUser.use({
+      renderer: {
+        html: plainHtmlRenderer,
+        text(token) {
+          if (token.tokens) return this.parser.parseInline(token.tokens);
+          return token.escaped ? token.text : escapeHtmlText(token.text);
+        },
+      },
+      tokenizer: {
+        escape(src) {
+          const match = LITERAL_ESCAPE_RE.exec(src);
+          return match ? { type: 'text', raw: match[0], text: match[0], escaped: false } : false;
+        },
+        inlineText(src) {
+          // Encode typed entities once, including text inside typed raw-text tags.
+          const match = this.rules.inline.text.exec(src);
+          return match ? { type: 'text', raw: match[0], text: match[0], escaped: false } : false;
+        },
+      },
+    });
     return markedUser;
   }
 

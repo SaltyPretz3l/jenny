@@ -60,12 +60,14 @@ from sidecar.ai.mcp.exceptions import (
     CMP_MCP_PROTOCOL_FAILED,
     CMP_MCP_SERVER_FAILED,
     CMP_MCP_TOOL_NOT_FOUND,
+    OBSERVED_CHANGES_KEY,
 )
+from sidecar.ai.semantic.reader import configure_catalog_reader_from_cli
 from sidecar.ai.tools.assembly import ToolAssemblyContext, assemble_tool_contract
 from sidecar.ai.tools.builtins import cancellation, output_chunk_slot
 from sidecar.ai.tools.builtins.lsp.tools import shutdown_lsp_tools
 from sidecar.ai.tools.builtins.owned_process_observation import observe_owned_process_invocation
-from sidecar.ai.tools.builtins.worktree_change_tracking import run_with_worktree_observation
+from sidecar.ai.tools.builtins.shell_background_changes import run_with_change_observation
 from sidecar.ai.tools.catalog import (
     BUILTIN_MCP_SERVER_NAME,
     BUILTIN_MCP_SURFACE,
@@ -123,9 +125,11 @@ TRANSPORT_ARGUMENT_KEYS: tuple[str, ...] = (
     "_jenny_turn_id",
     "_jenny_tool_call_id",
     "_jenny_change_set_id",
+    "_jenny_restore_point",
     "_jenny_session_offline_lockdown",
     "_jenny_read_only",
     "_jenny_approved_plan",
+    "_jenny_live_suggestions",
     TRUSTED_EXECUTION_CONTEXT_KEY,
 )
 
@@ -227,6 +231,9 @@ def _default_tools(
             engine_supports_tool_calling=True,
             mode="assist",
             plan_mode=False,
+            # The managed sidecar's request contract owns the Propose-mode gate;
+            # this transport must still list propose_change so it can dispatch it.
+            propose_mode=True,
             tool_preferences=None,
             resolution_context=None,
             workspace_root_present=workspace_root_present,
@@ -477,6 +484,13 @@ def _unpack_tool_output(
     )
 
 
+def _workspace_changed_evidence(output: object) -> bool | None:
+    """A result's ``workspace_changed`` evidence, or ``None`` when it is unavailable."""
+    metadata = getattr(output, "metadata", None)
+    changed = metadata.get("workspace_changed") if isinstance(metadata, dict) else None
+    return changed if isinstance(changed, bool) else None
+
+
 def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
     message_id: Any,
     tools: dict[str, BuiltinTool],
@@ -552,7 +566,6 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
                     workspace,
                 )
             call_side_effecting = effective_side_effecting(tool, validated_arguments)
-            workspace.observe_mutation_tool_call(tool.name, validated_arguments)
             if call_side_effecting is None:
                 call_side_effecting = tool.side_effecting
             # Ledger recovery can refer to an earlier invocation. From this
@@ -585,13 +598,16 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
                 with trace.phase("execute"), observe_owned_process_invocation(
                     tool.name
                 ) as process_observation:
-                    output = run_with_worktree_observation(
+                    output = run_with_change_observation(
                         side_effecting=tool.side_effecting,
                         tool_name=tool.name,
                         arguments=validated_arguments,
                         workspace=workspace,
                         handler=lambda: tool.handler(validated_arguments, workspace),
                         logger=logger,
+                    )
+                    workspace.observe_mutation_tool_result(
+                        tool.name, validated_arguments, _workspace_changed_evidence(output)
                     )
                     output = _postprocess_call_output(
                         tool_name=tool.name,
@@ -603,6 +619,8 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
                 output_chunk_slot.end_tool_call()
                 cancellation.end_tool_call()
     except ToolExecutionFailure as error:
+        if execution_may_have_started:
+            workspace.observe_mutation_tool_result(tool.name, validated_arguments, None)
         error_data = _traced_failure_data(
             tool_name=tool.name,
             error=error,
@@ -621,6 +639,9 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
             error_code=error.code,
         )
         cleanup = process_observation.resource_cleanup() if process_observation else None
+        # Row 34: a scripted call that raised still reports what it changed;
+        # kept out of ``error_data`` (ledger) and the log above.
+        observed = getattr(error, "result_metadata", None)
         return _error_response(
             message_id,
             error.code,
@@ -630,6 +651,7 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
             metadata={
                 **error_data,
                 **({"resource_cleanup": cleanup} if cleanup else {}),
+                **({OBSERVED_CHANGES_KEY: dict(observed)} if observed else {}),
                 "completion_status": (
                     "unknown" if execution_may_have_started else "not_started"
                 ),
@@ -638,6 +660,8 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
             },
         )
     except Exception as error:  # noqa: BLE001
+        if execution_may_have_started:
+            workspace.observe_mutation_tool_result(tool.name, validated_arguments, None)
         bracket.settle_unexpected()
         record_failure(tool.name, "execute")
         error_message = f"tool execution failed: {error}"
@@ -849,6 +873,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         token
         for token in (str(item or "").strip() for item in (args.knowledge_roots or []))
         if token
+    )
+    configure_catalog_reader_from_cli(
+        db_path=str(args.semantic_catalog_db or ""),
+        base_url=str(args.semantic_catalog_url or ""),
+        model_key=str(args.semantic_catalog_model_key or ""),
+        query_template=str(args.semantic_catalog_query_template or ""),
+        dims=str(args.semantic_catalog_dims or "0"),
+        allowed=host_policy.mode != "server",
     )
     skills_disabled_ids = tuple(
         token

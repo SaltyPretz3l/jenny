@@ -34,15 +34,7 @@
     var bound = false;
     var navItemCache = null;
     var cardCache = null;
-    // settings_search (default-ON, env-rollback JENNY_ENABLE_SETTINGS_SEARCH=0):
-    // gates only the search-box DOM wiring below. The nav itself is unaffected
-    // when the flag is off — createSettingsSearchController simply never binds.
-    // Default-ON semantics must match the markup gate (`!== false`): a flag
-    // payload that omits the key would otherwise render a search box that
-    // never binds.
-    var searchFeatureEnabled = Boolean(state && state.features && state.features.featureFlags)
-      && state.features.featureFlags.settings_search !== false;
-    var searchController = (searchFeatureEnabled && searchUtils && typeof searchUtils.createSettingsSearchController === 'function')
+    var searchController = (searchUtils && typeof searchUtils.createSettingsSearchController === 'function')
       ? searchUtils.createSettingsSearchController({
         settingsNav: settingsNav,
         navigateToSection: function (sectionId) {
@@ -79,15 +71,6 @@
         return DEFAULT_SECTION;
       }
       if (item.getAttribute('data-dev-only') === 'true' && (
-        item.hidden || item.classList.contains('hidden')
-      )) {
-        return DEFAULT_SECTION;
-      }
-      // Feature-gated nav items (e.g. Plugins behind featureFlags.plugins) are
-      // stamped data-feature-gated + hidden by their sibling controller while
-      // the flag is off. A persisted/deep-linked id must not activate a card
-      // whose nav item is absent — same contract as data-dev-only above.
-      if (item.hasAttribute('data-feature-gated') && (
         item.hidden || item.classList.contains('hidden')
       )) {
         return DEFAULT_SECTION;
@@ -467,13 +450,10 @@
   }
 
   /*
-   * `options.searchEnabled` gates the search-box markup injected into
-   * `.settings-nav-header` (settings_search flag; default-ON — pass `false`
-   * explicitly to roll back). renderSettingsNav runs at bootstrap before
-   * `state` exists, so the caller resolves the flag and passes the boolean
-   * through rather than this module reading state directly.
+   * Renders the nav groups, section picker and the search box into
+   * `.settings-nav-header`. Runs at bootstrap before `state` exists.
    */
-  function renderSettingsNav(documentRef, options) {
+  function renderSettingsNav(documentRef) {
     var doc = documentRef || (typeof globalThis !== 'undefined' ? globalThis.document : null);
     if (!doc || typeof doc.querySelector !== 'function') {
       return false;
@@ -489,7 +469,6 @@
       return false;
     }
     scroll.innerHTML = buildSettingsNavMarkup(groups, DEFAULT_SECTION);
-    var searchEnabled = !(options && options.searchEnabled === false);
     var header = doc.querySelector('.settings-nav .settings-nav-header');
     if (header) {
       var inventory = (typeof globalThis !== 'undefined' && globalThis.inventory)
@@ -509,7 +488,7 @@
       if (existingSearch) {
         existingSearch.parentNode.removeChild(existingSearch);
       }
-      if (searchEnabled && searchUtils && typeof searchUtils.buildSettingsSearchBoxMarkup === 'function') {
+      if (searchUtils && typeof searchUtils.buildSettingsSearchBoxMarkup === 'function') {
         header.insertAdjacentHTML('beforeend', searchUtils.buildSettingsSearchBoxMarkup());
       }
     }

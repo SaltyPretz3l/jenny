@@ -11,7 +11,7 @@ const {
   settle,
 } = require('./helpers/ide-tree-harness');
 
-function createHarness({ qolEnabled = true } = {}) {
+function createHarness() {
   const { dom, getDom } = buildIdeDom();
   const bridge = createBridgeStub({ files: { 'src/app.js': 'const app = true;' } });
   const previousWindow = globalThis.window;
@@ -51,7 +51,6 @@ function createHarness({ qolEnabled = true } = {}) {
   const cleanups = [];
   const state = {
     ui: { activeView: 'ide', ide: null },
-    features: { featureFlags: { workspace_explorer_qol: qolEnabled } },
   };
   const controller = createIdeController({
     state,
@@ -74,6 +73,7 @@ function createHarness({ qolEnabled = true } = {}) {
     controller,
     dom,
     getDom,
+    viewHost: (id) => dom.window.document.getElementById(`wbView-${id}`),
     getPendingEdit: () => getPendingEdit(),
     searchCalls,
     dispose() {
@@ -110,7 +110,7 @@ function openContextMenu(harness, element) {
 async function expandSourceFolder(harness) {
   await harness.controller.activateIde();
   await settle();
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   panel.querySelector('[data-ide-tree-path="src"]').click();
   await settle();
   return panel;
@@ -155,26 +155,4 @@ test('flag-on file and directory Delete items use danger styling', async (t) => 
     openContextMenu(harness, panel.querySelector(`[data-ide-tree-path="${path}"]`));
     assert.equal(findMenuItem(doc, 'Delete')?.classList.contains('inv-context-menu-item--danger'), true);
   }
-});
-
-test('flag-off file menu preserves its exact labels and ordinary Delete styling', async (t) => {
-  const harness = createHarness({ qolEnabled: false });
-  t.after(() => harness.dispose());
-  const panel = await expandSourceFolder(harness);
-  const doc = harness.dom.window.document;
-
-  openContextMenu(harness, panel.querySelector('[data-ide-tree-path="src/app.js"]'));
-  assert.deepEqual(menuLabels(doc), [
-    'Rename',
-    'Delete',
-    'Open in New Tab',
-    'Reveal in File Explorer',
-    'Open in Default App',
-    'Copy Path',
-    'Copy Relative Path',
-    'Copy Name',
-    'Send to Jenny — current chat',
-    'Send to Jenny — new chat',
-  ]);
-  assert.equal(findMenuItem(doc, 'Delete')?.classList.contains('inv-context-menu-item--danger'), false);
 });

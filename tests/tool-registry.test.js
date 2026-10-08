@@ -138,3 +138,13 @@ describe('ToolRegistry', () => {
   });
 
 });
+
+test('propose-mode-only tools are offered only when proposeMode is set (Plan Plus)', () => {
+  const registry = new ToolRegistry();
+  registry.registerTool(makeTool({ name: 'Suggest', readOnly: true, proposeModeOnly: true }));
+  registry.registerTool(makeTool({ name: 'Read', readOnly: true }));
+  const names = (options) => registry.getToolSchemas(options).map((schema) => schema.function.name);
+  assert.deepEqual(names(), ['Read']);
+  assert.deepEqual(names({ planMode: true }), ['Read']);
+  assert.deepEqual(names({ proposeMode: true }), ['Suggest', 'Read']);
+});

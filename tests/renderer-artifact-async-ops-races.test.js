@@ -56,7 +56,7 @@ function generatedArtifactFixture(id, sessionId, overrides = {}) {
   };
 }
 
-function makeHarness(t, { registryEnabled = false } = {}) {
+function makeHarness(t) {
   const dom = new JSDOM('<body></body>');
   const doc = dom.window.document;
   const previousDocument = globalThis.document;
@@ -104,7 +104,6 @@ function makeHarness(t, { registryEnabled = false } = {}) {
       deletedArtifactIds: [],
       operationGeneration: 0,
     },
-    features: { featureFlags: { artifact_renderer_registry: registryEnabled === true } },
   };
 
   const readImpl = { fn: async (sessionId, artifactId) => ({ artifact: { artifact_id: artifactId, editable: true, status: 'available' }, content: 'disk content' }) };

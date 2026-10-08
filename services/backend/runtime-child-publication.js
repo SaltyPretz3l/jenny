@@ -33,7 +33,7 @@ function childRequest(parent, child, task) {
     runtimePreferredModel: parent.request.runtimePreferredModel,
     normalizedPreferences: structuredClone(parent.request.normalizedPreferences || {}),
     normalizedInteractiveResponse: null, toolPreferences: structuredClone(parent.request.toolPreferences || null),
-    debugOptions: { plain_chat_mode: parent.trusted.mode === 'chat' }, runtimeChildReadOnly: true };
+    runtimeChildReadOnly: true };
 }
 async function publishRuntimeChild(coordinator, { work, context, rootWork, root, child, task, assertCurrent }) {
   const { runtime, service } = coordinator;

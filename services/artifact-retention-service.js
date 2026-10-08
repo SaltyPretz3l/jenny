@@ -33,6 +33,7 @@ const fsDefault = require('fs/promises');
 const pathDefault = require('path');
 const crypto = require('crypto');
 const { readSessionMessagesForReferenceScan } = require('./backend/session-reference-scan');
+const { ensureJennyDirGitignore } = require('./jenny-project-dir');
 
 const REDACTED_PATH_TOKEN = '[redacted:path]';
 const ARTIFACTS_SUBPATH = ['.jenny', 'artifacts'];
@@ -358,6 +359,7 @@ function createArtifactRetentionService({
       try {
         await validateMutation(artifactsRoot);
         await fsImpl.mkdir(quarantineRoot, { recursive: true });
+        await ensureJennyDirGitignore(pathImpl.dirname(quarantineRoot), { fs: fsImpl });
       } catch (_) {
         return { ...result, ok: false, skippedReason: 'invalid_root' };
       }

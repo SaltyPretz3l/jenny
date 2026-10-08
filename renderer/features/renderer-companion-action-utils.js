@@ -551,6 +551,8 @@
           title: loop.title,
           initialPrompt: taskBriefUtils.buildTaskBrief(loop, { linkedTaskId: loop.followUpId }),
           linkedTaskId: loop.followUpId,
+          // The chat starts in the task's project (FG-002 B3); the backend validates the id.
+          ...(loop.projectId ? { projectId: String(loop.projectId) } : {}),
         });
       } finally {
         taskSessionStarting = false;

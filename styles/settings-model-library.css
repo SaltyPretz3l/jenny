@@ -1,6 +1,6 @@
 /* styles/settings-model-library.css
  *
- * Settings > Models > "Model library" group (model_management_ui). Tiny —
+ * Settings > Models > "Model library" group. Tiny —
  * reuses .settings-group / .settings-field-row / .settings-actions /
  * .settings-note wherever possible; only the bits those primitives don't
  * cover live here.
@@ -551,6 +551,11 @@
 
 .model-card-note--error {
   color: var(--state-danger);
+}
+
+/* Row 38 item 1: plain words for a classified load failure; the badge carries the colour. */
+.model-card-note--failed {
+  color: var(--text-secondary);
 }
 
 .model-card-fit--success .inv-progress-fill {

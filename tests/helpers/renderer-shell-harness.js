@@ -565,4 +565,9 @@ module.exports = {
   },
   waitForStartupCurtainRemoval,
   waitForUi,
+  // Opens Settings and waits for its lazy page group (row 32 W2); tests that read Settings DOM call this first.
+  async openSettingsView(window, settleMs = 100) {
+    window.document.querySelector('[data-tab-id="settings"]').click();
+    await waitForUi(window, settleMs);
+  },
 };

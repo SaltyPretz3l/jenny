@@ -89,6 +89,26 @@ function withAdmissionWait(runtime, summary) {
   return { ...summary, admission_wait: admissionWait };
 }
 
+// A paused row says whether Resume can move it, by the scheduler's own rule
+// (restart-paused work with no checkpoint for its attempt cannot continue).
+// One record read per paused row, still no prompt; every other status, and a
+// runtime whose scheduler cannot answer, carries null.
+function withResumable(runtime, summary, record = null) {
+  if (summary.status !== 'paused' || typeof runtime.scheduler?.canResume !== 'function') {
+    return { ...summary, resumable: null };
+  }
+  let resumable;
+  try {
+    const work = record || runtime.store.get(summary.work_id);
+    resumable = Boolean(work) && runtime.scheduler.canResume(work) === true;
+  } catch (_error) { resumable = false; }
+  return { ...summary, resumable };
+}
+
+function decorateSummary(runtime, summary, record = null) {
+  return withResumable(runtime, withAdmissionWait(runtime, summary), record);
+}
+
 class RuntimeApplicationService {
   constructor({ getRuntime } = {}) {
     if (typeof getRuntime !== 'function') {
@@ -193,12 +213,12 @@ class RuntimeApplicationService {
       if (request.view === 'runs' && !runs) return unavailable('runtime_runs_view_unavailable');
       const listed = runs ? null : runtime.store.listSummaries(request);
       const page = listed ? { ...listed,
-        items: listed.items.map(summary => withAdmissionWait(runtime, summary)) } : null;
+        items: listed.items.map(summary => decorateSummary(runtime, summary)) } : null;
       return projectRuntimeSnapshot({
         runtime,
         page,
         runs: runs ? { ...runs, items: projectRunItems(runtime,
-          runs.items.map(summary => withAdmissionWait(runtime, summary))) } : null,
+          runs.items.map(summary => decorateSummary(runtime, summary))) } : null,
         storeStatus: runtime.store.getStatus(),
         laneSnapshot: runtime.lanes.snapshot(),
         resourceSnapshot: runtime.resourceBroker.snapshot(),
@@ -216,7 +236,7 @@ class RuntimeApplicationService {
     try {
       const work = runtime.store.get(request.workId);
       if (!work) return failure(RUNTIME_ERROR_CODES.NOT_FOUND, 'runtime_work_not_found');
-      const projected = projectWorkRecord(withAdmissionWait(runtime, work));
+      const projected = projectWorkRecord(decorateSummary(runtime, work, work));
       return { ...projected, coordination: projectWorkCoordination(runtime, work, request) };
     } catch (error) {
       return unavailable(error instanceof RuntimeProjectionError

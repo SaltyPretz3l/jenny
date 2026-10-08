@@ -22,6 +22,7 @@ from sidecar.ai.host_policy import host_policy_is_enforced
 from sidecar.ai.memory.unavailable import memory_store_status_payload
 from sidecar.ai.tools.builtins.workspace_cleanup import cleanup_workspace_artifacts
 from sidecar.runtime.chatgpt_model_catalog import chatgpt_model_entries
+from sidecar.runtime.local_engine.load_failure import load_failure_listener
 from sidecar.runtime.local_engine.snapshot import (
     active_app_profile_payload as _active_app_profile_payload,
 )
@@ -45,7 +46,7 @@ from sidecar.runtime.provider_capability_profile import (
 from sidecar.runtime.schema_versions import get_all_schema_versions
 from sidecar.runtime.worker_secrets import BROKERED_SECRET_KEYS, SECRET_CONFIG_KEYS
 
-SERVER_VERSION = "1.3.1"
+SERVER_VERSION = "1.4.0"
 
 _ARCHIVED_CLOUD_ENGINE_TYPES = frozenset({"anthropic", "openai", "gemini"})
 _INSPECTABLE_ENGINE_TYPES = frozenset({"ollama", "openai-compatible"})
@@ -175,26 +176,24 @@ def _initialize_visible_provider_capabilities(
     return visible
 
 
-def initialize_response(
+def initialize_response(  # noqa: PLR0913 - initialize transport callbacks are explicit seams
     message_id: Any,
     params: Any,
     *,
     api_version: str,
     brain_container: BrainContainer,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    notification_writer: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     raw_config = _runtime_initialize_config(params)
     secrets = initialize_secrets(params)
 
-    stack = (
-        brain_container.configure(raw_config, secrets=secrets)
-        if progress_callback is None
-        else brain_container.configure(
-            raw_config,
-            secrets=secrets,
-            progress_callback=progress_callback,
-        )
-    )
+    configure_kwargs: dict[str, Any] = {"secrets": secrets}
+    if progress_callback is not None:
+        configure_kwargs["progress_callback"] = progress_callback
+    if notification_writer is not None:
+        configure_kwargs["load_failure_callback"] = load_failure_listener(notification_writer)
+    stack = brain_container.configure(raw_config, **configure_kwargs)
     try:
         ws_root = stack.config.tools_workspace_root
         cleanup_workspace_artifacts(Path(ws_root) if ws_root else None)

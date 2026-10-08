@@ -110,14 +110,7 @@
     const settings = deps || {};
     const escapeHtml = typeof settings.escapeHtml === 'function'
       ? settings.escapeHtml
-      : function fallbackEscapeHtml(value) {
-          return String(value == null ? '' : value)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-        };
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     const sanitizeHtmlFragment = typeof settings.sanitizeHtmlFragment === 'function'
       ? settings.sanitizeHtmlFragment
       : function sanitizeToolTableHtml(html) {
@@ -517,41 +510,31 @@
       return parts.join('');
     }
 
+    // Shared .file-diff rows; the parent's default open state yields to a
+    // choice the user made on the row itself.
+    function diffDeps(model) {
+      return {
+        escapeHtml, fileDiffView, fileDiffBindings, codeHighlight, actionButton: inventoryActionButton,
+        input: parseInput(model) || {},
+        resolveExpanded(diffId) {
+          const override = fileDiffBindings?.getFileDiffExpansionOverride?.(diffId);
+          return override === undefined ? model.expandFileDiffsByDefault === true : override === true;
+        },
+        registerExpanded: true,
+      };
+    }
+
     function diffBody(model) {
-      const metadata = model.metadata || {};
-      const multi = Array.isArray(metadata.diffs) ? metadata.diffs : [];
-      const diffs = multi.length ? multi : (metadata.diff ? [metadata.diff] : []);
-      if (!diffs.length || typeof fileDiffView?.buildFileDiffMarkup !== 'function') return '';
-      const parsedInput = parseInput(model) || {};
-      const rows = diffs.map((diff, index) => {
-        const path = String(diff?.path || (multi.length ? '' : (parsedInput.path || parsedInput.file_path)) || '').trim();
-        if (!path) return '';
-        const changeId = String(diff?.diff_id || '').trim();
-        const diffId = changeId || [model.sessionId, model.callId, diff?.operation_index ?? index, path].map(String).join(':');
-        const languageId = codeHighlight?.getLanguageId?.(path) || '';
-        const expansionOverride = fileDiffBindings?.getFileDiffExpansionOverride?.(diffId);
-        const args = {
-          path, diffId, changeId, languageId,
-          languageDot: codeHighlight?.getLanguageDot?.(languageId),
-          hunks: Array.isArray(diff?.hunks) ? diff.hunks : [],
-          additions: diff?.additions, deletions: diff?.deletions, truncated: diff?.truncated === true,
-          expanded: expansionOverride === undefined
-            ? model.expandFileDiffsByDefault === true
-            : expansionOverride === true,
-          highlight: codeHighlight?.highlightLine,
-          escapeHtml,
-          actionButton: inventoryActionButton,
-        };
-        if (!args.truncated && args.hunks.length) {
-          fileDiffBindings?.registerFileDiffContext?.({
-            diffId, sessionId: model.sessionId,
-            expanded: args.expanded,
-            materialize: () => fileDiffView.buildFileDiffBodyMarkup(args),
-          });
-        }
-        return fileDiffView.buildFileDiffMarkup(args);
-      }).join('');
+      const rows = toolShellUtils.buildFileDiffRowsMarkup?.(model, diffDeps(model)) || '';
       return rows ? `${inputSections(model)}<div class="file-diff-list">${rows}</div>` : '';
+    }
+
+    // Script tool card (row 34 S5): Changed files follow the output and any error.
+    function changedFilesSection(model) {
+      const content = toolShellUtils.buildScriptedChangesContent?.(model, diffDeps(model)) || '';
+      return content
+        ? `<div class="tool-call-section" data-scripted-changes="true">${sectionCaption(jt('chat.toolDetail.changedFiles', 'Changed files'), '')}${content}</div>`
+        : '';
     }
 
     function readBody(model) {
@@ -590,22 +573,23 @@
         model.metadata
         && (model.metadata.diff || (Array.isArray(model.metadata.diffs) && model.metadata.diffs.length))
       );
+      const scripted = toolShellUtils.isScriptedChangeTool?.(kind) === true;
       let body;
       if (model.isError) {
-        const specializedErrorBody = kind === 'Bash' || kind === 'bash' || kind === 'run_command'
-          ? bashBody(model)
-          : (kind === 'python_execute' ? pythonBody(model, false) : inputSections(model));
-        body = `${specializedErrorBody}${errorBody(model)}`;
+        const specializedErrorBody = kind === 'python_execute'
+          ? pythonBody(model, false)
+          : (scripted ? bashBody(model) : inputSections(model));
+        body = `${specializedErrorBody}${errorBody(model)}${scripted ? changedFilesSection(model) : ''}`;
       } else if (kind === 'monitor' && model.metadata && model.metadata.monitor) {
         body = monitorBody(model);
       } else if (kind === 'python_execute') {
-        body = pythonBody(model, true);
+        body = `${pythonBody(model, true)}${changedFilesSection(model)}`;
+      } else if (scripted) {
+        body = `${bashBody(model)}${changedFilesSection(model)}`;
       } else if (hasStructuredDiff) {
         body = diffBody(model);
       } else if (kind === 'Read' || kind === 'read_file') {
         body = readBody(model);
-      } else if (kind === 'Bash' || kind === 'bash' || kind === 'run_command') {
-        body = bashBody(model);
       } else {
         body = genericBody(model);
       }

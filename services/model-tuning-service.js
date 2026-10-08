@@ -137,11 +137,9 @@ class ModelTuningService {
     return vramMb > 0 || unifiedMb > 0 || totalMb > 0;
   }
 
-  // Non-catalog fit path: diagnostics.modelFitEstimates is already gated by
-  // the model_fit_estimates flag upstream (offline-intelligence-service /
-  // model-fit-diagnostics.js return [] when the flag is off), so an empty or
-  // missing entry here naturally falls through to the unverified/degraded
-  // branches below without a second flag check.
+  // Non-catalog fit path: an empty or missing diagnostics.modelFitEstimates
+  // entry here naturally falls through to the unverified/degraded branches
+  // below.
   _estimatedPreflight(diagnostics, modelId, contextLength, nativeContext) {
     const entry = (diagnostics?.modelFitEstimates || []).find((candidate) => (
       matchesModel(candidate?.modelId, modelId)

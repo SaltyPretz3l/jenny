@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { loadRendererApp, waitForUi, openSettingsView } = require('./helpers/renderer-shell-harness');
 const { segmentedGroup, segmentedValue, segmentedOptions } = require('./helpers/segmented-control');
 
 async function loadRendererTestApp(t, options) {
@@ -8,6 +8,7 @@ async function loadRendererTestApp(t, options) {
   t.after(async () => {
     await app.dispose();
   });
+  await openSettingsView(app.window);
   return app;
 }
 
@@ -46,8 +47,8 @@ test('renderer shows the model-load hint in the hero and hides it once a real ch
   // The backend banner is gone entirely; the runtime hint lives in the chat hero
   // and live phase state lives in the workbench health pill.
   assert.equal(window.document.getElementById('backendBanner'), null);
-  assert.equal(heroRuntimeHint.classList.contains('hidden'), false);
-  assert.match(heroRuntimeHint.textContent, /Model loads with your first message/i);
+  assert.equal(heroRuntimeHint.classList.contains('hidden'), true);
+  assert.equal(heroRuntimeHint.textContent, '', 'no named model, no lazy-load hint');
   input.value = 'Start a real thread'; input.dispatchEvent(new window.Event('input', { bubbles: true }));
   window.document.getElementById('sendButton').click();
   await waitForUi(window, 30);
@@ -174,7 +175,7 @@ test('renderer hydrates Home-owned reminders without retired Settings sections',
   assert.ok(controlTowerTarget);
   assert.notEqual(controlTowerTarget, 'readiness');
   controlTowerAction.click(); await waitForUi(window, 40); assert.equal(window.__rendererState.ui.activeSettingsSection, controlTowerTarget);
-  // Skills is merged into Plugins & Extensions. Proactive and Tips are owned
+  // Skills is merged into Extensions. Proactive and Tips are owned
   // by Home, so none has a standalone Settings navigation item.
   const base = {
     skills: skillsGetCalls,
@@ -185,9 +186,9 @@ test('renderer hydrates Home-owned reminders without retired Settings sections',
   assert.equal(doc.querySelector('.settings-nav-item[data-settings-section="tips"]'), null);
   assert.equal(doc.querySelector('.settings-nav-item[data-settings-section="proactive"]'), null);
 
-  doc.querySelector('.settings-nav-item[data-settings-section="plugins"]').click();
+  doc.querySelector('.settings-nav-item[data-settings-section="extensions"]').click();
   await waitForUi(window, 40);
-  // Opening Plugins & Extensions readies its merged Skills companion.
+  // Opening Extensions readies its merged Skills companion.
   assert.equal(skillsGetCalls, base.skills + 1);
 
   doc.querySelector('.settings-nav-item[data-settings-section="offline"]').click();
@@ -200,7 +201,10 @@ test('renderer hydrates Home-owned reminders without retired Settings sections',
 });
 
 test('renderer attach menu works before settings opens and account sign-in is absent', async (t) => {
-  const { window } = await loadRendererTestApp(t);
+  // Boots on chat without ever opening Settings: the point of this test.
+  const app = await loadRendererApp();
+  t.after(async () => { await app.dispose(); });
+  const { window } = app;
   const doc = window.document;
   const composerAttachMenu = doc.getElementById('composerAttachMenu');
 
@@ -280,6 +284,9 @@ test('renderer retires the history disclosure without deleting the rollback pref
 
 test('renderer sidebar resizer ignores non-primary drags and supports keyboard reset', async (t) => {
   const { window } = await loadRendererTestApp(t);
+  // The sidebar belongs to the chat view; the loader left the app on Settings.
+  window.document.querySelector('[data-tab-id="chat"]').click();
+  await waitForUi(window, 20);
   const doc = window.document;
   const workspace = doc.getElementById('workspace');
   const sidebarResizer = doc.getElementById('sidebarResizer');
@@ -854,10 +861,10 @@ test('phase7D Settings account row opens Help and bounded factory reset modal', 
   assert.match(doc.body.textContent, /Onboarding reset complete — setup tiles reopened on Home\./);
 });
 
-test('Settings relocates standalone MCP management into Plugins & Extensions', async (t) => {
+test('Settings relocates standalone MCP management into Extensions', async (t) => {
   const { window } = await loadRendererTestApp(t, {
     shell: {
-      features: { state: { featureFlags: { plugins: true, mcp_management_ui: true } } },
+      features: { state: { featureFlags: { plugins: true } } },
       skills: {
         state: {
           featureEnabled: true,
@@ -883,12 +890,12 @@ test('Settings relocates standalone MCP management into Plugins & Extensions', a
 
   doc.getElementById('settingsTopRailTab').click();
   await waitForUi(window, 30);
-  doc.querySelector('.settings-nav-item[data-settings-section="plugins"]').click();
+  doc.querySelector('.settings-nav-item[data-settings-section="extensions"]').click();
   await waitForUi(window, 60);
 
   const group = doc.getElementById('mcpServersGroup');
   assert.ok(group);
-  assert.ok(group.closest('.settings-card[data-settings-section="plugins"]'));
+  assert.ok(group.closest('.settings-card[data-settings-section="extensions"]'));
   assert.equal(group.parentElement.id, 'mcpServersHost');
   assert.ok(group.classList.contains('settings-group--wide'));
   assert.match(group.textContent, /notes/);

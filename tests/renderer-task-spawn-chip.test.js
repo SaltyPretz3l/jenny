@@ -144,6 +144,54 @@ test('Start creates one linked session while the strip is busy', async (t) => {
   await new Promise((resolve) => setImmediate(resolve));
 });
 
+test('Start passes the chat project from getProjectId and omits it without the dep', async (t) => {
+  const dom = new JSDOM('<div id="timeline"></div><div id="bare"></div>');
+  const calls = [];
+  const previousActions = globalThis.rendererTaskSessionActions;
+  t.after(() => {
+    globalThis.rendererTaskSessionActions = previousActions;
+    dom.window.close();
+  });
+  globalThis.rendererTaskSessionActions = { start: async (options) => { calls.push(options); } };
+  const withDep = dom.window.document.getElementById('timeline');
+  withDep.innerHTML = taskSpawnChip.renderTaskSpawnChipStrip({ metadata: metadata() }, { escapeHtml });
+  taskSpawnChip.bindTaskSpawnChip(withDep, { getProjectId: () => 'project_abc' });
+  withDep.querySelector('[data-jenny-task-spawn="start"]').click();
+  await new Promise((resolve) => setImmediate(resolve));
+  const bare = dom.window.document.getElementById('bare');
+  bare.innerHTML = taskSpawnChip.renderTaskSpawnChipStrip({ metadata: metadata() }, { escapeHtml });
+  taskSpawnChip.bindTaskSpawnChip(bare, { getProjectId: () => '' });
+  bare.querySelector('[data-jenny-task-spawn="start"]').click();
+  await new Promise((resolve) => setImmediate(resolve));
+  const noDep = dom.window.document.createElement('div');
+  noDep.innerHTML = taskSpawnChip.renderTaskSpawnChipStrip({ metadata: metadata() }, { escapeHtml });
+  taskSpawnChip.bindTaskSpawnChip(noDep, {});
+  noDep.querySelector('[data-jenny-task-spawn="start"]').click();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].projectId, 'project_abc');
+  assert.equal(Object.hasOwn(calls[1], 'projectId'), false);
+  assert.equal(Object.hasOwn(calls[2], 'projectId'), false);
+});
+
+test('chat-shell binds the current chat project into the Start action', async (t) => {
+  const app = await loadRendererApp({ persistedActiveView: 'chat' });
+  t.after(() => app.dispose());
+  await waitForUi(app.window, 20);
+  const calls = [];
+  app.window.rendererTaskSessionActions = { start: (options) => calls.push(options) };
+  app.window.__rendererState.sessions = [
+    { id: 'other', project_id: 'project_other' },
+    { id: 'current', project_id: 'project_current' },
+  ];
+  app.window.__rendererState.currentSessionId = 'current';
+  const timeline = app.window.document.getElementById('chatTimeline');
+  timeline.innerHTML = app.window.rendererTaskSpawnChip.renderTaskSpawnChipStrip({ metadata: metadata() });
+  timeline.querySelector('[data-jenny-task-spawn="start"]').click();
+  assert.equal(calls[0].projectId, 'project_current');
+});
+
 test('chat-shell task notes flow into chip briefs without an empty notes block', async (t) => {
   const app = await loadRendererApp({ persistedActiveView: 'chat' });
   t.after(() => app.dispose());

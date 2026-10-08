@@ -545,22 +545,12 @@ test('plan-mode turns with a plan_object row route to the projected article path
   );
 });
 
-test('turn_activity_envelope coalesces a multi-message turn into one article + compat anchors', (t) => {
-  // The coalesce branch reads the flag off document.documentElement.dataset;
-  // stand up a minimal fake document for the duration of this test.
-  const hadDocument = 'document' in globalThis;
-  const priorDocument = globalThis.document;
-  globalThis.document = { documentElement: { dataset: { turnActivityEnvelope: 'true' } } };
+test('the turn-activity envelope coalesces a multi-message turn into one article + compat anchors', (t) => {
   // In the app the coalesce helpers self-register via their script tag; under
   // node the UMD wrapper exports instead, so publish them for the dispatcher.
   const priorCoalesceUtils = globalThis.rendererTurnArticleCoalesceUtils;
   globalThis.rendererTurnArticleCoalesceUtils = require('../renderer/chat/renderer-turn-article-coalesce-utils');
   t.after(() => {
-    if (hadDocument) {
-      globalThis.document = priorDocument;
-    } else {
-      delete globalThis.document;
-    }
     globalThis.rendererTurnArticleCoalesceUtils = priorCoalesceUtils;
   });
 
@@ -659,13 +649,6 @@ test('turn_activity_envelope coalesces a multi-message turn into one article + c
   const toolResultHtml = pipeline.buildMessageArticleMarkup(toolResultMessage, messages, '', '', '', null, projectionContext);
   assert.match(toolResultHtml, /data-thread-compat-enveloped="true"/);
   assert.doesNotMatch(toolResultHtml, /chat-row-node-dot/);
-
-  // …and keep the legacy tool-parent rail-gap dot when the envelope is off.
-  globalThis.document.documentElement.dataset.turnActivityEnvelope = 'false';
-  const legacyToolResultHtml = pipeline.buildMessageArticleMarkup(toolResultMessage, messages, '', '', '', null, projectionContext);
-  globalThis.document.documentElement.dataset.turnActivityEnvelope = 'true';
-  assert.match(legacyToolResultHtml, /chat-row-node-dot/);
-  assert.doesNotMatch(legacyToolResultHtml, /data-thread-compat-enveloped/);
 });
 
 test('projected turn article renders legacy plan_object as a collapsed receipt', () => {

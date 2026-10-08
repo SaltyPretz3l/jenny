@@ -397,6 +397,9 @@ def _budget_mandatory_tool_names(
             or name in un_deferred
         ):
             names.append(name)
+    # Plan Plus: a Propose turn always keeps its one way to answer.
+    if getattr(context.request_context, "propose_mode", False):
+        names.extend(name for name in ("propose_change", "read_file") if name in candidate_set)
     # HB-029: history un-deferrals can fill the cap on their own; a build turn's
     # typed file tools ride with them. Candidates only, so never a blocked tool.
     names.extend(

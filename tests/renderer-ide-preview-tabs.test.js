@@ -15,11 +15,13 @@ const {
 } = require('./helpers/renderer-ide-harness');
 
 test('ide tree preserves explorer scroll through selection rerenders and clears it on root reset', async () => {
-  const { getDom } = buildIdeDom();
+  const { dom } = buildIdeDom();
   const ide = ideStateUtils.createIdeUiState();
+  const panel = dom.window.document.createElement('div'); // standalone tree: any local host element
+  dom.window.document.body.appendChild(panel);
   const tree = createIdeTree({
     getIde: () => ide,
-    getMountEl: () => getDom().ideRailPanel,
+    getMountEl: () => panel,
     isActivePanel: () => true,
     getWorkspaceFsApi: () => ({
       listDirectory: async () => ({ entries: [{ name: 'a.js', relPath: 'a.js', kind: 'file' }] }),
@@ -27,7 +29,6 @@ test('ide tree preserves explorer scroll through selection rerenders and clears 
   });
   tree.refreshRoot();
   await settle();
-  const panel = getDom().ideRailPanel;
   panel.scrollTop = 180;
   ide.activeTabPath = 'a.js';
   tree.syncSelection();
@@ -43,7 +44,7 @@ test('tree click and Enter use one preview slot while double-click and context m
   t.after(() => harness.dispose());
   await harness.controller.activateIde();
   await settle();
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
 
   panel.querySelector('[data-ide-tree-path="a.js"]').click();
   await settle();

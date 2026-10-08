@@ -341,7 +341,6 @@
       hiddenSurfaceFirstActivationMarked.add(viewId);
       markStartupAudit('hidden-surface-first-activation', { view: viewId });
     }
-    let pluginSessionViewGuardPass = false;
     const diagnosticsWorkspaceRefresher = logsViewStateUtils.createDiagnosticsWorkspaceRefresher({
       state,
       getShell: () => window.jennyShell || {},
@@ -356,24 +355,12 @@
     function refreshDiagnosticsWorkspace() { return diagnosticsWorkspaceRefresher.refresh(); }
     function setActiveView(viewId) {
       const previousViewId = state.ui.activeView;
-      // Session-bound plugin views own privileged operations independently of
-      // renderer lifetime. Leaving one must await broker-confirmed teardown.
-      if (!pluginSessionViewGuardPass && previousViewId === 'plugin' && viewId !== 'plugin') {
-        const pluginSessions = globalThis.rendererPluginSessions?.instance || null;
-        const activeSessionId = pluginSessions?.getActiveSessionId?.() || '';
-        if (activeSessionId) {
-          pluginSessions.guardLeaveSession(activeSessionId, 'view_switch').then((proceed) => {
-            if (lifecycleFence.isDisposed() || !proceed) { return; }
-            pluginSessionViewGuardPass = true;
-            try { setActiveView(viewId); } finally { pluginSessionViewGuardPass = false; }
-          }).catch(() => null);
-          return;
-        }
-      }
       state.ui.activeView = viewId;
       persistActiveView(viewId);
       if (previousViewId === 'settings' && viewId !== 'settings') {
         fwd.syncUsageVisibility();
+        // One page pass off-view tears down the Appearance effect preview (renderAll no longer paints it here).
+        fwd.renderSettings();
       }
 
       if (typeof document !== 'undefined' && document.documentElement?.dataset) {
@@ -750,7 +737,6 @@
     }
 
     async function handleCreateSession(options = {}) {
-      const sessionType = options.sessionType === 'plugin' ? 'plugin' : 'chat';
       const previousCurrentSessionId = String(state.currentSessionId || '').trim();
       const knownSessionIds = new Set(
         Array.isArray(state.sessions)
@@ -758,7 +744,7 @@
           : []
       );
       fwd.clearComposerStatusNotice();
-      if (fwd.isAnySendBusy() && sessionType === 'chat' && typeof options.initialPrompt !== 'string' && options.requireRecord !== true) {
+      if (fwd.isAnySendBusy() && typeof options.initialPrompt !== 'string' && options.requireRecord !== true) {
         const runtimePreferences = mergeRequestedRuntimePreferences(getCurrentRuntimePreferences(), options.preferences, normalizeReasoningEffort);
         const sessionId = createLocalDraftSessionId();
         const timestamp = new Date().toISOString();
@@ -797,11 +783,9 @@
       }
       const runtimePreferences = mergeRequestedRuntimePreferences(getCurrentRuntimePreferences(), options.preferences, normalizeReasoningEffort);
       const payload = await window.jennyShell.sessions.create({
-        title: String(options.title || (sessionType === 'plugin' ? 'New Plugin Session' : 'New Chat')).trim(),
+        title: String(options.title || 'New Chat').trim(),
         ...(typeof options.initialPrompt === 'string' ? { initialPrompt: options.initialPrompt } : {}), ...(typeof options.linkedTaskId === 'string' && options.linkedTaskId ? { linkedTaskId: options.linkedTaskId } : {}),
-        ...(sessionType === 'plugin' ? {
-          sessionType: 'plugin', providerAuthority: options.providerAuthority,
-        } : {}),
+        ...(typeof options.projectId === 'string' && /^project_[A-Za-z0-9_-]{1,128}$/u.test(options.projectId) ? { projectId: options.projectId } : {}),
         preferences: {
           preferred_model: runtimePreferences.preferredModel,
           reasoning_effort: runtimePreferences.reasoningEffort,
@@ -853,12 +837,6 @@
     async function handleDeleteSession(sessionId, options = {}) {
       // Confirmation moved to the undo window: renderer-session-actions defers
       // this hard delete behind an Undo toast; callers reach it via that path.
-      // Session deletion must not outrun a supervised plugin host. The backend
-      // independently enforces the same invariant for non-renderer callers.
-      const pluginSessions = globalThis.rendererPluginSessions?.instance || null;
-      if (options.onlyIfIdle !== true && pluginSessions && !(await pluginSessions.guardLeaveSession(sessionId, 'session_delete'))) {
-        throw new Error('Session deletion was cancelled by the plugin.');
-      }
       const sessionSummary = state.sessions.find((session) => session.id === sessionId) || null;
       const isOptimisticLocal = sessionSummary?.optimistic_local === true;
       const normalizedSessionId = String(sessionId || '').trim();

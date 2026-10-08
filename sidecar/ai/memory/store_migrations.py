@@ -563,35 +563,76 @@ def _execute_schema_script(
         connection.execute(f"PRAGMA user_version={int(version)}")
 
 
+_QUARANTINE_PART_CHARS = 800  # escaped JSON of a part stays under the payload cap
+_MAX_QUARANTINE_PARTS_PER_FIELD = 64
+
+
+def _quarantine_payloads(
+    record: dict[str, object], preserved: dict[str, str] | None
+) -> list[str]:
+    """Serialize a quarantine record as valid JSON payloads under the size cap.
+
+    Preserved text that does not fit beside the record is carried by follow-up
+    ``_part`` rows (``field``, ``part``, ``parts``, ``text``) so a long original
+    is recoverable by concatenation instead of being cut mid-document.
+    """
+
+    def dumps(value: dict[str, object]) -> str:
+        return json.dumps(value, ensure_ascii=False, allow_nan=False)
+
+    if preserved is None:
+        return [dumps(record)[:MAX_QUARANTINE_PAYLOAD_CHARS]]
+    whole = dumps({**record, "preserved": preserved})
+    if len(whole) <= MAX_QUARANTINE_PAYLOAD_CHARS:
+        return [whole]
+    parts: list[str] = []
+    counts: dict[str, dict[str, object]] = {}
+    for field, text in preserved.items():
+        step = _QUARANTINE_PART_CHARS
+        pieces = [text[start:start + step] for start in range(0, len(text), step)] or [""]
+        complete = len(pieces) <= _MAX_QUARANTINE_PARTS_PER_FIELD
+        pieces = pieces[:_MAX_QUARANTINE_PARTS_PER_FIELD]
+        counts[field] = {"parts": len(pieces), "complete": complete}
+        parts.extend(
+            dumps({"row_digest": record["row_digest"], "field": field,
+                   "part": index, "parts": len(pieces), "text": piece})
+            for index, piece in enumerate(pieces)
+        )
+    return [dumps({**record, "preserved_parts": counts}), *parts]
+
+
 def _quarantine_row(
     connection: sqlite3.Connection,
     *,
     source_table: str,
     row: sqlite3.Row | tuple[object, ...],
     reason_code: str,
+    preserved: dict[str, str] | None = None,
 ) -> None:
     values = list(row)
     source_row_id = str(values[0]) if values else ""
     row_digest = hashlib.sha256(
         json.dumps(values, ensure_ascii=False, default=str).encode("utf-8", errors="replace")
     ).hexdigest()
-    raw_payload = json.dumps(
-        {
-            "row_digest": f"sha256:{row_digest}",
-            "value_count": len(values),
-            "value_types": [type(value).__name__ for value in values[:32]],
-        },
-        ensure_ascii=False,
-        allow_nan=False,
-    )[:MAX_QUARANTINE_PAYLOAD_CHARS]
-    connection.execute(
-        """
-        INSERT INTO memory_quarantine (
-            source_table, source_row_id, reason_code, raw_payload
-        ) VALUES (?, ?, ?, ?)
-        """,
-        (source_table[:64], source_row_id[:64], reason_code[:64], raw_payload),
-    )
+    record: dict[str, object] = {
+        "row_digest": f"sha256:{row_digest}",
+        "value_count": len(values),
+        "value_types": [type(value).__name__ for value in values[:32]],
+    }
+    for index, raw_payload in enumerate(_quarantine_payloads(record, preserved)):
+        connection.execute(
+            """
+            INSERT INTO memory_quarantine (
+                source_table, source_row_id, reason_code, raw_payload
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                source_table[:64],
+                source_row_id[:64],
+                (reason_code if index == 0 else f"{reason_code}_part")[:64],
+                raw_payload,
+            ),
+        )
     connection.execute(
         """
         DELETE FROM memory_quarantine
@@ -678,6 +719,7 @@ def _migrate_v6_to_v7(  # noqa: C901, PLR0912, PLR0915 - one atomic rebuild.
                 """
             ).fetchall()
             for row in approved_rows:
+                preserved_originals: dict[str, str] | None = None
                 try:
                     confidence = require_finite_confidence(row[5])
                     session_id = normalize_spaces(row[1])
@@ -689,18 +731,29 @@ def _migrate_v6_to_v7(  # noqa: C901, PLR0912, PLR0915 - one atomic rebuild.
                     provenance = normalize_spaces(row[9]) or "unknown_legacy"
                     if not session_id or len(session_id) > MAX_SESSION_ID_CHARS:
                         raise ValueError("invalid session_id")
-                    if not title or len(title) > MAX_TITLE_CHARS:
+                    if not title:
                         raise ValueError("invalid title")
-                    if not lesson_text or len(lesson_text) > MAX_LESSON_TEXT_CHARS:
+                    if not lesson_text:
                         raise ValueError("invalid lesson_text")
                     if not lesson_kind or len(lesson_kind) > MAX_CATEGORY_CHARS:
                         raise ValueError("invalid lesson_kind")
-                    if len(source_excerpt) > MAX_SOURCE_EXCERPT_CHARS:
-                        raise ValueError("invalid source_excerpt")
-                    if len(family_key) > MAX_FAMILY_KEY_CHARS:
-                        raise ValueError("invalid family_key")
-                    if len(provenance) > MAX_PROVENANCE_CHARS:
-                        raise ValueError("invalid provenance")
+                    truncated = any(len(value) > limit for value, limit in (
+                        (title, MAX_TITLE_CHARS),
+                        (lesson_text, MAX_LESSON_TEXT_CHARS),
+                        (source_excerpt, MAX_SOURCE_EXCERPT_CHARS),
+                        (family_key, MAX_FAMILY_KEY_CHARS),
+                        (provenance, MAX_PROVENANCE_CHARS),
+                    ))
+                    if truncated:
+                        preserved_originals = {
+                            "title": str(row[2]), "lesson_text": str(row[3]),
+                            "source_excerpt": str(row[6]),
+                        }
+                    title = title[:MAX_TITLE_CHARS]
+                    lesson_text = lesson_text[:MAX_LESSON_TEXT_CHARS]
+                    source_excerpt = source_excerpt[:MAX_SOURCE_EXCERPT_CHARS]
+                    family_key = family_key[:MAX_FAMILY_KEY_CHARS]
+                    provenance = provenance[:MAX_PROVENANCE_CHARS]
                     digest = build_content_digest(lesson_kind, lesson_text)
                     connection.execute(
                         """
@@ -716,12 +769,20 @@ def _migrate_v6_to_v7(  # noqa: C901, PLR0912, PLR0915 - one atomic rebuild.
                             str(row[10]), str(row[11]),
                         ),
                     )
+                    if preserved_originals is not None:
+                        _quarantine_row(
+                            connection, source_table="memories", row=row,
+                            reason_code="truncated_v7_row", preserved=preserved_originals,
+                        )
                 except (ValueError, TypeError, sqlite3.IntegrityError):
+                    # A truncated row whose shortened digest collides with
+                    # another row keeps its original text in quarantine.
                     _quarantine_row(
                         connection,
                         source_table="memories",
                         row=row,
                         reason_code="invalid_or_duplicate_v7_row",
+                        preserved=preserved_originals,
                     )
 
             _migration_checkpoint("approved_rows")

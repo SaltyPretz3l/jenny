@@ -9,7 +9,9 @@ Passes are capped by count and by a wall-clock budget. Past either cap the
 rows after the running summary are dropped oldest first until the rest fits,
 and the dropped count is reported as before. A single row too large to sit
 beside the running summary is replaced by a marker and counted as dropped;
-the newest row is never omitted or dropped (as before), whatever its size.
+the newest string row over half the limit is split into bounded pieces (a
+newest row without string content is sent whole). The last piece is never
+omitted or dropped; a split piece counts as one row.
 """
 
 from __future__ import annotations
@@ -72,6 +74,38 @@ def _omit_row(
     counts[index] = estimate_messages_tokens((rows[index],), backend)
 
 
+def _split_newest_row(
+    rows: list[dict[str, Any]], counts: list[int], limit: int, backend: TokenizerBackend
+) -> None:
+    bound = limit // 2
+    if not rows or counts[-1] <= bound:
+        return
+    row, content = rows[-1], rows[-1].get("content")
+    if not isinstance(content, str) or not content:
+        # Non-string or empty content (a tool-call row) stays intact and is
+        # sent whole as before: the newest row cannot be omitted.
+        return
+    pieces: list[dict[str, Any]] = []
+    piece_counts: list[int] = []
+    offset = 0
+    while offset < len(content):
+        size = bound * 4
+        while True:
+            piece = {**row, "content": content[offset:offset + size]}
+            tokens = estimate_messages_tokens((piece,), backend)
+            if size > 0 and tokens <= bound:
+                break
+            if size <= 1:
+                # The row's other fields alone exceed the bound; no split can
+                # help, so the row is sent whole as before.
+                return
+            size //= 2
+        pieces.append(piece)
+        piece_counts.append(tokens)
+        offset += size
+    rows[-1:], counts[-1:] = pieces, piece_counts
+
+
 def summarize_source_in_passes(  # noqa: PLR0913  # the three callables are the seam
     summary_source: list[dict[str, Any]],
     budget: TokenBudget,
@@ -103,6 +137,7 @@ def summarize_source_in_passes(  # noqa: PLR0913  # the three callables are the 
     cursor = 0
     if pin_first and rows and counts[0] <= limit // 2:
         carry, carry_tokens, cursor = rows[0], counts[0], 1
+    _split_newest_row(rows, counts, limit, backend)
     newest = len(rows) - 1
 
     # A row over the whole limit fits no request, with or without a summary.

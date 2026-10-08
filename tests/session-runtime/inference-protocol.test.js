@@ -7,25 +7,6 @@ const { beginRuntimeInferenceInitialization, completeRuntimeInferenceInitializat
   assertRuntimeInferenceProtocol, assertRuntimeOperationsProtocol,
   assertRuntimeContinuationProtocol, assertRuntimeBudgetProtocol } = require('../../services/session-runtime/inference-protocol');
 
-test('plugin-only initialization neither clears nor grants full-runtime protocols', async () => {
-  const client = new SidecarClient();
-  client.process = {};
-  const capabilities = { runtime_inference_admission_version: 1, runtime_tool_resource_admission_version: 1,
-    runtime_continuation_version: 1, runtime_inference_budget_version: 1 };
-  client.request = async () => capabilities;
-  await client.initialize({ mode: 'plugin_runtime', plugin_runtime: {} });
-  assert.throws(() => assertRuntimeInferenceProtocol(client), 'plugin response cannot grant protocols');
-  await client.initialize();
-  await client.initialize({ mode: 'plugin_runtime', plugin_runtime: {} });
-  assert.equal(assertRuntimeBudgetProtocol(client), true);
-  assert.equal(assertRuntimeContinuationProtocol(client), true);
-  client.request = async () => { throw new Error('plugin rejected'); };
-  await assert.rejects(client.initialize({ mode: 'plugin_runtime', plugin_runtime: {} }), /plugin rejected/);
-  assert.equal(assertRuntimeBudgetProtocol(client), true, 'failed plugin-only apply preserves negotiated runtime');
-  client.process = {};
-  assert.throws(() => assertRuntimeInferenceProtocol(client), 'process replacement still invalidates authority');
-});
-
 test('mandatory inference requires the current full-runtime acknowledgement', async () => {
   const client = new SidecarClient();
   client.process = {};

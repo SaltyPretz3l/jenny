@@ -35,7 +35,7 @@ const PASSTHROUGH_PREFERENCE_KEYS = [
 ];
 const BOOLEAN_PREFERENCE_KEYS = ['lockdown'];
 
-const RUN_MODES = new Set(['ask', 'auto', 'plan']);
+const RUN_MODES = new Set(['ask', 'auto', 'plan', 'propose']);
 
 // Keep in sync with the renderer twin in renderer-composer-v2-state.js.
 function normalizeRunMode(value, { planModeFallback = false } = {}) {

@@ -18,9 +18,7 @@
   var HISTORICAL_LIVE_SELECTOR = '[role="alert"], [role="status"], [aria-live]:not([aria-live="off"])';
   var SEMANTIC_DETAIL_SELECTOR = '.tool-call-row-body, .tool-call-details, .tool-result-body';
 
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function normalizePreview(value) {
     var text = String(value || '').replace(/\s+/g, ' ').trim();

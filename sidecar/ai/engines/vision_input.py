@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import io
 import os
 import stat
@@ -11,7 +10,7 @@ import warnings
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Sequence, TypeAlias
+from typing import Any
 
 MAX_VISION_ATTACHMENTS = 4
 MAX_VISION_IMAGE_BYTES = 10_000_000
@@ -61,9 +60,6 @@ class VisionImage:
 
     def as_data_uri(self) -> str:
         return f"data:{self.mime_type};base64,{self.as_base64()}"
-
-
-VisionInput: TypeAlias = str | VisionImage
 
 
 def _normalized_mime_type(value: Any) -> str:
@@ -292,59 +288,6 @@ def load_vision_image_path(
     )
 
 
-def _vision_image_from_encoded(value: str) -> VisionImage:
-    token = value.strip()
-    declared_mime = ""
-    encoded = token
-    if token.startswith("data:"):
-        header, separator, encoded = token.partition(",")
-        if not separator or not header.endswith(";base64"):
-            raise VisionInputError("data_uri", "Vision image data URI is malformed.")
-        declared_mime = header[5:-7]
-    max_encoded_chars = ((MAX_VISION_IMAGE_BYTES + 2) // 3) * 4 + 4
-    if len(encoded) > max_encoded_chars:
-        raise VisionInputError(
-            "image_bytes",
-            f"Image attachment exceeds the {MAX_VISION_IMAGE_BYTES}-byte limit.",
-        )
-    try:
-        data = base64.b64decode(encoded, validate=True)
-    except (binascii.Error, ValueError) as error:
-        raise VisionInputError("base64", "Vision image base64 is malformed.") from error
-    return vision_image_from_bytes(data, declared_mime_type=declared_mime)
-
-
-def normalize_vision_inputs(images: Sequence[VisionInput]) -> tuple[VisionImage, ...]:
-    """Normalize legacy path/base64 inputs and enforce count/aggregate budgets."""
-
-    if len(images) > MAX_VISION_ATTACHMENTS:
-        raise VisionInputError(
-            "attachment_count",
-            f"Vision requests support at most {MAX_VISION_ATTACHMENTS} image attachments.",
-        )
-    normalized: list[VisionImage] = []
-    aggregate_bytes = 0
-    for value in images:
-        if isinstance(value, VisionImage):
-            image = value
-        elif isinstance(value, str) and (value.startswith("data:") or not os.path.isabs(value)):
-            image = _vision_image_from_encoded(value)
-        elif isinstance(value, str):
-            _resolved, image = load_vision_image_path(value)
-        else:
-            raise VisionInputError(
-                "type", "Vision image inputs must be validated images or strings."
-            )
-        aggregate_bytes += image.decoded_bytes
-        if aggregate_bytes > MAX_VISION_AGGREGATE_BYTES:
-            raise VisionInputError(
-                "aggregate_bytes",
-                "Vision image attachments exceed the aggregate decoded-byte limit.",
-            )
-        normalized.append(image)
-    return tuple(normalized)
-
-
 __all__ = [
     "MAX_VISION_AGGREGATE_BYTES",
     "MAX_VISION_ATTACHMENTS",
@@ -352,9 +295,7 @@ __all__ = [
     "MAX_VISION_IMAGE_BYTES",
     "MAX_VISION_PIXELS",
     "VisionImage",
-    "VisionInput",
     "VisionInputError",
     "load_vision_image_path",
-    "normalize_vision_inputs",
     "vision_image_from_bytes",
 ]

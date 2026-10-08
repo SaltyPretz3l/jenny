@@ -6,8 +6,9 @@
 // Jenny — the timeline, the persisted session and the model's history — and
 // path redaction exists only for transparent anonymisation when the user
 // exports a transcript. These rules therefore run at the export boundary
-// (services/save-file-handler.js), never at persist time. Secret redaction is
-// NOT here: secrets are still redacted when they are persisted.
+// (services/save-file-handler.js), never at persist time. Session exports also
+// redact secrets here before serialization; persisted message text may contain
+// secrets even though canonical turn-event payloads have persist-time redaction.
 //
 // The rules are the ones the canonical turn-event contract applied to every
 // persisted payload string before HB-012 (moved from
@@ -20,11 +21,45 @@
 // are the privacy payload; route-shaped slash strings are content.
 
 const REDACTED_PATH_TOKEN = '[redacted:path]';
+const REDACTED_SECRET_TOKEN = '[redacted:secret]';
+const SECRET_VALUE_RE = /\bbearer\s+[A-Za-z0-9._~+/=-]{12,}|\bbasic\s+[A-Za-z0-9+/=]{8,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}|\bgh[pousr]_[A-Za-z0-9_-]{20,}|\b(?:sk|pk|tok|ghp|gho)_[A-Za-z0-9_-]{8,}/gi;
+// The key may be JSON-quoted (`"api_key": "..."`): an optional closing quote sits between the key and the separator.
+const SECRET_ASSIGNMENT_RE = /\b((?:authorization|api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password)["']?\s*[:=]\s*["']?)[^\s"',{}]{8,}/gi;
+const SECRET_KEYS = new Set(['authorization', 'api_key', 'apikey', 'x_api_key',
+  'access_token', 'refresh_token', 'client_secret', 'password', 'secret']);
 const WINDOWS_PATH_RE = /(?<![A-Za-z0-9_])[A-Za-z]:[\\/][^\s"'<>|]+/g;
 const FILE_URL_RE = /(?<![A-Za-z0-9_])file:\/\/[^\s"'<>|]+/gi;
 const UNIX_PATH_RE = /(^|[\s(])\/(?:Users|home|var|tmp|etc|opt|srv|root|private|workspace|mnt|Volumes)(?:\/[^\s"'<>|]+|(?=$|[\s)"'<>|,]))/g;
 const UNIX_PATH_AFTER_DELIMITER_RE = /(["':=,])\/(?:Users|home|var|tmp|etc|opt|srv|root|private|workspace|mnt|Volumes)(?:\/[^\s"'<>|]+|(?=$|[\s)"'<>|,]))/g;
 const JSON_EXPORT_FORMATS = new Set(['json', 'session-json']);
+
+function redactExportSecrets(text) {
+  return String(text ?? '')
+    .replace(SECRET_VALUE_RE, REDACTED_SECRET_TOKEN)
+    .replace(SECRET_ASSIGNMENT_RE, (_match, prefix) => `${prefix}${REDACTED_SECRET_TOKEN}`);
+}
+
+function redactExportSecretsInValue(value) {
+  if (typeof value === 'string') return redactExportSecrets(value);
+  if (Array.isArray(value)) return value.map((entry) => redactExportSecretsInValue(entry));
+  if (value && typeof value === 'object'
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)) {
+    const redacted = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const passthrough = key === '_exportedData' || key === 'assetPath';
+      const secret = SECRET_KEYS.has(key.toLowerCase().replaceAll('-', '_'))
+        && typeof entry === 'string' && entry.length > 0;
+      Object.defineProperty(redacted, key, {
+        value: passthrough ? entry : secret ? REDACTED_SECRET_TOKEN : redactExportSecretsInValue(entry),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+    return redacted;
+  }
+  return value;
+}
 
 function finalSegmentOf(segments) {
   return Array.from(segments.at(-1)).slice(0, 80).join('');
@@ -101,6 +136,9 @@ function redactTranscriptExportContent(content, format) {
 
 module.exports = {
   REDACTED_PATH_TOKEN,
+  REDACTED_SECRET_TOKEN,
+  redactExportSecrets,
+  redactExportSecretsInValue,
   redactTranscriptPaths,
   redactTranscriptPathsInValue,
   redactTranscriptExportContent,

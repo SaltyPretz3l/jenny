@@ -1,4 +1,4 @@
-"""Tests for sidecar.runtime.initialize_mode -- the PLUG-D16 fail-closed
+"""Tests for sidecar.runtime.initialize_mode -- the fail-closed
 `initialize` `mode` discriminator -- and its wiring into
 sidecar.runtime.request_dispatch.process_message.
 
@@ -13,7 +13,7 @@ Coverage map:
     before (the byte-identical-for-existing-callers proof)
   - through process_message: a rejected mode preserves the prior
     `initialized` state rather than hardcoding it
-  - plugin_runtime mode is accepted only by the isolated Stage-4 branch
+  - the retired plugin_runtime mode is refused like any other unknown mode
 """
 
 from __future__ import annotations
@@ -26,11 +26,9 @@ from typing import Any
 import pytest
 
 import sidecar.runtime.request_dispatch as rd
-from sidecar.ai.error_codes import CMP_PLUGIN_FEATURE_DISABLED
-from sidecar.protocol import API_VERSION, PLUGIN_RUNTIME_APPLIED_METHOD
+from sidecar.protocol import API_VERSION
 from sidecar.runtime.initialize_mode import (
     FULL_RUNTIME_MODE,
-    PLUGIN_RUNTIME_MODE,
     REASON_UNKNOWN_INITIALIZE_MODE,
     InitializeModeResolution,
     resolve_initialize_mode,
@@ -87,12 +85,11 @@ def test_explicit_full_runtime_mode_is_ok() -> None:
     assert resolution.rejected_mode is None
 
 
-def test_plugin_runtime_mode_selects_exact_plugin_branch() -> None:
+def test_retired_plugin_runtime_mode_is_rejected_like_any_unknown_mode() -> None:
     resolution = resolve_initialize_mode({"mode": "plugin_runtime"})
-    assert resolution.ok is True
-    assert resolution.mode == PLUGIN_RUNTIME_MODE
-    assert resolution.reason is None
-    assert resolution.rejected_mode is None
+    assert resolution.ok is False
+    assert resolution.reason == REASON_UNKNOWN_INITIALIZE_MODE
+    assert resolution.rejected_mode == "plugin_runtime"
 
 
 @pytest.mark.parametrize(
@@ -222,7 +219,21 @@ def test_process_message_unknown_mode_rejected_without_state_mutation(
     assert err["data"]["reason"] == REASON_UNKNOWN_INITIALIZE_MODE
 
 
-def test_process_message_plugin_runtime_requires_prior_full_initialize() -> None:
+@pytest.mark.parametrize("initialized", [False, True])
+def test_process_message_plugin_runtime_mode_is_refused_without_mutation(
+    monkeypatch: pytest.MonkeyPatch, initialized: bool,
+) -> None:
+    """The retired plugin_runtime initialize is an unknown mode: it is refused
+    before any logging/initialize work and preserves the prior state."""
+    logging_pref_calls: list[Any] = []
+    initialize_calls: list[Any] = []
+    monkeypatch.setattr(rd, "apply_logging_preferences", logging_pref_calls.append)
+    monkeypatch.setattr(
+        rd,
+        "initialize_response",
+        lambda *a, **k: initialize_calls.append((a, k)) or {"jsonrpc": "2.0", "result": {}},
+    )
+
     outcome = rd.process_message(
         {
             "method": "initialize",
@@ -232,67 +243,22 @@ def test_process_message_plugin_runtime_requires_prior_full_initialize() -> None
                 "plugin_runtime": {"snapshot": {}, "declarative_content": []},
             },
         },
-        False,
+        initialized,
         brain_container=_minimal_brain(),  # type: ignore[arg-type]
         logger=LOGGER,
         write_message=_null_writer,
         read_message=_null_reader,
     )
 
-    assert outcome.initialized is False
+    assert not logging_pref_calls
+    assert not initialize_calls
+    assert outcome.initialized is initialized
     assert outcome.shutdown_requested is False
+    assert outcome.notifications == []
     err = outcome.response["error"]
-    assert err["data"]["code"] == CMP_PLUGIN_FEATURE_DISABLED
-    assert err["data"]["reason"] == "plugin_runtime_requires_full_initialization"
-
-
-def test_process_message_plugin_runtime_returns_exact_attestation_and_notification() -> None:
-    attestation = {
-        "attestation_schema_version": 1,
-        "participant_kind": "sidecar",
-        "registry_revision": 2,
-    }
-    apply_calls: list[dict[str, object]] = []
-    brain = SimpleNamespace(
-        host_policy_enforced=False,
-        apply_plugin_runtime=lambda **kwargs: apply_calls.append(kwargs) or attestation,
-    )
-    outcome = rd.process_message(
-        {
-            "method": "initialize",
-            "id": 2,
-            "params": {
-                "mode": "plugin_runtime",
-                "plugin_runtime": {
-                    "snapshot": {"kind": "plugin_runtime_snapshot"},
-                    "declarative_content": [],
-                },
-            },
-        },
-        True,
-        brain_container=brain,  # type: ignore[arg-type]
-        logger=LOGGER,
-        write_message=_null_writer,
-        read_message=_null_reader,
-    )
-
-    assert apply_calls == [{
-        "snapshot": {"kind": "plugin_runtime_snapshot"},
-        "declarative_content": [],
-    }]
-    assert outcome.initialized is True
-    assert outcome.response == {
-        "jsonrpc": "2.0",
-        "id": 2,
-        "api_version": API_VERSION,
-        "result": attestation,
-    }
-    assert outcome.notifications == [{
-        "jsonrpc": "2.0",
-        "api_version": API_VERSION,
-        "method": PLUGIN_RUNTIME_APPLIED_METHOD,
-        "params": attestation,
-    }]
+    assert err["code"] == rd.INVALID_PARAMS_CODE
+    assert err["data"]["reason"] == REASON_UNKNOWN_INITIALIZE_MODE
+    assert err["data"]["mode"] == "plugin_runtime"
 
 
 def test_process_message_missing_mode_still_initializes_as_before(

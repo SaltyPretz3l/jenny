@@ -176,7 +176,6 @@ function normalizeDebugOptions(value) {
   const normalized = {
     disable_thinking: source.disableThinking === true || source.disable_thinking === true,
     lean_context: source.leanContext === true || source.lean_context === true,
-    plain_chat_mode: source.plainChatMode === true || source.plain_chat_mode === true,
   };
   return Object.values(normalized).some(Boolean) ? normalized : null;
 }

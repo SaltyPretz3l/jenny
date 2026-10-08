@@ -46,13 +46,10 @@
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const escapeHtml = typeof deps?.escapeHtml === 'function'
       ? deps.escapeHtml
-      : (value) => String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     const actionButton = resolveActionButton();
+    // A secondary editor group points its tabs at its own stage panel.
+    const ariaControls = String(deps?.ariaControls || 'ideEditorStage');
 
     function buildTabMarkup(tab, { active, dirty, stale, pinned }) {
       if (!actionButton) {
@@ -103,8 +100,8 @@
         className: 'ide-tab-label',
         role: 'tab',
         ariaSelected: active,
-        // Every tab drives the single shared editor stage (role="tabpanel").
-        ariaControls: 'ideEditorStage',
+        // Every tab drives its group's editor stage (role="tabpanel").
+        ariaControls,
         tabIndex: active ? 0 : -1,
         title: isDiff ? name : stale ? jt('ide.tabs.changedOnDisk', '{path} - changed on disk', { path: tab.path }) : tab.path,
         dataset: { 'ide-tab-path': tab.path },

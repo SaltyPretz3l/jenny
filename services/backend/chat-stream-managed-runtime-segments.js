@@ -1,4 +1,5 @@
 // Persists and resets managed-stream segments through the shared runtime ctx.
+const { buildTerminalMessageExtras } = require('./chat-stream-discarded-drafts');
 
 function persistCurrentTextSegment(ctx, options) {
   const allowReasoningOnly = Boolean(options && options.allowReasoningOnly);
@@ -54,7 +55,10 @@ function persistCurrentTextSegment(ctx, options) {
     // slice through here instead of buildAssistantCompletionTerminalMutation,
     // so the resumable-stop detail has to ride along or the durable message
     // loses it while the live `complete` event still carries it.
-    ...(options && options.resumableStop ? { resumable_stop: options.resumableStop } : {}),
+    ...buildTerminalMessageExtras({
+      resumableStop: options && options.resumableStop,
+      discardedDrafts: hasSegmentText && options ? options.discardedDrafts : null,
+    }),
     ...transcriptFields,
   };
   // Once a production coordinator sees the first refused boundary segment,

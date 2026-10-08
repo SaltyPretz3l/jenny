@@ -25,7 +25,7 @@ function createSearchHarness(t, files) {
 }
 
 function queryInput(harness) {
-  return harness.getDom().ideRailPanel.querySelector('[data-ide-search-input]');
+  return harness.viewHost('search').querySelector('[data-ide-search-input]');
 }
 
 test('ide search panel renders, debounces typing, and groups results by file', async (t) => {
@@ -36,7 +36,7 @@ test('ide search panel renders, debounces typing, and groups results by file', a
   await harness.controller.activateIde();
   await settle();
 
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('search');
   assert.ok(panel.querySelector('.ide-search'));
   assert.ok(queryInput(harness));
 
@@ -58,7 +58,7 @@ test('ide search panel renders, debounces typing, and groups results by file', a
   // Collapsing a file group hides its match rows.
   fileRow.click();
   await settle();
-  assert.equal(harness.getDom().ideRailPanel.querySelectorAll('[data-ide-search-path]').length, 0);
+  assert.equal(harness.viewHost('search').querySelectorAll('[data-ide-search-path]').length, 0);
 });
 
 test('ide search panel skips short queries and Enter runs immediately', async (t) => {
@@ -88,7 +88,7 @@ test('ide search result click opens the file and reveals the match position', as
   pressKey(harness, queryInput(harness), 'Enter');
   await settle(30);
 
-  const match = harness.getDom().ideRailPanel.querySelector('[data-ide-search-path="src/app.js"]');
+  const match = harness.viewHost('search').querySelector('[data-ide-search-path="src/app.js"]');
   assert.equal(match.dataset.ideSearchLine, '2');
   assert.equal(match.dataset.ideSearchColumn, '7');
   match.click();
@@ -109,11 +109,11 @@ test('ide search Escape clears the query and results', async (t) => {
   dispatchInput(harness, queryInput(harness), 'jenny');
   pressKey(harness, queryInput(harness), 'Enter');
   await settle(30);
-  assert.equal(harness.getDom().ideRailPanel.querySelectorAll('[data-ide-search-path]').length, 1);
+  assert.equal(harness.viewHost('search').querySelectorAll('[data-ide-search-path]').length, 1);
 
   pressKey(harness, queryInput(harness), 'Escape');
   await settle(30);
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('search');
   assert.equal(panel.querySelectorAll('[data-ide-search-path]').length, 0);
   assert.equal(queryInput(harness).value, '');
   assert.equal(harness.state.ui.ide.search.query, '');
@@ -131,7 +131,7 @@ test('ide search keeps focus in the query field across result re-renders', async
 
   // The panel re-rendered (results now present) around the SAME input element
   // (bug-pass #4: the inputs are stable; only the results region swaps).
-  assert.ok(harness.getDom().ideRailPanel.querySelector('[data-ide-search-path]'), 'results rendered');
+  assert.ok(harness.viewHost('search').querySelector('[data-ide-search-path]'), 'results rendered');
   const sameInput = queryInput(harness);
   assert.equal(sameInput, input, 'the query input is not recreated by a results render');
   assert.equal(harness.dom.window.document.activeElement, input);
@@ -153,7 +153,7 @@ test('dispose during an in-flight literal search cancels the render + result app
     return realSearchInFiles(payload);
   };
 
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('search');
   dispatchInput(harness, queryInput(harness), 'alpha');
   pressKey(harness, queryInput(harness), 'Enter'); // runSearch() starts, awaits the pending promise
   await settle(5);
@@ -191,7 +191,7 @@ test('dispose during an in-flight regex find cancels the stale result apply (F3)
     return realListAllFiles(...args);
   };
 
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('search');
 
   // Drive a regex query while listeners are still live: runSearch ->
   // replaceController.runRegexFind starts and parks on the pending listing.
@@ -216,7 +216,7 @@ test('dispose during an in-flight regex find cancels the stale result apply (F3)
 });
 
 test('Find in Folder scopes the search to a directory, then the chip clears it', async (t) => {
-  // Default persisted railPanel is 'explorer', so the file tree is shown and a
+  // The default layout shows the Explorer (files tree) in the left stack, so a
   // folder can be right-clicked (no SEARCH_PERSISTED here).
   const harness = createHarness({
     bridgeOptions: {
@@ -233,14 +233,14 @@ test('Find in Folder scopes the search to a directory, then the chip clears it',
   const doc = harness.dom.window.document;
 
   // The directory context menu offers "Find in Folder".
-  openContextMenu(harness, harness.getDom().ideRailPanel.querySelector('[data-ide-tree-path="src"]'));
+  openContextMenu(harness, harness.viewHost('explorer').querySelector('[data-ide-tree-path="src"]'));
   const item = findMenuItem(doc, 'Find in Folder');
   assert.ok(item, 'directory menu offers Find in Folder');
   item.click();
   await settle();
 
-  // The rail switched to the search panel, which shows a clearable scope chip.
-  const rail = harness.getDom().ideRailPanel;
+  // The workbench revealed the Search view, which shows a clearable scope chip.
+  const rail = harness.viewHost('search');
   const chip = rail.querySelector('[data-ide-search-clear-scope]');
   assert.ok(chip, 'a scope chip renders');
   assert.ok(chip.textContent.includes('src'));
@@ -262,7 +262,7 @@ test('Find in Folder scopes the search to a directory, then the chip clears it',
   rail.querySelector('[data-ide-search-clear-scope]').click();
   await settle(40);
   assert.deepEqual(harness.bridge.calls.searchInFiles.at(-1), { query: 'needle' });
-  const allFiles = [...harness.getDom().ideRailPanel.querySelectorAll('[data-ide-search-file]')]
+  const allFiles = [...harness.viewHost('search').querySelectorAll('[data-ide-search-file]')]
     .map((el) => el.dataset.ideSearchFile).sort();
   assert.deepEqual(allFiles, ['lib/util.js', 'src/app.js', 'src/inner/deep.js']);
 });

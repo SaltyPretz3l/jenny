@@ -297,3 +297,17 @@ test('a reply waiting on its own has no strip row; one that stopped being automa
   assert.deepEqual(h.state.runtimeSendController.listPending('session-1').map(row => [row.key, row.status]),
     [['work:work_1', 'paused']]);
 });
+
+// 2026-10-05 live recheck: the runtime's `resumable` reaches the strip row, so
+// the strip can withhold a Resume the scheduler would refuse; a host that omits
+// the field keeps Resume.
+test('a detached paused row carries the runtime resumable answer and defaults to resumable', async t => {
+  const { h } = queueHarness(t, {
+    snapshot: () => ({ ok: true, next_cursor: null, work: [summary(1, { status: 'paused', resumable: false }),
+      summary(2, { status: 'paused', resumable: true }), summary(3, { status: 'paused' })] }),
+    getWork: payload => workRead('paused', 3)(payload),
+  });
+  await h.state.runtimeSendController.refreshSessionRows('session-1');
+  assert.deepEqual(h.state.runtimeSendController.listPending('session-1').map(row => [row.key, row.resumable]),
+    [['work:work_1', false], ['work:work_2', true], ['work:work_3', true]]);
+});

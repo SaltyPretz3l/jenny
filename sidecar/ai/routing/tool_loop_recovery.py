@@ -675,8 +675,8 @@ def wind_down_response(
         )
         loop.streamed_event_types.update(streamed_generation_types)
         loop.usage_totals = _tl_hub._merge_generation_usage(loop.usage_totals, result.usage)
-        response_text = _tl_hub.sanitize_assistant_output(
-            str(result.content or ""), max_chars=_tl_hub.MAX_RESPONSE_CHARS
+        response_text = _tl_hub.finalize_visible_reply(
+            result.content, request_id=loop.request_id, session_id=loop.session_id
         ).strip()
         # This leg offered no tools, so a call written as text cannot run.
         response_text = _drop_text_tool_calls(loop, response_text, reason="tools_stripped")
@@ -775,8 +775,8 @@ def budget_exhausted_wind_down(loop: Any, result: Any, *, reason: str) -> Any:
     import sidecar.ai.routing.tool_loop as _tl_hub
 
     raw_content = str(result.content or "")
-    response_text = _tl_hub.sanitize_assistant_output(
-        raw_content, max_chars=_tl_hub.MAX_RESPONSE_CHARS
+    response_text = _tl_hub.finalize_visible_reply(
+        raw_content, request_id=loop.request_id, session_id=loop.session_id
     ).strip()
     footer, event, log_data = _budget_stop_details(loop, reason)
     fallback_sentence = {

@@ -64,11 +64,66 @@ test('each pane renders one primary Resume setup action and one click calls the 
     assert.equal(buttons[0].textContent, 'Resume setup');
     assert.ok(buttons[0].classList.contains('btn--primary'));
     assert.equal(hero.querySelector('.hero-subtitle').nextElementSibling, buttons[0]);
-    assert.equal(buttons[0].nextElementSibling.textContent, 'You can also start chatting now.');
+    assert.ok(buttons[0].nextElementSibling.classList.contains('hidden'));
   }
   document.querySelector('button').click();
   assert.equal(calls, 1);
   assert.equal(document.querySelector('textarea').disabled, false);
+});
+
+test('empty heroes follow model state per pane, clear on other branches, and render idempotently', (t) => {
+  const { document, state, render, pipelines } = heroHarness(t);
+  state.setup.setupComplete = true;
+  state.modelList = { available: true, data: [] };
+  state.modelRecommendation = { tag: 'fit:3b', downloadSizeMb: 2000 };
+  render();
+  for (const hero of document.querySelectorAll('.hero-stage')) {
+    assert.equal(hero.dataset.modelState, 'noModel');
+    assert.equal(hero.querySelector('.hero-title').textContent, 'Pick a model to start');
+    assert.equal(hero.querySelectorAll('[data-hero-action]').length, 2);
+    assert.match(hero.querySelector('.hero-runtime-hint').textContent, /ChatGPT/);
+  }
+  const nodes = [...document.querySelectorAll('.hero-actions, [data-hero-action]')];
+  const observer = new document.defaultView.MutationObserver(() => {});
+  observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+  render();
+  assert.deepEqual([...document.querySelectorAll('.hero-actions, [data-hero-action]')], nodes);
+  assert.equal(observer.takeRecords().length, 0, 'same view must not mutate nodes');
+  observer.disconnect();
+  state.modelPulls = { fit: { tag: 'fit:3b', status: 'running', percent: 40 } };
+  render();
+  assert.equal(document.querySelector('.hero-stage').dataset.modelState, 'downloading');
+  assert.match(document.querySelector('.hero-subtitle').textContent, /40%/);
+  assert.equal(document.querySelector('[data-hero-action]').dataset.heroAction, 'cancel-download');
+  state.backend = { phase: 'model_unavailable', model_lifecycle: { failure: { cause: 'out_of_memory', model: 'large:8b', context: 40960 } } };
+  render();
+  assert.equal(document.querySelector('.hero-stage').dataset.modelState, 'failed');
+  assert.equal(document.querySelectorAll('[data-pane="0"] [data-hero-model="large:8b"]').length, 2);
+  state.backend = { phase: 'ready' };
+  state.modelPulls = {};
+  state.modelList.data = [{ id: 'fit:3b' }];
+  state.status.model = 'fit:3b';
+  render();
+  assert.equal(document.querySelector('.hero-stage').dataset.modelState, 'ready');
+  assert.equal(document.querySelectorAll('[data-hero-action]').length, 0);
+  assert.equal(document.querySelector('.hero-runtime-hint').textContent, 'fit:3b loads with your first message');
+  state.setup.setupComplete = false;
+  render();
+  assert.equal(document.querySelector('.hero-stage').hasAttribute('data-model-state'), false);
+  assert.equal(document.querySelector('.hero-setup-footnote').textContent, 'fit:3b is ready, so you can start chatting now.');
+  assert.equal(document.querySelector('.hero-setup-footnote').classList.contains('hidden'), false);
+  state.modelPulls = { fit: { status: 'running', tag: 'fit:3b' } };
+  render();
+  assert.equal(document.querySelector('.hero-setup-footnote').classList.contains('hidden'), true);
+  state.setup.setupComplete = true;
+  state.sessions = [{ id: 'chat' }]; state.currentSessionId = 'chat'; state.messages = [{ kind: 'user', content: 'Hello' }];
+  render();
+  assert.equal(document.querySelector('.hero-stage').hasAttribute('data-model-state'), false);
+  state.sessions[0].session_type = 'plugin'; state.messages = [];
+  render();
+  assert.equal(document.querySelector('.hero-stage').hasAttribute('data-model-state'), false);
+  pipelines[0].dispose();
+  assert.equal(document.querySelector('[data-pane="0"] .hero-actions'), null);
 });
 
 for (const [label, steps, subtitle] of [
@@ -100,9 +155,11 @@ test('setup actions hide for ready, populated, and provider heroes', (t) => {
   const button = document.querySelector('button');
   assert.ok(button);
   state.setup.setupComplete = true;
+  // Row 38 item 5: "no model" needs a catalog that was read and lists no usable route.
+  state.modelList = { available: true, data: [] };
   render();
   assert.ok(button.classList.contains('hidden'));
-  assert.equal(document.querySelector('.hero-title').textContent, 'New session');
+  assert.equal(document.querySelector('.hero-title').textContent, 'Pick a model to start');
   state.setup.setupComplete = false;
   state.sessions = [{ id: 'chat', title: 'Existing chat' }];
   state.currentSessionId = 'chat';

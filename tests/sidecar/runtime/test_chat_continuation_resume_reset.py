@@ -28,6 +28,9 @@ def _install_fake_loop(monkeypatch: pytest.MonkeyPatch, events: list[object]) ->
     class _FakeRun:
         def __init__(self, **kwargs: Any) -> None:
             self.runtime = kwargs["runtime"]
+            self.kernel = kwargs["kernel"]
+            self.request_id = kwargs["request_id"]
+            self.session_id = kwargs["session_id"]
             self.outcomes: list[Any] = []
             self.streamed_event_types: set[str] = set()
             self.outcome_index = 0

@@ -13,7 +13,6 @@ function setup(t, rootPath, extra = {}) {
   const logs = [];
   const harness = createHarness({
     bridgeOptions: { rootPath, files: { 'a.txt': 'hello' } },
-    featureFlags: { workspace_explorer_qol: true },
     extraCallbacks: { appendClientLog: (...args) => logs.push(args) },
     ...extra,
   });
@@ -22,7 +21,7 @@ function setup(t, rootPath, extra = {}) {
 }
 
 function assertRootless(harness) {
-  const panel = harness.getDom().ideRailPanel;
+  const panel = harness.viewHost('explorer');
   assert.equal(panel.querySelector('.ide-tree-status')?.textContent, 'No folder open');
   const action = panel.querySelector('[data-ide-tree-choose-root]');
   assert.equal(action?.textContent, 'Choose a folder');
@@ -45,7 +44,7 @@ test('configured root lists and watches; choosing then clearing returns to the e
   const harness = setup(t, '');
   await harness.controller.activateIde();
   await settle();
-  harness.getDom().ideRailPanel.querySelector('[data-ide-tree-choose-root]').click();
+  harness.viewHost('explorer').querySelector('[data-ide-tree-choose-root]').click();
   await settle();
   let context = await harness.bridge.jennyShell.workspaceRoot.captureContext();
   harness.state.workspaceRoot = context;
@@ -53,8 +52,8 @@ test('configured root lists and watches; choosing then clearing returns to the e
   await settle();
   assert.ok(harness.bridge.calls.listDirectory.length > 0);
   assert.equal(harness.bridge.calls.watchStart.length, 1);
-  assert.ok(harness.getDom().ideRailPanel.querySelector('[data-ide-tree-path="a.txt"]'));
-  assert.ok(harness.getDom().ideRailPanel.querySelector(fileControls));
+  assert.ok(harness.viewHost('explorer').querySelector('[data-ide-tree-path="a.txt"]'));
+  assert.ok(harness.viewHost('explorer').querySelector(fileControls));
   const listCalls = harness.bridge.calls.listDirectory.length;
 
   const prepared = await harness.bridge.jennyShell.workspaceRoot.prepareClear();
@@ -87,7 +86,7 @@ test('real listing failure keeps its failure message and warning', async (t) => 
   harness.bridge.jennyShell.workspaceFs.listDirectory = async () => { throw new Error('Permission denied'); };
   await harness.controller.activateIde();
   await settle();
-  assert.equal(harness.getDom().ideRailPanel.querySelector('.ide-tree-status')?.textContent, 'Could not list this folder.');
+  assert.equal(harness.viewHost('explorer').querySelector('.ide-tree-status')?.textContent, 'Could not list this folder.');
   assert.equal(harness.logs.filter(([, event]) => event === 'ide.tree_list_failed').length, 1);
 });
 

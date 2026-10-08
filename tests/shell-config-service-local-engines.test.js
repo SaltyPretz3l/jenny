@@ -9,7 +9,7 @@ const {
   ShellConfigService,
   normalizeState,
 } = require('../services/shell-config-service');
-const { managedModelKey } = require('../services/shell-config-engines');
+const { managedModelKey, normalizeEmbeddingSettings } = require('../services/shell-config-engines');
 const {
   cleanupTrackedResources,
   trackDirectory,
@@ -325,4 +325,54 @@ test('a saved retired plugin_host preferred engine falls back to the default eng
   assert.equal(normalizePreferredEngineType('vllm'), 'vllm');
   const state = normalizeState({ preferredEngineType: 'plugin_host' });
   assert.equal(state.preferredEngineType, '');
+});
+
+test('localEngines.embedding backfills defaults on older configs without a version bump', () => {
+  const fresh = normalizeState({});
+  assert.deepEqual(fresh.localEngines.embedding, {
+    enabled: true,
+    modelPath: '',
+    profileId: '',
+    device: 'cpu',
+    dims: 0,
+  });
+  const v51 = normalizeState({ version: 51, localEngines: { openaiCompatible: { port: 9000 } } });
+  assert.deepEqual(v51.localEngines.embedding, fresh.localEngines.embedding);
+  assert.deepEqual(normalizeState(v51).localEngines, v51.localEngines, 'idempotent');
+});
+
+test('normalizeEmbeddingSettings keeps valid values and collapses anything else to the default', () => {
+  const win = (value) => normalizeEmbeddingSettings(value, { platform: 'win32' });
+  assert.deepEqual(win({
+    enabled: false,
+    modelPath: '  D:\\Models\\embeddinggemma-300m.GGUF  ',
+    profileId: 'qwen3-embedding',
+    device: 'gpu',
+    dims: 256,
+  }), {
+    enabled: false,
+    modelPath: 'D:\\Models\\embeddinggemma-300m.GGUF',
+    profileId: 'qwen3-embedding',
+    device: 'gpu',
+    dims: 256,
+  });
+  for (const modelPath of [
+    '\\\\server\\share\\embed.gguf', '\\\\?\\C:\\embed.gguf', 'embed.gguf', 'C:\\models\\embed.bin',
+    '/models/embed.gguf', `C:\\${'x'.repeat(1020)}.gguf`, 42,
+  ]) {
+    assert.equal(win({ modelPath }).modelPath, '', String(modelPath).slice(0, 40));
+  }
+  assert.equal(normalizeEmbeddingSettings({ modelPath: '/models/embed.gguf' }, { platform: 'linux' }).modelPath,
+    '/models/embed.gguf');
+  for (const profileId of ['Nomic', '-bge', 'a'.repeat(33), 'e5 ', 7]) {
+    assert.equal(win({ profileId }).profileId, '');
+  }
+  for (const dims of [-1, 4097, 1.5, '256', null]) {
+    assert.equal(win({ dims }).dims, 0);
+  }
+  assert.equal(win({ dims: 4096 }).dims, 4096);
+  assert.equal(win({ device: 'npu' }).device, 'cpu');
+  assert.equal(win({ enabled: 'no' }).enabled, true);
+  assert.deepEqual(win(null), win({}));
+  assert.deepEqual(win([]), win({}));
 });

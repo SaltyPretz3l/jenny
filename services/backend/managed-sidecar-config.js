@@ -233,15 +233,6 @@ function getConfiguredToolsSubagentsEnabled(service) {
   }, true);
 }
 
-function getConfiguredToolsSubagentBatchEnabled(service) {
-  // Compatibility-only output retained for one release. No active manifest
-  // entry consumes it after Delegation V2.
-  return (
-    getConfiguredToolsSubagentsEnabled(service)
-    && service.featureFlags?.subagent_batch === true
-  );
-}
-
 function getConfiguredToolsRichFilesEnabled(service) {
   return readConfigState(service, (state) => (
     state.tools?.richFiles === true
@@ -550,12 +541,6 @@ function resolveManagedStartupModel(service, engineType, fallbackDefaultModel) {
   return 'mock-v1';
 }
 
-function forcePhaseEventsForStreamEnvelopeV2(config) {
-  if (config?.feature_flags?.stream_envelope_v2 === true) {
-    config.feature_flags.phase_events = true;
-  }
-}
-
 // Hosted tool capabilities are a closed set. Keep every RuntimeConfig tool
 // toggle explicit here so desktop preferences, integrations, and newly-added
 // config patches cannot widen the server process by accident.
@@ -569,7 +554,6 @@ const HOSTED_TOOL_CAPABILITY_POLICY = Object.freeze({
   tools_distill_enabled: false,
   tools_worktree_enabled: false,
   tools_subagents_enabled: false,
-  tools_subagent_batch_enabled: false,
   tools_mcp_resources_enabled: false,
   tools_automations_enabled: false,
   tools_workspace_present_enabled: false,
@@ -578,6 +562,7 @@ const HOSTED_TOOL_CAPABILITY_POLICY = Object.freeze({
   tools_image_generate_enabled: false,
   tools_home_enabled: false,
   tools_task_board_enabled: false,
+  tools_project_notes_enabled: false,
   tools_rich_files_enabled: false,
   tools_knowledge_enabled: false,
   tools_shell_enabled: false,
@@ -702,8 +687,8 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     tools_image_generate_enabled: service.featureFlags?.tools_image_generate_enabled === true,
     tools_home_enabled: service.featureFlags?.tools_home_enabled === true,
     tools_task_board_enabled: service.featureFlags?.tools_task_board_enabled === true,
+    tools_project_notes_enabled: service.featureFlags?.tools_project_notes_enabled === true,
     tools_subagents_enabled: getConfiguredToolsSubagentsEnabled(service),
-    tools_subagent_batch_enabled: getConfiguredToolsSubagentBatchEnabled(service),
     tools_rich_files_enabled: getConfiguredToolsRichFilesEnabled(service),
     tools_image_read_enabled: getConfiguredToolsImageReadEnabled(service),
     tools_python_runtime_enabled: getConfiguredToolsPythonRuntimeEnabled(service),
@@ -793,21 +778,11 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
       ...(config.feature_flags || {}),
       ...service.featureFlags,
     };
-    if (
-      service.featureFlags?.canonical_text_primary === true
-      && service.featureFlags?.canonical_bridge === true
-      && service.featureFlags?.canonical_turn_events === true
-    ) {
-      config.feature_flags.canonical_text_primary = true;
-    } else {
-      delete config.feature_flags.canonical_text_primary;
-    }
     // Runtime checkpoints require additive canonical events even when legacy UI
   // rollout flags are off. This does not change the application's flag settings.
   if (service.featureFlags?.session_runtime === true) {
     config.feature_flags = { ...config.feature_flags, canonical_turn_events: true };
   }
-  forcePhaseEventsForStreamEnvelopeV2(config);
   }
   if (service.skillsService && typeof service.skillsService.getSidecarConfig === 'function') {
     Object.assign(config, service.skillsService.getSidecarConfig());
@@ -819,10 +794,13 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
   if (service.knowledgeService && typeof service.knowledgeService.getSidecarConfig === 'function') {
     Object.assign(config, service.knowledgeService.getSidecarConfig());
   }
+  // Row 41: the semantic catalog contribution (db path, loopback embedder URL,
+  // model key, prompt templates). Enabled only while the embedder is ready.
+  if (typeof service.semanticCatalogService?.getSidecarConfig === 'function') {
+    Object.assign(config, service.semanticCatalogService.getSidecarConfig());
+  }
   if (service.mcpDiscoveryService && typeof service.mcpDiscoveryService.getSidecarConfig === 'function') {
-    Object.assign(config, service.mcpDiscoveryService.getSidecarConfig({
-      httpTransportEnabled: service.featureFlags?.mcp_http_transport === true,
-    }));
+    Object.assign(config, service.mcpDiscoveryService.getSidecarConfig());
     if (Array.isArray(config.mcp_servers) && config.mcp_servers.length) {
       config.mcp_servers = resolveMcpServerAuthSecrets(service, config.mcp_servers);
     }
@@ -837,15 +815,6 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
       ...(config.feature_flags || {}),
       ...integrationPatch.feature_flags,
     };
-    if (
-      service.featureFlags?.canonical_text_primary === true
-      && service.featureFlags?.canonical_bridge === true
-      && service.featureFlags?.canonical_turn_events === true
-    ) {
-      config.feature_flags.canonical_text_primary = true;
-    } else {
-      delete config.feature_flags.canonical_text_primary;
-    }
   }
   for (const [key, value] of Object.entries(integrationPatch)) {
     if (key === 'feature_flags') {
@@ -858,7 +827,6 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
   if (service.featureFlags?.session_runtime === true) {
     config.feature_flags = { ...config.feature_flags, canonical_turn_events: true };
   }
-  forcePhaseEventsForStreamEnvelopeV2(config);
   if (engineType === 'vllm') {
     const vllmState = getConfiguredLocalVllmState(service);
     const port = Number(vllmState?.port);
@@ -984,6 +952,11 @@ function buildManagedSidecarSecrets(service, { telemetrySettings = null } = {}) 
     && service._chatgptLegacyChoicePending !== true) {
     secrets.chatgpt_access_token = service.chatgptAuthService?.getCachedAccessToken?.() || '';
   }
+  // The embedding server's per-launch key (row 41); only its own loopback
+  // endpoint receives it, through the catalog config's base_url.
+  if (typeof service.semanticCatalogService?.getSidecarSecrets === 'function') {
+    Object.assign(secrets, service.semanticCatalogService.getSidecarSecrets());
+  }
   if (service.currentEngineType === 'openai-compatible') {
     // The key belongs to the managed llama-server process only. The engine's
     // api_url may point at a user-run server (explicit apiUrl, or a different
@@ -1007,6 +980,7 @@ module.exports = {
   getConfiguredToolsWebSearxngUrl,
   getConfiguredToolsWorkspaceRoot,
   getConfiguredTelemetrySettings,
+  getConfiguredContextLengthOverride,
   buildManagedSidecarConfig,
   buildManagedSidecarSecrets,
   resolveManagedConfiguredModel,

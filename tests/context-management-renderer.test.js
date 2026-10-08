@@ -7,16 +7,15 @@ const inventoryActionButton = require('../renderer/inventory/action-button');
 const contextUsageUtils = require('../renderer/chat/renderer-context-usage-utils');
 const { createShellRuntimeController } = require('../renderer/shell/renderer-shell-runtime-utils');
 
-const {
-  loadRendererApp,
-  waitForUi,
-} = require('./helpers/renderer-shell-harness');
+const { loadRendererApp,
+  waitForUi, openSettingsView } = require('./helpers/renderer-shell-harness');
 
 async function loadRendererTestApp(t, options) {
   const app = await loadRendererApp(options);
   t.after(async () => {
     await app.dispose();
   });
+  await openSettingsView(app.window);
   return app;
 }
 
@@ -435,6 +434,9 @@ test('renderer disables context controls when the backend is external', async (t
     },
   });
 
+  // The Settings page paints on activation (renderAll no longer paints it on the chat view).
+  window.document.querySelector('[data-tab-id="settings"]').click();
+  await waitForUi(window, 20);
   const status = window.document.getElementById('contextStatus');
   const scopeGroup = window.document.getElementById('contextHistoryScopeSelect');
   const personalityToggle = window.document.querySelector('[data-inv-toggle="contextIncludePersonalityToggle"]');

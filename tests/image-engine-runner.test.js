@@ -38,7 +38,8 @@ function setup(extra = []) {
     scratchDir, outputPath, opId: 'render_123', userDataPath, deadlineMs: 10000,
     expectedWidth: 2, expectedHeight: 3,
     spawnImpl: spawnTracked,
-    processTools: { ...processTools, enumerateDescendants: async () => ({ ok: true, pids: [] }) } };
+    processTools: { ...processTools, enumerateDescendants: async () => ({ ok: true, pids: [] }),
+      listProcessRows: async () => ({ ok: true, rows: [] }) } };
 }
 
 function fakeChild(pid = 42001) {
@@ -52,21 +53,27 @@ function fakeChild(pid = 42001) {
 function fakeOptions(options, child) {
   return { ...options, spawnImpl: () => child,
     processTools: { enumerateDescendants: async () => ({ ok: true, pids: [] }),
+      listProcessRows: async () => ({ ok: true, rows: [] }),
+      selectRootSurvivors: processTools.selectRootSurvivors, terminatePids: async () => {},
       confirmAllGone: async () => ({ confirmed: true, survivors: [] }),
       killTreeWithProof: async () => ({ confirmed: true, pids: [child.pid], survivors: [] }) } };
 }
 
-// The sandbox denies WMI. Fixture-owned PIDs provide a bounded process table;
-// termination and liveness checks still operate on the real spawned processes.
+// The sandbox denies WMI. Fixture-owned PIDs provide a bounded process table
+// without creation times (the ps shape); termination and liveness checks still
+// operate on the real spawned processes.
 function fixtureTreeTools(childPidPath, onEnumerated = () => {}) {
+  const fixturePids = () => (childPidPath && fs.existsSync(childPidPath)
+    ? [Number(fs.readFileSync(childPidPath, 'utf8'))] : []);
   const enumerateDescendants = async () => {
-    const pids = childPidPath && fs.existsSync(childPidPath)
-      ? [Number(fs.readFileSync(childPidPath, 'utf8'))] : [];
+    const pids = fixturePids();
     assert.ok(pids.every((pid) => Number.isSafeInteger(pid) && pid > 0));
     onEnumerated(pids);
     return { ok: true, pids };
   };
-  return { ...processTools, enumerateDescendants,
+  const listProcessRows = async () => ({ ok: true,
+    rows: fixturePids().filter(isProcessAlive).map((pid) => ({ pid, ppid: 1, createdMs: null })) });
+  return { ...processTools, enumerateDescendants, listProcessRows,
     killTreeWithProof: (pid) => processTools.killTreeWithProof(pid, {
       enumerateImpl: enumerateDescendants,
       killImpl: async (target) => {
@@ -309,6 +316,7 @@ test('real abort and deadline kill and prove all enumerated pids; cancelled PNG 
     const ownedTools = fixtureTreeTools(childPidPath);
     const controller = new AbortController();
     let proof;
+    let grandchildGone = false;
     const timer = trigger === 'abort' ? setTimeout(() => controller.abort(), 900) : null;
     try {
       const result = await runImageGeneration({ ...options, abortSignal: controller.signal,
@@ -321,11 +329,13 @@ test('real abort and deadline kill and prove all enumerated pids; cancelled PNG 
       assert.equal(proof.confirmed, true);
       assert.equal(proof.pids.length, 2);
       assert.ok(proof.pids.every((pid) => !isProcessAlive(pid)));
+      grandchildGone = true;
       assert.equal(fs.existsSync(options.outputPath), false);
       assert.equal(pidfile.readRenderRecord(pidfile.getImageEnginePidPath(options.userDataPath)), null);
     } finally {
       clearTimeout(timer);
-      if (fs.existsSync(childPidPath)) {
+      // A pid proven gone may already belong to a sibling test's process.
+      if (!grandchildGone && fs.existsSync(childPidPath)) {
         const pid = Number(fs.readFileSync(childPidPath, 'utf8'));
         if (isProcessAlive(pid)) process.kill(pid, 'SIGKILL');
       }
@@ -353,6 +363,7 @@ test('real surviving grandchild is killed with proof after a normal exit and the
   const childPidPath = path.join(options.scratchDir, 'grandchild.pid');
   options.argv = [fakeSpawner, '-o', options.outputPath, '--pid-file', childPidPath];
   let grandchildPid;
+  let grandchildGone = false;
   let enumerated = [];
   try {
     const result = await runImageGeneration({ ...options, processTools: {
@@ -365,12 +376,45 @@ test('real surviving grandchild is killed with proof after a normal exit and the
     assert.notEqual(result.status, 'unconfirmed', JSON.stringify(result));
     assert.ok(enumerated.includes(grandchildPid));
     assert.equal(isProcessAlive(grandchildPid), false, 'the late worker does not outlive the render');
+    grandchildGone = true;
     assert.equal(pidfile.readRenderRecord(pidfile.getImageEnginePidPath(options.userDataPath)), null);
   } finally {
     if (!grandchildPid && fs.existsSync(childPidPath)) grandchildPid = Number(fs.readFileSync(childPidPath, 'utf8'));
-    if (grandchildPid && isProcessAlive(grandchildPid)) process.kill(grandchildPid, 'SIGKILL');
-    if (grandchildPid) await processTools.confirmAllGone([grandchildPid], { timeoutMs: 1000 });
+    // A pid proven gone may already belong to a sibling test's process.
+    if (grandchildPid && !grandchildGone && isProcessAlive(grandchildPid)) process.kill(grandchildPid, 'SIGKILL');
+    if (grandchildPid && !grandchildGone) await processTools.confirmAllGone([grandchildPid], { timeoutMs: 1000 });
   }
+});
+
+// Windows frees a pid once its exit is observed and hands it out again within
+// seconds under load; the dead root's pid then names an unrelated process whose
+// children list it as their parent.
+test('after a normal exit, children of a process that reused the root pid are never killed', async () => {
+  const options = setup();
+  const child = fakeChild();
+  const killed = [];
+  let exitWallMs = 0;
+  const fakeCim = (_exe, _args, _opts, cb) => cb(null, JSON.stringify([
+    { ProcessId: child.pid, ParentProcessId: 7, CreatedMs: exitWallMs + 5000 },
+    { ProcessId: 42002, ParentProcessId: child.pid, CreatedMs: exitWallMs + 5001 },
+    { ProcessId: 42003, ParentProcessId: child.pid, CreatedMs: exitWallMs - 20 },
+    { ProcessId: 42004, ParentProcessId: 42003, CreatedMs: exitWallMs + 100 },
+  ]));
+  const pending = runImageGeneration({ ...fakeOptions(options, child), processTools: {
+    enumerateDescendants: (pid) => processTools.enumerateDescendants(pid, { platform: 'win32', execFileImpl: fakeCim }),
+    listProcessRows: () => processTools.listProcessRows({ platform: 'win32', execFileImpl: fakeCim }),
+    killTreeWithProof: async (pid) => { killed.push(pid); return { confirmed: true, pids: [pid], survivors: [] }; },
+    terminatePids: async (pids) => { killed.push(...pids); },
+    confirmAllGone: async () => ({ confirmed: true, survivors: [] }),
+  } });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  exitWallMs = Date.now();
+  child.emit('exit', 0, null);
+  const result = await pending;
+  assert.notEqual(result.reason, 'image_engine_cleanup_pending', JSON.stringify(result));
+  assert.equal(killed.includes(42002), false, 'the reuser\'s child is not ours');
+  assert.equal(killed.includes(child.pid), false, 'the reused root pid is not ours');
+  assert.deepEqual(killed.sort(), [42003, 42004], 'our orphan and its worker are reaped');
 });
 
 test('stderr tail is bounded, paths and controls removed; oversized split lines flag once', async () => {

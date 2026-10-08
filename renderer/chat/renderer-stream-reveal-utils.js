@@ -58,11 +58,6 @@
       settings.state?.features?.featureFlags?.chat_stream_paint_v2 === true;
     const isTokenFadeEnabled = () =>
       settings.state?.features?.featureFlags?.chat_stream_token_fade === true;
-    // chat_timeline_render_telemetry (Track A): TEMPORARY render-path
-    // diagnostics for the streaming-flicker investigation. Same live-state
-    // read pattern as isStreamPaintV2Enabled above; absent state = OFF path.
-    const isRenderTelemetryEnabled = () =>
-      settings.state?.features?.featureFlags?.chat_timeline_render_telemetry === true;
     const recordChatTimelineRolloutSignal = typeof settings.recordChatTimelineRolloutSignal === 'function'
       ? settings.recordChatTimelineRolloutSignal
       : () => ({ logged: false, count: 0 });
@@ -74,7 +69,7 @@
       // falls back to `{}`, so an unresolved sibling would make a DIAGNOSTIC
       // throw inside the streaming patch path. Telemetry must never be able to
       // break a paint.
-      if (!isRenderTelemetryEnabled() || typeof describeDomWrite !== 'function') {
+      if (typeof describeDomWrite !== 'function') {
         return;
       }
       recordChatTimelineRolloutSignal(
@@ -653,7 +648,7 @@
               ? patchOptions.buildTurnRowListSegments()
               : null,
             buildMarkup: patchOptions.buildTurnRowListMarkup,
-            collectStats: isRenderTelemetryEnabled(),
+            collectStats: true,
           });
           const { morphed, rowListMarkup } = fallback;
           recordTimelineDomWrite(String(patchOptions.currentSessionId || ''), 'turn_row_list', fallback.outcome, fallback.stats);
@@ -755,23 +750,18 @@
       if (!nextMarkup) {
         return false;
       }
-      // chat_timeline_render_telemetry (Track A): gated, per-rebuild-granularity
-      // diagnostics only on the path that actually commits a rebuild (the
-      // no-op short-circuit above already returned). When the flag is off,
-      // priorIdentity is null and collectStats is omitted, so no capture,
-      // allocation, or emit happens below and the DOM behavior is unchanged.
-      const renderTelemetryEnabled = isRenderTelemetryEnabled();
-      const priorIdentity = renderTelemetryEnabled
-        ? {
-          root: runtime.activeTurnRootMessageId,
-          hash: runtime.activeTurnStructureHash,
-          tail: runtime.activeTurnTailFingerprint,
-        }
-        : null;
+      // Render-path telemetry (Track A): per-rebuild-granularity diagnostics
+      // only on the path that actually commits a rebuild (the no-op
+      // short-circuit above already returned).
+      const priorIdentity = {
+        root: runtime.activeTurnRootMessageId,
+        hash: runtime.activeTurnStructureHash,
+        tail: runtime.activeTurnTailFingerprint,
+      };
       // The host article's turn row list (when the builder names one) reconciles per row.
       const rowList = typeof nextOptions.resolveRowListSegments === 'function' ? nextOptions.resolveRowListSegments() : null;
       const patchResult = setOuterHtmlPreservingCodeScroll(rootNode, nextMarkup, {
-        collectStats: renderTelemetryEnabled, rowListSegments: rowList?.segments, rowListHostId: rowList?.hostId,
+        collectStats: true, rowListSegments: rowList?.segments, rowListHostId: rowList?.hostId,
       });
       replayReasoningHandoff();
       reasoningHandoff.rememberById(runtime.streamingArticleMessageId);
@@ -780,32 +770,30 @@
       runtime.activeTurnRootMessageId = activeTurnRootMessageId;
       runtime.activeTurnStructureHash = nextTurnStructureHash;
       runtime.activeTurnTailFingerprint = nextTurnTailFingerprint;
-      if (priorIdentity) {
-        const rootChanged = priorIdentity.root !== activeTurnRootMessageId;
-        const hashChanged = priorIdentity.hash !== nextTurnStructureHash;
-        const tailChanged = priorIdentity.tail !== nextTurnTailFingerprint;
-        // A new turn's first rebuild reaches here with prior* carried from the
-        // PREVIOUS turn, so the hash/tail deltas are cross-turn noise — label it
-        // root_switch rather than mislabeling it structure_hash/both.
-        const reason = rootChanged
-          ? 'root_switch'
-          : (hashChanged && tailChanged ? 'both' : (hashChanged ? 'structure_hash' : 'tail_fingerprint'));
-        const stats = patchResult.stats || { reused: 0, cloned: 0, removed: 0 };
-        recordChatTimelineRolloutSignal(currentSessionId, 'active_turn_root_rebuild', {
-          turnId: activeTurnRootMessageId,
-          reason,
-          priorRoot: priorIdentity.root,
-          priorHash: priorIdentity.hash,
-          nextHash: nextTurnStructureHash,
-          priorTail: priorIdentity.tail,
-          nextTail: nextTurnTailFingerprint,
-          outcome: patchResult.outcome,
-          reused: stats.reused,
-          cloned: stats.cloned,
-          removed: stats.removed,
-        });
-        recordTimelineDomWrite(currentSessionId, 'active_turn_root', patchResult.outcome, patchResult.stats);
-      }
+      const rootChanged = priorIdentity.root !== activeTurnRootMessageId;
+      const hashChanged = priorIdentity.hash !== nextTurnStructureHash;
+      const tailChanged = priorIdentity.tail !== nextTurnTailFingerprint;
+      // A new turn's first rebuild reaches here with prior* carried from the
+      // PREVIOUS turn, so the hash/tail deltas are cross-turn noise — label it
+      // root_switch rather than mislabeling it structure_hash/both.
+      const reason = rootChanged
+        ? 'root_switch'
+        : (hashChanged && tailChanged ? 'both' : (hashChanged ? 'structure_hash' : 'tail_fingerprint'));
+      const stats = patchResult.stats || { reused: 0, cloned: 0, removed: 0 };
+      recordChatTimelineRolloutSignal(currentSessionId, 'active_turn_root_rebuild', {
+        turnId: activeTurnRootMessageId,
+        reason,
+        priorRoot: priorIdentity.root,
+        priorHash: priorIdentity.hash,
+        nextHash: nextTurnStructureHash,
+        priorTail: priorIdentity.tail,
+        nextTail: nextTurnTailFingerprint,
+        outcome: patchResult.outcome,
+        reused: stats.reused,
+        cloned: stats.cloned,
+        removed: stats.removed,
+      });
+      recordTimelineDomWrite(currentSessionId, 'active_turn_root', patchResult.outcome, patchResult.stats);
       return true;
     }
 

@@ -727,6 +727,38 @@ test('wave-c: registerWorkspaceTestRunnerIpcHandlers wires exactly 4 channels an
   assert.deepEqual(onDiskConfig.configs.map((c) => c.id), ['e2e'], 'save-configs persisted through the channel');
 });
 
+test('panel runs: includeOutput reaches the service through the run channel; history stays tail-free', async (t) => {
+  const { userDataDir, makeRoot } = sandbox(t);
+  const root = makeRoot('rootOut');
+  writeConfigs(userDataDir, root, [{ id: 'unit', label: 'Unit', command: 'echo hi' }]);
+  const wiring = createWorkspaceTestRunnerWiring({
+    userDataDir,
+    shellConfigService: rootRef(root),
+    runner: {
+      runTestCommand: () => Promise.resolve({
+        status: 'failed', exitCode: 1, durationMs: 5, startedAt: 'S', finishedAt: 'F',
+        stdoutTail: 'out-tail', stderrTail: 'err-tail',
+      }),
+    },
+    featureFlagProvider: flag(true),
+    now: () => new Date(5000),
+    makeRunId: () => 'run-out',
+  });
+  const handlers = {};
+  registerWorkspaceTestRunnerIpcHandlers({ handle: (channel, fn) => { handlers[channel] = fn; } }, wiring);
+  const runChannel = getBridgeChannel('workspaceTestRunner.run', 'invoke');
+
+  const withOutput = await handlers[runChannel](null, { configId: 'unit', includeOutput: true });
+  assert.equal(withOutput.stdoutTail, 'out-tail');
+  assert.equal(withOutput.stderrTail, 'err-tail');
+
+  const state = await handlers[getBridgeChannel('workspaceTestRunner.getState', 'invoke')](null);
+  assert.equal(JSON.stringify(state.history).includes('out-tail'), false, 'tails never enter run history');
+
+  const without = await handlers[runChannel](null, { configId: 'unit' });
+  assert.equal('stdoutTail' in without, false, 'tails stay opt-in');
+});
+
 // ---------------------------------------------------------------------------
 // 6) Integration — registerMainIpcHandlers actually CALLS the registration fn
 //    (guards the "defined but never wired" false-green; deps shape mirrors the
@@ -798,7 +830,6 @@ test('wave-a: registerMainIpcHandlers wires the workspaceTestRunner.* channels',
     schedulerService: {},
     linkStatusService: {},
     calendarService: {},
-    chatStreamBridge: {},
     getStartupAuditConfig: () => ({ enabled: false }),
     createStartupAuditMarkHandler: () => () => ({ recorded: true }),
     createStartupAuditMarksBatchHandler: () => () => ({ recorded: true }),

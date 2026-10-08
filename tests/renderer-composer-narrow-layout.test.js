@@ -123,7 +123,7 @@ test('F4: Spanish run-mode segments wrap between words, never inside one, and ne
       const page = await mountComposer(browser, { paneWidth, lang: 'es' });
       await page.evaluate(() => window.__settings.setOpen(true));
       const segments = await readSegments(page);
-      assert.deepEqual(segments.map((segment) => segment.text), ['Preguntar', 'Ejecución automática', 'Planificar']);
+      assert.deepEqual(segments.map((segment) => segment.text), ['Preguntar', 'Ejecución automática', 'Planificar', 'Proponer']);
       for (const segment of segments) {
         assert.deepEqual(segment.split, [], `${paneWidth}px: "${segment.text}" breaks inside a word`);
         assert.equal(segment.inside, true, `${paneWidth}px: "${segment.text}" stays inside the list`);

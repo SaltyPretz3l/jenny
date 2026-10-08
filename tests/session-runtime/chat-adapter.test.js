@@ -258,7 +258,7 @@ test('adapter fences gateway and authority before delegating a live stream abort
 
 test('continuation preflight failure after gateway registration releases every no-start owner', async t => {
   const { adapter, service, sessionId } = createAdapterHarness(t);
-  service.featureFlags = { vision_unified_turn: true, session_runtime: true,
+  service.featureFlags = { session_runtime: true,
     canonical_bridge: true, canonical_turn_events: true };
   let producerCalls = 0;
   service._startManagedSidecarChatStream = async () => { producerCalls += 1; };
@@ -302,7 +302,7 @@ test('continuation preflight failure after gateway registration releases every n
 
 test('explicit resume validates source A before reserving actor B and preserves the paused checkpoint outcome', async t => {
   const { adapter, lanes, service, sessionId } = createAdapterHarness(t);
-  service.featureFlags = { vision_unified_turn: true, session_runtime: true,
+  service.featureFlags = { session_runtime: true,
     canonical_bridge: true, canonical_turn_events: true };
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-runtime-chat-resume-'));
   t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));

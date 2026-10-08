@@ -129,6 +129,15 @@
 
       var root = document.getElementById('logsView');
       listen(root, 'click', function (event) {
+        var retry = event.target.closest('[data-action="diagnostics-retry-load"]');
+        if (retry) {
+          if (retry.disabled) return;
+          retry.disabled = true;
+          Promise.resolve().then(function () { return options.callbacks.retryModelLoad?.(retry.dataset.retryModel, retry.dataset.retryEngine || ''); })
+            .catch(function () {})
+            .finally(disposalFence.guard(function () { retry.disabled = false; }));
+          return;
+        }
         var close = event.target.closest('[data-action="close-log-detail"]');
         if (close) { closeDetail(); return; }
 
@@ -155,6 +164,23 @@
           } });
           renderLogs();
           afterRender(focusActivityStart);
+          return;
+        }
+
+        var chooseFolder = event.target.closest('[data-action="choose-workspace-folder"]');
+        if (chooseFolder) {
+          Promise.resolve(options.callbacks.chooseWorkspaceRoot?.()).catch(function () {});
+          return;
+        }
+
+        var showPerformance = event.target.closest('[data-action="show-diagnostics-performance"]');
+        if (showPerformance) {
+          var heading = document.getElementById('diagnosticsPerformanceHeading');
+          if (heading) {
+            if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
+            if (typeof heading.scrollIntoView === 'function') heading.scrollIntoView({ block: 'start' });
+            heading.focus({ preventScroll: true });
+          }
           return;
         }
 
@@ -274,6 +300,14 @@
           afterRender(function () { options.callbacks.scrollLogsToBottom?.(options.dom.logList); });
         }
       }, listenerOptions);
+
+      // The pure card renders mapped actions only when the shell can serve them.
+      var actions = Object.freeze({
+        'show-diagnostics-performance': true,
+        'choose-workspace-folder': typeof options.callbacks.chooseWorkspaceRoot === 'function',
+      });
+      globalThis.rendererDiagnosticsActions = actions;
+      cleanups.push(function () { if (globalThis.rendererDiagnosticsActions === actions) delete globalThis.rendererDiagnosticsActions; });
     }
 
     function dispose() {

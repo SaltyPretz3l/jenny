@@ -29,6 +29,7 @@ const ELECTRON_BRIDGE_TOOL_NAMES = new Set([
   'image_generate',
   'home',
   'task_board',
+  'project_notes',
   'exit_plan_mode',
   'ask_user',
 ]);
@@ -263,7 +264,6 @@ async function executeElectronToolRequest(
     sessionId,
     streamId,
     abortSignal = null,
-    pluginRuntimeAuthority = null,
     executionAuthority = null,
     sandboxAuthorization = null,
     canonicalReadOnly = true,
@@ -347,6 +347,8 @@ async function executeElectronToolRequest(
       result = await gitService.createCheckpoint({
         session: scopedSessionId,
         signal: abortSignal,
+        // A clean tree still gets a ref: the run's restore point (row 34 S5).
+        allowClean: true,
       });
     } catch (error) {
       return bridgeFailure(toolName, `Auto-checkpoint failed: ${error?.message || String(error)}`);
@@ -484,7 +486,6 @@ function buildManagedSidecarChatSendOptions({
   // are called before the real handlers and may never influence them.
   onNotificationObserved,
   onApprovalObserved,
-  pluginRuntimeAuthority = null,
   executionAuthority = null,
 }) {
   const recordStreamActivity = typeof noteStreamActivity === 'function'
@@ -643,7 +644,6 @@ function buildManagedSidecarChatSendOptions({
           sessionId: resolvedSessionId,
           streamId,
           abortSignal: controller.signal,
-          pluginRuntimeAuthority,
           executionAuthority,
         });
       }
@@ -658,7 +658,6 @@ function buildManagedSidecarChatSendOptions({
           sessionId: resolvedSessionId,
           streamId,
           abortSignal: controller.signal,
-          pluginRuntimeAuthority,
           executionAuthority,
         });
       } finally {

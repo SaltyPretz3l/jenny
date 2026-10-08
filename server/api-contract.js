@@ -61,7 +61,19 @@ const PARAM_SCHEMAS = Object.freeze({
   'sessions.snapshot': object({
     before_message_id: text(256), max_messages: { type: 'integer', minimum: 1, maximum: 100 },
   }),
-  'sessions.preferences': object({ plan_mode: { type: 'boolean' } }, ['plan_mode']),
+  'sessions.preferences': { ...object({ plan_mode: { type: 'boolean' }, run_mode: { enum: ['ask', 'auto', 'plan', 'propose'] } }), minProperties: 1 },
+  // Propose mode (row 35): the suggestion record of the command's session.
+  'suggestedChanges.list': object({}),
+  'suggestedChanges.decide': object({
+    id, decision: { enum: ['reject', 'later', 'restore', 'ungroup'] }, reason: text(400),
+  }, ['id', 'decision']),
+  'suggestedChanges.comment': object({ id, text: { ...text(2000), minLength: 1 } }, ['id', 'text']),
+  'suggestedChanges.sendComments': object({
+    undo: object({ ids: { type: 'array', maxItems: 200, uniqueItems: true, items: id }, sent_at: { ...text(40), minLength: 1 } }, ['ids', 'sent_at']),
+  }),
+  'suggestedChanges.discardPending': object({}),
+  // Consent is for the revision the person saw; `force` is the confirmed "Apply anyway".
+  'suggestedChanges.accept': object({ id, revision: positiveRevision, force: { type: 'boolean' } }, ['id', 'revision']),
   'projects.list': object({}),
   'projects.create': object({ name: { ...text(80), minLength: 1 } }, ['name']),
   'projects.rename': object({
@@ -106,7 +118,7 @@ const PARAM_SCHEMAS = Object.freeze({
   'questions.answer': object({
     stream_id: id, question_ref: { ...id, maxLength: 512 },
     answers: { type: 'array', maxItems: 8, items: object({
-      question_id: id,
+      question_id: text(512),
       answer: { anyOf: [text(8000), { type: 'array', maxItems: 8, uniqueItems: true, items: text(240) }] },
       other: text(8000),
     }, ['question_id', 'answer']) },

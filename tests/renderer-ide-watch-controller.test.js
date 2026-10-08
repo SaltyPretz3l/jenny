@@ -61,7 +61,6 @@ function makeWatch({ dirty = false } = {}) {
     renderTabs: () => {},
     appendClientLog: () => {},
     onTreeExternalChanges: () => {},
-    refreshChangesPanelIfOpen: () => {},
     onExternalDelete: (path) => deletes.push(path),
   });
   watch.start(); // wires the internal batch handler onto api.onChange
@@ -267,7 +266,6 @@ test('a truncated batch revalidates every open FILE tab, not just the paths that
     },
     ideStateUtils: ideState,
     onTreeExternalChanges: () => {},
-    refreshChangesPanelIfOpen: () => {},
   });
   watch.start();
 

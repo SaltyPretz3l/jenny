@@ -12,7 +12,6 @@ from .base import BaseEngine, EngineMessage, ModelModality
 if TYPE_CHECKING:
     from ..tools.models import GenerationResult
     from .response_format import ResponseFormat
-    from .vision_input import VisionInput
 
 logger = logging.getLogger(__name__)
 
@@ -304,6 +303,23 @@ class MockEngine(BaseEngine):
                         "replace_all": replace_all,
                     },
                 )
+        if command == "propose":
+            # Plan Plus: "/tool propose <path> ::: <old> ::: <new>" suggests a replace.
+            file_part, first_delimiter, remainder = payload[7:].strip().partition(":::")
+            old_part, second_delimiter, new_part = remainder.partition(":::")
+            if first_delimiter == ":::" and second_delimiter == ":::" and file_part.strip():
+                return self._tool_result(
+                    "propose_change",
+                    {
+                        "path": self._strip_wrapping_quotes(file_part.strip()),
+                        "kind": "replace",
+                        "old_string": old_part.strip(),
+                        "new_string": new_part.strip(),
+                        "title": "Mock suggestion",
+                        "what": "Replaces the matched text.",
+                        "why": "Requested through the mock engine.",
+                    },
+                )
         if command == "shell" and len(tokens) >= 2:
             command_text = payload[6:].strip()
             return self._tool_result(
@@ -437,20 +453,6 @@ class MockEngine(BaseEngine):
         for word in response.split():
             yield word + " "
             time.sleep(0.1)
-
-    def generate_with_vision(
-        self,
-        prompt: str,
-        images: List["VisionInput"],
-        max_tokens: int = 256,
-        temperature: float = 0.7,
-    ) -> "GenerationResult":
-        from ..tools.models import GenerationResult
-
-        return GenerationResult(
-            content=f"[Mock Vision] I received {len(images)} image(s). You asked: '{prompt}'",
-            finish_reason="stop",
-        )
 
     def unload_model(self, _name: str | None = None) -> None:
         self.model_name = None

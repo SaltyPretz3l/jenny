@@ -27,19 +27,6 @@
   var STATIC_TIMING = { dtMs: 0, longGap: false };
   var EMPTY_STYLE = { getPropertyValue: function () { return ''; } };
 
-  function getNow() {
-    return typeof performance !== 'undefined' && performance && typeof performance.now === 'function'
-      ? performance.now() : Date.now();
-  }
-
-  function requestFrame(callback) {
-    return typeof requestAnimationFrame === 'function' ? requestAnimationFrame(callback) : 0;
-  }
-
-  function cancelFrame(handle) {
-    if (handle && typeof cancelAnimationFrame === 'function') { cancelAnimationFrame(handle); }
-  }
-
   function createAtomicBurstController(options) {
     var opts = options || {};
     var runtime = opts.runtime || moduleRuntime;
@@ -149,13 +136,9 @@
     }
 
     function scheduleMarkReady(entry) {
-      if (!entry.canvas || entry.readyShown || entry.markReadyHandle || staged || disposed || documentHidden) { return; }
-      var canvas = entry.canvas;
-      entry.markReadyHandle = requestFrame(function () {
-        entry.markReadyHandle = 0;
-        if (disposed || entry.canvas !== canvas) { return; }
-        entry.readyShown = true;
-        if (canvas.classList) { canvas.classList.add('surface-canvas-ready'); }
+      runtime.scheduleCanvasReady(entry, {
+        blocked: staged || disposed || documentHidden,
+        isLive: function () { return !disposed; },
       });
     }
 
@@ -200,7 +183,7 @@
     }
 
     function removeEntryCanvas(entry) {
-      if (entry.markReadyHandle) { cancelFrame(entry.markReadyHandle); entry.markReadyHandle = 0; }
+      if (entry.markReadyHandle) { runtime.cancelFrame(entry.markReadyHandle); entry.markReadyHandle = 0; }
       detachCanvas(entry.canvas);
       entry.canvas = null;
       entry.ctx = null;
@@ -306,21 +289,21 @@
       return bound && !disposed && !reducedMotion && !documentHidden && hasDrawableEntries();
     }
 
-    function stopLoop() { if (frameHandle) { cancelFrame(frameHandle); frameHandle = 0; } }
+    function stopLoop() { if (frameHandle) { runtime.cancelFrame(frameHandle); frameHandle = 0; } }
 
     function scheduleFrame() {
       if (!shouldAnimate() || frameHandle) { return; }
-      frameHandle = requestFrame(stepFrame);
+      frameHandle = runtime.requestFrame(stepFrame);
     }
 
     function stepFrame(timestamp) {
       frameHandle = 0;
       if (!shouldAnimate()) { return; }
-      var now = Number.isFinite(timestamp) ? timestamp : getNow();
+      var now = Number.isFinite(timestamp) ? timestamp : runtime.getNow();
       var fullRate = windowFocused && core.isResponding(sceneSimulation);
       if (!fullRate && lastPaintAt && now >= lastPaintAt
         && now - lastPaintAt < IDLE_FRAME_MS - FRAME_SLACK_MS) {
-        frameHandle = requestFrame(stepFrame);
+        frameHandle = runtime.requestFrame(stepFrame);
         return;
       }
       lastPaintAt = now;
@@ -334,7 +317,7 @@
     function drawAllStatic() {
       if (disposed || documentHidden) { return; }
       refreshDeviceDpr();
-      drawScene(getNow(), STATIC_TIMING);
+      drawScene(runtime.getNow(), STATIC_TIMING);
     }
 
     function requestRedraw() {
@@ -489,7 +472,7 @@
           core.spawnWave(sceneSimulation, {
             x: payload.sceneX,
             y: payload.sceneY,
-            startTime: Number.isFinite(payload.timeStamp) ? payload.timeStamp : getNow(),
+            startTime: Number.isFinite(payload.timeStamp) ? payload.timeStamp : runtime.getNow(),
             config: entry.config,
             kind: 'click',
           });

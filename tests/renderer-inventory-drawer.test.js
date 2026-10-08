@@ -44,3 +44,12 @@ test('drawer integrates with the overlay manager close contract', () => {
   assert.deepEqual(calls, [['open', 'managedDrawer'], ['close', 'managedDrawer']]);
   drawer.dispose();
 });
+
+test('the drawer panel starts below the title bar, clear of the window controls that stack above it', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer', 'inventory', 'inventory-drawer.css'), 'utf8');
+  const panel = css.match(/\.inv-drawer-panel \{([^}]*)\}/)[1];
+  assert.match(panel, /margin-top: var\(--titlebar-height, 0px\)/);
+  assert.match(panel, /height: calc\(100% - var\(--titlebar-height, 0px\)\)/);
+  const tier = css.match(/\.inv-drawer-host \{([^}]*)\}/)[1];
+  assert.match(tier, /z-index: calc\(var\(--z-popover\) - 1\)/, 'the drawer stays below the window controls tier this offset accounts for');
+});

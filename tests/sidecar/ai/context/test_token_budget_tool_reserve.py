@@ -97,8 +97,8 @@ def test_apply_budget_check_uses_the_measured_reserve() -> None:
     per_tool = measured_tool_overhead_per_tool(measured, 29)
     assert per_tool is not None and per_tool < 500
     assert budget.tool_overhead_per_tool == per_tool
-    # The conversation gets the room the flat 500/tool reserve used to hold back.
-    flat = TokenBudget(context_window=65_536, max_output_tokens=16_384)
+    # Compare reserves at the same window, including tokenizer headroom.
+    flat = TokenBudget(context_window=budget.context_window, max_output_tokens=16_384)
     assert budget.auto_compact_threshold(29) > flat.auto_compact_threshold(29)
 
 
@@ -166,18 +166,20 @@ def test_dogfood_64k_window_with_42_tools_compacts_at_the_measured_threshold() -
     schema reserve was already live (the session's meter published
     compact_threshold_tokens 38,031, i.e. trigger 26,355); the trigger sat low
     because the 8,192 summary reservation was stacked on the 16,384 output
-    reservation. Only the larger is held back now, so the trigger is ~33.7k."""
+    reservation. Only the larger is held back now; char-estimator headroom
+    further shrinks the budget window and caps both output and tools at a quarter."""
     measured = 9_320  # chars//4 of the 42 full schemas
     _messages, budget, _tracker = apply_budget_check(
         [], _Config(), _Engine(), num_tools=42, tool_schema_tokens=measured,  # type: ignore[arg-type]
     )
     assert budget is not None
     assert budget.tool_overhead_per_tool == 278  # ceil(9320 * 1.25 / 42)
-    assert budget.tool_overhead(42) == 11_676
-    # max(16,384 output, 8,192 summary) + 11,676 tools reserved.
-    assert budget.effective_context(42) == 65_536 - 16_384 - 11_676 == 37_476
-    assert budget.auto_compact_threshold(42) == 33_728
-    assert budget.meter_compact_threshold(42) == 45_404
+    assert budget.context_window == 45_875  # 30% char-estimator headroom.
+    assert budget.tool_overhead(42) == 11_468  # Capped at the reduced window's quarter.
+    # Output and tools each reserve a quarter of the reduced window.
+    assert budget.effective_context(42) == 45_875 - 11_468 - 11_468 == 22_939
+    assert budget.auto_compact_threshold(42) == 20_645
+    assert budget.meter_compact_threshold(42) == 32_113
 
     flat = TokenBudget(context_window=65_536, max_output_tokens=16_384)
     assert flat.tool_overhead(42) == 65_536 // 4  # 42 x 500 capped at a quarter

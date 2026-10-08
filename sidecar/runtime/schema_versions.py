@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from sidecar.runtime.runtime_gap_schema import RUNTIME_GAP_SCHEMA_VERSION
 
-PLUGIN_CONTRACT_SET_VERSION = 1
-
 
 def get_all_schema_versions() -> list[dict[str, object]]:
     """Return sidecar-owned schema/API versions for status surfaces."""
@@ -19,6 +17,7 @@ def get_all_schema_versions() -> list[dict[str, object]]:
     from sidecar.ai.memory.store_migrations import (
         SCHEMA_VERSION as MEMORY_SCHEMA_VERSION,
     )
+    from sidecar.ai.semantic.store import SEMANTIC_CATALOG_SCHEMA_VERSION
     from sidecar.protocol import API_VERSION
     from sidecar.runtime.diagnostics import (
         SCHEMA_VERSION as DIAGNOSTICS_SCHEMA_VERSION,
@@ -62,6 +61,17 @@ def get_all_schema_versions() -> list[dict[str, object]]:
             "source": "sidecar/ai/memory/embedding.py",
         },
         {
+            "id": "sidecar.semantic_catalog",
+            "surface": "Semantic catalog index",
+            "owner": "sidecar",
+            "kind": "sqlite_schema",
+            "version": SEMANTIC_CATALOG_SCHEMA_VERSION,
+            # Derived cache: a newer schema is refused (never written), an
+            # unreadable file is set aside and rebuilt from the source folders.
+            "forward_policy": "reject_future_rebuild_corrupt_cache",
+            "source": "sidecar/ai/semantic/store.py",
+        },
+        {
             "id": "sidecar.runtime_gap",
             "surface": "Runtime gap candidate notification",
             "owner": "sidecar",
@@ -87,14 +97,5 @@ def get_all_schema_versions() -> list[dict[str, object]]:
             "version": OLLAMA_CATALOG_CACHE_SCHEMA_VERSION,
             "forward_policy": "preserve_future_cache_schema",
             "source": "sidecar/ai/engines/ollama_catalog_cache.py",
-        },
-        {
-            "id": "sidecar.plugin_contract_set",
-            "surface": "Sidecar plugin V1 contract set",
-            "owner": "sidecar",
-            "kind": "contract_set",
-            "version": PLUGIN_CONTRACT_SET_VERSION,
-            "forward_policy": "frozen_v1_add_new_version",
-            "source": "sidecar/ai/plugins/generated_plugin_contracts.py",
         },
     ]

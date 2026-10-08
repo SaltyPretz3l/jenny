@@ -41,16 +41,6 @@
     var number = Number(value);
     return Number.isFinite(number) ? number : (fallback || 0);
   }
-  function getNow() {
-    return typeof performance !== 'undefined' && performance && typeof performance.now === 'function'
-      ? performance.now() : Date.now();
-  }
-  function requestFrame(callback) {
-    return typeof requestAnimationFrame === 'function' ? requestAnimationFrame(callback) : 0;
-  }
-  function cancelFrame(handle) {
-    if (handle && typeof cancelAnimationFrame === 'function') { cancelAnimationFrame(handle); }
-  }
 
   function createContextWeaveController(options) {
     var opts = options || {};
@@ -135,13 +125,9 @@
       };
     }
     function scheduleMarkReady(entry) {
-      if (!entry.canvas || entry.readyShown || entry.markReadyHandle || staged || disposed || documentHidden) { return; }
-      var canvas = entry.canvas;
-      entry.markReadyHandle = requestFrame(function () {
-        entry.markReadyHandle = 0;
-        if (disposed || entry.canvas !== canvas) { return; }
-        entry.readyShown = true;
-        if (canvas.classList) { canvas.classList.add('surface-canvas-ready'); }
+      runtime.scheduleCanvasReady(entry, {
+        blocked: staged || disposed || documentHidden,
+        isLive: function () { return !disposed; },
       });
     }
     function ensureCanvas(entry) {
@@ -164,7 +150,7 @@
       scheduleMarkReady(entry); return true;
     }
     function removeEntryCanvas(entry) {
-      if (entry.markReadyHandle) { cancelFrame(entry.markReadyHandle); entry.markReadyHandle = 0; }
+      if (entry.markReadyHandle) { runtime.cancelFrame(entry.markReadyHandle); entry.markReadyHandle = 0; }
       if (entry.canvas && entry.canvas.parentNode) {
         if (typeof entry.canvas.parentNode.removeChild === 'function') { entry.canvas.parentNode.removeChild(entry.canvas); }
         else if (typeof entry.canvas.remove === 'function') { entry.canvas.remove(); }
@@ -311,13 +297,13 @@
         || pluck.active || Boolean(pendingResize);
     }
     function stopLoop() {
-      if (frameHandle) { cancelFrame(frameHandle); frameHandle = 0; }
+      if (frameHandle) { runtime.cancelFrame(frameHandle); frameHandle = 0; }
       lastPaintAt = 0;
     }
     function scheduleFrame() {
       if (!canDraw() || frameHandle) { return; }
       if (!isRestless() && !needsRepaint) { return; }
-      frameHandle = requestFrame(stepFrame);
+      frameHandle = runtime.requestFrame(stepFrame);
     }
     function requestRedraw() {
       needsRepaint = true;
@@ -339,11 +325,11 @@
     function stepFrame(timestamp) {
       frameHandle = 0;
       if (!canDraw()) { return; }
-      var now = Number.isFinite(timestamp) ? timestamp : getNow();
+      var now = Number.isFinite(timestamp) ? timestamp : runtime.getNow();
       // Unfocused windows paint at ~30 fps; focused ones at display rate.
       if (!windowFocused && lastPaintAt && now >= lastPaintAt
         && now - lastPaintAt < IDLE_FRAME_MS - FRAME_SLACK_MS) {
-        frameHandle = requestFrame(stepFrame);
+        frameHandle = runtime.requestFrame(stepFrame);
         return;
       }
       // The first frame after a rest advances nothing: dt is 0, so a long
@@ -368,7 +354,7 @@
       refreshDeviceDpr();
       pluck.active = false;
       pointer.fade = pointer.active ? 1 : 0;
-      paintNow = getNow();
+      paintNow = runtime.getNow();
       trackedHosts.forEach(drawEach);
       needsRepaint = false;
     }
@@ -468,7 +454,7 @@
       // moves the sheen's peak, not the cloth.
       pluck.col = clamp(Math.round(x / Math.max(lattice.width / (lattice.cols - 1), 0.001)), 0, lattice.cols - 1);
       pluck.row = clamp(Math.round(y / Math.max(lattice.height / (lattice.rows - 1), 0.001)), 0, lattice.rows - 1);
-      pluck.startedAt = finite(startedAt, getNow());
+      pluck.startedAt = finite(startedAt, runtime.getNow());
       pluck.amplitude = core.PLUCK_BASE_AMPLITUDE * clamp(finite(sharedConfig.motionScale, 1), 0.5, 2);
       pluck.active = true;
     }

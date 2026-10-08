@@ -21,7 +21,7 @@ is enabled; adding a connection does not bypass that boundary. See the
 
 ## 1. Open the MCP connections list
 
-Open Settings (the gear icon) → **Plugins & Extensions**. Below the Plugins and Skills groups is **MCP connections**, one row per configured server with a status badge. On a fresh install the list is empty.
+Open Settings (the gear icon) → **Extensions**. Below the Skills group is **MCP connections**, one row per configured server with a status badge. On a fresh install the list is empty.
 
 ## 2. Add a connection
 
@@ -109,7 +109,7 @@ Notes:
 
 ## Containment
 
-MCP subprocesses run under the same containment as Jenny's other side-effecting subprocesses: a Job Object on Windows (children die with Jenny), a process group plus resource limits on POSIX, and sanitized stderr. That contains a crash; it does not sandbox the server. An MCP server has the same filesystem and network access as any program you run, so only add servers you trust. [Plugin security & trust model](../PLUGIN_SECURITY.md) has the full MCP trust design.
+MCP subprocesses run under the same containment as Jenny's other side-effecting subprocesses: a Job Object on Windows (children die with Jenny), a process group plus resource limits on POSIX, and sanitized stderr. That contains a crash; it does not sandbox the server. An MCP server has the same filesystem and network access as any program you run, so only add servers you trust. [MCP servers in the tools reference](../TOOLS.md#mcp-servers) describes the approval and trust model.
 
 ## Troubleshooting
 
@@ -123,4 +123,4 @@ MCP subprocesses run under the same containment as Jenny's other side-effecting 
 ## Next
 
 - Tour the built-in tool families: [docs/TOOLS.md](../TOOLS.md).
-- Pair the connection with a reusable [skill folder](../SKILLS.md). Plugin-provided MCP contributions are retired in current source; standalone MCP connections use this separate trust flow.
+- Pair the connection with a reusable [skill folder](../SKILLS.md).

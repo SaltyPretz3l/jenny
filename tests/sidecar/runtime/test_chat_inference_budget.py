@@ -47,21 +47,14 @@ def test_required_budget_without_authority_is_refused(tmp_path):
     assert container.stack.router.last_kwargs == {}
 
 
-def test_required_budget_cannot_take_unadmitted_live_stream_path(tmp_path, monkeypatch):
-    container, params = _fixture(tmp_path)
-    container.stack.config.feature_flags = {FEATURE_AGENT_EXECUTOR: False}
-    calls = []
-    monkeypatch.setattr(container.stack.engine, "stream", lambda **_kwargs: calls.append("provider"), raising=False)
-    with pytest.raises(ChatRequestError, match="requires the admitted router"):
-        _send(container, params, streaming=True)
-    assert calls == []
-    assert container.stack.router.last_kwargs == {}
-
-
+# Every turn, a streamed mode "chat" one with the executor off included, goes
+# through the admitted router (the unadmitted live-stream path is deleted).
+@pytest.mark.parametrize("executor", [True, False])
 @pytest.mark.parametrize("streaming", [False, True])
-def test_real_router_preserves_required_budget_callback(tmp_path, streaming):
+def test_real_router_preserves_required_budget_callback(tmp_path, streaming, executor):
     container, params = _fixture(tmp_path)
-    container.stack.config.feature_flags = {FEATURE_AGENT_EXECUTOR: True}
+    params["mode"] = "chat"
+    container.stack.config.feature_flags = {FEATURE_AGENT_EXECUTOR: executor}
     _send(container, params, streaming=streaming)
     runtime = container.stack.router.last_kwargs["runtime"]
     assert runtime.request_context.inference_budget_required is True

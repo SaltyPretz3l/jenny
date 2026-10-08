@@ -148,7 +148,6 @@ function buildDeps(overrides = {}) {
     schedulerService: {},
     linkStatusService: {},
     calendarService: {},
-    chatStreamBridge: {},
     getStartupAuditConfig: () => ({ enabled: false }),
     createStartupAuditMarkHandler: () => () => ({ recorded: true }),
     createStartupAuditMarksBatchHandler: () => () => ({ recorded: true }),

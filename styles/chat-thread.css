@@ -25,6 +25,9 @@
 
 .hero-stage {
   display: grid;
+  /* One shrinkable track: an auto track grows to the hero's 560px and its max-width: 100%
+     then never caps it, so a narrow split pane clipped the heading. */
+  grid-template-columns: minmax(0, 1fr);
   position: relative;
   isolation: isolate;
   place-items: center;

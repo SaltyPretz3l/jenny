@@ -106,7 +106,7 @@ test('model_winddown after a tool boundary opens a FRESH row even though main ha
 
   assert.equal(abandonedRow.payload.text, 'POST_TOOL', 'the abandoned slice keeps only its own text');
   assert.equal(abandonedRow.discarded, true, 'the erased live slice is tombstoned');
-  assert.equal(abandonedRow.payload.truncated, true, 'and keeps the "restarted" marker');
+  assert.equal(abandonedRow.payload.discard_anchor, true, 'and folds as a discarded draft');
   assert.equal(textRowGroupIndex(abandonedRow), -1, 'out of the canonical index space');
   assert.match(abandonedRow.row_id, /:discarded$/);
 
@@ -168,7 +168,7 @@ test('tool_continuation with preserve_prior_segments:false (display flag off) is
   assert.equal(rows.length, 2);
   assert.equal(rows[0].payload.text, 'TEXT_A');
   assert.equal(rows[0].discarded, true, 'the flag-off tool_continuation tombstones like any discard');
-  assert.equal(rows[0].payload.truncated, true, 'text main erased carries the "restarted" marker');
+  assert.equal(rows[0].payload.discard_anchor, true, 'text main erased carries the discard fold');
   assert.equal(textRowGroupIndex(rows[0]), -1);
   assert.equal(rows[1].payload.text, 'TEXT_B');
   assert.equal(textRowGroupIndex(rows[1]), 0, 'numbering restarts at 0, matching the projector');
@@ -188,7 +188,7 @@ test('tool_continuation with preserve_prior_segments:false (display flag off) is
   await preserving.handlers.handleDelta(payload({ type: 'delta', content: 'TEXT_B', aggregate: 'TEXT_B' }));
   const preservedRows = preserving.textRows();
   assert.equal(preservedRows[0].discarded, undefined);
-  assert.notEqual(preservedRows[0].payload.truncated, true);
+  assert.notEqual(preservedRows[0].payload.discard_anchor, true);
   assert.deepEqual(preservedRows.map(textRowGroupIndex), [0, 1]);
 });
 

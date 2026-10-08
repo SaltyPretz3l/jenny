@@ -589,12 +589,15 @@ function createChatGptAuthService({
       transition('connecting');
       const verifier = base64Url(randomBytes(64));
       const state = base64Url(randomBytes(32));
+      flow.state = state;
       const challenge = base64Url(crypto.createHash('sha256').update(verifier).digest());
       const port = await listenForCallback(flow, state);
+      flow.port = port;
       if (flow.controller.signal.aborted) {
         throw flow.abortError;
       }
       const { authUrl, redirectUri } = buildAuthorizationUrl(port, state, challenge);
+      flow.authorizeUrl = authUrl;
       try {
         await awaitWithFlowAbort(Promise.resolve().then(() => openExternal(authUrl)), flow);
       } catch (_error) {
@@ -656,6 +659,7 @@ function createChatGptAuthService({
       gracefulSocket: null,
       server: null,
       serverSockets: null,
+      startedAt: Number(now()),
       timer: null,
     };
     activeFlow = flow;
@@ -672,6 +676,54 @@ function createChatGptAuthService({
     if (activeFlow) {
       abortFlow(activeFlow, 'auth_cancelled', 'Sign-in was cancelled.');
     }
+  }
+
+  function completeFromPastedUrl(rawUrl) {
+    const flow = activeFlow;
+    if (!flow || flow.controller.signal.aborted) return { ok: false, reason: 'no_pending_flow' };
+    if (typeof rawUrl !== 'string' || rawUrl.length > 16384) return { ok: false, reason: 'invalid_url' };
+    let url;
+    try {
+      url = new URL(rawUrl);
+    } catch (_error) {
+      return { ok: false, reason: 'invalid_url' };
+    }
+    if (!['localhost', '127.0.0.1'].includes(url.hostname)
+      || url.port !== String(flow.port) || url.pathname !== '/auth/callback') {
+      return { ok: false, reason: 'invalid_url' };
+    }
+    // Same rule as the listener: a foreign state is ignored, never consumed, so a
+    // pasted denial from an earlier attempt cannot abort the live flow.
+    if (!stateMatches(flow.state, url.searchParams.get('state'))) return { ok: false, reason: 'state_mismatch' };
+    if (url.searchParams.get('error') === 'access_denied') {
+      abortFlow(flow, 'auth_cancelled', 'Sign-in was cancelled.');
+      return { ok: false, reason: 'access_denied' };
+    }
+    const code = url.searchParams.get('code') || '';
+    if (!code || code.length > 8192) return { ok: false, reason: 'missing_code' };
+    if (flow.callbackReceived) return { ok: false, reason: 'already_received' };
+    flow.callbackReceived = true;
+    flow.resolveCallback(code);
+    return { ok: true };
+  }
+
+  function extendPending() {
+    const flow = activeFlow;
+    if (!flow || flow.controller.signal.aborted) return { ok: false, reason: 'no_pending_flow' };
+    if (flow.deadlineMs == null) {
+      flow.deadlineMs = flow.startedAt + 600000;
+      clearTimeout(flow.timer);
+      flow.timer = setTimeout(
+        () => abortFlow(flow, 'auth_timeout', 'Sign-in timed out.'),
+        Math.max(0, flow.deadlineMs - Number(now()))
+      );
+    }
+    return { ok: true, deadline_ms: flow.deadlineMs };
+  }
+
+  function getPendingAuthorizeUrl() {
+    return activeFlow && !activeFlow.controller.signal.aborted && statusState === 'connecting'
+      ? activeFlow.authorizeUrl || '' : '';
   }
 
   // Fail closed: a secure-store delete failure must NOT leave the in-memory
@@ -879,6 +931,9 @@ function createChatGptAuthService({
   return {
     start,
     cancel,
+    completeFromPastedUrl,
+    extendPending,
+    getPendingAuthorizeUrl,
     signOut,
     permanentlyExpireAuth,
     getStatus,

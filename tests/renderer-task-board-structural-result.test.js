@@ -76,3 +76,33 @@ test('task_board results take a structural render and notify successful mutation
   await waitForUi(window, 40);
   assert.equal(mutationCalls, 1, 'error results do not notify mutations');
 });
+
+test('project_notes results take the structural render too, so the Open/Undo row appears at once', async (t) => {
+  const sessionId = 'session-project-notes-structural';
+  const streamId = `stream-${sessionId}`;
+  const app = await loadRendererApp({
+    shell: { chat: { startStream: createTaskSessionStartStream(sessionId) } },
+  });
+  t.after(() => app.dispose());
+  const { window, shell } = app;
+  await submitPrompt(window);
+  await shell.__emitChat({ type: 'started', sessionId, streamId });
+  await shell.__emitChat({
+    type: 'tool_use', sessionId, streamId, callId: 'notes-1',
+    toolName: 'project_notes', summary: 'project_notes', input: { action: 'append', text: 'x' }, status: 'running',
+  });
+  await waitForUi(window, 40);
+  const runningRow = window.document.querySelector('[data-tool-call-id="notes-1"]');
+  assert.ok(runningRow);
+  runningRow.setAttribute('data-structural-sentinel', 'present');
+  await shell.__emitChat({
+    type: 'tool_result', sessionId, streamId, callId: 'notes-1',
+    toolName: 'project_notes', summary: 'project_notes', content: 'Added 1 line to the project notes.', isError: false,
+    metadata: { result_kind: 'project_notes', action: 'append', status: 'ok', project_id: 'project_general', revision: 1, journal_entry_id: 'pnj_1', summary: 'x', lines: { added: 1, removed: 0, changed: 0 }, headings: [] },
+  });
+  await waitForUi(window, 40);
+  const settledRow = window.document.querySelector('[data-tool-call-id="notes-1"]');
+  assert.ok(settledRow);
+  assert.equal(settledRow.hasAttribute('data-structural-sentinel'), false, 'the row was re-rendered, not live-patched');
+  assert.ok(settledRow.querySelector('.notes-chat__row [data-notes-open]'), 'the Open/Undo row is in the settled markup');
+});

@@ -13,7 +13,7 @@
   const PENDING_STATE = Object.freeze({
     tone: 'pending',
     label: jt('titlebar.runtimeHealth.pending', 'Pending'),
-    summary: jt('titlebar.runtimeHealth.waitingFirstTurn', 'Pending: waiting for first turn'),
+    summary: jt('titlebar.runtimeHealth.waitingFirstMessagePlain', 'Waiting for your first message.'),
   });
 
   const HEALTHY_STATE = Object.freeze({
@@ -108,7 +108,7 @@
       return {
         tone: 'danger',
         label: jt('titlebar.runtimeHealth.blocked', 'Blocked'),
-        summary: jt('titlebar.runtimeHealth.routeFailClosed', 'Blocked: route is fail-closed for {model}', { model: readModelLabel(failClosedProfile) }),
+        summary: jt('titlebar.runtimeHealth.routeBlockedPlain', 'Tool calls from {model} are blocked: Jenny could not find a safe way to run them. Choose another model or check Models.', { model: readModelLabel(failClosedProfile) }),
       };
     }
 
@@ -117,7 +117,7 @@
       return {
         tone: 'danger',
         label: jt('titlebar.runtimeHealth.blocked', 'Blocked'),
-        summary: jt('titlebar.runtimeHealth.capabilityProbeFailed', 'Blocked: capability probe failed for {model}', { model: readModelLabel(probeFailedProfile) }),
+        summary: jt('titlebar.runtimeHealth.capabilityCheckFailedPlain', 'Jenny could not check what {model} can do. Reload the model or choose another.', { model: readModelLabel(probeFailedProfile) }),
       };
     }
 
@@ -129,7 +129,7 @@
         return {
           tone: 'danger',
           label: jt('titlebar.runtimeHealth.blocked', 'Blocked'),
-          summary: jt('titlebar.runtimeHealth.serverStopped', 'Blocked: local llama-server stopped unexpectedly; it restarts on your next message{alias}', { alias: alias ? ` (${alias})` : '' }),
+          summary: jt('titlebar.runtimeHealth.serverStoppedPlain', 'The local model server stopped unexpectedly{alias}. It restarts when you send your next message.', { alias: alias ? ` (${alias})` : '' }),
         };
       }
       // A failed (re)launch parks the manager in 'stopped' with the error.
@@ -137,7 +137,7 @@
         return {
           tone: 'danger',
           label: jt('titlebar.runtimeHealth.blocked', 'Blocked'),
-          summary: jt('titlebar.runtimeHealth.serverStartFailed', 'Blocked: local llama-server failed to start{alias}: {error}', { alias: alias ? ` (${alias})` : '', error: lastError }),
+          summary: jt('titlebar.runtimeHealth.serverStartFailedPlain', 'The local model server could not start{alias}: {error}', { alias: alias ? ` (${alias})` : '', error: lastError }),
         };
       }
     }
@@ -150,7 +150,7 @@
       return {
         tone: 'warning',
         label: jt('titlebar.runtimeHealth.degraded', 'Degraded'),
-        summary: jt('titlebar.runtimeHealth.schemaRoundtripFailed', 'Degraded: schema roundtrip failed for {model}', { model: readModelLabel(roundtripFailedProfile) }),
+        summary: jt('titlebar.runtimeHealth.toolFormatCheckFailedPlain', '{model} failed the tool-format check, so tool calls may not work.', { model: readModelLabel(roundtripFailedProfile) }),
       };
     }
 
@@ -159,7 +159,7 @@
       return {
         tone: 'warning',
         label: jt('titlebar.runtimeHealth.degraded', 'Degraded'),
-        summary: jt('titlebar.runtimeHealth.profileExpired', 'Degraded: profile expired for {model}; re-probe pending', { model: readModelLabel(expiredProfile) }),
+        summary: jt('titlebar.runtimeHealth.capabilityCheckStalePlain', '{model}\u2019s capability check is out of date. Jenny will check it again.', { model: readModelLabel(expiredProfile) }),
       };
     }
 
@@ -168,7 +168,7 @@
       return {
         tone: 'warning',
         label: jt('titlebar.runtimeHealth.degraded', 'Degraded'),
-        summary: jt('titlebar.runtimeHealth.toolsDisabled', 'Degraded: tools disabled for {model}', { model: readModelLabel(toolDisabledProfile) }),
+        summary: jt('titlebar.runtimeHealth.toolsOffPlain', 'Tools are turned off for {model}.', { model: readModelLabel(toolDisabledProfile) }),
       };
     }
 
@@ -178,7 +178,7 @@
       return {
         tone: 'warning',
         label: jt('titlebar.runtimeHealth.degraded', 'Degraded'),
-        summary: jt('titlebar.runtimeHealth.toolParseFailureHigh', 'Degraded: tool-call parse failure rate is high'),
+        summary: jt('titlebar.runtimeHealth.toolCallsFailingPlain', 'Many tool calls could not be read.'),
       };
     }
 
@@ -189,7 +189,7 @@
       return {
         tone: 'warning',
         label: jt('titlebar.runtimeHealth.degraded', 'Degraded'),
-        summary: jt('titlebar.runtimeHealth.recentTurnFailed', 'Degraded: recent turn failed ({detail})', { detail }),
+        summary: jt('titlebar.runtimeHealth.recentReplyFailedPlain', 'A recent reply failed ({detail}).', { detail }),
       };
     }
 

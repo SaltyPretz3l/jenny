@@ -9,6 +9,8 @@
 // Split out of local-engine-status.js, which applies the patches built here.
 
 const MANAGED_ENGINE_TYPE = 'openai-compatible';
+const { AI_ERROR_CODES } = require('./error-codes');
+const { buildLoadFailure, classifyLoadFailure } = require('./load-failure-classifier');
 
 function ownsStoredLoad(lifecycle, load) {
   return Boolean(load)
@@ -64,6 +66,17 @@ function managedLoadPatch(service, managerStatus) {
   // Failed, crashed, stopped, or a pre-existing server was reused (nothing
   // loaded): no load to confirm, so the clock must not survive into an init.
   service._managedEngineLoad = null;
+  const lastError = String(managerStatus.lastError || '').trim();
+  if (ownsStoredLoad(service._modelLifecycle, load) && !service._managedInitializeFlight
+    && ['stopped', 'crashed', 'failed'].includes(state) && lastError) {
+    return {
+      state: 'unavailable', status: 'Model failed to load', error_code: AI_ERROR_CODES.ENGINE_CONNECTION,
+      failure: buildLoadFailure({
+        cause: classifyLoadFailure(lastError, { timedOut: /readiness_timeout/.test(lastError) }),
+        message: lastError, engine: MANAGED_ENGINE_TYPE, model: model || load.model,
+      }),
+    };
+  }
   return ownsStoredLoad(service._modelLifecycle, load) && !service._managedInitializeFlight
     ? { state: 'unloaded', status: '', percent: 0 }
     : null;

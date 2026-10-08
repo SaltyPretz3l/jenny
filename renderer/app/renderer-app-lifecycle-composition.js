@@ -78,7 +78,7 @@
     },
   }) || null;
   const {
-    escapeHtml = (v) => String(v || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;'),
+    escapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml,
     getSessionMonogram = () => 'J',
     normalizeModelToken = (v) => String(v || '').trim(),
     getActiveSession = noopNull,
@@ -257,6 +257,8 @@
       // Declared later in this scope (function declarations hoist); the IDE
       // changes panel reads the same turn view-models as the code-review rail.
       getTurnViewModelsForActiveSession: (...a) => getTurnViewModelsForActiveSession(...a),
+      getSessionMessages: (sessionId) => getSessionMessages(sessionId),
+      getChangesUndoController: () => shellArtifactBridge?.getChangesUndoController?.() || null,
       chatInput,
       composerOfflineLabel,
       homeView,
@@ -311,7 +313,7 @@
     ensureIdeLoaded = noopAsync, renderIdeSafe = noop,
     activateIdeSafe = noop,
     layoutIdeEditorSafe = noop,
-    reconcileChatDockHostSafe = noopFalse, prepareChatDockSessionTransitionSafe = noopFalse, getIdeCommandItemsSafe = () => [], openIdeChangeDiffSafe = noopFalse, openIdeFileAtLineSafe = noopFalse,
+    reconcileChatDockHostSafe = noopFalse, prepareChatDockSessionTransitionSafe = noopFalse, getIdeCommandItemsSafe = () => [], openIdeChangeDiffSafe = noopFalse, openIdeFileAtLineSafe = noopFalse, revealIdeChangesSafe = noopFalse,
     openIdeHelpOverlaySafe = noop,
     clearApprovedMemoryDraftSafe = noop,
     getApprovedMemoryByIdSafe = noopNull,
@@ -610,13 +612,11 @@
   const buildArtifactsFromMessages = typeof artifactsUtils.buildArtifactsFromMessages === 'function'
     ? artifactsUtils.buildArtifactsFromMessages
     : () => [];
-  const codeReviewRenderUtils = window.rendererCodeReviewRender || {};
   const codeReviewRailUtils = window.rendererCodeReviewRail || {};
   const diffHunksRenderUtils = window.rendererDiffHunksRender || {};
   const jennyChangeLedgerUtils = window.rendererJennyChangeLedger || {};
-  const sessionDiffReviewModelUtils = window.rendererSessionDiffReviewModel || {};
-  function getTurnViewModelsForActiveSession() {
-    const ctx = uiRuntime.projectionContextBySession?.get?.(String(state.currentSessionId || '').trim())?.currentContext;
+  function getTurnViewModelsForActiveSession(sessionId) { // the side panel passes its owning chat (split view)
+    const ctx = uiRuntime.projectionContextBySession?.get?.(String(sessionId || state.currentSessionId || '').trim())?.currentContext;
     if (!ctx || !(ctx.viewModelByTurnId instanceof Map)) return [];
     return Array.from(ctx.viewModelByTurnId.values());
   }
@@ -652,19 +652,30 @@
       showToastMessage: (...a) => showToastMessage(...a),
       toErrorMessage: (...a) => toErrorMessage(...a),
       activateWorkspaceSession: (...a) => activateWorkspaceSession(...a),
+      getProjectSwitcher: (...a) => getProjectSwitcher(...a),
       getProjectionContext: () => uiRuntime.projectionContextBySession?.get?.(String(state.currentSessionId || '').trim())?.currentContext || null,
       getChatTimelineRowModelEnabled: (...a) => getChatTimelineRowModelEnabled(...a),
       recordChatTimelineRolloutSignal: (...a) => recordChatTimelineRolloutSignal(...a),
       rollbackChatTimelineRowModel: (...a) => rollbackChatTimelineRowModel(...a),
     },
     codeReview: {
-      codeReviewRenderFactory: codeReviewRenderUtils.createCodeReviewRenderer,
       codeReviewRailFactory: codeReviewRailUtils.createCodeReviewRail,
+      // The Changes view loads on first open (row 34 S5); the IDE manifest lists the same files.
+      loadChangesView: () => codeReviewRailUtils.loadChangesViewModules?.({
+        ensureScript: window.scriptLoaderUtils?.ensureScript,
+        windowRef: window,
+        log: (...a) => appendClientLog(...a),
+      }),
       renderDiffHunks: diffHunksRenderUtils.renderDiffHunks,
       buildJennyChangeLedgerFromTurnViewModels: jennyChangeLedgerUtils.buildJennyChangeLedgerFromTurnViewModels,
-      buildSessionDiffReviewModel: sessionDiffReviewModelUtils.buildSessionDiffReviewModel,
-      resolveReviewScope: sessionDiffReviewModelUtils.resolveReviewScope,
       getTurnViewModelsForActiveSession,
+      getSessionMessages: (sessionId) => getSessionMessages(sessionId),
+      // A chat docked in the Workspace shows its review in the dock's Changes tab.
+      revealInDock: (payload) => revealIdeChangesSafe({ turnId: payload?.turnId, fileKey: payload?.fileKey, scope: payload?.scope, toolCallId: payload?.toolCallId, secondChat: Boolean(payload?.contextNode?.closest?.('[data-pane-hosted]')) }),
+      openChangeInWorkspace: (changeId) => {
+        setActiveView('ide');
+        return openIdeChangeDiffSafe(changeId);
+      },
       getWorkspaceId: () => String(state.workspace?.activeWorkspaceId || 'default'),
       showComposerActionError: (error, title) => showComposerActionError?.(error, title),
     },

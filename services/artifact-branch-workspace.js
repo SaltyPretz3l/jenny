@@ -3,6 +3,7 @@
 const { normalizeGeneratedArtifactMetadata } = require('./artifact-metadata-utils');
 const { sameProjectAuthority } = require('./artifact-session-authority');
 const { createMissingSessionCleanup } = require('./artifact-session-cleanup');
+const { assertSessionScratchDirUnredirected } = require('./artifact-scratch-containment');
 
 function capError(reason, bytes) {
   const error = new Error(`branch clone aborted: ${reason}`);
@@ -136,18 +137,37 @@ async function cloneSessionArtifactsForBranch(
   let createdTargetDir = false;
   try {
     assertCurrent();
+    const realWorkspaceRoot = await service._resolveRealPath(workspaceRoot);
+    const assertScratchUnredirected = (realScratchDir, sessionId) => {
+      try {
+        assertSessionScratchDirUnredirected({
+          pathImpl: service._path, realWorkspaceRoot, realScratchDir,
+          sessionId, sessionArtifactRoot: contract.sessionArtifactRoot,
+        });
+      } catch (error) {
+        error.branchCloneReason = 'scratch_redirected';
+        throw error;
+      }
+    };
     await service._assertRealPathInside(artifactsRoot, workspaceRoot);
     assertCurrent();
     const realSourceDir = await service._assertRealPathInside(sourceDir, artifactsRoot);
     await service._assertRealPathInside(realSourceDir, workspaceRoot);
+    assertScratchUnredirected(realSourceDir, sourceId);
     assertCurrent();
     const plan = await collectScratchCopyPlan(service, realSourceDir, { byteCap, entryCap });
     assertCurrent();
-    await service._fs.mkdir(targetDir);
+    await service._fs.mkdir(targetDir).catch(async (error) => {
+      if (error?.code === 'EEXIST') {
+        assertScratchUnredirected(await service._resolveRealPath(targetDir), targetId);
+      }
+      throw error;
+    });
     createdTargetDir = true;
     assertCurrent();
     const realTargetDir = await service._assertRealPathInside(targetDir, artifactsRoot);
     await service._assertRealPathInside(realTargetDir, workspaceRoot);
+    assertScratchUnredirected(realTargetDir, targetId);
     for (const relativePath of plan.files) {
       const destination = service._path.join(realTargetDir, relativePath);
       assertCurrent();
@@ -172,6 +192,9 @@ async function cloneSessionArtifactsForBranch(
         : null,
     };
   } catch (error) {
+    if (error?.branchCloneReason === 'scratch_redirected') {
+      return { cloned: false, reason: 'scratch_redirected' };
+    }
     if (createdTargetDir) {
       if (sourceScope.kind === 'project') {
         await createMissingSessionCleanup(

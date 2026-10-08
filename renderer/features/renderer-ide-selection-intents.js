@@ -124,13 +124,13 @@
     // three senders. `intent` is optional - the canned (Explain/Fix/...) or
     // composed (blame/squiggle) instruction renderer-ide-send-utils prepends
     // above the fenced block. Omitting it keeps a plain send intent-free.
-    function emitCodeSelection({ target, code, path, startLine, endLine, intent }) {
+    function emitCodeSelection({ target, code, path, startLine, endLine, intent, language }) {
       const payload = {
         kind: 'code_selection',
         target: target || 'current',
         code,
         path,
-        language: editorHost?.getActiveLanguageId?.() || '',
+        language: typeof language === 'string' ? language : editorHost?.getFocusedLanguageId?.() || '',
         startLine,
         endLine,
       };
@@ -142,7 +142,7 @@
 
     // Builds the send payload for the active selection (target: 'current' | 'new').
     function sendSelection(target, intent) {
-      const path = editorHost?.getActivePath?.() || '';
+      const path = editorHost?.getFocusedPath?.() || '';
       if (!path || isDiffTabId(path)) {
         return;
       }
@@ -167,7 +167,7 @@
     // selection. Degrades to a no-op (returns false) when there is no path, no
     // selection, no git bridge, or the range is not tracked in HEAD.
     async function sendBlameSummary(target) {
-      const path = editorHost?.getActivePath?.() || '';
+      const path = editorHost?.getFocusedPath?.() || '';
       if (!path || isDiffTabId(path)) {
         return false;
       }
@@ -179,6 +179,9 @@
       if (!code.trim()) {
         return false;
       }
+      // Read before the first await: an action run from an editor group's
+      // editor only sees that editor during its synchronous part.
+      const language = editorHost?.getFocusedLanguageId?.() || '';
       const client = ensureGitClient();
       if (!client || typeof client.blameRange !== 'function') {
         // Symmetric with the no-history notice below - a silently-missing git
@@ -230,6 +233,7 @@
         path,
         startLine: range.startLine,
         endLine: range.endLine,
+        language,
         intent: buildBlameSummaryIntent(commits, {
           path,
           startLine: range.startLine,
@@ -243,11 +247,11 @@
     // shape) plus the surrounding code with a fix intent. Degrades to a no-op
     // when there is no path, no cursor, or no marker on the cursor line.
     function sendSquiggleFix(target) {
-      const path = editorHost?.getActivePath?.() || '';
+      const path = editorHost?.getFocusedPath?.() || '';
       if (!path || isDiffTabId(path)) {
         return false;
       }
-      const cursor = editorHost?.getCursorInfo?.();
+      const cursor = editorHost?.getFocusedCursorInfo?.();
       if (!cursor) {
         return false;
       }

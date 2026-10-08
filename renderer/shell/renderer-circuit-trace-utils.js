@@ -41,23 +41,6 @@
 
   var LIVE_SEED_SALT = 0x9e3779b9;
 
-  function getNow() {
-    if (typeof performance !== 'undefined' && performance && typeof performance.now === 'function') {
-      return performance.now();
-    }
-    return Date.now();
-  }
-
-  function requestFrame(cb) {
-    return typeof requestAnimationFrame === 'function' ? requestAnimationFrame(cb) : 0;
-  }
-
-  function cancelFrame(handle) {
-    if (handle && typeof cancelAnimationFrame === 'function') {
-      cancelAnimationFrame(handle);
-    }
-  }
-
   function rectKey(rects) {
     var parts = [];
     for (var i = 0; i < rects.length; i++) {
@@ -193,7 +176,7 @@
       var liveCanvas = entry.liveCanvas;
       // Tracked so dispose() can cancel it (no orphaned rAF pinning a detached
       // canvas for a frame after teardown).
-      entry.markReadyHandle = requestFrame(function () {
+      entry.markReadyHandle = runtime.requestFrame(function () {
         entry.markReadyHandle = 0;
         entry.readyShown = true;
         canvas.classList.add('surface-canvas-ready');
@@ -239,7 +222,7 @@
 
     function removeEntryCanvas(entry) {
       if (entry.markReadyHandle) {
-        cancelFrame(entry.markReadyHandle);
+        runtime.cancelFrame(entry.markReadyHandle);
         entry.markReadyHandle = 0;
       }
       detach(entry.canvas);
@@ -423,12 +406,12 @@
       if (!bound || reducedMotion || documentHidden || !hasDrawableEntries()) { return; }
       if (!rafHandle) {
         lastRafAt = 0;
-        rafHandle = requestFrame(stepFrame);
+        rafHandle = runtime.requestFrame(stepFrame);
       }
     }
 
     function stopLoop() {
-      cancelFrame(rafHandle);
+      runtime.cancelFrame(rafHandle);
       rafHandle = 0;
       lastRafAt = 0;
     }
@@ -468,7 +451,7 @@
       frameCap = needsFullRate() ? 'full' : 'idle';
       if (frameCap === 'idle' && lastPaintAt
         && now - lastPaintAt < IDLE_FRAME_MS - FRAME_SLACK_MS && now >= lastPaintAt) {
-        rafHandle = requestFrame(stepFrame);
+        rafHandle = runtime.requestFrame(stepFrame);
         return;
       }
       lastPaintAt = now;
@@ -481,7 +464,7 @@
       renderFrame(advance.dtMs);
       // renderFrame's fault report can dispose us synchronously (manager kill switch).
       if (bound && !reducedMotion && !rafHandle) {
-        rafHandle = requestFrame(stepFrame);
+        rafHandle = runtime.requestFrame(stepFrame);
       }
     }
 

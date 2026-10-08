@@ -159,6 +159,20 @@ class ToolPolicySnapshot:
 
 
 @dataclass(frozen=True)
+class SemanticCatalogConfig:
+    """Validated ``semantic_catalog`` block (row 41); ``None`` on RuntimeConfig when off."""
+
+    enabled: bool
+    db_path: str
+    base_url: str
+    model_key: str
+    query_template: str
+    document_template: str
+    dims: int = 0
+    api_key: str | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     engine_type: str = "mock"
     model: str = "mock-v1"
@@ -260,11 +274,15 @@ class RuntimeConfig:
     tools_image_generate_enabled: bool = False
     tools_home_enabled: bool = False
     tools_task_board_enabled: bool = False
+    tools_project_notes_enabled: bool = False
     tools_rich_files_enabled: bool = True
     tools_knowledge_enabled: bool = False
     # Absolute paths of user-registered knowledge folders (Electron-validated;
     # the knowledge tools re-validate containment on every access).
     knowledge_roots: tuple[str, ...] = ()
+    # Semantic catalog index settings; the embedder key arrives as the
+    # ``semantic_catalog_api_key`` secret and lives only inside this object.
+    semantic_catalog: SemanticCatalogConfig | None = None
     tool_policy_snapshot: ToolPolicySnapshot | None = None
     tools_shell_enabled: bool = False
     tools_confirm_side_effects: bool = True

@@ -56,6 +56,9 @@ function createProjectBrowserService(owner, execution, { signal = null, allowEva
     screenshot: (id, options) => run('screenshot', id, options),
     click: (id, options) => run('click', id, options),
     type: (id, options) => run('type', id, options),
+    hover: (id, options) => run('hover', id, options),
+    focus: (id, options) => run('focus', id, options),
+    press: (id, options) => run('press', id, options),
     close,
   });
 }

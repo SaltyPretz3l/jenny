@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { SessionExecutionAuthority } = require('../services/backend/session-execution-authority');
+const { SessionExecutionAuthority, getTrustedExecutionBinding } = require('../services/backend/session-execution-authority');
 
 // A run-mode flip while a request is in flight (Plan toggled during the model
 // load in the 2026-09-15 GUI gate) fails the request by design. The failure
@@ -48,4 +48,30 @@ test('a run-mode change during the request throws the coded retryable run_mode_c
     assert.match(error.message, /run mode changed/i);
     return true;
   });
+});
+
+// Propose (row 35): the binding records it, and entering or leaving Propose
+// mid-request stops the reply like a Plan flip does.
+test('entering or leaving Propose during the request throws run_mode_changed', () => {
+  for (const [from, to] of [['ask', 'propose'], ['propose', 'ask'], ['propose', 'auto']]) {
+    const summary = { id: 'session_1', run_mode: from, plan_mode: false };
+    const authority = createAuthority(summary);
+    const binding = authority.captureSession('session_1', {
+      requestId: 'request_1', mode: 'assist', approvalMode: 'prompt',
+    });
+    assert.doesNotThrow(() => authority.requireCurrent(binding));
+    summary.run_mode = to;
+    assert.throws(() => authority.requireCurrent(binding), (error) => error.code === 'run_mode_changed',
+      `${from} -> ${to}`);
+  }
+});
+
+test('a Propose binding is read-only and stays put while the mode holds', () => {
+  const summary = { id: 'session_1', run_mode: 'propose', plan_mode: false };
+  const authority = createAuthority(summary);
+  const binding = authority.captureSession('session_1', {
+    requestId: 'request_1', mode: 'assist', approvalMode: 'prompt',
+  });
+  assert.doesNotThrow(() => authority.requireCurrent(binding));
+  assert.equal(getTrustedExecutionBinding(binding).readOnly, true);
 });

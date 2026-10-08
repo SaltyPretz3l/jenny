@@ -98,6 +98,10 @@
 
   function show(anchorEl, text) {
     if (!anchorEl || !text) return;
+    /* A detached anchor (a re-render removed it while a delayed show was
+     * pending) measures as a zero rect and would park the tooltip at the
+     * window's top-left corner. */
+    if (anchorEl.isConnected === false) { hide(); return; }
     if (_currentAnchor && _currentAnchor !== anchorEl) {
       _updateDescribedBy(_currentAnchor, TOOLTIP_ID, false);
     }
@@ -186,8 +190,19 @@
     return null;
   }
 
+  /* An anchor removed from the DOM never gets mouseleave/focusout, so its
+   * visible tooltip is dropped on the next delegated event. A pinned anchor
+   * keeps its pin (Escape and click-away still unpin it). */
+  function _dropDetachedAnchor() {
+    if (_currentAnchor && _currentAnchor !== _pinnedAnchor && _currentAnchor.isConnected === false) hide();
+  }
+
   function _suppressed(el) {
     return Boolean(el && typeof el.closest === 'function' && el.closest('[data-tooltip-suppressed]'));
+  }
+
+  function _isPointerFocus(el) {
+    try { return el.ownerDocument.activeElement === el && !el.matches(':focus-visible'); } catch (_e) { return false; }
   }
 
   function _scheduleShow(target, text) {
@@ -215,6 +230,7 @@
     rootEl.__invTooltipHandlersInstalled = true;
 
     rootEl.addEventListener('mouseenter', function (e) {
+      _dropDetachedAnchor();
       var target = _findTooltipTarget(e.target);
       if (!target) return;
       _migrateTitle(target);
@@ -236,9 +252,17 @@
       hide();
     }, true);
 
+    rootEl.addEventListener('mousemove', function () {
+      if (_currentAnchor) _dropDetachedAnchor();
+    }, true);
+
     rootEl.addEventListener('focusin', function (e) {
+      _dropDetachedAnchor();
       var target = _findTooltipTarget(e.target);
       if (!target) return;
+      /* Pointer-driven focus (a dropped view's tab, a click) is not keyboard focus:
+       * the hover path owns those tooltips, so one does not linger after the drop. */
+      if (_isPointerFocus(e.target)) return;
       _migrateTitle(target);
       var text = target.getAttribute('data-tooltip');
       if (!text) {

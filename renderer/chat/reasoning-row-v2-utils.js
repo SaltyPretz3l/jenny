@@ -146,7 +146,7 @@
   const LIVE_WINDOW_DETACHED_CHARS = 4 * LIVE_WINDOW_CHARS;
   const LIVE_WINDOW_ELIDED_FINGERPRINT = 'elided';
   const LIVE_WINDOW_NOTE_FINGERPRINT = 'elided-note';
-  const LIVE_WINDOW_NOTE_HTML = '<p class="reasoning-row-meta reasoning-live-window-note">' + String(jt('chat.reasoningRow.earlierThinkingAfterCompletion', 'Earlier thinking will show when this step completes.')).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') + '</p>';
+  const LIVE_WINDOW_NOTE_HTML = '<p class="reasoning-row-meta reasoning-live-window-note">' + (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml(jt('chat.reasoningRow.earlierThinkingAfterCompletion', 'Earlier thinking will show when this step completes.')) + '</p>';
 
   function resolveLiveWindowStart(units, previousStart, options) {
     const list = Array.isArray(units) ? units : [];

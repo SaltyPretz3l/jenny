@@ -160,6 +160,8 @@
         navigateToDiagnosticsTrace: (...a) => navigateToDiagnosticsTrace(...a),
         refreshPhasePercentiles: (...a) => refreshPhasePercentiles?.(...a),
         resetPhasePercentiles: (...a) => resetPhasePercentiles?.(...a),
+        // Passed through unwrapped: Diagnostics publishes its presence as the folder-picker action flag.
+        chooseWorkspaceRoot: callbacks.chooseWorkspaceRoot,
         handleWorkspaceShortcut: (...a) => handleWorkspaceShortcut(...a),
       },
     }) || null;
@@ -213,11 +215,11 @@
         // the IDE controller is never force-created off-IDE (it already exists
         // once you're on the IDE view); empty elsewhere keeps the palette scoped.
         getIdeCommandItems: () => (state.ui?.activeView === 'ide' ? getIdeCommandItemsCb() : []),
-        getPluginCommandItems: () => [],
         // Settings rows ride the same navigate-to-section seam the Settings
         // page's own search box uses, so the palette never re-implements the
         // jump (or drifts from it).
         openSettingsSection: (...a) => openSettingsSection?.(...a),
+        ensureSettingsPage: () => controllers.settingsShellController?.ensureSettingsPage?.(),
         // "Keyboard shortcuts" routes to the IDE overlay on the IDE view, else
         // the chat shortcuts overlay (replaces the prior no-op hint toast).
         openKeyboardShortcuts: () => {
@@ -285,7 +287,9 @@
       callbacks: {
         setActiveView: (...a) => setActiveView(...a),
         newChat: () => { try { dom.newChatButton?.click?.(); } catch (_err) { /* noop */ } },
-        togglePanel: () => root.rendererTopNavShellController?.togglePanelForActiveView?.() === true,
+        // In the Workspace, Ctrl+B toggles the side that holds Files (row 40 W3).
+        togglePanel: () => (state?.ui?.activeView === 'ide' && root.rendererIdeWorkbenchWiring?.getActive?.()?.togglePrimarySide?.() === true)
+          || root.rendererTopNavShellController?.togglePanelForActiveView?.() === true,
         togglePaneSplit: () => root.rendererAppPaneComposition?.getPaneComposition?.()?.toggleSplit?.() === true,
         appendClientLog: (...a) => appendClientLog(...a),
         openCapture: () => {

@@ -68,13 +68,13 @@ class _ReasonProgressReasonEngine:
         return GenerationResult(content="", finish_reason="tool_calls", tool_calls=(_WRITE_CALL,))
 
 
-def _run(engine: Any) -> list[object]:
+def _run(engine: Any, *, feature_flags: dict[str, bool] | None = None) -> list[object]:
     kernel = SimpleNamespace(
         _engine=engine,
         _config=SimpleNamespace(
             temperature=0.0,
             reasoning_effort=None,
-            feature_flags={"phase_events": True},
+            feature_flags={"phase_events": True} if feature_flags is None else feature_flags,
         ),
         _system_prompt_for_engine=str,
     )
@@ -131,3 +131,26 @@ def test_reasoning_after_tool_argument_progress_opens_a_new_phase() -> None:
     first, second = (events[index] for index in started)
     assert isinstance(first, PhaseStartedEvent) and isinstance(second, PhaseStartedEvent)
     assert first.thinking_id == second.thinking_id
+
+
+class _ReasonThenTextEngine:
+    def stream_with_tools(self, **_kwargs: Any):
+        yield StreamingEvent(kind="thinking", text="deep thought")
+        yield StreamingEvent(kind="content", text="Reply text.")
+        yield EngineEvent(kind="done")
+        return GenerationResult(content="Reply text.", finish_reason="stop")
+
+
+def test_reasoning_then_text_opens_and_closes_both_phases() -> None:
+    events = _run(_ReasonThenTextEngine())
+
+    started = {e.phase_kind for e in events if isinstance(e, PhaseStartedEvent)}
+    completed = {e.phase_kind for e in events if isinstance(e, PhaseCompletedEvent)}
+    assert started == {"reasoning", "text"}
+    assert completed == {"reasoning", "text"}
+
+
+def test_phase_events_are_not_emitted_when_the_flag_is_off() -> None:
+    events = _run(_ReasonThenTextEngine(), feature_flags={})
+
+    assert not [e for e in events if isinstance(e, (PhaseStartedEvent, PhaseCompletedEvent))]

@@ -204,6 +204,182 @@ def test_edits_honor_stale_read_snapshot(tmp_path: Path) -> None:
     assert (tmp_path / "snap.txt").read_text(encoding="utf-8") == "changed underneath\n"
 
 
+def test_noop_item_in_batch_is_skipped_and_reported(tmp_path: Path) -> None:
+    # A real batch once failed whole because one item restated its old text
+    # unchanged; the other items are still the model's intended change.
+    _write(tmp_path, "page.js", "a = 1\nb = 2\nc = 3\n")
+
+    result = edit_module.edit_file_tool(
+        {
+            "file_path": "page.js",
+            "edits": [
+                {"old_string": "a = 1", "new_string": "a = 10"},
+                {"old_string": "b = 2", "new_string": "b = 2"},
+                {"old_string": "c = 3", "new_string": "c = 30"},
+            ],
+        },
+        _guard(tmp_path),
+    )
+
+    assert result.success is True
+    assert (tmp_path / "page.js").read_text(encoding="utf-8") == "a = 10\nb = 2\nc = 30\n"
+    assert "Edit 2 made no change and was skipped." in result.output
+    assert result.metadata.get("edits_applied") == 2
+    assert result.metadata.get("edits_skipped") == [2]
+
+
+def test_noop_item_in_batch_must_still_match(tmp_path: Path) -> None:
+    _write(tmp_path, "page.js", "a = 1\n")
+
+    result = edit_module.edit_file_tool(
+        {
+            "file_path": "page.js",
+            "edits": [
+                {"old_string": "a = 1", "new_string": "a = 10"},
+                {"old_string": "missing", "new_string": "missing"},
+            ],
+        },
+        _guard(tmp_path),
+    )
+
+    assert result.success is False
+    assert result.error_code == CMP_TOOL_EXECUTION_FAILED
+    assert result.output.startswith("Edit 2: ")
+    assert (tmp_path / "page.js").read_text(encoding="utf-8") == "a = 1\n"
+
+
+def test_batch_of_only_noop_items_fails(tmp_path: Path) -> None:
+    _write(tmp_path, "page.js", "a = 1\nb = 2\n")
+
+    result = edit_module.edit_file_tool(
+        {
+            "file_path": "page.js",
+            "edits": [
+                {"old_string": "a = 1", "new_string": "a = 1"},
+                {"old_string": "b = 2", "new_string": "b = 2"},
+            ],
+        },
+        _guard(tmp_path),
+    )
+
+    assert result.success is False
+    assert result.error_code == CMP_TOOL_EXECUTION_FAILED
+    assert "identical" in result.output.lower()
+    assert (tmp_path / "page.js").read_text(encoding="utf-8") == "a = 1\nb = 2\n"
+
+
+def test_batch_reports_every_failing_item_at_once(tmp_path: Path) -> None:
+    original = "a = 1\nb = 2\nc = 3\n"
+    _write(tmp_path, "many.txt", original)
+
+    result = edit_module.edit_file_tool(
+        {
+            "file_path": "many.txt",
+            "edits": [
+                {"old_string": "a = 1", "new_string": "a = 10"},
+                {"old_string": "missing-one", "new_string": "x"},
+                {"old_string": "c = 3", "new_string": "c = 30"},
+                {"old_string": "missing-two", "new_string": "y"},
+            ],
+        },
+        _guard(tmp_path),
+    )
+
+    assert result.success is False
+    assert result.error_code == CMP_TOOL_EXECUTION_FAILED
+    assert result.output.startswith("2 of 4 edits failed; no changes were applied.")
+    assert "Edit 2: " in result.output
+    assert "Edit 4: " in result.output
+    assert "Edit 1: " not in result.output
+    assert "Edit 3: " not in result.output
+    assert result.metadata.get("failed_edits") == [2, 4]
+    assert result.metadata.get("path") == "many.txt"
+    assert (tmp_path / "many.txt").read_text(encoding="utf-8") == original
+
+
+def test_batch_failure_after_successful_earlier_item_is_still_reported(tmp_path: Path) -> None:
+    original = "alpha\nbeta\n"
+    _write(tmp_path, "later.txt", original)
+
+    result = edit_module.edit_file_tool(
+        {
+            "file_path": "later.txt",
+            "edits": [
+                {"old_string": "alpha", "new_string": "ALPHA"},
+                {"old_string": "gamma", "new_string": "x"},
+                # Sequential: matches text produced by item 1, so it still succeeds.
+                {"old_string": "ALPHA", "new_string": "Alpha"},
+                {"old_string": "beta", "new_string": "BETA"},
+                # Content is now "Alpha\nBETA\n": "A" matches twice.
+                {"old_string": "A", "new_string": "q"},
+            ],
+        },
+        _guard(tmp_path),
+    )
+
+    assert result.success is False
+    assert result.output.startswith("2 of 5 edits failed; no changes were applied.")
+    assert "Edit 2: " in result.output
+    assert "Edit 5: Found" in result.output
+    assert result.metadata.get("failed_edits") == [2, 5]
+    assert (tmp_path / "later.txt").read_text(encoding="utf-8") == original
+
+
+def test_batch_with_one_failure_keeps_single_item_wording(tmp_path: Path) -> None:
+    _write(tmp_path, "one.txt", "a = 1\n")
+
+    result = edit_module.edit_file_tool(
+        {
+            "file_path": "one.txt",
+            "edits": [
+                {"old_string": "a = 1", "new_string": "a = 2"},
+                {"old_string": "nope", "new_string": "x"},
+            ],
+        },
+        _guard(tmp_path),
+    )
+
+    assert result.success is False
+    assert result.output.startswith("Edit 2: ")
+    assert result.metadata.get("failed_edits") == [2]
+    assert (tmp_path / "one.txt").read_text(encoding="utf-8") == "a = 1\n"
+
+
+def test_batch_failures_use_cap_code_only_when_every_failure_is_a_cap_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(tmp_path, "cap.txt", "aa\nbb\n")
+    monkeypatch.setattr(edit_module, "current_max_edit_file_bytes", lambda: 8)
+    big = "z" * 50
+
+    capped = edit_module.edit_file_tool(
+        {
+            "file_path": "cap.txt",
+            "edits": [
+                {"old_string": "aa", "new_string": big},
+                {"old_string": "bb", "new_string": big},
+            ],
+        },
+        _guard(tmp_path),
+    )
+    mixed = edit_module.edit_file_tool(
+        {
+            "file_path": "cap.txt",
+            "edits": [
+                {"old_string": "aa", "new_string": big},
+                {"old_string": "missing", "new_string": "x"},
+            ],
+        },
+        _guard(tmp_path),
+    )
+
+    assert capped.error_code == CMP_TOOL_CAP_EXCEEDED
+    assert capped.metadata.get("failed_edits") == [1, 2]
+    assert mixed.error_code == CMP_TOOL_EXECUTION_FAILED
+    assert mixed.metadata.get("failed_edits") == [1, 2]
+    assert (tmp_path / "cap.txt").read_text(encoding="utf-8") == "aa\nbb\n"
+
+
 def test_apply_patch_is_no_longer_a_model_facing_binding() -> None:
     registry = build_default_registry(config={"tools_apply_patch_enabled": True})
     assert "apply_patch" not in registry

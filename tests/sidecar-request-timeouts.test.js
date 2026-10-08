@@ -32,8 +32,10 @@ test('workspace recovery RPCs have operation-sized timeout budgets', () => {
       'workspace.list_change_sets': 60_000,
       'workspace.preflight_undo': 300_000,
       'workspace.undo_change_set': 300_000,
+      'workspace.reapply_change_set': 300_000,
       'workspace.restore_trash_entry': 300_000,
       'workspace.abandon_restore': 60_000,
+      'workspace.apply_suggested_changes': 120_000,
     }
   );
 });

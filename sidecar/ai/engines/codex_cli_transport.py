@@ -20,6 +20,7 @@ from sidecar.ai.config import read_environment_value
 from sidecar.ai.engines.base import EMPTY_ASSISTANT_CONTENT_PLACEHOLDER, EngineMessage
 from sidecar.ai.tools.inband_parser import _gen_inband_call_id
 from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
+from sidecar.ai.tools.tool_call_healing import is_healing_enabled, repair_json_payload
 
 if TYPE_CHECKING:
     from sidecar.ai.engines.codex_cli import CodexCliProcessResult
@@ -90,6 +91,12 @@ _JENNY_STRUCTURED_TRANSPORT_INSTRUCTIONS = (
 )
 _BATCH_SHIM_WARNED: set[str] = set()
 _MAX_EVENT_KINDS = 24
+_MAX_DIAGNOSTIC_ENTRIES = 8
+# Character-level fixes only: a repair that strips or closes structure can
+# keep the first of several objects or a cut-off body, which is not the call.
+_SAFE_ARGUMENT_REPAIRS = frozenset(
+    {"ascii_quotes", "python_literals", "single_quotes", "trailing_comma"}
+)
 
 
 def _structured_tools_enabled() -> bool:
@@ -172,23 +179,28 @@ def _read_structured_result(parts: list[str], tool_names: list[str]) -> Generati
     texts = [*preface, message if isinstance(message, str) else ""]
     content = "\n".join(text.strip() for text in texts if text.strip())
     calls: list[ToolCallRequest] = []
-    malformed = False
+    failures: list[dict[str, Any]] = []
     for entry in payload["tool_calls"]:
-        name = str(entry.get("name") or "").strip() if isinstance(entry, dict) else ""
-        arguments = _structured_call_arguments(entry.get("arguments_json")) if name else None
-        if name not in tool_names or arguments is None:
-            malformed = True
-            continue
-        calls.append(
-            ToolCallRequest(tool_id=name, arguments=arguments, call_id=_gen_inband_call_id(name))
-        )
+        call, failure = _structured_call(entry, tool_names)
+        if call is not None:
+            calls.append(call)
+        elif failure is not None and len(failures) < _MAX_DIAGNOSTIC_ENTRIES:
+            failures.append(failure)
+    # Content-free: the transport tells the loop which envelope to re-teach.
+    diagnostics = {"transport": "structured", "entries": failures}
     if calls:
         return GenerationResult(
-            content=content, tool_calls=tuple(calls), finish_reason="tool_calls"
+            content=content,
+            tool_calls=tuple(calls),
+            finish_reason="tool_calls",
+            tool_call_parse_diagnostics=diagnostics,
         )
     # Same signal as a failed in-band candidate: the model gets its repair hint.
     return GenerationResult(
-        content=content, finish_reason="stop", inband_tool_call_parse_failed=malformed
+        content=content,
+        finish_reason="stop",
+        inband_tool_call_parse_failed=bool(failures),
+        tool_call_parse_diagnostics=diagnostics,
     )
 
 
@@ -204,16 +216,66 @@ def _schema_object(texts: list[str]) -> dict[str, Any] | None:
     return None
 
 
+def _structured_call(
+    entry: Any, tool_names: list[str]
+) -> tuple[ToolCallRequest | None, dict[str, Any] | None]:
+    """Return ``(call, None)`` for a usable entry or ``(None, diagnostic)``."""
+
+    name = str(entry.get("name") or "").strip() if isinstance(entry, dict) else ""
+    raw = entry.get("arguments_json") if isinstance(entry, dict) else None
+    diagnostic: dict[str, Any] = {
+        "tool": name if name in tool_names else "<unknown>",
+        "arguments_length": len(raw) if isinstance(raw, str) else 0,
+    }
+    if name not in tool_names:
+        return None, {**diagnostic, "reason": "unknown_tool"}
+    arguments = _structured_call_arguments(raw)
+    if arguments is None:
+        return None, {**diagnostic, **_arguments_failure(raw)}
+    return ToolCallRequest(
+        tool_id=name, arguments=arguments, call_id=_gen_inband_call_id(name)
+    ), None
+
+
+def _decode_arguments_object(text: str) -> dict[str, Any] | None:
+    # ``strict=False`` accepts raw control characters (a literal newline)
+    # inside string values, the usual slip in large bodies.
+    with suppress(ValueError):
+        decoded = json.loads(text, strict=False)
+        return decoded if isinstance(decoded, dict) else None
+    # The net's own repair passes run only when the reliability net is on, and
+    # only character-level fixes count here. Closing a cut-off string or object,
+    # or isolating one object out of a truncated list, would run the call on
+    # partial arguments (half a write_file body); a repair that leaves nothing
+    # ({} from non-blank text) discarded them. Those stay malformed and the
+    # model is asked to resend.
+    if not is_healing_enabled():
+        return None
+    healed = repair_json_payload(text)
+    if not _SAFE_ARGUMENT_REPAIRS.issuperset(healed.repairs):
+        return None
+    return healed.value or None
+
+
+def _arguments_failure(raw: Any) -> dict[str, Any]:
+    """Describe why ``arguments_json`` is unusable without echoing any of it."""
+
+    if isinstance(raw, str):
+        try:
+            json.loads(raw, strict=False)
+        except json.JSONDecodeError as error:
+            return {"reason": "json_error", "error": error.msg, "pos": error.pos}
+        except ValueError:
+            # e.g. an integer past the digit limit: no position, fixed label.
+            return {"reason": "json_error", "error": "invalid value"}
+    return {"reason": "not_object"}
+
+
 def _structured_call_arguments(raw: Any) -> dict[str, Any] | None:
     # Anything but a JSON object (bad JSON, a double-encoded string, null, a
     # list) is malformed; running the call with {} would hide the mistake.
     if isinstance(raw, str):
-        if not raw.strip():
-            return {}
-        try:
-            raw = json.loads(raw)
-        except ValueError:
-            return None
+        return {} if not raw.strip() else _decode_arguments_object(raw)
     return raw if isinstance(raw, dict) else None
 
 

@@ -144,9 +144,11 @@ test('Electron tool bridge maps edited_plan into the pre-approved tool context',
 describe('Electron tool bridge: __jenny_git_checkpoint (internal, sidecar-originated)', () => {
   test('routes to WorkspaceGitService.createCheckpoint and returns success metadata', async () => {
     let calledWith = null;
+    let allowCleanSeen = null;
     const result = await runCheckpoint({
-      async createCheckpoint({ session }) {
+      async createCheckpoint({ session, allowClean }) {
         calledWith = session;
+        allowCleanSeen = allowClean;
         return {
           ok: true,
           available: true,
@@ -161,6 +163,7 @@ describe('Electron tool bridge: __jenny_git_checkpoint (internal, sidecar-origin
     });
 
     assert.equal(calledWith, 'sess_x');
+    assert.equal(allowCleanSeen, true, 'a clean tree still gets the run a restore point');
     assert.equal(result.success, true);
     assert.equal(result.metadata.result_kind, 'auto_checkpoint');
     assert.equal(result.metadata.created, true);

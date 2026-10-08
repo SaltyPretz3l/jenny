@@ -288,7 +288,7 @@ class OfflineIntelligenceService {
     // Wave 4 "record on first load, then self-catalog": when present, feeds
     // buildModelFitEstimates() a measured-footprint store so an
     // already-observed model gets a source:'observed' fit instead of a pure
-    // estimate. Optional — null when the model_fit_estimates flag is off.
+    // estimate. Optional — null when no store is wired.
     this.modelFitObservationStore = modelFitObservationStore || null;
     this.now = typeof now === 'function' ? now : () => Date.now();
     this.lastState = this._buildDefaultState();
@@ -529,8 +529,8 @@ class OfflineIntelligenceService {
           hardwareProfile,
           memory,
           modelRecommendations,
-          configService: this.configService,
           observationStore: this.modelFitObservationStore,
+          loadContextLengthFor: (modelId) => this._ollamaLoadContextLength(modelId),
         }).catch(() => []);
         const result = {
           ...state,
@@ -550,6 +550,21 @@ class OfflineIntelligenceService {
     })();
     this._diagnosticsInFlightPromise = inFlightPromise;
     return inFlightPromise;
+  }
+
+  // The n_ctx an Ollama load gets: the per-model Settings override, else the
+  // managed shell clamp (managed-sidecar-config.js sends the same pair).
+  _ollamaLoadContextLength(modelId) {
+    const {
+      getConfiguredContextLengthOverride,
+    } = require('./backend/managed-sidecar-config');
+    const { DEFAULT_MANAGED_SHELL_CONTEXT_LENGTH } = require('./backend/backend-config');
+    const config = this.configService;
+    const tuning = typeof config?.getCompactionTuning === 'function'
+      ? config.getCompactionTuning()
+      : config?.getState?.()?.compactionTuning;
+    return getConfiguredContextLengthOverride(tuning, modelId, 'ollama')
+      ?? DEFAULT_MANAGED_SHELL_CONTEXT_LENGTH;
   }
 
   async updateSettings(patch = {}) {

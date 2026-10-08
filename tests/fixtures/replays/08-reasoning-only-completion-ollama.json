@@ -57,7 +57,8 @@
         "delta": "I should explain this carefully.",
         "thinking_id": "think_req_replay_model",
         "kind": "reasoning",
-        "persist": false
+        "persist": false,
+        "thinking_budget_chars": 265
       }
     },
     {
@@ -66,15 +67,18 @@
         "delta": "Actually, I am not sure what to do.",
         "thinking_id": "think_req_replay_model",
         "kind": "reasoning",
-        "persist": true
+        "persist": true,
+        "thinking_budget_chars": 265
       }
     },
     {
-      "method": "chat.error",
+      "method": "chat.thinking",
       "params": {
-        "code": "CMP-STREAM-REASONING-ONLY",
-        "message": "Reasoning-only completion (no visible text and no tool call)",
-        "retryable": false
+        "delta": "Reasoning-only completion (no visible text and no tool call)",
+        "thinking_id": "think_req_replay_stop",
+        "kind": "status",
+        "persist": false,
+        "code": "CMP-STREAM-REASONING-ONLY"
       }
     }
   ],

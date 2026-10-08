@@ -31,8 +31,7 @@ function makeCoordinator(overrides = {}) {
   const toasts = [];
   const logs = [];
   const coordinator = createWindowExitPreflight({
-    // Left undefined by default so the factory falls back to globalThis, which
-    // carries no mounted plugin-session controller in these unit tests.
+    // Left undefined by default so the factory falls back to globalThis.
     root: overrides.root,
     getCloseOrchestrator: overrides.getCloseOrchestrator || (() => null),
     getShell: overrides.getShell || (() => null),
@@ -42,18 +41,6 @@ function makeCoordinator(overrides = {}) {
     appendClientLog: (level, event, details) => logs.push({ level, event, details }),
   });
   return { coordinator, toasts, logs };
-}
-
-// A session-bound native plugin is settled before the dirty-buffer prompt.
-function makePluginSessionRoot(guard, { sessionId = 's-plugin' } = {}) {
-  return {
-    rendererPluginSessions: {
-      instance: {
-        getActiveSessionId: () => sessionId,
-        guardLeaveSession: guard,
-      },
-    },
-  };
 }
 
 test('a clean IDE proceeds with no prompt', async () => {
@@ -143,63 +130,21 @@ test('the update-restart path aborts when the user cancels', async () => {
   assert.equal(result.proceed, false, 'a canceled preflight aborts the update restart');
 });
 
-test('an active plugin session blocks the exit when teardown proof is declined', async () => {
-  const { orch, calls } = makeOrchestrator({ dirty: [] });
-  const seen = [];
+test('exit needs no plugin round-trip even when a stale plugin-session global exists', async () => {
+  const { orch } = makeOrchestrator({ dirty: [] });
+  let guardCalls = 0;
   const { coordinator } = makeCoordinator({
     getCloseOrchestrator: () => orch,
-    root: makePluginSessionRoot(async (sessionId, reason) => {
-      seen.push([sessionId, reason]);
-      return false;
-    }),
+    root: { rendererPluginSessions: { instance: {
+      getActiveSessionId: () => { guardCalls += 1; return 's-old'; },
+      guardLeaveSession: async () => { guardCalls += 1; return false; },
+    } } },
   });
 
   const result = await coordinator.preflightExit('close');
-
-  assert.deepEqual(result, { proceed: false, reason: 'plugin_session_active' });
-  assert.deepEqual(seen, [['s-plugin', 'window_close']], 'the guard is told which session and why');
-  assert.equal(calls.preflight.length, 0, 'a blocked plugin exit never reaches the dirty-buffer prompt');
-});
-
-test('an allowed plugin-session guard falls through to the dirty-buffer preflight', async () => {
-  const { orch } = makeOrchestrator({ dirty: [] });
-  const { coordinator } = makeCoordinator({
-    getCloseOrchestrator: () => orch,
-    root: makePluginSessionRoot(async () => true),
-  });
-
-  const result = await coordinator.preflightExit('reload');
 
   assert.deepEqual(result, { proceed: true, reason: 'clean' });
-});
-
-test('a rejecting plugin-session guard fails closed and blocks the exit', async () => {
-  // The guard decision is fail-closed on purpose: if the guard itself breaks we
-  // must not fall through to "allow" and destroy an in-flight generation.
-  const { orch, calls } = makeOrchestrator({ dirty: [] });
-  const { coordinator } = makeCoordinator({
-    getCloseOrchestrator: () => orch,
-    root: makePluginSessionRoot(async () => { throw new Error('guard exploded'); }),
-  });
-
-  const result = await coordinator.preflightExit('close');
-
-  assert.deepEqual(result, { proceed: false, reason: 'plugin_session_active' });
-  assert.equal(calls.preflight.length, 0);
-});
-
-test('a synchronously throwing plugin-session guard also fails closed', async () => {
-  // Guards the try/catch specifically: a `.catch()` on the returned promise
-  // would miss a guard that throws before it ever returns one.
-  const { orch } = makeOrchestrator({ dirty: [] });
-  const { coordinator } = makeCoordinator({
-    getCloseOrchestrator: () => orch,
-    root: makePluginSessionRoot(() => { throw new Error('sync explosion'); }),
-  });
-
-  const result = await coordinator.preflightExit('close');
-
-  assert.deepEqual(result, { proceed: false, reason: 'plugin_session_active' });
+  assert.equal(guardCalls, 0, 'no plugin process can exist, so the exit never consults a guard');
 });
 
 test('a native-close request runs the preflight and replies over the bridge', async () => {

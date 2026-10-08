@@ -21,12 +21,17 @@ function scopedToolAvailability(status, state, descriptorFor) {
       else if (descriptor.plan_mode_only) {
         if (state.mode !== 'plan') reason = 'tool is available only in plan mode';
         else if (reason === 'tool is available only in plan mode') reason = null;
+      } else if (descriptor.propose_mode_only) {
+        // Plan Plus: the captured request state says whether this is a Propose run.
+        if (state.proposeMode !== true) reason = 'tool is available only in propose mode';
+        else if (reason === 'tool is available only in propose mode') reason = null;
       } else if (state.readOnly && descriptor.side_effecting && !hasReadAction(descriptor)) reason = 'read-only mode blocks side-effecting tools';
       if (state.toolPreferences?.disabled_tools?.includes(name)
         || state.liveDisabledTools?.has(name)) reason = 'disabled for this request';
     }
     tools[name] = { ...entry, available: !reason && (entry.available === true
-      || (descriptor?.plan_mode_only && state.mode === 'plan')), reason };
+      || (descriptor?.plan_mode_only && state.mode === 'plan')
+      || (descriptor?.propose_mode_only && state.proposeMode === true)), reason };
   }
   return { tools_status: tools, tools_status_scope: 'request',
     project_id: state.authority.project_id, workspace_configured: Boolean(state.authority.root_path),

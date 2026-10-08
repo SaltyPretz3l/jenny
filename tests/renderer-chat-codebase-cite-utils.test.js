@@ -239,7 +239,7 @@ test('clicking a cite link dispatches ide:open-file-at-line and falls back to op
   anchor.dispatchEvent(event);
 
   assert.equal(event.defaultPrevented, true);
-  assert.deepEqual(events, [{ path: 'services/auth/login.js', line: 42, column: null }]);
+  assert.deepEqual(events, [{ path: 'services/auth/login.js', line: 42, column: null, pane: 0 }]);
   // No listener claimed the event (none called preventDefault) -> OS fallback.
   assert.deepEqual(opens, [{ path: 'services/auth/login.js' }]);
 });

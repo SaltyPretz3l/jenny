@@ -55,6 +55,7 @@ DEFAULT_TOOL_POLICIES = {
     "grep_search": "auto",
     "write_file": "ask",
     "edit_file": "ask",
+    "propose_change": "auto",
     "run_command": "ask",
     "create_artifact": "ask",
     "jenny_status": "auto",

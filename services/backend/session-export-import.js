@@ -8,6 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { redactExportSecretsInValue } = require('./transcript-export-redaction');
 const {
   normalizeSession,
   normalizeMessage,
@@ -226,6 +227,7 @@ function exportSession(sessionStore, sessionId, attachmentStore = null, options 
     },
   };
 
+  payload.session = redactExportSecretsInValue(payload.session);
   return JSON.stringify(payload, null, 2);
 }
 
@@ -296,11 +298,17 @@ function validateSessionImportPayload(jsonPayload) {
     || parsed.session.turn_events.some((event) => !event || typeof event !== 'object' || Array.isArray(event)))) {
     throw createImportError('format_mismatch', 'Session turn events are malformed.');
   }
+  const messageIds = new Set();
   for (const message of parsed.session.messages || []) {
     if (!message || typeof message !== 'object' || Array.isArray(message)
       || (message.attachments !== undefined && !Array.isArray(message.attachments))) {
       throw createImportError('format_mismatch', 'Session message is malformed.');
     }
+    const messageId = String(message.id || '');
+    if (messageId && messageIds.has(messageId)) {
+      throw createImportError('format_mismatch', 'Session message is malformed.');
+    }
+    if (messageId) messageIds.add(messageId);
     for (const attachment of message.attachments || []) {
       if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) {
         throw createImportError('format_mismatch', 'Session attachment is malformed.');
@@ -378,7 +386,12 @@ function importSession(sessionStore, jsonPayload, attachmentStore, options = {})
           }
           savedAssetPaths.push(savedMeta.assetPath);
           const clean = stripAttachmentLocalFields(attachment);
-          return { ...clean, assetPath: savedMeta.assetPath };
+          return {
+            ...clean,
+            assetPath: savedMeta.assetPath,
+            ...(typeof savedMeta.mimeType === 'string' && savedMeta.mimeType.length > 0
+              ? { mimeType: savedMeta.mimeType } : {}),
+          };
         });
         return normalizeMessage({ ...message, attachments: restoredAttachments });
       }

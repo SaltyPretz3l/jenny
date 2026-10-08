@@ -44,10 +44,10 @@
       // projection are byte-identical.
       isDeterministicRowIdEnabled,
       recordChatTimelineRolloutSignal,
-      // chat_timeline_render_telemetry (Track A): TEMPORARY per-session
-      // resolver for the streaming-flicker diagnostics. Absent/false (the
-      // default) => the affirmative "clean reconcile" signal below never
-      // fires; reconcile itself is completely untouched either way.
+      // Render-path telemetry (Track A): per-session resolver for the
+      // streaming-flicker diagnostics. Absent/false => the affirmative "clean
+      // reconcile" signal below never fires; reconcile itself is completely
+      // untouched either way.
       isRenderTelemetryEnabled,
       appendClientLog,
     } = options || {};
@@ -434,7 +434,7 @@
           recoveredKeys: reconciliation.secondPassMatches.map((match) => String(match && match.key || '')),
         });
       }
-      // chat_timeline_render_telemetry (Track A): affirmative zero-count signal —
+      // Render-path telemetry (Track A): affirmative zero-count signal —
       // this turn's terminal reconcile needed neither stale-row deletion nor the
       // deterministic-row_id second-pass recovery net. Kept as an independent
       // `if` (disjoint from the DC1 branch above: it requires both counts 0, that

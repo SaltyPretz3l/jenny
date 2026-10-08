@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const appearance = require('../renderer/shared/appearance-utils');
 const { normalizePortablePreferences } = require('../services/data-lifecycle/portable-preferences-store');
-const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { loadRendererApp, waitForUi, openSettingsView } = require('./helpers/renderer-shell-harness');
 
 function createStorage(initial = {}) {
   const values = new Map(Object.entries(initial));
@@ -49,6 +49,7 @@ test('artifactAutoOpen is portable but never a theme-bundle axis', () => {
 test('Settings offers the default-off artifact toggle and persists changes independently of themes', async (t) => {
   const app = await loadRendererApp();
   t.after(() => app.dispose());
+  await openSettingsView(app.window);
   const { window } = app;
   const doc = window.document;
   const list = doc.querySelector('[data-setting-mount="appearanceArtifactAutoOpenToggle"]');

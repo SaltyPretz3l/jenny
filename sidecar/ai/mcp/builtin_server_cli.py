@@ -3,6 +3,36 @@
 import argparse
 
 
+def _add_knowledge_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--knowledge-enabled", dest="knowledge_enabled", default="0")
+    # Repeatable: one flag per registered knowledge root. Roots are paths, not
+    # secrets, so argv delivery matches --workspace-root.
+    parser.add_argument(
+        "--knowledge-root",
+        dest="knowledge_roots",
+        action="append",
+        default=[],
+    )
+    _add_semantic_catalog_arguments(parser)
+
+
+def _add_semantic_catalog_arguments(parser: argparse.ArgumentParser) -> None:
+    """Semantic catalog reader for knowledge_search (row 41).
+
+    Paths, a loopback URL and a prompt template only: the embedder takes no
+    key, and the index is opened read-only (the main sidecar owns the writer).
+    """
+    parser.add_argument("--semantic-catalog-db", dest="semantic_catalog_db", default="")
+    parser.add_argument("--semantic-catalog-url", dest="semantic_catalog_url", default="")
+    parser.add_argument(
+        "--semantic-catalog-model-key", dest="semantic_catalog_model_key", default=""
+    )
+    parser.add_argument(
+        "--semantic-catalog-query-template", dest="semantic_catalog_query_template", default=""
+    )
+    parser.add_argument("--semantic-catalog-dims", dest="semantic_catalog_dims", default="0")
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     _add_host_arguments(parser)
@@ -87,15 +117,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default="0",
     )
     parser.add_argument("--rich-files-enabled", dest="rich_files_enabled", default="0")
-    parser.add_argument("--knowledge-enabled", dest="knowledge_enabled", default="0")
-    # Repeatable: one flag per registered knowledge root. Roots are paths, not
-    # secrets, so argv delivery matches --workspace-root.
-    parser.add_argument(
-        "--knowledge-root",
-        dest="knowledge_roots",
-        action="append",
-        default=[],
-    )
+    _add_knowledge_arguments(parser)
     parser.add_argument("--distill-enabled", dest="distill_enabled", default="1")
     parser.add_argument("--lsp-enabled", dest="lsp_enabled", default="0")
     parser.add_argument(

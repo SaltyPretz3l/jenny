@@ -88,6 +88,19 @@ describe('preview_test / one-shot lifecycle', () => {
     assert.equal(callsOf(service, 'open').length, 0);
   });
 
+  test('a width/height viewport object is rejected with a hint', async () => {
+    const root = makeWorkspace();
+    const service = stubService();
+    const result = await makeTool().execute(
+      { path: 'index.html', viewport: { width: 320, height: 740 } },
+      makeContext(root, service)
+    );
+    assert.equal(result.isError, true);
+    assert.equal(result.metadata.reason, 'invalid_viewport');
+    assert.match(result.content, /width\/height objects are not supported/);
+    assert.equal(callsOf(service, 'open').length, 0);
+  });
+
   test('wait_ms is clamped to the 5000ms ceiling', async () => {
     const root = makeWorkspace();
     const service = stubService();
@@ -396,6 +409,85 @@ describe('preview_test / bounded events', () => {
     assert.match(result.content, /applied 1 of 2 event\(s\)/);
     assert.match(result.content, /1\. click "#go" → selector_miss/);
     assert.match(result.content, /2\. type "#name" → typed/);
+  });
+
+  test('hover, focus and press events are forwarded in order with their arguments', async () => {
+    const root = makeWorkspace();
+    const service = stubService();
+    const result = await makeTool().execute(
+      {
+        path: 'index.html',
+        events: [
+          { action: 'hover', selector: '#menu' },
+          { action: 'focus', selector: '#name' },
+          { action: 'press', key: 'Enter', selector: '#name' },
+          { action: 'press', key: 'Escape' },
+        ],
+      },
+      makeContext(root, service)
+    );
+
+    assert.equal(result.isError, false);
+    const sessionId = callsOf(service, 'open')[0][1].sessionId;
+    assert.deepEqual(callsOf(service, 'hover').map((c) => c.slice(1)), [[sessionId, { selector: '#menu' }]]);
+    assert.deepEqual(callsOf(service, 'focus').map((c) => c.slice(1)), [[sessionId, { selector: '#name' }]]);
+    assert.deepEqual(
+      callsOf(service, 'press').map((c) => c.slice(1)),
+      [[sessionId, { key: 'Enter', selector: '#name' }], [sessionId, { key: 'Escape', selector: '' }]]
+    );
+    assert.deepEqual(
+      result.metadata.events.map((entry) => `${entry.action}:${entry.status}`),
+      ['hover:hovered', 'focus:focused', 'press:pressed', 'press:pressed']
+    );
+    assert.equal(result.metadata.events[2].key, 'Enter');
+    assert.match(result.content, /applied 4 of 4 event\(s\)/);
+    assert.match(result.content, /press Enter/);
+  });
+
+  test('press requires an allowlisted key; other actions still require a selector', async () => {
+    const root = makeWorkspace();
+    for (const bad of [
+      [{ action: 'press' }],
+      [{ action: 'press', key: 'F5' }],
+      [{ action: 'press', key: 'enter' }],
+      [{ action: 'hover' }],
+      [{ action: 'focus' }],
+      [{ action: 'click' }],
+      [{ action: 'click', selector: '#x', key: 'Enter' }],
+    ]) {
+      const service = stubService();
+      const result = await makeTool().execute(
+        { path: 'index.html', events: bad },
+        makeContext(root, service)
+      );
+      assert.equal(result.isError, true, `${JSON.stringify(bad)} must be rejected`);
+      assert.equal(result.metadata.reason, 'invalid_event');
+      assert.equal(callsOf(service, 'open').length, 0);
+    }
+  });
+
+  test('a literal " " or Spacebar press is sent as Space (gate recheck 2026-10-05)', async () => {
+    const root = makeWorkspace();
+    const service = stubService();
+    const result = await makeTool().execute(
+      { path: 'index.html', events: [{ action: 'press', key: ' ' }, { action: 'press', key: 'Spacebar' }] },
+      makeContext(root, service)
+    );
+    assert.equal(result.isError, false);
+    assert.deepEqual(callsOf(service, 'press').map((c) => c[2].key), ['Space', 'Space']);
+    assert.deepEqual(result.metadata.events.map((event) => event.key), ['Space', 'Space']);
+  });
+
+  test('every allowlisted press key is accepted without a selector', async () => {
+    const root = makeWorkspace();
+    const keys = ['Enter', 'Space', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+    const service = stubService();
+    const result = await makeTool().execute(
+      { path: 'index.html', events: keys.map((key) => ({ action: 'press', key })) },
+      makeContext(root, service)
+    );
+    assert.equal(result.isError, false);
+    assert.deepEqual(callsOf(service, 'press').map((c) => c[2].key), keys);
   });
 
   test('more than 10 events fails closed before any window opens', async () => {

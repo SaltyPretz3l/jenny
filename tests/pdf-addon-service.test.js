@@ -14,7 +14,7 @@ const { EventEmitter } = require('node:events');
 
 const { PDF_ADDON_ENV, PdfAddonService, runSidecarProbe } = require('../services/pdf-addon-service');
 const { registerPdfAddonIpc } = require('../services/main/pdf-addon-ipc-registration');
-const { assembleZip } = require('./helpers/plugins/hostile-archive-builder');
+const { assembleZip } = require('./helpers/hostile-archive-builder');
 const { cleanupTrackedResources, createTrackedTempDir } = require('./helpers/resource-cleanup');
 const { initializeSessionRuntimeComposition } = require('../services/session-runtime/composition');
 const { captureRuntimeRoute } = require('../services/session-runtime/lanes');

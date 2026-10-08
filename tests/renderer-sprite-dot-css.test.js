@@ -263,7 +263,7 @@ test('every light palette overrides the sprite tones and meets 3:1 on its chat b
 });
 
 // --- 4. root, scaling, urgent, suspended ---------------------------------------
-test('the dot root is a fixed 30px centered coordinate space that alone takes the breakpoint scale', () => {
+test('the dot root is a fixed 30px centered coordinate space that alone takes the throbber and breakpoint scale', () => {
   const root = declsFor(baseRules, D);
   assert.equal(root.get('width'), '30px');
   assert.equal(root.get('height'), '30px');
@@ -271,9 +271,9 @@ test('the dot root is a fixed 30px centered coordinate space that alone takes th
   assert.equal(root.get('inset-block-start'), '50%');
   assert.equal(root.get('inset-inline-start'), '50%');
   assert.equal(root.get('transform'), 'scale(var(--sprite-dot-scale))');
-  assert.equal(declsFor(baseRules, ':root').get('--sprite-dot-scale'), '1');
+  assert.equal(declsFor(baseRules, ':root').get('--sprite-dot-scale'), 'var(--tl-throbber-scale)');
   const media = baseRules.filter((rule) => rule.context === '@media (max-width: 700px)');
-  assert.equal(declsFor(media, '.chat-view').get('--sprite-dot-scale'), '0.8');
+  assert.equal(declsFor(media, '.chat-view').get('--sprite-dot-scale'), 'calc(0.8 * var(--tl-throbber-scale))');
   // The ratio mirrors chat-media-queries.css: --chat-sprite-size clamp(22px, 5vw, 24px) is 24px
   // at every width where the rail still shows (phones hide it at <= 480px), and 24 / 30 = 0.8.
   assert.match(read('styles/chat-media-queries.css'),
@@ -284,6 +284,33 @@ test('the dot root is a fixed 30px centered coordinate space that alone takes th
         `${rule.prelude} must not carry the scale`);
     }
   }
+});
+
+test('throbbers follow Text size at a damped rate and leave the machinery dot alone', () => {
+  const tokens = declsFor(parseSheet(read('styles/chat-timeline-tokens.css')).rules, ':root');
+  assert.equal(tokens.get('--tl-dot-size'), '6px', 'settled machinery and task-rail dots keep their size');
+  const scale = tokens.get('--tl-throbber-scale');
+  assert.equal(scale, 'min(calc(0.55 + var(--font-scale,1.2) * 0.5),1.2)');
+  assert.equal(tokens.get('--tl-activity-dot-size'), 'calc(var(--tl-dot-size) * var(--tl-throbber-scale))');
+  // Small / Default / Large text presets (appearance-utils FONT_SCALE_PRESETS).
+  const evaluate = (fontScale) => Math.min(0.55 + fontScale * 0.5, 1.2);
+  assert.deepEqual([1.1, 1.2, 1.3].map((f) => Number(evaluate(f).toFixed(3))), [1.1, 1.15, 1.2]);
+  // At the cap, the widest form (the think moon's orbit plus its radius)
+  // stays inside the 15px half-slot of the 30px rail.
+  const orbit = Math.max(...[...dot.keyframes.get('sprite-moon').values()]
+    .map((frame) => Math.abs(parseFloat(frame.transform.match(/translate\((-?[\d.]+)px/)[1]))));
+  const moonRadius = parseFloat(declsFor(baseRules, `${state('think')} .p2`).get('width')) / 2;
+  assert.ok((orbit + moonRadius) * evaluate(1.3) < 15, `moon reaches ${(orbit + moonRadius) * evaluate(1.3)}px`);
+
+  const row = parseSheet(read('styles/chat-activity-row.css'));
+  const rowCss = stripComments(read('styles/chat-activity-row.css'));
+  assert.equal(/var\(--tl-dot-size\)/.test(rowCss), false, 'the activity row sizes from the throbber token');
+  const dotDecls = declsFor(row.rules, '.turn-activity-row > .status-dot');
+  assert.equal(dotDecls.get('width'), 'var(--tl-activity-dot-size)');
+  assert.equal(dotDecls.get('height'), 'var(--tl-activity-dot-size)');
+  const glyph = declsFor(row.rules, '.turn-activity-row[data-turn-activity-kind="checklist"] > .turn-activity-glyph');
+  assert.equal(glyph.get('width'), 'calc(12px * var(--tl-throbber-scale))');
+  assert.equal(glyph.get('height'), 'calc(11px * var(--tl-throbber-scale))');
 });
 
 test('data-morph-urgent switches every dot transition to the urgent duration', () => {

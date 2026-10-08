@@ -191,6 +191,16 @@
   color: var(--text-muted);
 }
 
+/* Settled = superseded by a rerun or resumed reply below: a record of the
+ * stop, not an offer, so it recedes a step further than calm. */
+.chat-error-card--settled {
+  opacity: 0.85;
+}
+
+.chat-error-card--settled .chat-error-card-title {
+  color: var(--text-muted);
+}
+
 .chat-error-card-head {
   display: flex;
   align-items: center;
@@ -327,28 +337,89 @@
   font-size: var(--tl-font-ui);
 }
 
-/* ── Truncation marker (EH-W5) ───────────────────────────────────────
- * Hairline + muted label appended to rows whose streamed tail was
- * discarded by a stream_reset. Subtle by design: a clean recovery
- * shows only this. */
+/* ── Draft discarded (stream_reset) ───────────────────────────────────
+ * Live: a closed <details> fold in place of the erased draft. Settled: a
+ * one-line receipt under the answer. Typography and whitespace only. */
 
-.chat-truncation-marker {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+.chat-discarded-draft {
+  margin: var(--space-1) 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+}
+
+.chat-discarded-draft summary {
+  display: block;
+  cursor: pointer;
+  list-style: none;
+}
+
+.chat-discarded-draft summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-discarded-draft summary > span + span {
+  margin-inline-start: var(--space-1);
+}
+
+.chat-discarded-draft-chevron {
+  display: inline-block;
+  font-size: 0.7em;
+  transition: transform 0.15s ease;
+}
+
+[dir="rtl"] .chat-discarded-draft:not([open]) .chat-discarded-draft-chevron {
+  transform: scaleX(-1);
+}
+
+.chat-discarded-draft[open] .chat-discarded-draft-chevron {
+  transform: rotate(90deg);
+}
+
+.chat-discarded-draft-what {
+  color: var(--text-primary);
+  opacity: 0.72;
+  white-space: nowrap;
+}
+
+.chat-discarded-draft summary:hover .chat-discarded-draft-what {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-discarded-draft summary:focus-visible {
+  outline: 2px solid var(--accent, currentColor);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.chat-discarded-draft-body {
+  margin-top: var(--space-2);
+}
+
+.chat-discarded-draft-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-discarded-draft-label {
+  margin-top: var(--space-2);
+  font-weight: 600;
+}
+
+.chat-discarded-draft-trimmed,
+.chat-discarded-draft-note {
+  margin-top: var(--space-1);
+  font-size: 0.92em;
+}
+
+.chat-discarded-receipt {
   margin-top: var(--space-1);
   color: var(--text-muted);
   font-size: var(--tl-font-meta);
-  user-select: none;
-}
-
-.chat-truncation-marker-rule {
-  flex: 1;
-  height: 1px;
-  background: color-mix(in srgb, var(--text-muted) 25%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .chat-discarded-draft-chevron,
   .origin-chip {
     transition: none;
   }

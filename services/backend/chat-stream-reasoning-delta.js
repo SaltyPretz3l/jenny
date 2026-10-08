@@ -61,9 +61,7 @@ function appendProviderReasoningDelta(ctx, delta, timestamp = new Date().toISOSt
     service, streamId, resolvedSessionId, transcriptCollector, assistantBaseMessageId,
     emitChatStream, noteTurnEvent,
   } = ctx;
-  // The V2 coalescer replaces entries by id and cannot preserve append edits.
-  const reasoningWireEnabled = service?.featureFlags?.reasoning_wire_deltas === true
-    && service?.featureFlags?.stream_envelope_v2 !== true;
+  const reasoningWireEnabled = service?.featureFlags?.reasoning_wire_deltas === true;
   if (!reasoningWireEnabled) {
     delete ctx.reasoningWireLast;
     ctx.reasoningWireResyncPending = false;

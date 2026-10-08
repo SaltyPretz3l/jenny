@@ -49,7 +49,7 @@ _FIX_TEMPLATES: dict[str, str] = {
 _FIELD_LIMIT = 240
 
 
-def _optional_text(value: object) -> str | None:
+def _optional_text(value: object, *, tool_name: str | None = None) -> str | None:
     """Single-line, bounded field value.
 
     Field values arrive from handler metadata and persisted history; an
@@ -58,7 +58,8 @@ def _optional_text(value: object) -> str | None:
     """
     if value is None:
         return None
-    text = _WHITESPACE_RE.sub(" ", str(value)).strip()
+    text = sanitize_tool_output_no_truncate(str(value), tool_name=tool_name)
+    text = _WHITESPACE_RE.sub(" ", text).strip()
     return text[:_FIELD_LIMIT] if text else None
 
 
@@ -102,11 +103,11 @@ def _neutralize_body(text: str) -> str:
     return neutralized.replace(_CLOSE_TAG, "</untrusted_tool_output[escaped]>")
 
 
-def _sanitize_detail(value: object) -> str | None:
+def _sanitize_detail(value: object, *, tool_name: str | None = None) -> str | None:
     flattened = _WHITESPACE_RE.sub(" ", str(value or "")).strip()
     if not flattened:
         return None
-    sanitized = sanitize_tool_output_no_truncate(flattened)
+    sanitized = sanitize_tool_output_no_truncate(flattened, tool_name=tool_name)
     sanitized = sanitized.replace("## Tool Result", "## [escaped] Tool Result")
     sanitized = sanitized.replace(_OPEN_TAG, "<untrusted_tool_output[escaped]>")
     sanitized = sanitized.replace(_CLOSE_TAG, "</untrusted_tool_output[escaped]>")
@@ -142,7 +143,7 @@ def render_tool_result_envelope(  # noqa: C901, PLR0912, PLR0913  # envelope
         effects = "saved"
 
     if ok:
-        if (effects_text := _optional_text(effects)) is not None:
+        if (effects_text := _optional_text(effects, tool_name=tool_id)) is not None:
             lines.append(f"effects: {effects_text}")
         if elapsed is not None:
             lines.append(f"elapsed_ms: {elapsed}")
@@ -152,21 +153,24 @@ def render_tool_result_envelope(  # noqa: C901, PLR0912, PLR0913  # envelope
         )
         if valid_failure_class is not None:
             lines.append(f"error_class: {valid_failure_class}")
-        if (error_code_text := _optional_text(error_code)) is not None:
+        if (error_code_text := _optional_text(error_code, tool_name=tool_id)) is not None:
             lines.append(f"error_code: {error_code_text}")
-        if (effects_text := _optional_text(effects)) is not None:
+        if (effects_text := _optional_text(effects, tool_name=tool_id)) is not None:
             lines.append(f"effects: {effects_text}")
-        if (failed_phase_text := _optional_text(failed_phase)) is not None:
+        if (failed_phase_text := _optional_text(failed_phase, tool_name=tool_id)) is not None:
             lines.append(f"failed_phase: {failed_phase_text}")
         if elapsed is not None:
             lines.append(f"elapsed_ms: {elapsed}")
         if valid_failure_class is not None:
             lines.append(f"retry: {RETRY_DISPOSITIONS[valid_failure_class]}")
-            fix = _optional_text(remediation) or _FIX_TEMPLATES[valid_failure_class]
+            fix = (
+                _optional_text(remediation, tool_name=tool_id)
+                or _FIX_TEMPLATES[valid_failure_class]
+            )
             lines.append(f"fix: {fix}")
-        if (trace_text := _optional_text(trace)) is not None:
+        if (trace_text := _optional_text(trace, tool_name=tool_id)) is not None:
             lines.append(f"trace: {trace_text}")
-        if (detail_text := _sanitize_detail(detail)) is not None:
+        if (detail_text := _sanitize_detail(detail, tool_name=tool_id)) is not None:
             lines.append(f"detail: {detail_text}")
 
     body = _neutralize_body(str(output_text or ""))

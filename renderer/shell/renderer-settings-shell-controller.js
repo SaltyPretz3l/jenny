@@ -42,7 +42,7 @@
     }
     return String(sectionId || '').trim() || DEFAULT_SETTINGS_SECTION;
   }
-  /* Hidden sections merged into a host card (Skills -> Plugins & Extensions). The
+  /* Hidden sections merged into a host card (Skills -> Extensions). The
    * host readies + refreshes them as companions when it is shown, so the merged
    * subsections behave exactly like their former standalone sections did. */
   function companionSectionIds(sectionId) {
@@ -149,7 +149,7 @@
       ? (sectionId) => settingsPatchGuard.shouldPatchSection(sectionId)
       : () => true;
 
-    const settingsRendererUtils = factories.settingsRendererUtils || globalThis.rendererSettingsUtils || {};
+    const settingsRendererUtils = factories.settingsRendererUtils || globalThis.rendererSettingsChrome || {};
     const settingsEventUtils = factories.settingsEventUtils || globalThis.rendererSettingsEventUtils || {};
     const settingsNavUtils = factories.settingsNavUtils || globalThis.rendererSettingsNavUtils || {};
 
@@ -373,8 +373,12 @@
 
     function ensureSettingsSectionReady(sectionId) {
       const normalizedSectionId = normalizeSettingsSectionId(sectionId);
+      if (!isSettingsPageLoaded()) {
+        whenSettingsPageReady(() => ensureSettingsSectionReady(normalizedSectionId));
+        return normalizedSectionId;
+      }
       readySectionBindings(normalizedSectionId);
-      // Ready merged-in companions (Skills under Plugins & Extensions) so
+      // Ready merged-in companions (Skills under Extensions) so
       // their controls bind the first time the host card is shown.
       companionSectionIds(normalizedSectionId).forEach(readySectionBindings);
       return normalizedSectionId;
@@ -402,6 +406,11 @@
     }
 
     function refreshSettingsSection(sectionId, options = {}) {
+      if (!isSettingsPageLoaded()) {
+        return new Promise((resolve, reject) => whenSettingsPageReady(() => {
+          refreshSettingsSection(sectionId, options).then(resolve, reject);
+        }));
+      }
       const normalizedSectionId = normalizeSettingsSectionId(sectionId);
       ensureSettingsSectionReady(normalizedSectionId);
       // Opt-in narrowed render for the host section (the 2s diagnostics poll
@@ -485,16 +494,18 @@
       // Deep links (the chat tool row's "Set up PDF reading") name the group to show.
       // Its first control takes keyboard focus a frame later, after the page heading
       // has taken it, and the scroll comes after the focus so the focus cannot undo it.
-      const target = options.focusId ? globalDocument?.getElementById?.(String(options.focusId)) : null;
-      if (target) {
-        globalWindow?.requestAnimationFrame?.(() => {
-          const focusable = 'button, input, select, textarea, [href], [tabindex]';
-          const control = [...target.querySelectorAll(focusable), target]
-            .find((el) => el.matches(focusable) && !el.disabled && el.getAttribute('tabindex') !== '-1' && !el.closest('[hidden]'));
-          control?.focus({ preventScroll: true });
-          target.scrollIntoView?.({ block: 'start' });
-        });
-      }
+      whenSettingsPageReady(() => {
+        const target = options.focusId ? globalDocument?.getElementById?.(String(options.focusId)) : null;
+        if (target) {
+          globalWindow?.requestAnimationFrame?.(() => {
+            const focusable = 'button, input, select, textarea, [href], [tabindex]';
+            const control = [...target.querySelectorAll(focusable), target]
+              .find((el) => el.matches(focusable) && !el.disabled && el.getAttribute('tabindex') !== '-1' && !el.closest('[hidden]'));
+            control?.focus({ preventScroll: true });
+            target.scrollIntoView?.({ block: 'start' });
+          });
+        }
+      });
     }
 
     function openSettingsSection(sectionId, options) {
@@ -503,6 +514,7 @@
 
     const settingsController = settingsRendererUtils.createSettingsRenderer?.({
       state,
+      windowRef: deps.windowRef || globalWindow || globalThis,
       composerLayoutRuntime,
       shouldPatchSection,
       constants: { ACTIVITY_SCOPE: deps.constants.ACTIVITY_SCOPE },
@@ -563,7 +575,7 @@
         composerModelSelectEl: dom.composerModelSelect,
       },
       callbacks: {
-        getCurrentRuntimePreferences, getRuntimePreferencesFromSession,
+        getCurrentRuntimePreferences, getRuntimePreferencesFromSession, appendClientLog,
         normalizeAppearancePreferences,
         getPalettePresets,
         getTypographyPresets,
@@ -598,7 +610,11 @@
     }) || null;
 
     const {
+      ensureSettingsPage = () => Promise.resolve(settingsController),
+      whenSettingsPageReady = (fn) => fn(),
+      isSettingsPageLoaded = () => true,
       renderSettings = function noopRenderSettings() {},
+      renderComposerCarriers = function noopRenderComposerCarriers() {},
       renderComposerPopover = function noopRenderComposerPopover() {},
       renderCommandPopover = function noopRenderCommandPopover() {},
       syncComposerInputHeight = function noopSyncComposerInputHeight() {},
@@ -767,6 +783,14 @@
     }
 
     let bound = false;
+    function replayTitlebarLoadToggle(event) {
+      if (event.detail?.replayed === true || isSettingsPageLoaded()) return;
+      ensureSettingsPage().then((page) => {
+        if (page && bound) globalDocument.dispatchEvent(new globalWindow.CustomEvent('jenny:titlebar-load-toggle', {
+          detail: { ...event.detail, replayed: true },
+        }));
+      });
+    }
 
     function bind() {
       if (bound) {
@@ -774,9 +798,12 @@
       }
       bound = true;
       settingsNavController?.bind?.();
-      settingsEventBindings?.bind?.();
+      globalDocument?.addEventListener?.('jenny:titlebar-load-toggle', replayTitlebarLoadToggle);
+      whenSettingsPageReady(() => {
+        settingsEventBindings?.bind?.();
+        mountFieldReset();
+      });
       renderSettings();
-      mountFieldReset();
     }
 
     function dispose() {
@@ -792,6 +819,7 @@
         return;
       }
       bound = false;
+      globalDocument?.removeEventListener?.('jenny:titlebar-load-toggle', replayTitlebarLoadToggle);
       settingsEventBindings?.dispose?.();
       settingsNavController?.dispose?.();
       fieldReset?.dispose?.();
@@ -805,7 +833,10 @@
     return {
       bind,
       dispose,
+      ensureSettingsPage,
+      whenSettingsPageReady,
       renderSettings,
+      renderComposerCarriers,
       renderComposerPopover,
       renderCommandPopover,
       syncComposerInputHeight,

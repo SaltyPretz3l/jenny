@@ -57,7 +57,7 @@ test('opening Workspace loads one ordered group and renders the IDE', async (t) 
   window.document.querySelector('[data-tab-id="ide"]').click();
   await waitForUi(window, 100);
   assert.deepEqual(requests.filter((src) => manifest.some(([entry]) => entry === src)), manifest.map(([src]) => src));
-  assert.ok(window.document.querySelector('#ideActivityBar [role="tab"]'), 'IDE rendered after loading');
+  assert.ok(window.document.querySelector('#ideWorkbench [data-wb-tab="explorer"]'), 'IDE rendered after loading');
 });
 
 test('concurrent triggers share one flight and inject the entire group before awaiting', async () => {
@@ -106,7 +106,7 @@ test('persisted Workspace launch renders before notifyBootViewReady', async (t) 
       win.rendererLifecycleUtils.createLifecycleController = (deps) => {
         const notify = deps.callbacks.notifyBootViewReady;
         deps.callbacks.notifyBootViewReady = (...args) => {
-          assert.ok(win.document.querySelector('#ideActivityBar [role="tab"]'), 'IDE painted before ready');
+          assert.ok(win.document.querySelector('#ideWorkbench [data-wb-tab="explorer"]'), 'IDE painted before ready');
           ready = true;
           return notify(...args);
         };

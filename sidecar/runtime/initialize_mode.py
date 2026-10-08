@@ -1,19 +1,11 @@
 """Fail-closed discriminator for the ``initialize`` RPC's ``mode`` field.
 
-Normative source: ``PLUGIN_SYSTEM_ARCHITECTURE_AND_ROADMAP.md``, PLUG-D16 --
-"Repeated `initialize` remains the fixed sidecar reconfiguration seam, but an
-explicit plugin-only mode updates a nested plugin-runtime generation without
-rebuilding unrelated `BrainStack` resources or rerunning startup side effects;
-rejection preserves the prior initialized runtime and plugin generation."
-
-Stage 4A accepts a second exact mode that reconfigures only the nested plugin
-runtime generation without touching the BrainStack. A malformed or hostile
-``mode`` can never be silently treated as a request for full-runtime
-reconfiguration: an ``initialize`` with no ``mode`` field keeps behaving
-exactly as it does today (``FULL_RUNTIME_MODE``, accepted), the exact
-``plugin_runtime`` token selects the plugin-only branch, and anything else is
-rejected outright. None of these rejection paths may cause any runtime
-mutation -- see the call site in
+A malformed or hostile ``mode`` can never be silently treated as a request for
+full-runtime reconfiguration: an ``initialize`` with no ``mode`` field keeps
+behaving exactly as it does today (``FULL_RUNTIME_MODE``, accepted), the exact
+``full_runtime`` token is accepted, and anything else (including the retired
+``plugin_runtime`` token) is rejected outright. None of these rejection paths
+may cause any runtime mutation -- see the call site in
 ``sidecar/runtime/request_dispatch.py``, which invokes
 ``resolve_initialize_mode`` before any secret merge, logging-preference
 application, or version validation.
@@ -27,9 +19,6 @@ from typing import Any, Final
 # Default mode for initialize requests that omit mode; omission preserves
 # full-runtime initialization behavior.
 FULL_RUNTIME_MODE: Final[str] = "full_runtime"
-
-# Exact Stage-4A plugin-only reconfiguration discriminator (PLUG-D16).
-PLUGIN_RUNTIME_MODE: Final[str] = "plugin_runtime"
 
 REASON_UNKNOWN_INITIALIZE_MODE: Final[str] = "unknown_initialize_mode"
 
@@ -76,7 +65,7 @@ class InitializeModeResolution:
 def resolve_initialize_mode(params: Any) -> InitializeModeResolution:
     """Fail-closed resolution of the ``mode`` field of an ``initialize`` call.
 
-    PLUG-D16: a malformed or hostile ``mode`` must never be silently treated
+    A malformed or hostile ``mode`` must never be silently treated
     as a full-runtime initialize. Absence of ``mode`` is the one case that
     must reproduce today's behavior exactly, since every existing caller
     omits it.
@@ -92,9 +81,6 @@ def resolve_initialize_mode(params: Any) -> InitializeModeResolution:
     # "Full_Runtime" or " full_runtime " slip through as if canonical.
     if isinstance(raw_mode, str) and raw_mode == FULL_RUNTIME_MODE:
         return InitializeModeResolution(mode=FULL_RUNTIME_MODE, ok=True, reason=None)
-
-    if isinstance(raw_mode, str) and raw_mode == PLUGIN_RUNTIME_MODE:
-        return InitializeModeResolution(mode=PLUGIN_RUNTIME_MODE, ok=True, reason=None)
 
     return InitializeModeResolution(
         mode=FULL_RUNTIME_MODE,

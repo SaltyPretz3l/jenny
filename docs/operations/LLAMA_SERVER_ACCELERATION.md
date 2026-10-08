@@ -448,7 +448,7 @@ same model; record the recovery time.
 
 - **Exclusive GPU coordinator**: `services/backend/exclusive-gpu-coordinator.js`
   has no VRAM accounting; the drafter's extra residency raises the OOM odds for
-  a privileged plugin workload after a lease handoff. The coordinator is
+  another GPU workload after a lease handoff. The coordinator is
   deliberately NOT modified by this feature; a VRAM-aware lease is a separate
   program.
 - **Vision**: the accel profiles run gemma4 text-only (`--no-mmproj`); serving

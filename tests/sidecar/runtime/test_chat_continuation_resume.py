@@ -681,6 +681,12 @@ def test_resume_executes_saved_batch_before_generation_without_rereserving(
     )
     monkeypatch.setattr(resume, "execute_tool_calls_sequentially", _execute)
     monkeypatch.setattr(resume, "_finish_pending_batch", lambda *_args: None)
+    from sidecar.ai.routing import auto_checkpoint
+
+    monkeypatch.setattr(
+        auto_checkpoint, "maybe_create_auto_checkpoint",
+        lambda run, remaining: events.append(("checkpoint", tuple(c.call_id for c, _ in remaining))),
+    )
     arguments = _resume_arguments(_hydrated(), request, runtime)
     rejected_request, rejected_runtime = _fresh_request()
     with pytest.raises(resume.ContinuationResumeError, match="quota_state_unavailable"):
@@ -708,6 +714,7 @@ def test_resume_executes_saved_batch_before_generation_without_rereserving(
 
     assert result.done is True
     assert events == [
+        ("checkpoint", ("call_1", "call_2")),  # row 34 S5: a restore point before the batch
         ("dispatch", "call_1", {"value": 1.0}),
         ("budget", ("call_1", "call_2")),
         ("generate", ("call_1", "call_2")),

@@ -197,9 +197,6 @@ async function sendManagedChatWithAuthRetry({
     return service.sidecarClient.chatSend(params, options);
   };
   const emit = (level, event, details) => emitRetryLog(log, ids, level, event, details);
-  if (service?.featureFlags?.chatgpt_auth_turn_retry === false) {
-    return send();
-  }
   // At-most-one refresh+retry per turn is enforced STRUCTURALLY: `alreadyRetried`
   // is local to a single invocation and is the ONLY way past the precondition
   // gate a second time — once set, the next failure takes the terminal branch.

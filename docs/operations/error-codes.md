@@ -254,6 +254,19 @@ Internal background scheduler RPC validation.
 |---|---|---|---|---|---|---|
 | `CMP_BACKGROUND_INVALID_PARAMS` | `CMP-BG-0001` | `background.run` payload invalid | No | `runtime_error` | internal-only | [sidecar/runtime/request_dispatch_background.py](../../sidecar/runtime/request_dispatch_background.py) |
 
+## CAT - `CMP-CAT-NNNN` (6 codes, 0 dead)
+
+Semantic catalog (passive knowledge-folder embedding index). Returned to Electron as structured results, never as chat-turn errors.
+
+| Constant | Code | Meaning | Retryable? | Terminal state | User-facing default | Primary source |
+|---|---|---|---|---|---|---|
+| `CMP_CATALOG_EMBEDDER_UNAVAILABLE` | `CMP-CAT-0001` | The loopback embedding server refused, timed out or returned an HTTP error | Yes | `internal` | internal-only | [sidecar/ai/semantic/provider.py](../../sidecar/ai/semantic/provider.py) |
+| `CMP_CATALOG_NOT_CONFIGURED` | `CMP-CAT-0002` | No enabled, valid `semantic_catalog` config; catalog methods answer `{available: false}` | No | `internal` | internal-only | [sidecar/ai/semantic/runtime.py](../../sidecar/ai/semantic/runtime.py) |
+| `CMP_CATALOG_INDEX_UNAVAILABLE` | `CMP-CAT-0003` | The catalog index has a newer schema or could not be opened | No | `internal` | internal-only | [sidecar/ai/semantic/store.py](../../sidecar/ai/semantic/store.py) |
+| `CMP_CATALOG_INVALID_PARAMS` | `CMP-CAT-0004` | `catalog.*` request params invalid (`-32602`) | No | `internal` | internal-only | [sidecar/runtime/request_dispatch_catalog.py](../../sidecar/runtime/request_dispatch_catalog.py) |
+| `CMP_CATALOG_CAPACITY_REACHED` | `CMP-CAT-0005` | A catalog root, document or chunk cap was reached; nothing is evicted | No | `internal` | internal-only | [sidecar/ai/semantic/catalog.py](../../sidecar/ai/semantic/catalog.py) |
+| `CMP_CATALOG_EMBEDDER_INVALID_PAYLOAD` | `CMP-CAT-0006` | The embedding server answered with a malformed or inconsistent payload | No | `internal` | internal-only | [sidecar/ai/semantic/provider.py](../../sidecar/ai/semantic/provider.py) |
+
 ## STREAM - sentinel codes
 
 Provider-stream normalization failures that intentionally do not use the numeric domain schema because they predate the registry reconciliation and are wire-stable deterministic-harness sentinels.
@@ -261,7 +274,7 @@ Provider-stream normalization failures that intentionally do not use the numeric
 | Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
 |---|---|---|---|---|---|---|
 | `CMP_STREAM_REASONING_ONLY` | `CMP-STREAM-REASONING-ONLY` | Provider produced reasoning deltas but no visible text or tool call | No | `runtime_error` | "The model returned reasoning without an answer." | [sidecar/ai/routing/provider_stream_normalizer.py](../../sidecar/ai/routing/provider_stream_normalizer.py) |
-| `CMP_STREAM_INCOMPLETE` | `CMP-STREAM-INCOMPLETE` | Provider stream ended without a clean terminal: EOF before Ollama's `done` chunk or vLLM's `[DONE]` sentinel (`finish_reason=incomplete`), an in-band provider error frame (`finish_reason=error`), or a thinking-budget abort (`finish_reason=thinking_budget`) | Yes | `runtime_error` (`terminal_subcode=stream_incomplete` or `thinking_budget`) | Per-reason: "The response was cut off before it finished ..." / "The model provider reported a stream error ..." / "The model spent its entire thinking budget ..." | [sidecar/ai/routing/tool_loop_finalize.py](../../sidecar/ai/routing/tool_loop_finalize.py), [sidecar/runtime/chat_streaming.py](../../sidecar/runtime/chat_streaming.py) |
+| `CMP_STREAM_INCOMPLETE` | `CMP-STREAM-INCOMPLETE` | Provider stream ended without a clean terminal: EOF before Ollama's `done` chunk or vLLM's `[DONE]` sentinel (`finish_reason=incomplete`), an in-band provider error frame (`finish_reason=error`), or a thinking-budget abort (`finish_reason=thinking_budget`) | Yes | `runtime_error` (`terminal_subcode=stream_incomplete` or `thinking_budget`) | Per-reason: "The response was cut off before it finished ..." / "The model provider reported a stream error ..." / "The model spent its entire thinking budget ..." | [sidecar/ai/routing/tool_loop_finalize.py](../../sidecar/ai/routing/tool_loop_finalize.py) |
 
 ## ROUTE - sentinel codes
 
@@ -280,14 +293,14 @@ Approval cancellation sentinel codes surfaced through the existing `chat.error` 
 |---|---|---|---|---|---|---|
 | `CMP_APPROVAL_REJECTED` | `CMP-APPROVAL-REJECTED` | User rejected a tool approval request | No | `denied` | "Tool execution was denied." | [sidecar/runtime/chat_helpers.py](../../sidecar/runtime/chat_helpers.py) |
 
-## PLUGIN - `CMP-PLUGIN-NNNN` (35 Node codes, pre-allocated)
+## PLUGIN - `CMP-PLUGIN-NNNN` (35 Node codes, reserved, not emitted)
 
-Plugin-platform control plane (PLUGIN_SYSTEM_ARCHITECTURE_AND_ROADMAP.md).
-Codes are pre-allocated at Wave 0 of the execution program; consumers land stage
-by stage under docs/manifests/plugin-system.md.
-`services/plugins/**` must import from
-[services/backend/error-codes.js](../../services/backend/error-codes.js) — inline
-literals are banned by `check_error_codes.py`.
+Reserved. The plugin platform was retired (2026-10-05), so no code in this family
+is emitted any more. The constants stay defined in
+[services/backend/error-codes.js](../../services/backend/error-codes.js) and
+`sidecar/ai/error_codes.py` so the wire numbers are never reused and
+`check_error_codes.py` stays reconciled. History:
+archived plugin architecture.
 
 Program range allocations (numeric wire-code ranges reserved per packet; new
 packets claim the next free 20-block): 0001–0025 control-plane core ·
@@ -298,42 +311,42 @@ data/compatibility · 0201–0220 Stage 3B lifecycle/IPC/consent.
 
 | Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
 |---|---|---|---|---|---|---|
-| `PLUGIN_ERROR_CODES.MANIFEST_INVALID` | `CMP-PLUGIN-0001` | Plugin manifest failed contract validation | No | `runtime_error` | "This plugin's manifest is invalid." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.UNSUPPORTED_CONTRACT_VERSION` | `CMP-PLUGIN-0002` | Contract/schema version newer than this Jenny understands | No | `runtime_error` | "This plugin requires a newer version of Jenny." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.ARCHIVE_REJECTED` | `CMP-PLUGIN-0003` | Package archive failed structural/hostile-entry validation | No | `runtime_error` | "This plugin package is malformed and was rejected." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.INTEGRITY_FAILED` | `CMP-PLUGIN-0004` | Content digest disagreement with the verified record | No | `runtime_error` | "This plugin failed integrity verification." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.SIGNATURE_INVALID` | `CMP-PLUGIN-0005` | Canonical signed metadata failed signature verification | No | `runtime_error` | "This plugin's signature could not be verified." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.PUBLISHER_UNTRUSTED` | `CMP-PLUGIN-0006` | Publisher identity not in the trusted set | No | `runtime_error` | "This plugin's publisher is not trusted." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.GENERATION_INVALID` | `CMP-PLUGIN-0007` | Control-plane generation failed schema/digest/closure validation | No | `runtime_error` | internal-only | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.POINTER_CORRUPT` | `CMP-PLUGIN-0008` | active-generation pointer unreadable or digest-mismatched | No | `runtime_error` | internal-only | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.EPOCH_REGRESSION` | `CMP-PLUGIN-0009` | Commit epoch not strictly increasing | No | `runtime_error` | internal-only | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.LEASE_BUSY` | `CMP-PLUGIN-0010` | Another lifecycle operation holds the graph mutation lease | Yes | `runtime_error` | "Another plugin operation is in progress." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.EXPECTED_GENERATION_CONFLICT` | `CMP-PLUGIN-0011` | Expected-generation CAS failed at commit | Yes | `runtime_error` | "Plugin state changed underneath this operation; retry." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.IDEMPOTENCY_EXPIRED` | `CMP-PLUGIN-0012` | Operation receipt expired/pruned; replay refused | No | `runtime_error` | internal-only | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.OUTCOME_INDETERMINATE` | `CMP-PLUGIN-0013` | Operation outcome cannot be proven either way | No | `runtime_error` | internal-only | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.FINGERPRINT_MISMATCH` | `CMP-PLUGIN-0014` | Same operation id with a different request fingerprint | No | `runtime_error` | internal-only | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.POLICY_BLOCKED` | `CMP-PLUGIN-0015` | Effective policy denies the requested state/capability | No | `runtime_error` | "Policy blocks this plugin." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.QUARANTINED` | `CMP-PLUGIN-0016` | Integrity/revocation/vulnerability/crash-loop quarantine | No | `runtime_error` | "This plugin is quarantined." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.DEPENDENCY_UNSATISFIED` | `CMP-PLUGIN-0017` | Required dependency missing, blocked, or incompatible | No | `runtime_error` | "A plugin this depends on is unavailable." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.DATA_INCOMPATIBLE` | `CMP-PLUGIN-0018` | Plugin-data schema/migration incompatibility | No | `runtime_error` | "This plugin's data is incompatible with the installed version." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.CLEANUP_PENDING_RESTART` | `CMP-PLUGIN-0019` | Physical cleanup deferred to next restart (locked files) | No | `runtime_error` | "Cleanup will finish after a restart." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.CLEANUP_TERMINATION_FAILED` | `CMP-PLUGIN-0020` | Best-effort process/file cleanup could not be proven | No | `runtime_error` | internal-only | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.SAFE_MODE_ACTIVE` | `CMP-PLUGIN-0021` | Launch-level plugins-off switch active | No | `runtime_error` | "Plugins are disabled in safe mode." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.FEATURE_DISABLED` | `CMP-PLUGIN-0022` | Plugin platform feature flag is off | No | `runtime_error` | "The plugin system is not enabled." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.CONSENT_REQUIRED` | `CMP-PLUGIN-0023` | High-consequence operation lacks main-process consent | No | `runtime_error` | "This action needs explicit confirmation." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.CONSENT_ORIGIN_INVALID` | `CMP-PLUGIN-0024` | Approval did not originate from the consent surface (PLUG-D18) | No | `runtime_error` | internal-only | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.STORE_WRITE_FAILED` | `CMP-PLUGIN-0025` | Durable control-plane write failed | Yes | `runtime_error` | "Saving plugin state failed." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.SOURCE_UNAVAILABLE` | `CMP-PLUGIN-0026` | Selected package/catalog/Git/mirror source is unavailable | Yes | `runtime_error` | "This plugin source is unavailable." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.UPDATE_METADATA_INVALID` | `CMP-PLUGIN-0027` | Catalog, TUF, or advisory metadata failed validation | No | `runtime_error` | "Plugin update metadata is invalid." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.ROLLBACK_OR_FREEZE_DETECTED` | `CMP-PLUGIN-0028` | Version, metadata, or trusted-clock high-water regressed | No | `runtime_error` | "A stale or rolled-back update was blocked." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.ADVISORY_BLOCKED` | `CMP-PLUGIN-0029` | Current advisory or revocation blocks an artifact | No | `runtime_error` | "A security advisory blocks this plugin version." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.REMOTE_AUTH_REQUIRED` | `CMP-PLUGIN-0030` | Remote descriptor requires user authorization | No | `denied` | "This remote plugin connection needs authorization." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.REMOTE_AUTH_FAILED` | `CMP-PLUGIN-0031` | OAuth discovery, validation, exchange, or refresh failed | Yes | `runtime_error` | "Remote plugin authorization failed." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.REMOTE_PROTOCOL_UNSUPPORTED` | `CMP-PLUGIN-0032` | Remote MCP protocol/feature/transport is outside Stage 5 | No | `runtime_error` | "This remote MCP server is not supported." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.REMOTE_TRANSPORT_FAILED` | `CMP-PLUGIN-0033` | Bounded remote MCP request failed | Yes | `runtime_error` | "The remote MCP request failed." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.OPERATION_CANCELLED` | `CMP-PLUGIN-0034` | Stage 5 operation was cancelled before commit | No | `cancelled` | "The plugin operation was cancelled." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `PLUGIN_ERROR_CODES.RESOURCE_LIMIT_EXCEEDED` | `CMP-PLUGIN-0035` | Stage 5 hard byte/time/count/queue bound was exceeded | No | `runtime_error` | "This plugin operation exceeded a safety limit." | [services/plugins/README.md](../../services/plugins/README.md) |
-| `CMP_PLUGIN_HOST_FAILED` | `CMP-PLUGIN-0036` | Privileged plugin-host authority, transport, frame, or terminal settlement failed | No | `runtime_error` | "The privileged plugin host could not complete this request." | [PLUGIN_SECURITY.md § Privileged plugin full-host operations](../PLUGIN_SECURITY.md#privileged-plugin-full-host-operations) |
+| `PLUGIN_ERROR_CODES.MANIFEST_INVALID` | `CMP-PLUGIN-0001` | Plugin manifest failed contract validation | No | `runtime_error` | "This plugin's manifest is invalid." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.UNSUPPORTED_CONTRACT_VERSION` | `CMP-PLUGIN-0002` | Contract/schema version newer than this Jenny understands | No | `runtime_error` | "This plugin requires a newer version of Jenny." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.ARCHIVE_REJECTED` | `CMP-PLUGIN-0003` | Package archive failed structural/hostile-entry validation | No | `runtime_error` | "This plugin package is malformed and was rejected." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.INTEGRITY_FAILED` | `CMP-PLUGIN-0004` | Content digest disagreement with the verified record | No | `runtime_error` | "This plugin failed integrity verification." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.SIGNATURE_INVALID` | `CMP-PLUGIN-0005` | Canonical signed metadata failed signature verification | No | `runtime_error` | "This plugin's signature could not be verified." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.PUBLISHER_UNTRUSTED` | `CMP-PLUGIN-0006` | Publisher identity not in the trusted set | No | `runtime_error` | "This plugin's publisher is not trusted." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.GENERATION_INVALID` | `CMP-PLUGIN-0007` | Control-plane generation failed schema/digest/closure validation | No | `runtime_error` | internal-only | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.POINTER_CORRUPT` | `CMP-PLUGIN-0008` | active-generation pointer unreadable or digest-mismatched | No | `runtime_error` | internal-only | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.EPOCH_REGRESSION` | `CMP-PLUGIN-0009` | Commit epoch not strictly increasing | No | `runtime_error` | internal-only | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.LEASE_BUSY` | `CMP-PLUGIN-0010` | Another lifecycle operation holds the graph mutation lease | Yes | `runtime_error` | "Another plugin operation is in progress." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.EXPECTED_GENERATION_CONFLICT` | `CMP-PLUGIN-0011` | Expected-generation CAS failed at commit | Yes | `runtime_error` | "Plugin state changed underneath this operation; retry." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.IDEMPOTENCY_EXPIRED` | `CMP-PLUGIN-0012` | Operation receipt expired/pruned; replay refused | No | `runtime_error` | internal-only | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.OUTCOME_INDETERMINATE` | `CMP-PLUGIN-0013` | Operation outcome cannot be proven either way | No | `runtime_error` | internal-only | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.FINGERPRINT_MISMATCH` | `CMP-PLUGIN-0014` | Same operation id with a different request fingerprint | No | `runtime_error` | internal-only | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.POLICY_BLOCKED` | `CMP-PLUGIN-0015` | Effective policy denies the requested state/capability | No | `runtime_error` | "Policy blocks this plugin." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.QUARANTINED` | `CMP-PLUGIN-0016` | Integrity/revocation/vulnerability/crash-loop quarantine | No | `runtime_error` | "This plugin is quarantined." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.DEPENDENCY_UNSATISFIED` | `CMP-PLUGIN-0017` | Required dependency missing, blocked, or incompatible | No | `runtime_error` | "A plugin this depends on is unavailable." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.DATA_INCOMPATIBLE` | `CMP-PLUGIN-0018` | Plugin-data schema/migration incompatibility | No | `runtime_error` | "This plugin's data is incompatible with the installed version." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.CLEANUP_PENDING_RESTART` | `CMP-PLUGIN-0019` | Physical cleanup deferred to next restart (locked files) | No | `runtime_error` | "Cleanup will finish after a restart." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.CLEANUP_TERMINATION_FAILED` | `CMP-PLUGIN-0020` | Best-effort process/file cleanup could not be proven | No | `runtime_error` | internal-only | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.SAFE_MODE_ACTIVE` | `CMP-PLUGIN-0021` | Launch-level plugins-off switch active | No | `runtime_error` | "Plugins are disabled in safe mode." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.FEATURE_DISABLED` | `CMP-PLUGIN-0022` | Plugin platform feature flag is off | No | `runtime_error` | "The plugin system is not enabled." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.CONSENT_REQUIRED` | `CMP-PLUGIN-0023` | High-consequence operation lacks main-process consent | No | `runtime_error` | "This action needs explicit confirmation." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.CONSENT_ORIGIN_INVALID` | `CMP-PLUGIN-0024` | Approval did not originate from the consent surface (PLUG-D18) | No | `runtime_error` | internal-only | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.STORE_WRITE_FAILED` | `CMP-PLUGIN-0025` | Durable control-plane write failed | Yes | `runtime_error` | "Saving plugin state failed." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.SOURCE_UNAVAILABLE` | `CMP-PLUGIN-0026` | Selected package/catalog/Git/mirror source is unavailable | Yes | `runtime_error` | "This plugin source is unavailable." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.UPDATE_METADATA_INVALID` | `CMP-PLUGIN-0027` | Catalog, TUF, or advisory metadata failed validation | No | `runtime_error` | "Plugin update metadata is invalid." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.ROLLBACK_OR_FREEZE_DETECTED` | `CMP-PLUGIN-0028` | Version, metadata, or trusted-clock high-water regressed | No | `runtime_error` | "A stale or rolled-back update was blocked." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.ADVISORY_BLOCKED` | `CMP-PLUGIN-0029` | Current advisory or revocation blocks an artifact | No | `runtime_error` | "A security advisory blocks this plugin version." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.REMOTE_AUTH_REQUIRED` | `CMP-PLUGIN-0030` | Remote descriptor requires user authorization | No | `denied` | "This remote plugin connection needs authorization." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.REMOTE_AUTH_FAILED` | `CMP-PLUGIN-0031` | OAuth discovery, validation, exchange, or refresh failed | Yes | `runtime_error` | "Remote plugin authorization failed." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.REMOTE_PROTOCOL_UNSUPPORTED` | `CMP-PLUGIN-0032` | Remote MCP protocol/feature/transport is outside Stage 5 | No | `runtime_error` | "This remote MCP server is not supported." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.REMOTE_TRANSPORT_FAILED` | `CMP-PLUGIN-0033` | Bounded remote MCP request failed | Yes | `runtime_error` | "The remote MCP request failed." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.OPERATION_CANCELLED` | `CMP-PLUGIN-0034` | Stage 5 operation was cancelled before commit | No | `cancelled` | "The plugin operation was cancelled." | reserved, not emitted |
+| `PLUGIN_ERROR_CODES.RESOURCE_LIMIT_EXCEEDED` | `CMP-PLUGIN-0035` | Stage 5 hard byte/time/count/queue bound was exceeded | No | `runtime_error` | "This plugin operation exceeded a safety limit." | reserved, not emitted |
+| `CMP_PLUGIN_HOST_FAILED` | `CMP-PLUGIN-0036` | Privileged plugin-host authority, transport, frame, or terminal settlement failed | No | `runtime_error` | "The privileged plugin host could not complete this request." | reserved, not emitted |
 
 ## PROACTIVE - `CMP-PROACTIVE-NNNN` (1 Node code, 0 dead)
 

@@ -28,9 +28,7 @@ const HEARTBEAT_MS = 2000;
 const LANE_NOTICE_MS = 1500;
 const MAX_NOTICES = 256;
 
-function normalizeId(value) {
-  return String(value == null ? '' : value).trim();
-}
+const { normalizeText: normalizeId } = require('../shared/normalize');
 
 function createRuntimeWaitNotices({ emit, broker, isTracked, getWork, incarnation, log = () => {},
   now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, stuckGraceMs = STUCK_GRACE_MS,

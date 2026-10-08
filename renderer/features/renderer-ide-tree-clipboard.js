@@ -37,7 +37,6 @@
     const onNotify = typeof deps?.onNotify === 'function' ? deps.onNotify : noop;
     const parentDirOf = typeof deps?.parentDirOf === 'function' ? deps.parentDirOf : () => '';
     const nameOf = typeof deps?.nameOf === 'function' ? deps.nameOf : (path) => String(path || '');
-    const isQolEnabled = typeof deps?.isQolEnabled === 'function' ? deps.isQolEnabled : () => false;
     let content = null;
     let disposed = false;
     let operationGeneration = 0;
@@ -47,10 +46,6 @@
     }
 
     function currentContent() {
-      if (!isQolEnabled()) {
-        clear();
-        return null;
-      }
       if (!content) return null;
       if (content.epoch !== getRootEpoch()) {
         clear();
@@ -60,7 +55,7 @@
     }
 
     function resolveTargets() {
-      if (!isQolEnabled() || typeof selection.resolveTargets !== 'function') return [];
+      if (typeof selection.resolveTargets !== 'function') return [];
       return filterAncestorPaths(selection.resolveTargets(getFocusedPath()));
     }
 

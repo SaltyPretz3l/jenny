@@ -12,6 +12,7 @@ from sidecar.ai.engines.ollama_templates import (
 )
 from sidecar.ai.memory.embedding import EMBEDDING_SCHEMA_VERSION
 from sidecar.ai.memory.store_migrations import SCHEMA_VERSION as MEMORY_SCHEMA_VERSION
+from sidecar.ai.semantic.store import SEMANTIC_CATALOG_SCHEMA_VERSION
 from sidecar.protocol import API_VERSION
 from sidecar.runtime.diagnostics import SCHEMA_VERSION as DIAGNOSTICS_SCHEMA_VERSION
 from sidecar.runtime.runtime_gap_schema import RUNTIME_GAP_SCHEMA_VERSION
@@ -24,8 +25,6 @@ def _entry_by_id(entries: list[dict[str, object]]) -> dict[str, dict[str, object
 
 def test_get_all_schema_versions_returns_sidecar_registry() -> None:
     sys.modules.pop("sidecar.runtime.runtime_gap", None)
-    sys.modules.pop("sidecar.ai.plugins.generated_plugin_contracts", None)
-    sys.modules.pop("sidecar.ai.plugins", None)
 
     entries = get_all_schema_versions()
     by_id = _entry_by_id(entries)
@@ -35,10 +34,12 @@ def test_get_all_schema_versions_returns_sidecar_registry() -> None:
     assert by_id["sidecar.diagnostics_log"]["version"] == DIAGNOSTICS_SCHEMA_VERSION
     assert by_id["sidecar.memory_store"]["version"] == MEMORY_SCHEMA_VERSION
     assert by_id["sidecar.embedding_index"]["version"] == EMBEDDING_SCHEMA_VERSION
+    catalog_entry = by_id["sidecar.semantic_catalog"]
+    assert catalog_entry["version"] == SEMANTIC_CATALOG_SCHEMA_VERSION
+    assert catalog_entry["source"] == "sidecar/ai/semantic/store.py"
+    assert catalog_entry["surface"] == "Semantic catalog index"
     assert by_id["sidecar.runtime_gap"]["version"] == RUNTIME_GAP_SCHEMA_VERSION
-    assert by_id["sidecar.plugin_contract_set"]["version"] == 1
-    assert "sidecar.ai.plugins" not in sys.modules
-    assert "sidecar.ai.plugins.generated_plugin_contracts" not in sys.modules
+    assert "sidecar.plugin_contract_set" not in by_id
     assert (
         by_id["sidecar.ollama_template_registry"]["version"]
         == OLLAMA_TEMPLATE_SCHEMA_VERSION

@@ -62,14 +62,7 @@
   const VERB_ICON_KIND = { read: 'Read', edit: 'Edit', search: 'Grep', run: 'Bash', tool: 'Bash' };
   const VERB_LABEL = { read: 'read', edit: 'edit', search: 'search', run: 'run', tool: 'tool' };
 
-  function defaultEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function basenameOf(rel) {
     const s = String(rel || '');

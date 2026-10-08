@@ -80,27 +80,6 @@ SURFACE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     (
-        "services/plugins/*",
-        (
-            "docs/manifests/plugin-system.md",
-            "PLUGIN_SYSTEM_ARCHITECTURE_AND_ROADMAP.md",
-        ),
-    ),
-    (
-        "config/plugins/*",
-        (
-            "docs/manifests/plugin-system.md",
-            "PLUGIN_SYSTEM_ARCHITECTURE_AND_ROADMAP.md",
-        ),
-    ),
-    (
-        "sidecar/ai/plugins/*",
-        (
-            "docs/manifests/plugin-system.md",
-            "PLUGIN_SYSTEM_ARCHITECTURE_AND_ROADMAP.md",
-        ),
-    ),
-    (
         "sidecar/ai/tools/builtins/*.py",
         (
             "docs/TOOLS.md",

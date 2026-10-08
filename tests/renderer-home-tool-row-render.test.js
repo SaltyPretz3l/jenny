@@ -253,3 +253,48 @@ test('non-home tool markup is byte-identical with and without the calendar modul
   assert.equal(withModule.turn, withoutModule.turn);
   assert.equal(withModule.transcript, withoutModule.transcript);
 });
+
+function notesMetadata(overrides = {}) {
+  return {
+    result_kind: 'project_notes',
+    action: 'append',
+    status: 'ok',
+    project_id: 'proj-1',
+    revision: 3,
+    journal_entry_id: 'entry-3',
+    summary: 'Added the release checklist',
+    lines: { added: 2, removed: 0, changed: 0 },
+    ...overrides,
+  };
+}
+
+test('project notes writes render the notes row outside detail bodies in both tool render paths', () => {
+  withFreshRendererModules(calendarBlock, (modules) => {
+    const markup = renderBoth(modules, {
+      toolName: 'project_notes', action: 'append', metadata: notesMetadata(), forceMaterialize: true,
+    });
+    const turn = documentFor(markup.turn);
+    const turnRow = turn.querySelector('.tool-call-row');
+    const turnNotes = turnRow.querySelector('.notes-chat__row');
+    assert.equal(turnNotes.dataset.notesProject, 'proj-1');
+    assert.equal(turnRow.querySelector('.tool-call-row-body').contains(turnNotes), false);
+    assert.ok(turnNotes.querySelector('[data-notes-undo="entry-3"]'));
+    assert.equal(turnRow.getAttribute('data-run-foldable'), null);
+
+    const transcript = documentFor(markup.transcript);
+    const block = transcript.querySelector('.tool-call-block');
+    const transcriptNotes = block.querySelector('.notes-chat__row');
+    assert.equal(transcriptNotes.querySelector('.notes-chat__meta').textContent, '+2 lines \u00b7 Added the release checklist');
+    assert.equal(block.querySelector('.tool-call-details').contains(transcriptNotes), false);
+  });
+});
+
+test('project notes reads and failures render no notes row in either path', () => {
+  withFreshRendererModules(calendarBlock, (modules) => {
+    for (const metadata of [notesMetadata({ action: 'read' }), notesMetadata({ status: 'failed' })]) {
+      const markup = renderBoth(modules, { toolName: 'project_notes', action: 'read', metadata });
+      assert.doesNotMatch(markup.turn, /notes-chat__row/);
+      assert.doesNotMatch(markup.transcript, /notes-chat__row/);
+    }
+  });
+});

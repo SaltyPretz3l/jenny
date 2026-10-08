@@ -77,7 +77,6 @@ test('full_render preserves code scroll when the children morph cannot take', (t
       content: '<pre data-fallback-result="true">new</pre>',
     }],
   });
-  harness.state.features = { featureFlags: { chat_timeline_render_telemetry: true } };
   t.after(() => harness.pipeline.dispose?.());
 
   const originalCreateElement = documentRef.createElement;
@@ -123,7 +122,6 @@ test('legacy_article_innerhtml keeps its label and uses the preserving helper', 
     auth: { authenticated: true },
     backend: { phase: 'ready' },
     features: { featureFlags: {
-      chat_timeline_render_telemetry: true,
       chat_timeline_streaming_article_morph: true,
     } },
   };

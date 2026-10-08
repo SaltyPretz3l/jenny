@@ -230,7 +230,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       appendClientLog('WARN', 'features.bootstrap_failed', { message: error?.message || String(error) });
     }
   }
-  // Living Atlas seam (WORKSPACE_FILE_MAP atlas plan, W3): ONE shared
+  // Living Atlas seam (file map atlas plan, W3): ONE shared
   // activity bus ingests the stream payloads the chat stream handler fans out.
   // Stashed on state.workspaceActivityBus so the IDE controller chain — which
   // already threads the shared `state` object to every layer — can hand it
@@ -244,10 +244,6 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
   }) || null;
   state.workspaceActivityBus = workspaceActivityBus;
   function handleWorkspaceActivityStreamEvent(rawPayload) {
-    // Flags hydrate late (post-boot fetch): gate PER EVENT, not once at wiring
-    // time, so a flag flip mid-session takes effect immediately and flag-off
-    // keeps the bus at zero accumulated state.
-    if (state.features?.featureFlags?.workspace_file_map !== true) return;
     workspaceActivityBus?.ingest(rawPayload);
   }
   const thinkingController = new ThinkingPanelController();
@@ -327,6 +323,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     disposeComposerHolo = noop,
   } = composerHoloController || {};
   let renderSettings = noop;
+  let renderComposerCarriers = noop;
   let renderComposerPopover = noop;
   let renderCommandPopover = noop;
   let syncComposerInputHeight = noop;
@@ -520,7 +517,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     MAX_INTERACTIVE_QUESTIONS, MAX_INTERACTIVE_ROUNDS, INTERACTIVE_GUARDRAIL_PROMPT,
     INTERACTIVE_SEQUENCE_IDLE, INTERACTIVE_SEQUENCE_STRUCTURED_ACTIVE, INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED,
     settingsShellController, chatShellController, chatWayfinderController,
-    renderSettings, renderComposerPopover, renderCommandPopover,
+    renderSettings, renderComposerCarriers, renderComposerPopover, renderCommandPopover,
     syncComposerInputHeight, flushPendingStreamCommitsForSession,
     rehydrateSessionFromPersistedTurnEvents, clearProjectionContextCacheForSession,
     rekeyProjectionContextCache, updateAssistantSpritePositionRef, renderLiveThinkingChip,
@@ -700,6 +697,10 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     handleCopyMessage = noopAsync,
     handleElaborateMessage = noopAsync,
   } = controllerComposition;
+  // Suggested changes (row 35): the lazily loaded review UI sends the comment digest and reads streaming state here.
+  const suggestedChangesHost = Object.freeze({ startPromptSend: (...a) => startPromptSend(...a), isSessionStreaming: (id) => isSessionStreaming(id), showToastMessage: (...a) => showToastMessage(...a) });
+  window.rendererSuggestedChangesHost = suggestedChangesHost;
+  registerRendererCleanup(() => { if (window.rendererSuggestedChangesHost === suggestedChangesHost) window.rendererSuggestedChangesHost = null; });
   applySurfaceEffect = controllerApplySurfaceEffect;
   handleCreateSessionWithWorkspace = controllerHandleCreateSessionWithWorkspace;
   syncBackendActivityFromStatus = controllerSyncBackendActivityFromStatus;
@@ -731,6 +732,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     createThinkingController: () => new ThinkingPanelController(), // pane 1's own reasoning-disclosure state
     relatchPrimaryFollow: () => { thinkingController.resumeAutoScroll(); setFollowLatest(true); }, // pane 0 took another session through a layout change
     getPrimaryShell: () => chatShellController,
+    getPrimaryComposerInput: () => chatInput, // pane 0's composer, wherever the Workspace dock holds it
     createResizer: (resizerDeps) => window.rendererChatPaneResizer?.createChatPaneResizer?.(resizerDeps) || null,
     persistSplitRatio: (splitRatio) => workspaceStateController?.persistPaneLayout?.({ splitRatio }),
     renderPrimaryMessages: () => renderMessages(),

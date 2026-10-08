@@ -48,12 +48,12 @@ class CredentialFileStore extends FileJsonStore {
       return defaultValue;
     }
     const result = recheck ? this.readWithStatus(defaultValue) : readWithRetry(this, defaultValue);
-    if (!result.corrupted && (result.missing || isPlainObject(result.value))) {
+    if (!result.corrupted && !result.unreadable && (result.missing || isPlainObject(result.value))) {
       this._writeBlocked = false;
       this._unreadableSinceCheckMs = null;
       return result.value;
     }
-    if (result.corrupted && result.errorCode) {
+    if (result.unreadable) {
       this._unreadableSinceCheckMs = this._now();
       if (recheck) return defaultValue;
     } else {
@@ -87,7 +87,7 @@ class CredentialFileStore extends FileJsonStore {
   _handleDamagedFile(result) {
     // A read error code means the file could not be read at all and may be
     // healthy, so it is never moved: it stays and writes are blocked.
-    const outcome = result.corrupted && result.errorCode
+    const outcome = result.unreadable
       ? { preserved: false, reason: 'unreadable' }
       : preserveCorruptFile(this.filePath, { logger: this._damageLogger });
     this._writeBlocked = !outcome.preserved && outcome.reason !== 'missing';

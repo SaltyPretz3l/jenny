@@ -110,7 +110,7 @@ function invoke(handlers, methodPath, ...args) {
   return handler({}, ...args);
 }
 
-test('registers all five workspaceRecovery invoke channels', () => {
+test('registers all six workspaceRecovery invoke channels', () => {
   const { handlers, ipcMainLike } = buildRegistry();
   registerWorkspaceRecoveryIpcHandlers({
     ipcMainLike,
@@ -121,6 +121,7 @@ test('registers all five workspaceRecovery invoke channels', () => {
     'workspaceRecovery.listChangeSets',
     'workspaceRecovery.preflightUndo',
     'workspaceRecovery.undoChangeSet',
+    'workspaceRecovery.reapplyChangeSet',
     'workspaceRecovery.restoreTrashEntry',
     'workspaceRecovery.abandonRestore',
   ]) {
@@ -350,6 +351,45 @@ test('abandonRestore forwards both ids and returns the updated change-set summar
     },
   }]);
   assert.deepEqual(result, { ok: true, ...changeSetSummary() });
+});
+
+function reapplyRegistry(request) {
+  const calls = [];
+  const { handlers, ipcMainLike } = buildRegistry();
+  registerWorkspaceRecoveryIpcHandlers({
+    ipcMainLike,
+    backendService: stubBackendService(async (method, params) => { calls.push({ method, params }); return request(); }),
+    ipcAuthorization: {},
+  });
+  return { calls, call: (payload) => invoke(handlers, 'workspaceRecovery.reapplyChangeSet', payload) };
+}
+
+test('reapplyChangeSet validates its payload and forwards only the change set id', async () => {
+  const { calls, call } = reapplyRegistry(() => changeSetSummary({ restore_completed_at: null }));
+
+  assert.equal((await call({ changeSetId: CHANGE_SET_ID, decisions: {} })).reason, 'payload_invalid');
+  assert.equal((await call({ changeSetId: '../bad' })).reason, 'change_set_id_invalid');
+  assert.equal((await call({})).reason, 'change_set_id_invalid');
+  assert.equal(calls.length, 0);
+  const result = await call({ changeSetId: CHANGE_SET_ID.toUpperCase() });
+  assert.deepEqual(calls, [{
+    method: 'workspace.reapply_change_set',
+    params: { accept_version: API_VERSION, change_set_id: CHANGE_SET_ID },
+  }]);
+  assert.deepEqual(result, { ok: true, ...changeSetSummary({ restore_completed_at: null }) });
+});
+
+test('reapplyChangeSet passes a sidecar refusal through; summaries carry a well-formed undo time', async () => {
+  const refused = reapplyRegistry(() => {
+    throw Object.assign(new Error('not re-applied'), { rpc: { message: 'not re-applied', data: { reason: 'reapply_state_mismatch' } } });
+  });
+  const result = await refused.call({ changeSetId: CHANGE_SET_ID });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'reapply_state_mismatch');
+  const listed = reapplyRegistry(() => changeSetSummary({ state: 'rolled_back', restore_status: 'committed', restore_completed_at: '2026-10-05T14:52:00.000Z' }));
+  assert.equal((await listed.call({ changeSetId: CHANGE_SET_ID })).restore_completed_at, '2026-10-05T14:52:00.000Z');
+  const malformed = reapplyRegistry(() => changeSetSummary({ restore_completed_at: 42 }));
+  assert.equal((await malformed.call({ changeSetId: CHANGE_SET_ID })).reason, 'recovery_response_invalid');
 });
 
 test('abandonRestore rejects a bad change-set id before calling the sidecar', async () => {

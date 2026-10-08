@@ -192,14 +192,46 @@ test('status bar explains when large-file policy overrides the minimap preferenc
   }
 });
 
-test('the run indicator shows while a task runs and its kill button fires onKillRun', () => {
+test('W7b the status strip follows a focused editor group while the breadcrumbs stay on the primary file', () => {
+  const dom = new JSDOM('<!doctype html><body><div id="sb"></div><div id="bc"></div></body>');
+  const prevWindow = globalThis.window;
+  globalThis.window = dom.window;
+  try {
+    const doc = dom.window.document;
+    let statusPath = 'group.py';
+    const statusBar = createIdeStatusBar({
+      getDom: () => ({ ideStatusBar: doc.getElementById('sb'), ideBreadcrumbs: doc.getElementById('bc') }),
+      getIde: () => ({ activeTabPath: 'src/primary.js', wordWrap: 'off' }),
+      callbacks: {
+        getStatusPath: () => statusPath,
+        getDocumentKind: (path) => (path.endsWith('.png') ? 'image' : 'file'),
+        isLargeFile: (path) => path === 'group.py',
+      },
+    });
+    statusBar.render();
+    assert.ok(doc.querySelector('.ide-statusbar-effective-note'), 'the strip reads the group file (large)');
+    assert.match(doc.getElementById('bc').textContent, /primary\.js/);
+    assert.doesNotMatch(doc.getElementById('bc').textContent, /group\.py/);
+    statusPath = 'shot.png';
+    statusBar.render();
+    assert.equal(doc.getElementById('sb').classList.contains('hidden'), true, 'an image in the focused group hides the strip');
+    statusPath = '';
+    statusBar.render();
+    assert.equal(doc.getElementById('sb').classList.contains('hidden'), false);
+    assert.equal(doc.querySelector('.ide-statusbar-effective-note'), null, 'back on the primary file');
+  } finally {
+    globalThis.window = prevWindow;
+  }
+});
+
+test('the run indicator is one control that opens the Run view and offers no second Stop', () => {
   const dom = new JSDOM('<!doctype html><body><div id="sb"></div></body>');
   const prevWindow = globalThis.window;
   globalThis.window = dom.window;
   try {
     const doc = dom.window.document;
     let running = true;
-    let killed = 0;
+    let opened = 0;
     const ide = { activeTabPath: 'a.js', wordWrap: 'off' };
     const statusBar = createIdeStatusBar({
       getDom: () => ({ ideStatusBar: doc.getElementById('sb'), ideBreadcrumbs: null }),
@@ -208,7 +240,7 @@ test('the run indicator shows while a task runs and its kill button fires onKill
         getCursorInfo: () => ({ lineNumber: 1, column: 1, selectedChars: 0 }),
         getActiveLanguageId: () => 'javascript',
         getRunning: () => running,
-        onKillRun: () => { killed += 1; },
+        onOpenRun: () => { opened += 1; },
         getDocumentKind: () => 'file',
         isDiffTab: () => false,
       },
@@ -218,11 +250,16 @@ test('the run indicator shows while a task runs and its kill button fires onKill
     const chip = doc.getElementById('sb').querySelector('.ide-statusbar-run');
     assert.ok(chip, 'run chip rendered while a task is running');
     assert.match(chip.textContent, /Running/);
-    const kill = doc.getElementById('sb').querySelector('[data-ide-status-action="kill-run"]');
-    assert.ok(kill, 'kill button present');
-    assert.ok(kill.querySelector('svg'), 'kill uses an inline (CSP-safe) glyph');
-    kill.click();
-    assert.equal(killed, 1, 'kill button fires onKillRun');
+    assert.equal(doc.getElementById('sb').querySelector('[data-ide-status-action="kill-run"]'), null, 'no kill button on the statusbar');
+    assert.equal(doc.getElementById('sb').querySelector('.ide-statusbar-run-kill'), null, 'no nested stop control');
+    const open = doc.getElementById('sb').querySelector('[data-ide-status-action="open-run"]');
+    assert.ok(open, 'run chip is one clickable control');
+    assert.equal(open, chip, 'the chip itself is the control');
+    assert.equal(open.getAttribute('title'), 'Show the running task');
+    assert.equal(open.getAttribute('aria-label'), 'Show the running task');
+    assert.ok(open.querySelector('svg'), 'uses an inline (CSP-safe) glyph');
+    open.click();
+    assert.equal(opened, 1, 'clicking the chip fires onOpenRun');
     // Once the task ends the chip disappears.
     running = false;
     statusBar.render();

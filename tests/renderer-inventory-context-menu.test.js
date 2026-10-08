@@ -36,6 +36,14 @@ function setup(t, extraItems) {
   return { window, doc, trigger, picks, hides, open, menuEl, key };
 }
 
+test('an ariaLabel names the menu; without one the menu has no aria-label', (t) => {
+  const { doc, trigger, menuEl } = setup(t);
+  contextMenu.show({ anchorEl: trigger, rootEl: trigger, items: [{ label: 'One', action() {} }], ariaLabel: 'Move View to…' });
+  assert.equal(menuEl().getAttribute('aria-label'), 'Move View to…');
+  contextMenu.show({ anchorEl: trigger, rootEl: trigger, items: [{ label: 'One', action() {} }] });
+  assert.equal(doc.querySelector('.inv-context-menu').hasAttribute('aria-label'), false);
+});
+
 test('radio rows carry menuitemradio, aria-checked and the checked class; plain rows stay menuitems', (t) => {
   const { doc, open } = setup(t);
   open();

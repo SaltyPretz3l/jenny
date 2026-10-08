@@ -13,7 +13,7 @@ const { createStreamHandlerLifecycle } = require('../../renderer/chat/renderer-s
 const { waitFor } = require('../helpers/session-runtime-chat-adapter-harness');
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
-test('real application and stdio producer emit one canonical admission before content through both bridge formats', async t => {
+test('real application and stdio producer emit one canonical admission before content through the bridge', async t => {
   t.after(cleanupTrackedResources);
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-desktop-admission-'));
   trackDirectory(profile);
@@ -23,7 +23,7 @@ test('real application and stdio producer emit one canonical admission before co
   const app = new RuntimeApplicationService({ getRuntime: () => service.sessionRuntime });
   const events = []; const sent = [];
   const bridge = createChatStreamBridge({ sendBridgeEvent: (method, payload) => sent.push({ method, payload }),
-    isStreamEnvelopeV2Enabled: () => true, log() {} });
+    log() {} });
   service.on('chat-stream', payload => { events.push(payload); bridge.handleEvent(payload); });
   const terminal = waitForChatStreamEvent(service, payload => payload.type === 'complete' || payload.type === 'error', 10000);
   const ack = await app.submit({ idempotency_key: 'desktop_fixture', session_id: session.data.id, prompt: 'Say hello.', preferred_model: 'mock-v1' });
@@ -46,13 +46,13 @@ test('real application and stdio producer emit one canonical admission before co
   assert.equal(identity.idempotency_key, 'desktop_fixture');
   const user = service.sessionStore.getSessionMessages(session.data.id).find(row => row.role === 'user');
   assert.equal(identity.user_message_id, user.id);
-  const envelope = sent.find(row => row.method === 'chat.onStreamEnvelope' && row.payload.eventKind === 'started');
-  assert.deepEqual(envelope.payload.payload.runtimeAdmission, identity);
+  const forwarded = sent.find(row => row.method === 'chat.onStream' && row.payload.type === 'started');
+  assert.deepEqual(forwarded.payload.runtimeAdmission, identity);
   assert.ok(events.indexOf(started[0]) < events.findIndex(row => row.type === 'delta'));
   bridge.resetStream(identity.stream_id); await service.stop();
 });
 
-for (const envelope of [false, true]) test(`ordered production mailbox binds admission before content (${envelope ? 'v2' : 'legacy'})`, async t => {
+test('ordered production mailbox binds admission before content', async t => {
   let captured; let acknowledge;
   const h = createControllerHarness([], { durableRuntime: true, shell: { sessionRuntime: { submit: payload => {
     captured = payload; return new Promise(resolve => { acknowledge = resolve; }); } } } });
@@ -60,24 +60,23 @@ for (const envelope of [false, true]) test(`ordered production mailbox binds adm
   const sending = h.controller.startPromptSend('hello'); await new Promise(resolve => setImmediate(resolve));
   const seen = []; let listener;
   const handle = async payload => {
-    seen.push(payload.type || payload.eventKind);
+    seen.push(payload.type);
     assert.equal(h.state.messagesBySession.get('session-1')[0].id, 'authoritative_user');
-    if ((payload.type || payload.eventKind) === 'started') await new Promise(resolve => setImmediate(resolve));
+    if (payload.type === 'started') await new Promise(resolve => setImmediate(resolve));
     return { buffered: false, terminal: false };
   };
   const lifecycle = createStreamHandlerLifecycle({ state: h.state, normalizeId: value => String(value || ''),
-    appendClientLog() {}, handleStreamPayload: handle, handleStreamEnvelope: handle,
+    appendClientLog() {}, handleStreamPayload: handle,
     pendingStreamCommitQueue: { dispose() {} }, runtime: { disposeRenderQueue() {} },
     approvalToastSessionIds: new Set(), reasoningStreamMerger: { clearAll() {} },
     isRowModelEnabled: () => false, getLiveStateStore: () => null,
-    isStreamEnvelopeV2Enabled: () => envelope, clearBufferedStreamEvents() {} });
-  lifecycle.registerStreamHandler({ chat: { onStream: fn => { listener = fn; return () => {}; },
-    onStreamEnvelope: fn => { listener = fn; return () => {}; } } });
+    clearBufferedStreamEvents() {} });
+  lifecycle.registerStreamHandler({ chat: { onStream: fn => { listener = fn; return () => {}; } } });
   const receipt = { work_id: 'work_x', turn_id: 'turn_x', session_id: 'session-1', stream_id: 'stream_x',
     user_message_id: 'authoritative_user', idempotency_key: captured.idempotency_key };
   const base = { sessionId: 'session-1', turnId: 'turn_x', streamId: 'stream_x' };
-  const first = listener({ ...base, ...(envelope ? { eventKind: 'started', payload: { runtimeAdmission: receipt } } : { type: 'started', runtimeAdmission: receipt }) });
-  const second = listener({ ...base, ...(envelope ? { eventKind: 'delta', payload: { content: 'hello' } } : { type: 'delta', content: 'hello' }) });
+  const first = listener({ ...base, type: 'started', runtimeAdmission: receipt });
+  const second = listener({ ...base, type: 'delta', content: 'hello' });
   await Promise.all([first, second]); assert.deepEqual(seen, ['started', 'delta']);
   acknowledge({ ok: true, work_id: 'work_x', turn_id: 'turn_x', session_id: 'session-1' }); await sending;
   lifecycle.dispose(); h.controller.dispose();

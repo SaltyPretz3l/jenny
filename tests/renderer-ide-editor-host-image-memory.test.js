@@ -31,7 +31,6 @@ function makeHost({ budgetBytes } = {}) {
     getDom: () => ({ ideEditorHost: dom.window.document.getElementById('ideEditorHost') }),
     monacoUtils: { ensureMonacoEditorApi: async () => null, normalizeEditorLanguage: () => 'plaintext' },
     imageHostUtils,
-    previewHostUtils: {},
     imageMemoryOptions: budgetBytes ? { budgetBytes } : undefined,
   });
   return {

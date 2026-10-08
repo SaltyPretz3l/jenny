@@ -240,6 +240,52 @@ test('registerClientLogIpcHandler does not throw when passed an object without .
   assert.equal(result, undefined, 'returns undefined for undefined ipcMain (guard early-return)');
 });
 
+for (const denial of [false, 'truthy', 'throw']) {
+  test(`renderer log authorization ignores ${denial} before touching sinks or drop state`, () => {
+    for (const canonical of [true, false]) {
+      const handlers = new Map();
+      const calls = [];
+      const authorizations = [];
+      let decision = denial;
+      registerClientLogIpcHandler({ on: (channel, handler) => handlers.set(channel, handler) }, {
+        authorize: (event, metadata) => {
+          authorizations.push({ event, ...metadata });
+          if (decision === 'throw') throw new Error('denied');
+          return decision;
+        },
+        getDiagnosticLogService: () => {
+          calls.push('service');
+          return canonical ? {
+            append: () => calls.push('append'), recordDrop: () => calls.push('drop'),
+          } : null;
+        },
+        getProcessLogWriter: () => {
+          calls.push('writer');
+          return { writeBatch: () => calls.push('write') };
+        },
+        getRedactionPrefixes: () => { calls.push('redaction'); return []; },
+        env: {},
+        log: () => calls.push('warn'),
+      });
+      const event = {};
+      const batch = { entries: [{ level: 'INFO', message: 'hi' }, null], dropped_count: 3 };
+      const methods = ['diagnostics.logs.appendRendererBatch', 'logs.clientAppend'];
+      for (const methodPath of methods) {
+        assert.equal(handlers.get(getBridgeChannel(methodPath, 'send'))(event, batch), undefined);
+      }
+      assert.deepEqual(calls, []);
+      assert.deepEqual(authorizations, methods.map((methodPath) => ({
+        event, methodPath, channel: getBridgeChannel(methodPath, 'send'),
+      })));
+      decision = true;
+      for (const methodPath of methods) handlers.get(getBridgeChannel(methodPath, 'send'))(event, batch);
+      assert.equal(calls.filter((call) => call === (canonical ? 'append' : 'write')).length, 2);
+      assert.equal(calls.filter((call) => call === 'drop').length, canonical ? 4 : 0);
+      assert.equal(calls.filter((call) => call === 'warn').length, 1, 'denial must not latch the drop warning');
+    }
+  });
+}
+
 test('registerClientLogIpcHandler ignores ipcMain whose .on is not a function (guard does not invoke it)', () => {
   // A crafted ipcMain whose `.on` is a non-callable value must hit the
   // `typeof ipcMainLike.on !== 'function'` guard branch and return without

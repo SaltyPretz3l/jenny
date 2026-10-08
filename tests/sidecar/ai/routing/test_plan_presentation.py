@@ -190,7 +190,7 @@ def test_prose_plan_gets_one_nudge_with_the_reply_kept_for_the_model() -> None:
     assert loop.working_messages[-2] == {"role": "assistant", "content": _PROSE_PLAN}
     assert loop.working_messages[-1] == {"role": "user", "content": PLAN_PROSE_NUDGE}
     assert [type(event) for event in loop.events] == [StreamResetEvent]
-    assert loop.events[0].reason == "post_tool_restart"
+    assert loop.events[0].reason == "nudge_retry"
     assert "chat.token" not in loop.streamed_event_types
 
 

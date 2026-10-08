@@ -2,6 +2,15 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { normalizeLocalRuntime } = require('../services/backend/managed-sidecar-status');
+
+test('local runtime round-trips load_failure and discards unknown shapes', () => {
+  const failure = { cause: 'out_of_memory', message: 'memory exhausted', context: 8192,
+    engine: 'ollama', model: 'qwen3:8b', at: '2026-10-07T12:00:00.000Z' };
+  assert.deepEqual(normalizeLocalRuntime({ load_failure: failure }).load_failure, failure);
+  assert.equal(normalizeLocalRuntime({ load_failure: { unknown: true } }).load_failure, null);
+  assert.equal(normalizeLocalRuntime({}).load_failure, null);
+});
 const {
   applyManagedInitializePayload,
   buildManagedStatusSnapshot,

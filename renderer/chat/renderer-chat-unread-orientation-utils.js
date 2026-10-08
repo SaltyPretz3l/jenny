@@ -21,9 +21,7 @@
       return scrollHeight - (scrollTop + clientHeight) <= 48;
     };
 
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  var normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function ensureUiState(state) {
     if (!state.ui || typeof state.ui !== 'object') {

@@ -140,7 +140,26 @@ def _knowledge_mcp_args(config: RuntimeConfig) -> list[str]:
     if config.tools_knowledge_enabled:
         for knowledge_root in config.knowledge_roots:
             args.extend(["--knowledge-root", knowledge_root])
+    args.extend(_semantic_catalog_mcp_args(config))
     return args
+
+
+def _semantic_catalog_mcp_args(config: RuntimeConfig) -> list[str]:
+    """Forward the catalog reader settings knowledge_search needs (row 41).
+
+    No key travels on argv: the embedder is loopback-only and unauthenticated,
+    and the tools subprocess opens the index read-only.
+    """
+    settings = config.semantic_catalog
+    if settings is None or not settings.enabled or settings.api_key:
+        return []
+    return [
+        "--semantic-catalog-db", settings.db_path,
+        "--semantic-catalog-url", settings.base_url,
+        "--semantic-catalog-model-key", settings.model_key,
+        "--semantic-catalog-query-template", settings.query_template,
+        "--semantic-catalog-dims", str(settings.dims),
+    ]
 
 
 def _execution_policy_mcp_args(config: RuntimeConfig) -> list[str]:

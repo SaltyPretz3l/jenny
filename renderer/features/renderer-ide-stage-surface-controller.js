@@ -5,8 +5,7 @@
  * a time; the persisted enum lives at ide.activeStageSurface
  * (renderer-ide-state.js STAGE_SURFACES) and THIS module is the only writer.
  *
- * Feature flags are applied at render time because they hydrate late. Exploded
- * state derives from the active file tab's viewMode. Bootstrap suppresses one
+ * Exploded state derives from the active file tab's viewMode. Bootstrap suppresses one
  * activation reset so a restored preview or file_map surface survives.
  *
  * sync() is called from renderIde() and is the ONLY place the three overlay
@@ -33,7 +32,6 @@
     const getDom = typeof d.getDom === 'function' ? d.getDom : () => ({});
     const getIde = typeof d.getIde === 'function' ? d.getIde : () => ({});
     const ideStateUtils = d.ideStateUtils || {};
-    const getFeatureFlags = typeof d.getFeatureFlags === 'function' ? d.getFeatureFlags : () => ({});
     const schedulePersist = typeof d.schedulePersist === 'function' ? d.schedulePersist : noop;
     const requestRender = typeof d.requestRender === 'function' ? d.requestRender : noop;
     const appendClientLog = typeof d.appendClientLog === 'function' ? d.appendClientLog : noop;
@@ -49,15 +47,6 @@
     let disposed = false;
     let suppressOnce = false;
 
-    function flags() {
-      return getFeatureFlags() || {};
-    }
-    function isPreviewEnabled() {
-      return flags().workspace_preview_surface === true;
-    }
-    function isMapEnabled() {
-      return flags().workspace_file_map === true;
-    }
     function coerce(value) {
       return typeof ideStateUtils.coerceStageSurface === 'function'
         ? ideStateUtils.coerceStageSurface(value)
@@ -75,30 +64,26 @@
         && ideStateUtils.getTabViewMode(ide, path) === 'exploded';
     }
 
-    // The surface actually shown this render: flag-gated view of the stored
-    // enum, with the editor cluster split by the active tab's viewMode.
+    // The surface actually shown this render: the stored enum, with the
+    // editor cluster split by the active tab's viewMode.
     function getEffectiveSurface() {
       const ide = getIde() || {};
       const stored = coerce(ide.activeStageSurface);
-      if (stored === 'preview' && isPreviewEnabled()) {
-        return 'preview';
-      }
-      if (stored === 'file_map' && isMapEnabled()) {
-        return 'file_map';
+      if (stored === 'preview' || stored === 'file_map') {
+        return stored;
       }
       return explodedEligible(ide) ? 'exploded' : 'editor';
     }
 
-    // User/model-initiated switch. Flag-off targets are rejected (returns the
-    // surface still in effect) rather than stored, so a hidden feature can
-    // never be persisted into view.
+    // User/model-initiated switch. Unknown targets are rejected (returns the
+    // surface still in effect) rather than stored.
     function activate(surface) {
       if (disposed) {
         return getEffectiveSurface();
       }
       const allowed = surface === 'editor'
-        || (surface === 'preview' && isPreviewEnabled())
-        || (surface === 'file_map' && isMapEnabled())
+        || surface === 'preview'
+        || surface === 'file_map'
         || surface === 'exploded';
       if (!allowed) {
         appendClientLog('WARN', 'ide_stage.activate_rejected', { surface: String(surface || '') });
@@ -188,7 +173,7 @@
       const surface = getEffectiveSurface();
       const ide = getIde() || {};
       const dom = getDom() || {};
-      // Stamp the effective (flag-gated) surface on the common parent so CSS
+      // Stamp the effective surface on the common parent so CSS
       // can make the mounted Monaco layer genuinely exclusive with Preview /
       // File Map / Exploded View. Keeping Monaco mounted preserves models,
       // undo history, and scroll state; visibility + inertness prevent its
@@ -238,8 +223,6 @@
       bindEvents,
       dispose,
       getEffectiveSurface,
-      isMapEnabled,
-      isPreviewEnabled,
       noteEditorActivation,
       suppressNextActivationReset,
       sync,

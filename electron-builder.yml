@@ -64,12 +64,6 @@ win:
       filter:
         - "**/*"
         - "!**/.gitignore"
-    # Owner-signed first-party plugin archives. The source directory is always
-    # present; release packaging copies only finalized .jenny-plugin bundles.
-    - from: plugins
-      to: plugins
-      filter:
-        - "*.jenny-plugin"
 nsis:
   # True one-click install (owner decision, 2026-08-19): running the exe
   # installs immediately with no wizard pages. allowToChangeInstallationDirectory
@@ -114,10 +108,6 @@ mac:
       to: sidecar
       filter:
         - "**/*"
-    - from: plugins
-      to: plugins
-      filter:
-        - "*.jenny-plugin"
     - from: vendor/sidecar-media-site
       to: sidecar-media-site
       filter:
@@ -182,10 +172,6 @@ linux:
     # carries none.
     - from: build/icon.png
       to: icon.png
-    - from: plugins
-      to: plugins
-      filter:
-        - "*.jenny-plugin"
 dmg:
   writeUpdateInfo: true
   contents:
@@ -219,7 +205,6 @@ files:
   - "!start.js"
   - "!preload.js"
   - "!uninstall-preload.js"
-  - "!plugin-view-preload.js"
   - "!renderer/shell/renderer-surface-gallery-utils.js"
   - "!styles/views-surface-gallery.css"
   - "*.html"

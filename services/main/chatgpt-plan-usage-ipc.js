@@ -56,6 +56,7 @@ function registerChatGptPlanUsageIpc(ipcMainLike, {
   sendBridgeEvent = noop,
   app,
   log = null,
+  authorization = {},
 } = {}) {
   if (!backendService) {
     return noop;
@@ -111,7 +112,7 @@ function registerChatGptPlanUsageIpc(ipcMainLike, {
 
   registerIpcInvokeHandlers(ipcMainLike, {
     'chatgptPlanUsage.getSnapshot': () => buildPayload(),
-  });
+  }, authorization);
 
   const unsubscribeStore = store.onChange(() => pushSnapshot());
   const unsubscribeAuth = typeof backendService.chatgptAuthService?.onStatusChange === 'function'

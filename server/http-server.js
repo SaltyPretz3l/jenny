@@ -239,7 +239,8 @@ function createHttpServer({ canonicalOrigin, staticRoot, auth, clients, events, 
       }
       if (route === 'POST /api/v1/auth/revoke') {
         const { value } = await readJson(request, security, 4096);
-        if (!value || Object.keys(value).length !== 1 || !/^[A-Za-z0-9_-]{1,128}$/.test(value.session_id || '')) {
+        if (!value || Object.keys(value).length !== 1 || typeof value.session_id !== 'string'
+          || !/^[A-Za-z0-9_-]{1,128}$/.test(value.session_id)) {
           failure(response, 'invalid', 'invalid_session_reference', requestId); return;
         }
         if (!isAuthenticated()) { failure(response, 'unauthorized', 'session_expired', requestId); return; }

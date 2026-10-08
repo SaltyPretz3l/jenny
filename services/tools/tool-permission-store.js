@@ -21,7 +21,7 @@ const {
   validatePermissionDocument,
 } = require('./tool-permission-migrations');
 
-const NEVER_PERSIST_ALWAYS_ALLOW = Object.freeze(new Set(['exit_plan_mode']));
+const NEVER_PERSIST_ALWAYS_ALLOW = Object.freeze(new Set(['exit_plan_mode', 'propose_change']));
 const MAX_PERMISSION_DOCUMENT_BYTES = 4 * 1024 * 1024;
 const DEFAULT_POLICIES = Object.freeze({
   read_file: 'auto', glob_files: 'auto', grep_search: 'auto', write_file: 'ask',
@@ -240,7 +240,7 @@ class ToolPermissionStore {
       return;
     }
     const read = this._store.readWithStatus(null);
-    if (read.corrupted) {
+    if (read.corrupted || read.unreadable) {
       markReadOnly(this, 'unreadable_or_corrupt', {
         errorCode: read.errorCode, errorMessage: read.errorMessage,
       });

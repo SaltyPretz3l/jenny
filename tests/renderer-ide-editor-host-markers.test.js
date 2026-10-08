@@ -52,7 +52,6 @@ function makeHost() {
     },
     // Stub the overlay panes so node doesn't load the browser-only host modules.
     imageHostUtils: {},
-    previewHostUtils: {},
   });
   return { host, fake, dom };
 }
@@ -183,7 +182,6 @@ function makeSharingHost(api) {
     getDom: () => ({ ideEditorHost: dom.window.document.getElementById('ideEditorHost') }),
     monacoUtils: { ...require('../renderer/features/renderer-monaco-editor-utils'), ensureMonacoEditorApi: async () => api, normalizeEditorLanguage: () => 'javascript' },
     imageHostUtils: {},
-    previewHostUtils: {},
   });
 }
 

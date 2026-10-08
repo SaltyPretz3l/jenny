@@ -519,7 +519,7 @@ async function loadRendererApp({
     async ensureScript({ src, isReady } = {}) {
       this.requests.push(src);
       if (isReady?.()) return true;
-      if (!window.rendererIdeScriptManifest?.some(([entry]) => entry === src) && !['renderer/shell/renderer-runs-view.js', 'renderer/shell/renderer-runtime-limits-view.js', 'renderer/shell/renderer-orchestration-controller.js'].includes(src)) return false;
+      if (!window.rendererIdeScriptManifest?.some(([entry]) => entry === src) && !window.rendererSettingsScriptManifest?.some(([entry]) => entry === src) && !['renderer/shell/renderer-runs-view.js', 'renderer/shell/renderer-runtime-limits-view.js', 'renderer/shell/renderer-orchestration-controller.js'].includes(src)) return false;
       const scriptPath = path.join(root, src);
       runScriptFile(scriptPath, context);
       return isReady ? Boolean(isReady()) : true;

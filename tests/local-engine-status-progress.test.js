@@ -290,7 +290,8 @@ test('a managed start that fails, crashes, or reuses a running server drops its 
     const { service } = loadClockService();
     observeManagedLlamaServerState(service, { state: 'starting', alias: 'gemma4:12b', changedAt: Date.now() - 1_000 });
     observeManagedLlamaServerState(service, { alias: 'gemma4:12b', changedAt: Date.now(), ...terminal });
-    assert.equal(service._modelLifecycle.state, 'unloaded', terminal.state);
+    assert.equal(service._modelLifecycle.state, terminal.lastError ? 'unavailable' : 'unloaded', terminal.state);
+    if (terminal.lastError) assert.equal(service._modelLifecycle.failure.cause, 'other');
     assert.notEqual(observedStatus(service).model_state, 'loading', terminal.state);
   }
 });

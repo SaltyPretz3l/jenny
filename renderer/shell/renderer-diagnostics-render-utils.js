@@ -9,7 +9,8 @@
       require('../shared/log-contract-utils'),
       require('./renderer-phase-percentiles-utils'),
       require('./renderer-runtime-health-utils'),
-      require('./renderer-diagnostics-performance-utils')
+      require('./renderer-diagnostics-performance-utils'),
+      require('./renderer-diagnostics-issue-card')
     );
     return;
   }
@@ -22,7 +23,8 @@
     root.logContractUtils || {},
     root.rendererPhasePercentilesUtils || {},
     root.rendererRuntimeHealthUtils || {},
-    root.rendererDiagnosticsPerformanceUtils || {}
+    root.rendererDiagnosticsPerformanceUtils || {},
+    root.rendererDiagnosticsIssueCard || {}
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (
   issueUtils,
@@ -33,7 +35,8 @@
   logContractUtils,
   phaseUtils,
   runtimeHealthUtils,
-  performanceUtils
+  performanceUtils,
+  issueCard
 ) {
   'use strict';
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -131,12 +134,6 @@
       chat: jt('diagnostics.inventory.chat', 'Chat'),
       disabled: jt('diagnostics.inventory.off', 'Off'),
       enabled: jt('diagnostics.inventory.on', 'On'),
-      consistent: jt('diagnostics.inventory.recoveryConsistent', 'No recovery needed'),
-      recovered: jt('diagnostics.inventory.recoveryRecovered', 'Recovered'),
-      plugins_disabled_required: jt('diagnostics.inventory.pluginsMustBeOff', 'Plugins must be turned off'),
-      read_only_incompatible: jt('diagnostics.inventory.readOnlyIncompatible', 'Read only due to incompatible plugin data'),
-      recovery_failed: jt('diagnostics.inventory.recoveryFailed', 'Recovery failed'),
-      not_required: jt('diagnostics.inventory.recoveryNotRequired', 'Not required'),
       idle: jt('diagnostics.inventory.idle', 'Idle'),
       running: jt('diagnostics.inventory.running', 'Running'),
       stopped: jt('diagnostics.inventory.stopped', 'Stopped'),
@@ -186,11 +183,11 @@
     node.textContent = message;
   }
 
-  function runOption(run, label) {
+  function runOption(run, label, isPrior) {
     if (!run) return '';
     var suffix = run.legacy
       ? jt('diagnostics.run.legacyHistory', ' · legacy history')
-      : (label === 'Prior run' || label === jt('diagnostics.run.prior', 'Prior run')) && run.started_at
+      : isPrior && run.started_at
         ? ' · ' + formatCompactTime(run.started_at, true)
         : '';
     return '<option value="' + escapeHtml(run.run_id) + '">' + escapeHtml(label + suffix) + '</option>';
@@ -200,7 +197,7 @@
     var select = document.getElementById('diagnosticsRunSelect');
     if (!select) return;
     var snapshot = state.diagnosticsSnapshot || {};
-    var markup = runOption(snapshot.active_run, jt('diagnostics.run.current', 'Current run')) + runOption(snapshot.prior_run, jt('diagnostics.run.prior', 'Prior run'));
+    var markup = runOption(snapshot.active_run, jt('diagnostics.run.thisLaunch', 'This app launch')) + runOption(snapshot.prior_run, jt('diagnostics.run.previousLaunch', 'Previous app launch'), true);
     if (select.dataset.optionsSignature !== markup) {
       select.innerHTML = markup;
       select.dataset.optionsSignature = markup;
@@ -279,7 +276,7 @@
           ? jtn('diagnostics.groupedIssuesNeedReview', issues.length, { count: issues.length }, '{count} grouped issue need review.', '{count} grouped issues need review.')
           : unavailable
             ? jt('diagnostics.runtimeUnavailableSummary', 'The runtime is not available. Inspect recent issues and Activity for the failure path.')
-            : jt('diagnostics.noWarnOrErrorEvents', 'No WARN or ERROR events in the selected run.');
+            : jt('diagnostics.noWarnOrErrorEventsLaunch', 'No warnings or errors in this app launch.');
     return { tone: tone, headline: headline, summary: summary };
   }
 
@@ -334,54 +331,29 @@
       + '<p>' + escapeHtml(integrityCopy) + '</p></div>');
   }
 
-  function renderIssues(issues) {
+  function renderIssues(issues, entries) {
     var issueList = document.getElementById('diagnosticsIssueList');
     if (!issueList) return;
     if (!issues.length) {
-      paintMarkup(issueList, '<div class="diagnostics-empty"><strong>' + escapeHtml(jt('diagnostics.issues.noneActionable', 'No actionable issues')) + '</strong><p>' + escapeHtml(jt('diagnostics.issues.noWarnOrError', 'The selected run has no WARN or ERROR events.')) + '</p></div>');
+      paintMarkup(issueList, '<div class="diagnostics-empty"><strong>' + escapeHtml(jt('diagnostics.issues.noneActionable', 'No actionable issues')) + '</strong><p>' + escapeHtml(jt('diagnostics.issues.noWarnOrErrorLaunch', 'This app launch has no warnings or errors.')) + '</p></div>');
       return;
     }
-    var rows = issues.slice(0, 20).map(function (issue) {
-      var message = displayMessage(issue.message, issue.event);
-      var correlationPairs = Object.entries(issue.correlations || {}).filter(function (pair) {
-        return String(pair[1] || '').trim();
-      });
-      var correlations = correlationPairs.length
-        ? '<div class="diagnostics-issue-correlations" aria-label="' + escapeHtml(jt('diagnostics.issues.correlationIdentifiers', 'Correlation identifiers')) + '">'
-          + correlationPairs.map(function (pair) {
-            var safeValue = safeCorrelationValue(pair[1]);
-            return '<span><span>' + escapeHtml(statusLabel(pair[0].replace('_id', ''))) + '</span><code title="'
-              + escapeHtml(safeValue) + '">' + escapeHtml(safeValue) + '</code></span>';
-          }).join('') + '</div>'
-        : '';
-      var remediation = issue.remediation
-        ? '<p class="diagnostics-remediation"><span>' + escapeHtml(jt('diagnostics.issues.recordedRemediation', 'Recorded remediation')) + '</span>' + escapeHtml(issue.remediation) + '</p>'
-        : '';
-      var inspect = typeof actionButton === 'function'
-        ? actionButton({
-          id: 'inspect-diagnostic-issue',
-          label: jt('diagnostics.inspectActivity', 'Inspect activity'),
-          variant: 'ghost',
-          size: 'sm',
-          dataset: { issue: encodeURIComponent(issue.key) },
-          className: 'diagnostics-inspect-action',
-        })
-        : '';
-      return '<article class="diagnostics-issue" role="listitem" data-severity="' + escapeHtml(issue.severity) + '">'
-        + '<span class="diagnostics-issue-level" data-label="' + escapeHtml(jt('diagnostics.labels.level', 'Level')) + '">' + escapeHtml(issue.severity) + '</span>'
-        + '<div class="diagnostics-issue-copy" data-label="' + escapeHtml(jt('diagnostics.labels.issue', 'Issue')) + '"><strong><code>' + escapeHtml(issue.event) + '</code></strong>'
-        + (message ? '<p>' + escapeHtml(message) + '</p>' : '<p class="diagnostics-muted">' + escapeHtml(jt('diagnostics.issues.noAdditionalMessageRecorded', 'No additional message recorded.')) + '</p>')
-        + correlations + remediation + '</div>'
-        + '<div class="diagnostics-issue-meta" data-label="' + escapeHtml(jt('diagnostics.labels.component', 'Component')) + '"><code>' + escapeHtml(issue.component) + '</code>'
-        + (issue.error_code ? '<span>' + escapeHtml(issue.error_code) + '</span>' : '') + '</div>'
-        + '<time data-label="' + escapeHtml(jt('diagnostics.source.lastSeen', 'Last seen')) + '" datetime="' + escapeHtml(issue.ts || '') + '" title="' + escapeHtml(issue.ts || jt('diagnostics.common.unknownTime', 'Unknown time')) + '">'
-        + escapeHtml(issue.ts ? formatCompactTime(issue.ts) : jt('diagnostics.common.unknown', 'Unknown')) + '</time>'
-        + '<span class="diagnostics-issue-count" data-label="' + escapeHtml(jt('diagnostics.labels.count', 'Count')) + '">' + formatNumber(issue.count) + '\u00d7</span>'
-        + '<div class="diagnostics-issue-action">' + inspect + '</div></article>';
-    }).join('');
-    paintMarkup(issueList,
-      '<div class="diagnostics-issue-header" aria-hidden="true"><span>' + escapeHtml(jt('diagnostics.labels.level', 'Level')) + '</span><span>' + escapeHtml(jt('diagnostics.labels.issue', 'Issue')) + '</span><span>' + escapeHtml(jt('diagnostics.labels.component', 'Component')) + '</span><span>' + escapeHtml(jt('diagnostics.source.lastSeen', 'Last seen')) + '</span><span>' + escapeHtml(jt('diagnostics.labels.count', 'Count')) + '</span><span></span></div>'
-      + rows);
+    // The card module owns the entry markup; folds open in the live DOM stay open across a repaint, the
+    // markup memo holds content only (toggling a fold never forces one), and a repaint for new content
+    // gives focus back to the control that had it.
+    var openGroups = issueCard.openGroupsIn(issueList);
+    var focused = issueCard.focusedControlIn(issueList);
+    var painted = paintMarkup(issueList, issueCard.renderIssueList(issues, {
+      availableActions: globalThis.rendererDiagnosticsActions,
+      entries: entries,
+      formatDetailTime: formatDetailTime,
+      safeCorrelationValue: safeCorrelationValue,
+      statusLabel: statusLabel,
+    }));
+    if (painted) {
+      issueCard.restoreOpenGroups(issueList, openGroups);
+      issueCard.restoreFocus(issueList, focused);
+    }
   }
 
   function renderHealth(state) {
@@ -410,7 +382,7 @@
     var summary = document.getElementById('diagnosticsSummary');
     if (summary && selectedRunId(state) && selectedRunId(state) !== String(state.diagnosticsSnapshot?.active_run?.run_id || '')) {
       summary.insertAdjacentHTML('beforeend', '<p class="settings-note diagnostics-muted">'
-        + escapeHtml(jt('diagnostics.health.currentLaunchScope', 'Health shows the current launch, not the selected run.')) + '</p>');
+        + escapeHtml(jt('diagnostics.health.currentLaunchScope', 'Health shows the current app launch, not the one picked above.')) + '</p>');
     }
     performanceUtils.renderPerformanceSummary(status, runtimeHealthState, paintMarkup);
   }
@@ -532,20 +504,59 @@
     return [jt('diagnostics.inventory.shell', 'Shell'), clauses.join(' \u00b7 ') || jt('diagnostics.inventory.configured', 'Configured'), 'ok', false, [companion && 'companion ' + companion, offline && 'offline ' + offline].filter(Boolean).join(' \u00b7 ')];
   }
 
-  function boundedFacetItems(snapshot) {
-    var runtime = isAvailableFacet(snapshot?.runtime) ? snapshot.runtime : null;
+  var loadFailureUtils = (typeof globalThis !== 'undefined' && globalThis.jennyModelLoadFailure)
+    || (typeof require === 'function' ? require('../shared/model-load-failure') : null);
+
+  // Row 38 item 1 (B): the Engine row says "failed to load" with the reason and
+  // the last attempt while Electron's lifecycle carries a classified failure.
+  function loadFailureRows(failure) {
+    if (!failure || !loadFailureUtils) return [];
+    var at = Date.parse(failure.at);
+    var time = Number.isFinite(at) ? formatCompactTime(at, true) : '';
+    var attempt = failure.context
+      ? jt('diagnostics.inventory.attemptAt', '{time} · {context} context', { time: time, context: formatContextShort(failure.context) })
+      : time;
+    // causeSentence already quotes the message for `other`; the other causes add it.
+    var reason = loadFailureUtils.causeSentence(failure)
+      + (failure.message && failure.cause !== 'other' ? ' \u00b7 ' + failure.message : '');
     return [
-      runtime && runtime.active_engine && runtime.active_model
+      [jt('diagnostics.inventory.reason', 'Reason'), reason, 'danger', false, reason],
+      [jt('diagnostics.inventory.lastAttempt', 'Last attempt'), attempt, 'muted', false, attempt],
+    ];
+  }
+
+  function formatContextShort(value) {
+    return value >= 1024 ? Math.round(value / 1024) + 'K' : String(value);
+  }
+
+  function inventoryActionsMarkup(failure) {
+    if (!failure || typeof actionButton !== 'function') return '';
+    var label = jt('diagnostics.inventory.retryLoad', 'Retry load');
+    return '<div class="diagnostics-inventory-actions">' + actionButton({
+      id: 'diagnostics-retry-load', label: label, title: label, variant: 'secondary', size: 'sm',
+      dataset: { 'retry-model': failure.model, 'retry-engine': failure.engine || '' },
+    }) + '</div>';
+  }
+
+  function boundedFacetItems(snapshot, failure) {
+    var runtime = isAvailableFacet(snapshot?.runtime) ? snapshot.runtime : null;
+    var failed = failure
+      ? loadFailureUtils.engineLabel(failure.engine) + ' \u00b7 ' + failure.model + ' \u00b7 ' + jt('diagnostics.inventory.failedToLoad', 'failed to load') : '';
+    return [
+      failure
+        ? [jt('diagnostics.inventory.engine', 'Engine'), failed, 'danger', true, failed]
+        : runtime && runtime.active_engine && runtime.active_model
         ? [jt('diagnostics.inventory.engine', 'Engine'), runtime.active_engine + ' \u00b7 ' + runtime.active_model + ' \u00b7 '
           + statusLabel(runtime.active_mode || 'chat'), 'ok', true,
           runtime.active_engine + ' \u00b7 ' + runtime.active_model + ' \u00b7 ' + (runtime.active_mode || 'chat')]
         : unavailableFacet(jt('diagnostics.inventory.engine', 'Engine')),
+    ].concat(loadFailureRows(failure), [
       toolsFacetRow(isAvailableFacet(snapshot?.tools) ? snapshot.tools : null),
       memoryFacetRow(isAvailableFacet(snapshot?.memories) ? snapshot.memories : null),
       skillsFacetRow(isAvailableFacet(snapshot?.skills) ? snapshot.skills : null),
       workspaceFacetRow(isAvailableFacet(snapshot?.workspace) ? snapshot.workspace : null),
       shellFacetRow(isAvailableFacet(snapshot?.shell) ? snapshot.shell : null),
-    ];
+    ]);
   }
 
   function schedulerRow(scheduler) {
@@ -557,28 +568,6 @@
     if (lifecycle.reason) clauses.push(String(lifecycle.reason));
     if (lifecycle.error) clauses.push(String(lifecycle.error));
     return [jt('diagnostics.inventory.scheduler', 'Scheduler'), clauses.join(' \u00b7 '), phase === 'failed' ? 'warn' : 'ok', false, phase + ' \u00b7 ' + clauses.join(' \u00b7 ')];
-  }
-
-  function pluginRows(state) {
-    if (state.features?.featureFlags?.plugins !== true) return [];
-    var plugins = state.pluginPlatformDiagnostics;
-    var platform = isRecord(plugins) && isRecord(plugins.platform) ? plugins.platform : null;
-    if (!platform) return [unavailableFacet(jt('diagnostics.inventory.plugins', 'Plugins'))];
-    var distribution = isRecord(plugins.distribution?.state)
-      ? plugins.distribution.state
-      : isRecord(plugins.distribution) ? plugins.distribution : {};
-    var installed = Number(platform.installed_count);
-    var clauses = Number.isFinite(installed) ? [jt('diagnostics.inventory.installedCount', '{count} installed', { count: formatNumber(installed) })] : [];
-    if (platform.read_only) clauses.push(jt('diagnostics.inventory.readOnly', 'Read only'));
-    var technical = 'stage ' + String(platform.stage ?? 'unknown') + ' \u00b7 revision ' + String(platform.revision ?? 'unknown');
-    var recovery = String(platform.recovery?.classification || '').trim();
-    return [
-      [jt('diagnostics.inventory.plugins', 'Plugins'), clauses.join(' \u00b7 '), platform.read_only ? 'warn' : 'ok', false, technical],
-      [jt('diagnostics.inventory.recovery', 'Recovery'), statusLabel(recovery || 'not_required'), recovery === 'recovery_failed' ? 'warn' : 'ok', false, recovery],
-      [jt('diagnostics.inventory.distribution', 'Distribution'), distribution.revision == null
-        ? jt('diagnostics.inventory.notPersisted', 'Not persisted')
-        : jt('diagnostics.inventory.revision', 'Revision {revision}', { revision: formatNumber(distribution.revision) }), 'ok', false, 'revision ' + String(distribution.revision ?? 'unknown')],
-    ];
   }
 
   // Electron's own runtime facet (jenny_status.runtime.chromium_sandbox) says
@@ -618,10 +607,11 @@
       return;
     }
     var sandbox = chromiumSandboxRow(state.diagnosticsStatus);
-    var platform = [schedulerRow(state.schedulerDiagnostics)].concat(pluginRows(state), sandbox ? [sandbox] : []);
-    var rows = boundedFacetItems(snapshot).map(function (item) { return inventoryRow(item, false); }).join('')
+    var platform = [schedulerRow(state.schedulerDiagnostics)].concat(sandbox ? [sandbox] : []);
+    var failure = loadFailureUtils ? loadFailureUtils.readModelLoadFailure(liveBackend(state)) : null;
+    var rows = boundedFacetItems(snapshot, failure).map(function (item) { return inventoryRow(item, false); }).join('')
       + platform.map(function (item, index) { return inventoryRow(item, index === 0); }).join('');
-    paintMarkup(host, '<dl class="diagnostics-inventory-list">' + rows + '</dl>' + inventoryStampMarkup(state));
+    paintMarkup(host, '<dl class="diagnostics-inventory-list">' + rows + '</dl>' + inventoryActionsMarkup(failure) + inventoryStampMarkup(state));
   }
 
   function renderOverview(state, entries) {
@@ -633,7 +623,7 @@
     var integrity = evidence.integrity || {};
     var sourceEvidence = evidence.sources || {};
     renderOverall(state, issues, sourceEvidence, integrity);
-    renderIssues(issues);
+    renderIssues(issues, entries);
     renderSources(sourceEvidence, integrity);
     renderHealth(state);
     renderRuntimeInventory(state);
@@ -877,9 +867,15 @@
   // poller with Settings › Limits & budgets). Each paint of this tab attaches
   // it on first show and wakes it after; the console polls only while
   // Diagnostics shows this tab.
-  function showRunsBoard() {
+  function showRunsBoard(loadSeam) {
     var host = document.getElementById('diagnosticsRunsMount');
-    if (host) globalThis.rendererRuntimeConsole?.showRuns?.(host);
+    if (!host) return false;
+    var seam = globalThis.rendererRuntimeConsole;
+    if (seam && typeof seam.showRuns === 'function') { seam.showRuns(host); return true; }
+    // The seam ships with the Settings page group, which loads on first use
+    // (row 32 W2): ask for the page once, and the caller paints again after.
+    if (typeof loadSeam === 'function') loadSeam();
+    return false;
   }
 
   function scrollLogsToBottom(list) {
@@ -923,8 +919,23 @@
       if (headerActions) headerActions.hidden = view.activeTab === 'runs';
       if (view.activeTab === 'overview') renderOverview(state, entries);
       else if (view.activeTab === 'activity') renderActivity(state, entries, virtualizer, activityCache);
-      else showRunsBoard();
+      else if (!showRunsBoard(loadRunsSeam)) return;
+      if (view.activeTab !== 'runs') runsSeamFailed = false;
       renderDetail(state, entries);
+    }
+
+    var runsSeamLoad = null;
+    var runsSeamFailed = false;
+    function loadRunsSeam() {
+      var ensureSettingsPage = options.callbacks && options.callbacks.ensureSettingsPage;
+      if (runsSeamLoad || runsSeamFailed || typeof ensureSettingsPage !== 'function') return;
+      runsSeamLoad = Promise.resolve(ensureSettingsPage()).then(function (page) {
+        runsSeamLoad = null;
+        var seam = globalThis.rendererRuntimeConsole;
+        // A failed load (or a page without the seam) waits for the next visit of the tab; no repaint loop.
+        if (!page || !seam || typeof seam.showRuns !== 'function') { runsSeamFailed = true; return; }
+        if (diagnosticsState(state).activeTab === 'runs') renderLogs();
+      }, function () { runsSeamLoad = null; runsSeamFailed = true; });
     }
 
     function renderLogs() {

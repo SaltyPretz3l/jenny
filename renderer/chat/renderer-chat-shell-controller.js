@@ -925,6 +925,11 @@
         getLinkedSessionId: (taskId) => state.sessions.find(
           (session) => String(session?.linked_task_id || '').trim() === String(taskId || '').trim()
         )?.id || '',
+        // The task's own project first (the board row carries it), else the current chat's.
+        getProjectId: (taskId) => String(['active', 'deferred', 'recentResolved', 'archived']
+          .flatMap((section) => state.companion?.openLoopsBoard?.[section] || [])
+          .find((task) => String(task?.followUpId || '').trim() === String(taskId || '').trim())?.projectId
+          || state.sessions.find((session) => String(session?.id || '') === String(state.currentSessionId || ''))?.project_id || '').trim(),
         getTaskNotes: (taskId) => String(['active', 'deferred', 'recentResolved', 'archived']
           .flatMap((section) => state.companion?.openLoopsBoard?.[section] || [])
           .find((task) => String(task?.followUpId || '').trim() === String(taskId || '').trim())?.body || ''),
@@ -935,17 +940,6 @@
         setHomeCalendarFocusDay: (key) => { state.ui.homeCalendarFocusDay = key; },
         appendClientLog: (...args) => callbacks.appendClientLog(...args),
       }) || (() => {}));
-    }
-
-    // Re-checks the stream_envelope_v2 flag against the live subscription and
-    // resubscribes on a mode change. Called after the initial feature-state
-    // load in bootstrapAppShell: bind() runs before features.getState()
-    // resolves, so the first subscription is made against placeholder flags.
-    function resyncStreamSubscriptionMode() {
-      if (!bound || !streamHandler) {
-        return null;
-      }
-      return streamHandler.resyncStreamSubscriptionMode?.() ?? null;
     }
 
     function dispose() {
@@ -967,7 +961,6 @@
       sendOutboxActions: controllers.sendOutboxActions, streamHandler,
       onPaneSessionChanged: (sessionId) => selectionController?.onSessionSwitch?.(sessionId), // P2: the pane composition, on a layout session change
       bind,
-      resyncStreamSubscriptionMode,
       dispose,
       startPromptSend,
       dispatchQueuedSendForSession,

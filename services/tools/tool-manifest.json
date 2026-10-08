@@ -314,6 +314,43 @@
       }
     },
     {
+      "name": "propose_change",
+      "description": "Propose mode: suggest one exact change for the user to review. Nothing is written: the file stays unchanged until the user accepts the suggestion. kind \"replace\" swaps old_string, copied exactly from the current file and matching once, for new_string; kind \"create\" suggests a new file with new_string as its whole content.",
+      "category": "builtin",
+      "side_effecting": false,
+      "read_only": true,
+      "owner": "sidecar",
+      "tool_family": "filesystem",
+      "source_kind": "builtin",
+      "surfaces": ["managed_sidecar", "builtin_mcp"],
+      "result_metadata": { "suggested_change": "Bounded v1 record: schema_version, path (workspace-relative, forward slashes), kind, old_string, new_string, title, what, why, watch_for, revises, group (label or null), depends_on (ids), base_hash (sha256 of the LF-normalized current file, null for create), diff (structured diff; nothing is written or snapshotted)." },
+      "availability": {
+        "config_flag": "tools_edit_file_enabled",
+        "workspace_required": true,
+        "platforms": [],
+        "defer_eligible": false,
+        "always_available": false,
+        "propose_mode_only": true
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Workspace-relative or absolute path of the file to change or create." },
+          "kind": { "type": "string", "enum": ["create", "replace"], "description": "replace: change text in an existing file. create: a new file that does not exist yet." },
+          "old_string": { "type": "string", "description": "replace only: the exact text from the current file to replace; it must match once. Earlier suggestions are not applied, so copy from the file as it is now." },
+          "new_string": { "type": "string", "description": "The replacement text, or the whole content of the new file for create." },
+          "title": { "type": "string", "description": "A short name for the change, at most 80 characters. Write title, what and why for someone who doesn't program. Describe the effect, not the code: no function names unless unavoidable, no jargon. Be brief; the code diff is right there." },
+          "what": { "type": "string", "description": "At most two sentences: what changes for the user. Write title, what and why for someone who doesn't program. Describe the effect, not the code: no function names unless unavoidable, no jargon. Be brief; the code diff is right there." },
+          "why": { "type": "string", "description": "At most two sentences: why this change helps. Write title, what and why for someone who doesn't program. Describe the effect, not the code: no function names unless unavoidable, no jargon. Be brief; the code diff is right there." },
+          "watch_for": { "type": "string", "description": "Optional, one sentence: what the user should check after accepting. Write title, what and why for someone who doesn't program. Describe the effect, not the code: no function names unless unavoidable, no jargon. Be brief; the code diff is right there." },
+          "revises": { "type": "string", "description": "Optional: the id of an earlier suggestion this one replaces; use it to change a region an existing suggestion already covers." },
+          "group": { "type": "string", "description": "Optional: a short label (letters, digits, dot, dash or underscore) shared by changes that only work together, such as a rename and its callers. A group is applied as one unit after the user accepts every change in it." },
+          "depends_on": { "type": "array", "items": { "type": "string" }, "maxItems": 10, "description": "Optional: ids of earlier suggestions this change needs applied first (this turn's own earlier suggestions go by their tool call id). Use group instead when the changes must land together." }
+        },
+        "required": ["path", "kind", "new_string", "title", "what", "why"]
+      }
+    },
+    {
       "name": "delete_file",
       "aliases": ["Delete"],
       "description": "Delete a workspace file or directory. The target is moved to .jenny/trash (reversible) rather than permanently erased. Deleting a directory requires recursive: true.",
@@ -502,7 +539,7 @@
     },
     {
       "name": "knowledge_search",
-      "description": "Search the user's registered knowledge folders for a regular expression. Returns matching lines plus kb:N source references.",
+      "description": "Search the user's registered knowledge folders by regular expression (pattern), by meaning (query), or both. Returns matching lines, passages found by meaning, and kb:N source references.",
       "category": "builtin",
       "side_effecting": false,
       "read_only": true,
@@ -521,7 +558,8 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "pattern": { "type": "string", "description": "Regex pattern to search for." },
+          "pattern": { "type": "string", "description": "Regex pattern to search for. Pass pattern, query, or both." },
+          "query": { "type": "string", "maxLength": 2000, "description": "What to find, in plain words (e.g. 'notes about the lease renewal'). Finds passages by meaning when Search by meaning is on, otherwise matches the query's words." },
           "root": { "type": "string", "description": "Optional registered root to restrict the search to (folder name or full path). Mutually exclusive with path." },
           "path": { "type": "string", "description": "Optional directory or file inside a registered folder to scope the search to (e.g. project-x/sub). Mutually exclusive with root." },
           "include_glob": { "type": "string", "description": "Optional glob to filter searched files." },
@@ -529,7 +567,7 @@
           "context_lines": { "type": "integer", "minimum": 0, "maximum": 10, "description": "Number of context lines to include around each match." },
           "max_results": { "type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum number of matches to return." }
         },
-        "required": ["pattern"]
+        "required": []
       }
     },
     {
@@ -1055,7 +1093,7 @@
     },
     {
       "name": "preview_test",
-      "description": "Load one workspace HTML file in a hidden, network-isolated sandbox and report what happened: render state, console errors, and page errors, optionally after bounded click/type interactions and at a chosen viewport. Each event outcome is listed; a \"clicked\" status only means the click was dispatched, so pass observe (CSS selectors) to read back match count, visibility and text after the events and verify the effect. The page loads real workspace files, but the in-app Preview is self-contained: external scripts and stylesheets do not load there, and the result warns when the page references any. Read-only and one-shot; it never navigates off the file, reaches the network, or evaluates caller scripts (observation uses a tool-owned read-only script).",
+      "description": "Load one workspace HTML file in a hidden, network-isolated sandbox and report what happened: render state, console errors, and page errors, optionally after bounded click/type/hover/focus/press interactions and at a chosen viewport. Each event outcome is listed; a \"clicked\", \"hovered\", \"focused\" or \"pressed\" status only means the input was dispatched, so pass observe (CSS selectors) to read back match count, visibility and text after the events and verify the effect. A screenshot is taken after a fresh frame is presented, so it reflects the post-event state. The page loads real workspace files, but the in-app Preview is self-contained: external scripts and stylesheets do not load there, and the result warns when the page references any. Read-only and one-shot; it never navigates off the file, reaches the network, or evaluates caller scripts (observation uses a tool-owned read-only script).",
       "category": "builtin",
       "side_effecting": false,
       "read_only": true,
@@ -1081,7 +1119,7 @@
           "viewport": {
             "type": "string",
             "enum": ["desktop", "mobile", "tablet"],
-            "description": "Viewport preset for responsiveness checks. Default desktop (1280x800); mobile is 390x844, tablet 820x1180."
+            "description": "Viewport preset name as a string, not an object (width/height are not supported). Default desktop (1280x800); mobile is 390x844, tablet 820x1180."
           },
           "wait_ms": {
             "type": "integer",
@@ -1093,17 +1131,22 @@
           },
           "events": {
             "type": "array",
-            "description": "Up to 10 bounded interactions applied in order after load. Each item: {action: \"click\"|\"type\", selector, text?, press_enter?}. Selector misses are reported per event, not fatal.",
+            "description": "Up to 10 bounded interactions applied in order after load. Each item: {action: \"click\"|\"type\"|\"hover\"|\"focus\"|\"press\", selector, text?, press_enter?, key?}. selector is required except for press, which sends key (Enter, Space or a literal \" \" or Spacebar, Tab, Escape, ArrowUp, ArrowDown, ArrowLeft or ArrowRight) to the focused element or, with a selector, to that element after focusing it. hover moves the pointer over the element; focus focuses any focusable element. Selector misses are reported per event, not fatal. Events use \"action\" (not \"type\") to name the interaction, e.g. [{\"action\":\"click\",\"selector\":\"#start\"},{\"action\":\"press\",\"key\":\"Enter\"}].",
             "items": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "action": { "type": "string", "enum": ["click", "type"] },
+                "action": { "type": "string", "enum": ["click", "type", "hover", "focus", "press"] },
                 "selector": { "type": "string" },
+                "key": {
+                  "type": "string",
+                  "enum": ["Enter", "Space", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " ", "Spacebar"]
+                },
                 "text": { "type": "string" },
                 "press_enter": { "type": "boolean" }
               },
-              "required": ["action", "selector"]
+              "required": ["action"],
+              "anyOf": [{ "required": ["selector"] }, { "required": ["key"] }]
             }
           },
           "observe": {
@@ -1341,7 +1384,7 @@
     },
     {
       "name": "task_board",
-      "description": "Add, update, complete, or list durable model-authored tasks in the persisted Open Loops store. Mutations target one task id; add generates and returns a new id. The list action returns only agent_task records. When you finish work that a task tracks — including a session started from a task, whose brief names its task id — call complete with that id. Do not leave a finished task open.",
+      "description": "Add, update, complete, or list durable model-authored tasks in the persisted Open Loops store. Mutations target one task id; add generates and returns a new id. The list action returns only agent_task records. When you finish work that a task tracks — including a session started from a task, whose brief names its task id — call complete with that id. Do not leave a finished task open. Tasks are scoped to the current chat's project; list, update and complete only see that project's tasks.",
       "category": "builtin",
       "side_effecting": true,
       "read_only": false,
@@ -1396,6 +1439,66 @@
       }
     },
     {
+      "name": "project_notes",
+      "description": "Read and edit Jenny's notes for the current chat's project: a single markdown page the user also edits in the Notes rail. read returns the note; append adds text at the end or under a `## Heading`; replace swaps one exact passage for another. Writes are attributed to Jenny and one-click undoable from the chat and the Notes rail. Keep notes short and factual: decisions, conventions, open questions, where things live.",
+      "category": "builtin",
+      "side_effecting": true,
+      "read_only": false,
+      "owner": "electron",
+      "tool_family": "home",
+      "source_kind": "builtin",
+      "surfaces": ["managed_sidecar"],
+      "availability": {
+        "config_flag": "tools_project_notes_enabled",
+        "workspace_required": false,
+        "platforms": [],
+        "defer_eligible": false,
+        "always_available": false
+      },
+      "actions": {
+        "read": { "side_effecting": false },
+        "append": { "side_effecting": true },
+        "replace": { "side_effecting": true }
+      },
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["read", "append", "replace"],
+            "description": "Which project-notes operation to perform."
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 4000,
+            "description": "Text to add. Required for append."
+          },
+          "heading": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "Optional for append: add the text under this `## Heading`, creating the section when it does not exist."
+          },
+          "old_text": {
+            "type": "string",
+            "maxLength": 20000,
+            "description": "The exact passage to replace. Required for replace; it must appear exactly once in the note."
+          },
+          "new_text": {
+            "type": "string",
+            "maxLength": 20000,
+            "description": "The replacement passage. Required for replace; an empty string deletes the passage."
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 140,
+            "description": "Optional one-line description of the change, shown beside the undo control."
+          }
+        },
+        "required": ["action"]
+      }
+    },
+    {
       "name": "delegate",
       "description": "Delegate one context-heavy read-only investigation or two to three independent investigations. The harness chooses single, sequential, or parallel execution and returns ordered compact results.",
       "category": "builtin",
@@ -1444,7 +1547,7 @@
     },
     {
       "name": "python_execute",
-      "description": "Execute Python code for data analysis, calculations, and visualization. Returns text output plus optional inline charts and tables. Code runs with its working directory set to the workspace root when one is configured, so relative paths resolve against the workspace, and JENNY_WORKSPACE_ROOT names that root. Without a workspace it runs in a temporary directory that is deleted after the call. Write generated files to the directory named by JENNY_OUTPUT_DIR.",
+      "description": "Execute Python code for data analysis, calculations, and visualization. Returns text output plus optional inline charts and tables. Code runs with its working directory set to the workspace root when one is configured, so relative paths resolve against the workspace, and JENNY_WORKSPACE_ROOT names that root. Without a workspace it runs in a temporary directory that is deleted after the call. Write generated files to the directory named by JENNY_OUTPUT_DIR. Use edit_file or write_file for source edits; files changed by commands and scripts skip the stale-file check, encoding preservation and undo.",
       "category": "builtin",
       "side_effecting": true,
       "read_only": false,
@@ -1486,7 +1589,7 @@
     {
       "name": "run_command",
       "aliases": ["Bash"],
-      "description": "Run a shell command via cmd.exe on Windows or /bin/sh elsewhere. On Windows the command must be a single line: cmd.exe runs only the first line, so a command containing a line break is refused. Run one command per call (join dependent steps with &&) or use run_temp_script for multi-line scripts, including python -c programs. Windows cmd.exe treats ^ as an escape; prefer git_show with path for historical blobs, or ~1 when raw shell Git syntax is unavoidable. Use move_file to relocate or rename workspace files instead of shell move or mv.",
+      "description": "Run a shell command via cmd.exe on Windows or /bin/sh elsewhere. On Windows the command must be a single line: cmd.exe runs only the first line, so a command containing a line break is refused. Run one command per call (join dependent steps with &&) or use run_temp_script for multi-line scripts, including python -c programs. Windows cmd.exe treats ^ as an escape; prefer git_show with path for historical blobs, or ~1 when raw shell Git syntax is unavoidable. Use move_file to relocate or rename workspace files instead of shell move or mv. Use edit_file or write_file for source edits; files changed by commands and scripts skip the stale-file check, encoding preservation and undo.",
       "category": "builtin",
       "side_effecting": true,
       "read_only": false,
@@ -1529,7 +1632,7 @@
     {
       "name": "run_temp_script",
       "aliases": [],
-      "description": "Run an automatically cleaned-up platform shell script outside the repository. Uses cmd.exe on Windows and /bin/sh elsewhere; background mode is not supported. Pass language to run the script under a specific interpreter instead of the platform shell. Python scripts live outside the workspace: cwd does not add project modules to sys.path. For workspace imports, explicitly use import sys; from pathlib import Path; sys.path.insert(0, str(Path.cwd())). Check sys.executable before installing missing dependencies; use run_command with the project interpreter absolute path when required.",
+      "description": "Run an automatically cleaned-up platform shell script outside the repository. Uses cmd.exe on Windows and /bin/sh elsewhere; background mode is not supported. Pass language to run the script under a specific interpreter instead of the platform shell. Python scripts live outside the workspace: cwd does not add project modules to sys.path. For workspace imports, explicitly use import sys; from pathlib import Path; sys.path.insert(0, str(Path.cwd())). Check sys.executable before installing missing dependencies; use run_command with the project interpreter absolute path when required. Use edit_file or write_file for source edits; files changed by commands and scripts skip the stale-file check, encoding preservation and undo.",
       "category": "builtin",
       "side_effecting": true,
       "read_only": false,
@@ -1548,7 +1651,7 @@
         "type": "object",
         "properties": {
           "script": { "type": "string", "minLength": 1, "maxLength": 100000, "description": "Platform shell script content." },
-          "language": { "type": "string", "enum": ["python", "powershell", "cmd", "sh", "javascript"], "description": "Interpreter language for the temporary script." },
+          "language": { "type": "string", "enum": ["python", "powershell", "cmd", "sh", "javascript"], "description": "Optional. One of python, powershell, cmd, sh, javascript. When omitted the script runs under the platform shell (cmd on Windows, sh elsewhere), and a script that is plainly Python, JavaScript or PowerShell is rejected until you pass its language. Example: {\"script\": \"print(1)\", \"language\": \"python\"}." },
           "cwd": { "type": "string", "description": "Working directory override within the workspace." },
           "timeout_seconds": { "type": "number", "minimum": 0.1, "maximum": 600, "description": "Timeout in seconds (default 10, max 600)." },
           "expected_exit_codes": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "type": "integer" }, "description": "Explicit acceptable exit codes." },

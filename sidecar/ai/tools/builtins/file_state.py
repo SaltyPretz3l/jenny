@@ -82,7 +82,7 @@ def open_regular_file(
         yield handle
 
 
-def _verify_authorized_handle(handle: Any, resolved: Path, authorized_root: Path) -> None:
+def verify_authorized_handle(handle: Any, resolved: Path, authorized_root: Path) -> None:
     try:
         # The handle's final path is fully resolved; compare against the root's
         # final form too so a workspace that itself sits under a junction, symlink
@@ -115,6 +115,9 @@ def _verify_authorized_handle(handle: Any, resolved: Path, authorized_root: Path
         raise _workspace_containment_failure() from error
     if not matches:
         raise _workspace_containment_failure()
+
+
+_verify_authorized_handle = verify_authorized_handle
 
 
 def _windows_final_path(fd: int) -> Path:
@@ -472,14 +475,23 @@ def refuse_reserved_internal_path(path: str, *, action: str) -> None:
         )
 
 
-def build_no_match_message(content: str, old_string: str, relative_path: str) -> str:
+def build_no_match_message(
+    content: str, old_string: str, relative_path: str, *, suggestion: bool = False
+) -> str:
     """Build an actionable no-match error: base hint, an optional whitespace-only
     diagnosis, and the closest matching region so a small model can self-correct.
 
-    ``content`` and ``old_string`` are newline-normalized (LF)."""
+    ``content`` and ``old_string`` are newline-normalized (LF). ``suggestion``
+    words it for propose_change, whose earlier suggestions never changed the
+    file (a model copying its own withdrawn suggestion is the common miss)."""
     parts = [
         f"Target string not found in file: {relative_path}. "
-        "Check whitespace, line endings, or whether the file was already edited."
+        + (
+            "Check whitespace and line endings. Suggested changes are not applied: "
+            "the file on disk is unchanged."
+            if suggestion
+            else "Check whitespace, line endings, or whether the file was already edited."
+        )
     ]
     if edit_hints.collapse_horizontal_whitespace(content).count(
         edit_hints.collapse_horizontal_whitespace(old_string)

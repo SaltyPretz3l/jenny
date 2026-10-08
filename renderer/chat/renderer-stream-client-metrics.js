@@ -27,9 +27,7 @@
     const warnedUnknownRenderKinds = new Set();
     let lastDeltaStreamId = '';
 
-    function normalizeId(value) {
-      return String(value || '').trim();
-    }
+    const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
     function ensureEntry(streamId, sessionId) {
       let entry = byStreamId.get(streamId);

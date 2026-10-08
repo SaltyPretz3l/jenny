@@ -76,8 +76,8 @@ function redactSecretLikeText(value) {
     .replace(SENSITIVE_VALUE_RE, REDACTED_VALUE_TOKEN);
 }
 
-// Paths AND secrets: for text that leaves the transcript (remote relay,
-// bridge errors, subagent report metadata).
+// Paths AND secrets: for text that leaves the transcript (bridge
+// errors, subagent report metadata).
 function redactSensitiveLikeText(value) {
   return redactSecretLikeText(redactPathLikeText(value));
 }

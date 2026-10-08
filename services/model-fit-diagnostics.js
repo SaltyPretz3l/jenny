@@ -5,7 +5,6 @@
 // values. Models outside the catalog still get an estimated fit reading.
 // Kept out of offline-intelligence-service.js to hold that file under the
 // 600-line soft cap. Never throws — every failure degrades to [].
-const { buildFeatureFlags } = require('./feature-flags');
 const { estimateModelFit, estimateDivergence, resolveModelFit } = require('./model-fit-estimator');
 const { normalizeString } = require('./backend/path-utils');
 
@@ -16,17 +15,6 @@ function canonicalModelId(value) {
   if (!modelId) return '';
   const lastSegment = modelId.slice(modelId.lastIndexOf('/') + 1);
   return lastSegment.includes(':') ? modelId : `${modelId}:latest`;
-}
-
-function isModelFitEstimatesEnabled(configService) {
-  try {
-    const overrides = configService && typeof configService.getState === 'function'
-      ? configService.getState()?.featureOverrides || {}
-      : {};
-    return buildFeatureFlags(process.env, overrides).model_fit_estimates === true;
-  } catch (_) {
-    return false;
-  }
 }
 
 function findRecommendationForModel(modelRecommendations, modelId) {
@@ -56,7 +44,7 @@ function _extractGpuIdentity(hardwareProfile) {
  * fields resolveModelFit()/the renderer expect (see model-fit-observer.js's
  * companion comment for the same derivation at record time).
  */
-function findObservationForModel(observationStore, { modelId, digest, gpu }) {
+function findObservationForModel(observationStore, { modelId, digest, gpu, contextLength }) {
   if (!observationStore || typeof observationStore.get !== 'function') return null;
   if (!gpu.name) return null;
   let raw;
@@ -66,6 +54,7 @@ function findObservationForModel(observationStore, { modelId, digest, gpu }) {
       digest,
       gpuName: gpu.name,
       gpuVramMb: gpu.vramMb,
+      contextLength,
     });
   } catch (_) {
     return null;
@@ -106,6 +95,23 @@ function emitDivergenceLog(backend, { modelId, estimate, recommendation }) {
   }
 }
 
+function resolveLoadContextLength(loadContextLengthFor, modelId) {
+  if (typeof loadContextLengthFor !== 'function') return 0;
+  try {
+    const value = Number(loadContextLengthFor(modelId));
+    return Number.isSafeInteger(value) && value > 0 ? value : 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+// An unknown window on either side (0) keeps the pre-existing precedence.
+function sameWindow(fit, loadContextLength) {
+  if (!fit) return false;
+  const fitContext = Number(fit.contextLength) || 0;
+  return !loadContextLength || !fitContext || fitContext === loadContextLength;
+}
+
 /**
  * @param {object} deps
  * @param {object} deps.backend backendService (for listModelsForEngine + logging)
@@ -115,6 +121,9 @@ function emitDivergenceLog(backend, { modelId, estimate, recommendation }) {
  * @param {object|null} deps.configService for feature-flag overrides
  * @param {Array|null} deps.installedModels pre-fetched normalized ollama models (optional)
  * @param {object|null} deps.observationStore ModelFitObservationStore (Wave 4 self-catalog, optional)
+ * @param {Function|null} deps.loadContextLengthFor modelId -> the n_ctx Jenny
+ *   loads that model with (optional). When given, the fit is read at that
+ *   window, so the "context" label and the VRAM figure match the real load.
  * @returns {Promise<Array>} modelFitEstimates entries
  */
 async function buildModelFitEstimates({
@@ -122,13 +131,10 @@ async function buildModelFitEstimates({
   hardwareProfile,
   memory,
   modelRecommendations,
-  configService,
   installedModels = null,
   observationStore = null,
+  loadContextLengthFor = null,
 } = {}) {
-  if (!isModelFitEstimatesEnabled(configService)) {
-    return [];
-  }
   try {
     let models = installedModels;
     if (!Array.isArray(models)) {
@@ -148,18 +154,23 @@ async function buildModelFitEstimates({
 
       const recommendation = findRecommendationForModel(modelRecommendations, modelId);
       const catalogMatched = Boolean(recommendation);
+      const loadContextLength = resolveLoadContextLength(loadContextLengthFor, modelId);
 
       const estimate = estimateModelFit({
         sizeBytes: entry.size,
         params: entry.parameterSize || entry.parameter_size,
         quant: entry.quantizationLevel || entry.quantization_level,
-        contextLength: recommendation?.contextLength,
+        contextLength: loadContextLength || recommendation?.contextLength,
         hardware: hardwareProfile,
         memory,
       });
       if (!estimate) continue;
 
-      if (catalogMatched) {
+      // A catalog or observed fit read at another window would misstate the
+      // load (a 256K override reported as the catalog's 8K), so it only wins
+      // when it was measured at the window Jenny loads.
+      const catalogFit = sameWindow(recommendation, loadContextLength) ? recommendation : null;
+      if (catalogFit) {
         emitDivergenceLog(backend, { modelId, estimate, recommendation });
       }
 
@@ -170,12 +181,15 @@ async function buildModelFitEstimates({
       // findObservationForModel already returned null, so this falls back to
       // the estimate exactly as if no observation had ever been recorded.
       const digest = normalizeString(entry.digest);
-      const observation = findObservationForModel(observationStore, { modelId, digest, gpu });
+      const observed = findObservationForModel(observationStore, {
+        modelId, digest, gpu, contextLength: loadContextLength,
+      });
+      const observation = sameWindow(observed, loadContextLength) ? observed : null;
       // Pass the matched catalog recommendation through too: resolveModelFit's
       // precedence is observation > recommendation > estimate, so a
       // catalog-matched model with no observation yet resolves to
       // fitSource:'catalog' instead of falling through to 'estimated'.
-      const resolved = resolveModelFit({ observation, recommendation, estimate });
+      const resolved = resolveModelFit({ observation, recommendation: catalogFit, estimate });
 
       results.push({
         ...estimate,
@@ -183,7 +197,7 @@ async function buildModelFitEstimates({
         // An observation's contextLength can be 0 (never recorded pre-Wave-4,
         // or genuinely unknown at record time) — never let that clobber the
         // estimate's real contextLength.
-        contextLength: resolved.contextLength || estimate.contextLength,
+        contextLength: loadContextLength || resolved.contextLength || estimate.contextLength,
         sizeBytes: Number(entry.size) || 0,
         modelId,
         catalogMatched,
@@ -199,6 +213,5 @@ async function buildModelFitEstimates({
 
 module.exports = {
   buildModelFitEstimates,
-  isModelFitEstimatesEnabled,
   canonicalModelId,
 };

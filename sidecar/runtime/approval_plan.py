@@ -24,6 +24,7 @@ SIDECAR_INJECTED_ARG_KEYS: tuple[str, ...] = (
     "_jenny_turn_id",
     "_jenny_tool_call_id",
     "_jenny_change_set_id",
+    "_jenny_live_suggestions",
 )
 
 SIDECAR_HISTORY_HASH_FIELDS: tuple[str, ...] = (

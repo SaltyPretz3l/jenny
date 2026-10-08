@@ -114,7 +114,8 @@ test('groups render in order with the verbs of each state; finished is today-onl
     item('work_old', { status: 'failed', group: 'finished', queue_position: null, updated_at: '2026-09-26T10:00:00.000Z' }),
     item('work_w', { created_at: '2026-09-27T13:00:00.000Z' }),
     item('work_r', { status: 'running', group: 'running', queue_position: null, progress: { steps: 3, tool_calls: 7 } }),
-    item('work_n', { status: 'paused', group: 'needs_you', queue_position: null, recovery_kind: 'restart_paused' }),
+    item('work_n', { status: 'paused', group: 'needs_you', queue_position: null, recovery_kind: 'restart_paused', resumable: false }),
+    item('work_m', { status: 'paused', group: 'needs_you', queue_position: null, recovery_kind: 'restart_paused', resumable: true }),
     item('work_x', { status: 'needs_attention', group: 'needs_you', queue_position: null }),
   ]));
   h.controller.bind(); await settle();
@@ -123,7 +124,8 @@ test('groups render in order with the verbs of each state; finished is today-onl
   const labels = [...h.runsHost.querySelectorAll('.runs-group:not([hidden]) .runs-group-label')].map(node => node.textContent);
   assert.deepEqual(labels, ['Needs you', 'Running', 'Waiting', 'Finished today · 1']);
   const verbs = id => [...h.runsHost.querySelectorAll(`.runs-row[data-work-id="${id}"] .runs-row-actions [data-action]`)].map(node => node.dataset.action);
-  assert.deepEqual(verbs('work_n'), ['runs-resume', 'runs-stop', 'runs-open']);
+  assert.deepEqual(verbs('work_m'), ['runs-resume', 'runs-stop', 'runs-open']);
+  assert.deepEqual(verbs('work_n'), ['runs-stop', 'runs-open'], 'paused work the runtime cannot continue offers no Resume (2026-10-05 recheck)');
   assert.deepEqual(verbs('work_x'), ['runs-stop', 'runs-open'], 'needs-attention work cannot be resumed, only stopped');
   assert.deepEqual(verbs('work_r'), ['runs-pause', 'runs-stop']);
   assert.deepEqual(verbs('work_w'), ['runs-withdraw']);
@@ -346,6 +348,7 @@ test('runs and limits render translated strings in pseudo, RTL and CJK locales',
     const catalog = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', `${tag}.json`), 'utf8'));
     const strings = catalog.strings || catalog;
     const context = vm.createContext({ inventoryActionButton: require('../renderer/inventory/action-button'), Intl,
+      stringUtils: require('../renderer/shared/string-utils'),
       inventoryTextField: require('../renderer/inventory/text-field'), inventoryNumberInput: require('../renderer/inventory/number-input'),
       inventorySettingsField: require('../renderer/inventory/settings-field'), jennyI18n: { tag: () => tag === 'qps-ploc' ? 'en' : tag,
         t: (key, fallback, params) => String(strings[key] || fallback).replace(/\{(\w+)\}/g, (match, name) => params?.[name] ?? match) } });
@@ -523,5 +526,31 @@ test('N6: "Stop requested" clears once its run is done; Finished today lists the
   assert.equal(message.hidden, true);
   assert.deepEqual([...h.runsHost.querySelectorAll('.runs-group[data-group="finished"] .runs-row')].map(node => node.dataset.workId),
     ['work_a', 'work_mid', 'work_early']);
+  h.controller.dispose();
+});
+
+test('F10: paused work untouched for a day moves to a collapsed "Paused earlier" group that keeps Resume and Stop', async () => {
+  const h = harness({}, { sessions: [] });
+  h.setSnapshot(snapshot([
+    item('work_new', { status: 'paused', group: 'needs_you', queue_position: null, updated_at: '2026-09-27T10:00:00.000Z' }),
+    item('work_old', { status: 'paused', group: 'needs_you', queue_position: null, recovery_kind: 'restart_paused',
+      created_at: '2026-09-23T09:00:00.000Z', updated_at: '2026-09-23T10:00:00.000Z' }),
+    item('work_stale_attention', { status: 'needs_attention', group: 'needs_you', queue_position: null, updated_at: '2026-09-23T10:00:00.000Z' }),
+  ]));
+  h.controller.bind(); await settle();
+  const groupOf = id => h.runsHost.querySelector(`.runs-row[data-work-id="${id}"]`).closest('.runs-group').dataset.group;
+  assert.equal(groupOf('work_new'), 'needs_you');
+  assert.equal(groupOf('work_old'), 'paused_earlier');
+  assert.equal(groupOf('work_stale_attention'), 'needs_you', 'only paused work moves; attention work still needs the person');
+  const shown = [...h.runsHost.querySelectorAll('.runs-group:not([hidden])')].map(node => node.dataset.group);
+  assert.deepEqual(shown, ['needs_you', 'paused_earlier']);
+  assert.equal(h.runsHost.querySelector('.runs-group[data-group="paused_earlier"] .runs-group-label').textContent, 'Paused earlier · 1');
+  const list = h.runsHost.querySelector('.runs-group[data-group="paused_earlier"] .runs-list');
+  assert.equal(list.hidden, true, 'collapsed by default');
+  h.click('[data-action="runs-paused-earlier-toggle"]');
+  assert.equal(list.hidden, false);
+  const verbs = [...h.runsHost.querySelectorAll('.runs-row[data-work-id="work_old"] .runs-row-actions [data-action]')].map(node => node.dataset.action);
+  assert.deepEqual(verbs, ['runs-resume', 'runs-stop', 'runs-open']);
+  assert.match(h.runsHost.querySelector('[data-work-id="work_old"] .runs-row-meta').textContent, /paused when Jenny restarted/);
   h.controller.dispose();
 });

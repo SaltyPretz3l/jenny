@@ -308,30 +308,92 @@ def test_an_oversized_row_dropped_at_the_cap_is_counted_once() -> None:
     assert outcome.dropped_messages == len(missing)
 
 
-def test_an_oversized_newest_row_is_sent_in_one_request_as_before() -> None:
+class _WindowEnforcingSummariser(_Summariser):
+    def __call__(self, request: list[dict[str, str]]) -> str:
+        tokens = estimate_messages_tokens([request[1]], CharEstimationBackend())
+        limit = _limit(_budget(), CharEstimationBackend())
+        assert tokens <= limit, f"Summary row part exceeds input limit: {tokens} > {limit}"
+        return super().__call__(request)
+
+
+def _newest_giant(limit: int) -> tuple[str, list[str]]:
+    markers = [f"piece-{i}-key" for i in range(100)]
+    numbered = " ".join(markers) + " "
+    content = (numbered * (limit * 8 // len(numbered) + 1))[:limit * 8]
+    return content, markers
+
+
+def test_an_oversized_newest_row_is_split_so_every_request_fits() -> None:
     backend = CharEstimationBackend()
     limit = _limit(_budget(), backend)
-    alone = _Summariser()
+    content, markers = _newest_giant(limit)
+    newest = {"role": "user", "content": content, "name": "author", "metadata": {"id": 42}}
+    summariser = _WindowEnforcingSummariser()
+    pieces: list[dict[str, Any]] = []
 
-    outcome = _run([{"role": "user", "content": "only-row-key " + "g" * (limit * 8)}], alone)
+    def build_request(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+        pieces.extend(row for row in rows if row.get("name") == "author")
+        return build_full_compaction_messages(rows)
 
-    assert (outcome.passes, outcome.dropped_messages) == (1, 0)
-    assert len(alone.requests) == 1 and "only-row-key" in alone.requests[0]
+    outcome = summarize_source_in_passes(
+        [newest],
+        _budget(),
+        backend,
+        build_request=build_request,
+        summarize=summariser,
+        summary_row=_summary_row,
+        pin_first=False,
+    )
 
-    pair = _Summariser()
+    assert outcome.dropped_messages == 0
+    assert len(summariser.requests) > 1
+    assert all(any(marker in request for request in summariser.requests) for marker in markers)
+    assert "".join(piece["content"] for piece in pieces) == content
+    assert all(piece["content"] for piece in pieces)
+    assert all(estimate_messages_tokens((piece,), backend) <= limit // 2 for piece in pieces)
+    assert all({**piece, "content": content} == newest for piece in pieces)
+    assert newest["content"] == content
+
+
+def test_a_newest_tool_call_row_without_text_is_sent_whole() -> None:
+    backend = CharEstimationBackend()
+    limit = _limit(_budget(), backend)
+    newest = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"name": "read_file", "arguments": "a" * (limit * 3)}],
+    }
+    size = estimate_messages_tokens((newest,), backend)
+    assert limit // 2 < size <= limit
+    summariser = _Summariser()
+
+    outcome = _run([*_rows(2, chars=40), newest], summariser)
+
+    assert outcome.dropped_messages == 0
+    assert newest["content"] == ""
+    assert len(summariser.requests) >= 1
+
+
+def test_an_older_giant_is_omitted_and_the_newest_giant_is_split() -> None:
+    backend = CharEstimationBackend()
+    limit = _limit(_budget(), backend)
+    content, markers = _newest_giant(limit)
+    summariser = _WindowEnforcingSummariser()
+
     outcome = _run(
         [
             {"role": "user", "content": "older-giant-key " + "g" * (limit * 8)},
-            {"role": "assistant", "content": "newest-giant-key " + "h" * (limit * 8)},
+            {"role": "assistant", "content": content},
         ],
-        pair,
+        summariser,
     )
 
-    # No pass is spent folding a marker: the older row is omitted, the newest is sent.
-    assert (outcome.passes, outcome.dropped_messages) == (1, 1)
-    assert len(pair.requests) == 1
-    assert "newest-giant-key" in pair.requests[0]
-    assert "older-giant-key" not in pair.requests[0]
+    assert outcome.dropped_messages == 1
+    assert len(summariser.requests) > 1
+    everything = "".join(summariser.requests)
+    assert "older-giant-key" not in everything
+    assert "too large for this summary input" in everything
+    assert all(any(marker in request for request in summariser.requests) for marker in markers)
 
 
 def test_one_row_larger_than_the_limit_is_omitted_and_the_rest_is_folded() -> None:

@@ -41,12 +41,15 @@ function createRunModeHarness(t, options = {}) {
     inventoryHelpOverlay: globalThis.inventoryHelpOverlay,
     rendererHealthPillController: globalThis.rendererHealthPillController,
     rendererRunModeControl: globalThis.rendererRunModeControl,
+    jennyShell: globalThis.jennyShell,
   };
   globalThis.document = dom.window.document;
   globalThis.inventoryActionButton = function actionButton() { return ''; };
   globalThis.inventoryHelpOverlay = { createHelpOverlay() {} };
+  // `suggestedChanges`: the Propose-mode bridge (row 35) leaving Propose consults.
+  if (options.suggestedChanges) globalThis.jennyShell = { suggestedChanges: options.suggestedChanges };
 
-  const calls = { confirm: [], logs: [], persistence: [], toasts: [], refreshes: 0 };
+  const calls = { choose: [], confirm: [], errors: [], logs: [], persistence: [], toasts: [], refreshes: 0 };
   const prefs = { runMode: options.runMode || 'ask' };
   const switcher = options.switcher
     ? createRunModeSwitcherRenderer({ slot: runModeSlot, getRunMode: () => prefs.runMode })
@@ -60,6 +63,10 @@ function createRunModeHarness(t, options = {}) {
           confirm(configure) {
             calls.confirm.push(configure);
             return confirmation();
+          },
+          choose(configure) {
+            calls.choose.push(configure);
+            return Promise.resolve((options.choice || (() => 'cancel'))());
           },
         };
       },
@@ -98,7 +105,7 @@ function createRunModeHarness(t, options = {}) {
       return Promise.resolve({});
     },
     getCurrentRuntimePreferences() { return prefs; },
-    showComposerActionError() {},
+    showComposerActionError(error, title) { calls.errors.push({ error, title }); },
     closeComposerPopover() {},
     openComposerPopover() {},
     setActiveView() {},
@@ -122,6 +129,7 @@ function createRunModeHarness(t, options = {}) {
     restoreGlobal('inventoryHelpOverlay', previous.inventoryHelpOverlay);
     restoreGlobal('rendererHealthPillController', previous.rendererHealthPillController);
     restoreGlobal('rendererRunModeControl', previous.rendererRunModeControl);
+    restoreGlobal('jennyShell', previous.jennyShell);
     dom.window.close();
   }
   t.after(cleanup);

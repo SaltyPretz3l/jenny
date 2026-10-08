@@ -32,8 +32,8 @@ _LOGGER = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # The cross-layer signal an engine sets on itself when the normalizer detects a
-# reasoning-only completion. Read by ``chat_streaming.build_live_streaming_chat_response``
-# at end-of-stream to surface ``CHAT_ERROR_METHOD`` instead of ``CHAT_DONE_METHOD``.
+# reasoning-only completion. Read by the routed generation stream at end-of-stream
+# to surface ``CHAT_ERROR_METHOD`` instead of ``CHAT_DONE_METHOD``.
 FINISH_REASON_REASONING_ONLY = "reasoning_only"
 
 # Terminal-evidence verdicts. ``incomplete`` is set by the ENGINE when a stream

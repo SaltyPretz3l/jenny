@@ -63,14 +63,7 @@
   /* Fallback escaper. This module writes preset labels into innerHTML, so the
      fallback has to actually escape -- an identity function here would be a
      silent injection hole whenever the host forgets to pass escapeHtml. */
-  function defaultEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  var defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function createPersonalityEditor(deps) {
     var d = deps || {};

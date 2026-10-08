@@ -69,8 +69,8 @@
       getSessionRows: id => sessionWork.get(id)?.rows || [],
       controlDetached: (workId, owner, invoke) => controlDetached(workId, owner, invoke),
       noticeRefusal: (source, owner) => noticeRefusal(source, owner), schedulePoll: () => schedulePoll(),
-      pause: typeof shell.sessionRuntime?.pause === 'function' ? payload => shell.sessionRuntime.pause(payload) : null,
-      getWork: typeof shell.sessionRuntime?.getWork === 'function' ? payload => shell.sessionRuntime.getWork(payload) : null });
+      ...Object.fromEntries(['pause', 'getWork', 'getSnapshot'].map(name => [name, typeof shell.sessionRuntime?.[name] === 'function'
+        ? payload => shell.sessionRuntime[name](payload) : null])) });
     function render(sessionId) {
       if (closed()) return;
       c.renderSessions();
@@ -89,7 +89,8 @@
       for (const entry of pending.values()) {
         if (entry.workId !== work.work_id || entry.sessionId !== work.session_id || entry.turnId !== work.turn_id) continue;
         // Why it has not started yet: the runtime's own reason, or none.
-        if (terminal) retire(entry); else entry.admissionWait = work.admission_wait || null;
+        if (terminal) retire(entry);
+        else { entry.admissionWait = work.admission_wait || null; entry.resumable = work.resumable !== false; }
       }
     }
     // The wait a row shows now: the grace is timed against the runtime's clock
@@ -137,18 +138,22 @@
         .map((entry, index) => ({ entry, index, wait: waitOf(entry) }))
         .map(({ entry, index, wait }) => Object.freeze({ key: entry.key, workId: entry.workId, turnId: entry.turnId,
           userId: entry.userId, prompt: entry.prompt, position: entry.position, status: entry.workStatus, admitted: entry.admitted, wait,
+          resumable: entry.resumable !== false,
           // A direct Send that has waited past its grace joins the strip, which says why.
           queued: entry.queued === true || index > 0 || busy || Boolean(wait)
             || (Number.isSafeInteger(entry.position) && entry.position > 1) || RECOVERY_STATUSES.has(entry.workStatus) }));
       const owned = new Set(entries.map(row => row.workId).filter(Boolean));
       // Paused work the composer never queued (it was running when it paused) needs a row: Resume is the only
-      // way it moves again. A reply waiting by itself moves again unasked and says so in the chat instead.
+      // way it moves again, or Discard alone when the runtime says it cannot continue (`resumable: false`; a
+      // runtime that omits the field keeps Resume). A reply waiting by itself moves again unasked and says so
+      // in the chat instead.
       const detached = (sessionWork.get(id)?.rows || [])
         .filter(row => row.status === 'paused' && !owned.has(row.work_id) && state.streamWaits?.isWaitingWork?.(row.work_id) !== true)
         .sort((left, right) => sequenceOf(left) - sequenceOf(right))
         .map(row => Object.freeze({ key: DETACHED_PREFIX + row.work_id, workId: row.work_id,
           turnId: String(row.turn_id || ''), prompt: detachedPrompt(row), position: null,
-          status: detachedWithdrawing.has(row.work_id) ? 'withdrawing' : 'paused', admitted: true, detached: true, queued: true }));
+          status: detachedWithdrawing.has(row.work_id) ? 'withdrawing' : 'paused', resumable: row.resumable !== false,
+          admitted: true, detached: true, queued: true }));
       return detached.length ? [...entries, ...detached] : entries;
     }
     function getSessionRuntimeState(sessionId) {
@@ -197,9 +202,12 @@
         const status = entry.workStatus === 'withdrawing' ? 'withdrawing' : row.status;
         const position = numbered && row.status === 'pending'
           ? 1 + ahead.filter(item => item.submission_sequence < row.submission_sequence).length : null;
+        const resumable = row.resumable !== false;
         changed = changed || entry.workStatus !== status || entry.position !== position
-          || entry.revision !== row.revision || entry.submissionSequence !== row.submission_sequence;
+          || entry.revision !== row.revision || entry.submissionSequence !== row.submission_sequence
+          || (entry.resumable !== false) !== resumable;
         entry.workStatus = status; entry.position = position; entry.admissionWait = row.admission_wait || null;
+        entry.resumable = resumable;
         entry.revision = row.revision; entry.submissionSequence = row.submission_sequence;
       }
       if (changed || pausedChanged) render(sessionId);
@@ -588,7 +596,8 @@
     // Only a stream the runtime admitted through this controller can be paused.
     const ownsStream = streamId => admitted.has(String(streamId || '').trim());
     const api = { send, acceptAdmission, mergePending, refreshPending, reconcileWork, listPending,
-      withdraw, resume, pauseSession: sessionId => pauses.pauseSession(sessionId),
+      withdraw, resume, pauseSession: sessionId => pauses.pauseSession(sessionId), // F9: the key of the run a restart paused for a stream
+      interruptedReplyKey: async (id, stream) => { const workId = await pauses.pausedWorkForStream(id, stream); return workId ? DETACHED_PREFIX + workId : ''; },
       refreshSessionRows, getSessionRuntimeState, ownsStream, listStuckSends, restartEngine,
       openChat: sessionId => (sessionId ? c.activateWorkspaceSession?.(sessionId) : undefined),
       dispose, hasCapacity: () => pending.size < 128 };

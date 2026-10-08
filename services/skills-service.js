@@ -10,7 +10,7 @@ const {
   normalizeSkillSettings,
 } = require('./shell-config-service');
 const { isWorkspaceRootChangeReason } = require('./workspace-root-change-reasons');
-const { authorityProjectRoot } = require('./skills-project-scope');
+const { authorityProjectRoot, createScopeFolder } = require('./skills-project-scope');
 
 const SKILL_FILENAME = 'SKILL.md';
 const SCOPE_BUNDLED = 'bundled';
@@ -974,7 +974,7 @@ class SkillsService extends EventEmitter {
       targetPath = normalizedScope === SCOPE_USER ? this.getUserRoot() : this.getProjectRoot();
     }
     if (normalizedScope !== SCOPE_BUNDLED) {
-      fs.mkdirSync(targetPath, { recursive: true });
+      createScopeFolder(targetPath, { project: normalizedScope === SCOPE_PROJECT });
     }
     const openResult = await Promise.resolve(this.openPathImpl(targetPath));
     const openError = normalizeString(openResult);

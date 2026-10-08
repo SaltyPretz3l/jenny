@@ -10,6 +10,26 @@ const MAX_EVAL_SCRIPT_LENGTH = 10_000;
 const MAX_EVAL_RESULT_CHARS = 20_000;
 const MAX_EVAL_RESULT_DEPTH = 6;
 const MAX_EVAL_RESULT_ITEMS = 100;
+// Allowlisted keys for press, mapped to Electron sendInputEvent key codes.
+const PRESS_KEY_CODES = Object.freeze({
+  Enter: 'Enter',
+  Space: 'Space',
+  Tab: 'Tab',
+  Escape: 'Escape',
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+});
+const PRESS_KEYS = Object.freeze(Object.keys(PRESS_KEY_CODES));
+// Spellings a model reaches for before the canonical name (gate recheck
+// 2026-10-05: {"action":"press","key":" "} was refused eight times before it
+// tried "Space"). Resolved on the raw value, before trimming erases " ".
+const PRESS_KEY_ALIASES = Object.freeze({ ' ': 'Space', Spacebar: 'Space' });
+// The schema enum offers the canonical names plus both aliases: the sidecar
+// enforces this enum before Electron ever sees the value (Astra review
+// 2026-10-05), so an alias missing here would be refused, never normalized.
+const PRESS_KEY_SCHEMA_VALUES = Object.freeze([...PRESS_KEYS, ' ', 'Spacebar']);
 
 const SENSITIVE_KEY_PATTERN = /(api[_-]?key|authorization|bearer|credential|password|refresh[_-]?token|secret|token)/i;
 const SENSITIVE_VALUE_PATTERN = /\b(?:bearer\s+[a-z0-9._~+/=-]{12,}|sk-[a-z0-9_-]{12,}|gh[pousr]_[a-z0-9_]{20,})\b/i;
@@ -37,6 +57,19 @@ function normalizeSelector(value) {
 function normalizeClickButton(value) {
   const button = String(value || 'left').trim().toLowerCase();
   return ['left', 'middle', 'right'].includes(button) ? button : 'left';
+}
+
+function resolvePressKeyAlias(value) {
+  const raw = typeof value === 'string' ? value : String(value ?? '');
+  return Object.hasOwn(PRESS_KEY_ALIASES, raw) ? PRESS_KEY_ALIASES[raw] : raw.trim();
+}
+
+function normalizePressKey(value) {
+  const key = resolvePressKeyAlias(value);
+  if (!Object.hasOwn(PRESS_KEY_CODES, key)) {
+    throw new Error(`A browser key press requires key to be one of: ${PRESS_KEYS.join(', ')}.`);
+  }
+  return key;
 }
 
 function safeBrowserReason(value, fallback = 'browser_action_failed') {
@@ -122,7 +155,7 @@ function sanitizePageResult(value, state = { chars: 0, truncated: false, seen: n
   return { value: output, truncated: state.truncated };
 }
 
-function buildSelectorProbeScript(selector, { focus = false, clear = false } = {}) {
+function buildSelectorProbeScript(selector, { focus = false, clear = false, focusAny = false } = {}) {
   return `
 (() => {
   const selector = ${JSON.stringify(selector)};
@@ -138,10 +171,12 @@ function buildSelectorProbeScript(selector, { focus = false, clear = false } = {
   element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
   const style = window.getComputedStyle(element);
   const rect = element.getBoundingClientRect();
+  // Keyboard focus does not need pointer interactivity, so focusAny ignores
+  // pointer-events:none.
   const hidden = (
     style.display === 'none' ||
     style.visibility === 'hidden' ||
-    style.pointerEvents === 'none' ||
+    ${focusAny ? '' : "style.pointerEvents === 'none' ||"}
     Number(rect.width) <= 0 ||
     Number(rect.height) <= 0
   );
@@ -181,6 +216,15 @@ function buildSelectorProbeScript(selector, { focus = false, clear = false } = {
       }
     }
   }
+  if (${focusAny ? 'true' : 'false'}) {
+    if (element.disabled === true || typeof element.focus !== 'function') {
+      return { status: 'selector_not_focusable', selector, reason: 'selector_not_focusable' };
+    }
+    element.focus({ preventScroll: true });
+    if (document.activeElement !== element) {
+      return { status: 'selector_not_focusable', selector, reason: 'selector_not_focusable' };
+    }
+  }
   return {
     status: 'ready',
     selector,
@@ -214,11 +258,17 @@ module.exports = {
   MAX_BROWSER_ACTION_TIMEOUT_MS,
   MAX_EVAL_SCRIPT_LENGTH,
   MAX_TYPE_TEXT_LENGTH,
+  PRESS_KEYS,
+  PRESS_KEY_ALIASES,
+  PRESS_KEY_CODES,
+  PRESS_KEY_SCHEMA_VALUES,
   boundedPositiveInt,
   buildEvalScript,
   buildSelectorProbeScript,
   normalizeClickButton,
+  normalizePressKey,
   normalizeSelector,
+  resolvePressKeyAlias,
   safeBrowserReason,
   sanitizePageResult,
 };

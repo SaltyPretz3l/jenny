@@ -247,7 +247,6 @@ class SidecarClient extends EventEmitter {
         id, resolve, reject, method, requestKey, onCleanup,
         // chat.cancel correlation for the abort and timeout paths.
         traceId: String(params?.trace_id || '').trim(), sessionId: String(params?.session_id || '').trim(),
-        initializeMode: String(options?.initializeMode || ''),
         timer: null, removeAbortListener: null, frameWritten: false,
         // suspendRequestTimeout() suspend state.
         timeoutMs: null, timeoutRemainingMs: 0, timeoutSuspendDepth: 0,
@@ -709,7 +708,6 @@ class SidecarClient extends EventEmitter {
       if (
         pending
         && pending.method === 'initialize'
-        && pending.initializeMode !== 'plugin_runtime'
         && message.result
         && typeof message.result === 'object'
       ) {

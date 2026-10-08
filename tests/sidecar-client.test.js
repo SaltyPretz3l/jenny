@@ -212,34 +212,6 @@ test('hardwareVramUsage sends hardware.vram_usage RPC request', async () => {
   assert.equal(payload.available, true);
 });
 
-test('plugin-only initialize sends the exact envelope and preserves runtime feature flags', async () => {
-  const client = new SidecarClient();
-  const proc = createMockProcess();
-  const writes = [];
-  proc.stdin.write = (chunk) => {
-    writes.push(Buffer.from(chunk));
-    return true;
-  };
-  client.attachProcess(proc);
-  client.sidecarFeatureFlags = { multiplexer: true, chat_cancel: true };
-  const pluginRuntime = { snapshot: { kind: 'plugin_runtime_snapshot' }, declarative_content: [] };
-  const promise = client.initialize({ mode: 'plugin_runtime', plugin_runtime: pluginRuntime });
-  proc.stdout.push(buildFrame({
-    jsonrpc: '2.0',
-    id: 1,
-    result: { attestation_schema_version: 1, feature_flags: { multiplexer: false } },
-  }));
-
-  const result = await promise;
-  const body = Buffer.concat(writes).toString('utf8').split('\r\n\r\n')[1];
-  const request = JSON.parse(body);
-  assert.deepEqual(request.params, { mode: 'plugin_runtime', plugin_runtime: pluginRuntime });
-  assert.equal('accept_version' in request.params, false);
-  assert.equal('secrets' in request.params, false);
-  assert.deepEqual(client.sidecarFeatureFlags, { multiplexer: true, chat_cancel: true });
-  assert.equal(result.attestation_schema_version, 1);
-});
-
 test('hardwareVramUsage rejects with timeout classification when sidecar does not respond', async () => {
   await withImmediateTimeouts(async () => {
     const client = new SidecarClient();

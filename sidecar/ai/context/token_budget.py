@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _CHARS_PER_TOKEN = 4
+# Measured ~1.37x undercount on digit-heavy CSV/code (HB-028), plus margin.
+CHAR_ESTIMATION_HEADROOM = 0.30
 _MESSAGE_OVERHEAD_TOKENS = 4  # role / separator / framing per message
 
 # Last-resort window when neither the engine nor the config knows one. Matches
@@ -44,6 +46,14 @@ class TokenizerBackend(Protocol):
 
 class CharEstimationBackend:
     """Default backend using the ~4 chars/token heuristic."""
+
+    @property
+    def headroom_factor(self) -> float:
+        return CHAR_ESTIMATION_HEADROOM
+
+    @property
+    def is_exact_match(self) -> bool:
+        return False
 
     def count_tokens(self, text: str) -> int:
         if not text:

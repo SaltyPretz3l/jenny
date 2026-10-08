@@ -332,8 +332,10 @@ test('the real Windows helper cancellation confirms Job cleanup of an identified
       "setInterval(() => {}, 1000);",
     ].join('\n'));
     let descendantPid = null;
+    let descendantGone = false;
     t.after(() => {
-      if (descendantPid && processIsLive(descendantPid)) process.kill(descendantPid, 'SIGKILL');
+      // A pid proven gone may already belong to a sibling test's process.
+      if (descendantPid && !descendantGone && processIsLive(descendantPid)) process.kill(descendantPid, 'SIGKILL');
       fs.rmSync(tempRoot, { recursive: true, force: true });
     });
 
@@ -354,6 +356,7 @@ test('the real Windows helper cancellation confirms Job cleanup of an identified
     const result = await pending;
     assert.equal(result.status, 'aborted');
     assert.equal(result.terminationConfirmed, true);
-    assert.equal(await waitFor(() => !processIsLive(descendantPid)), true,
+    descendantGone = await waitFor(() => !processIsLive(descendantPid));
+    assert.equal(descendantGone, true,
       'the positively identified descendant must be gone when cleanup is confirmed');
   });

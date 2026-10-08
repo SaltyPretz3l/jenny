@@ -15,7 +15,7 @@ const {
 } = require('./helpers/renderer-ide-harness');
 
 function treeRows(harness) {
-  return [...harness.getDom().ideRailPanel.querySelectorAll('[data-ide-tree-path]')];
+  return [...harness.viewHost('explorer').querySelectorAll('[data-ide-tree-path]')];
 }
 
 function activeElement(harness) {
@@ -30,21 +30,27 @@ test('tree keyboard nav: roving tabindex, arrows, expand/collapse, Enter opens',
   await harness.controller.activateIde();
   await settle();
 
+  // Arrow keys also move the selection, which re-renders the rows: look the
+  // row up by path each time instead of holding element references.
+  const rowFor = (path) => treeRows(harness).find((row) => row.dataset.ideTreePath === path);
+  const focusedPath = () => activeElement(harness)?.dataset?.ideTreePath;
+  const tabStops = () => treeRows(harness).map((row) => row.tabIndex);
+
   // Directories list first: rows are [src, a.txt]; exactly one is tabbable.
   let rows = treeRows(harness);
   assert.deepEqual(rows.map((row) => row.dataset.ideTreePath), ['src', 'a.txt']);
-  assert.deepEqual(rows.map((row) => row.tabIndex), [0, -1]);
+  assert.deepEqual(tabStops(), [0, -1]);
 
-  rows[0].focus();
-  pressKey(harness, rows[0], 'ArrowDown');
-  assert.equal(activeElement(harness), rows[1]);
-  assert.deepEqual(rows.map((row) => row.tabIndex), [-1, 0]);
+  rowFor('src').focus();
+  pressKey(harness, rowFor('src'), 'ArrowDown');
+  assert.equal(focusedPath(), 'a.txt');
+  assert.deepEqual(tabStops(), [-1, 0]);
 
-  pressKey(harness, rows[1], 'ArrowUp');
-  assert.equal(activeElement(harness), rows[0]);
+  pressKey(harness, rowFor('a.txt'), 'ArrowUp');
+  assert.equal(focusedPath(), 'src');
 
   // ArrowRight on a collapsed dir expands it; focus survives the re-render.
-  pressKey(harness, rows[0], 'ArrowRight');
+  pressKey(harness, rowFor('src'), 'ArrowRight');
   await settle();
   rows = treeRows(harness);
   assert.deepEqual(
@@ -52,37 +58,37 @@ test('tree keyboard nav: roving tabindex, arrows, expand/collapse, Enter opens',
     ['src', 'src/app.js', 'src/lib.js', 'a.txt']
   );
   assert.equal(harness.state.ui.ide.expandedDirs.has('src'), true);
-  assert.equal(activeElement(harness)?.dataset?.ideTreePath, 'src');
+  assert.equal(focusedPath(), 'src');
 
   // ArrowRight on an expanded dir steps into the first child.
-  pressKey(harness, rows[0], 'ArrowRight');
-  assert.equal(activeElement(harness), rows[1]);
+  pressKey(harness, rowFor('src'), 'ArrowRight');
+  assert.equal(focusedPath(), 'src/app.js');
 
   // ArrowLeft from a child jumps back to the parent directory row.
-  pressKey(harness, rows[1], 'ArrowLeft');
-  assert.equal(activeElement(harness), rows[0]);
+  pressKey(harness, rowFor('src/app.js'), 'ArrowLeft');
+  assert.equal(focusedPath(), 'src');
 
   // Home / End hit the boundaries.
-  pressKey(harness, rows[0], 'End');
-  assert.equal(activeElement(harness), rows[rows.length - 1]);
-  pressKey(harness, rows[rows.length - 1], 'Home');
-  assert.equal(activeElement(harness), rows[0]);
+  pressKey(harness, rowFor('src'), 'End');
+  assert.equal(focusedPath(), 'a.txt');
+  pressKey(harness, rowFor('a.txt'), 'Home');
+  assert.equal(focusedPath(), 'src');
 
   // ArrowLeft on the expanded dir collapses it.
-  pressKey(harness, rows[0], 'ArrowLeft');
+  pressKey(harness, rowFor('src'), 'ArrowLeft');
   await settle();
   rows = treeRows(harness);
   assert.deepEqual(rows.map((row) => row.dataset.ideTreePath), ['src', 'a.txt']);
   assert.equal(harness.state.ui.ide.expandedDirs.has('src'), false);
-  assert.equal(activeElement(harness)?.dataset?.ideTreePath, 'src');
+  assert.equal(focusedPath(), 'src');
 
   // Enter on a file row opens it in a tab and keeps tree focus usable.
-  pressKey(harness, rows[1], 'ArrowDown');
-  pressKey(harness, treeRows(harness)[1], 'Enter');
+  pressKey(harness, rowFor('src'), 'ArrowDown');
+  pressKey(harness, rowFor('a.txt'), 'Enter');
   await settle();
   const strip = harness.getDom().ideTabStrip;
   assert.ok(strip.querySelector('[data-ide-tab-path="a.txt"]'));
-  assert.equal(activeElement(harness)?.dataset?.ideTreePath, 'a.txt');
+  assert.equal(focusedPath(), 'a.txt');
 });
 
 test('tab strip keyboard nav: arrows rove focus across real tab buttons', async (t) => {
@@ -134,9 +140,9 @@ test('no workspace root: empty state and tree both offer Choose Folder', async (
   assert.ok(emptyAction, 'expected the empty-state Choose Folder button');
   assert.equal(dom.ideEmptyStateAction.classList.contains('hidden'), false);
 
-  const treeAction = dom.ideRailPanel.querySelector('[data-ide-tree-choose-root]');
+  const treeAction = harness.viewHost('explorer').querySelector('[data-ide-tree-choose-root]');
   assert.ok(treeAction, 'expected the tree Choose Folder button');
-  assert.match(dom.ideRailPanel.textContent, /No folder open/);
+  assert.match(harness.viewHost('explorer').textContent, /No folder open/);
 
   // No root: the watcher never starts; the chooser arms it below.
   assert.equal(harness.bridge.calls.watchStart.length, 0);
@@ -178,5 +184,5 @@ test('cancelled Choose Folder dialog leaves the no-root state untouched', async 
   // No refresh happened: same listing count, action still offered.
   assert.equal(harness.bridge.calls.listDirectory.length, listCallsBefore);
   assert.ok(dom.ideEmptyStateAction.querySelector('[data-ide-choose-root]'));
-  assert.ok(dom.ideRailPanel.querySelector('[data-ide-tree-choose-root]'));
+  assert.ok(harness.viewHost('explorer').querySelector('[data-ide-tree-choose-root]'));
 });

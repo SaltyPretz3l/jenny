@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { JSDOM } = require('jsdom');
 
 const { createTranscriptActionRenderer } = require('../renderer/chat/renderer-transcript-actions');
 
@@ -32,6 +33,20 @@ function createRenderer(overrides) {
     buildMessageActionModel: () => buildHoverActionModel(overrides),
   });
 }
+
+test('Branch and Elaborate show words beside their icons', (t) => {
+  const actions = Object.fromEntries(['edit', 'branch', 'regenerate', 'copy', 'elaborate']
+    .map((action) => [action, { visible: true, enabled: true }]));
+  const html = createRenderer({ actions }).renderMessageHoverRow({ id: 'all_actions' }, {}, '');
+  const dom = new JSDOM(html);
+  t.after(() => dom.window.close());
+  for (const [action, word] of [['branch', 'Branch'], ['elaborate', 'Elaborate']]) {
+    assert.equal(dom.window.document.querySelector(`[data-message-action="${action}"] .chat-hover-action-word`).textContent, word);
+  }
+  for (const action of ['edit', 'regenerate', 'copy']) {
+    assert.equal(dom.window.document.querySelector(`[data-message-action="${action}"] .chat-hover-action-word`), null);
+  }
+});
 
 test('hover-action buttons carry descriptive aria-labels (E2)', () => {
   const renderer = createRenderer();
@@ -72,7 +87,7 @@ test('disabled hover-action labels are extended with the disabled reason (E2)', 
 test('renders one button per visible action (E2)', () => {
   const renderer = createRenderer();
   const html = renderer.renderMessageHoverRow({ id: 'assistant_4' }, {}, '');
-  const buttonMatches = html.match(/class="chat-hover-action"/g) || [];
+  const buttonMatches = html.match(/data-message-action="[^"]+"/g) || [];
   assert.equal(buttonMatches.length, 4, 'expected four hover-action buttons');
 });
 

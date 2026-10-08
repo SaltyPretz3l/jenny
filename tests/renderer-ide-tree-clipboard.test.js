@@ -46,7 +46,7 @@ function menuItems(harness) {
 }
 
 async function createHarness({
-  files = {}, dirs = [], expanded = [], qol = true,
+  files = {}, dirs = [], expanded = [],
   preflightMutation = async () => ({ ready: true, paths: [] }),
 } = {}) {
   const domHarness = buildIdeDom();
@@ -64,7 +64,6 @@ async function createHarness({
     getIde: () => ide,
     getMountEl: () => domHarness.getDom().ideRailPanel,
     isActivePanel: () => true,
-    isQolEnabled: () => qol,
     getWorkspaceFsApi: () => bridge.jennyShell.workspaceFs,
     getMutationContext: async () => ({ rootId: 'root-test', generation: 1, phase: 'ready' }),
     preflightMutation,
@@ -88,21 +87,6 @@ async function createHarness({
     },
   };
 }
-
-test('flag off leaves clipboard shortcuts, state, calls, and markup inert', async (t) => {
-  const harness = await createHarness({ files: { 'a.js': 'a' }, qol: false });
-  t.after(() => harness.dispose());
-
-  for (const key of ['c', 'x', 'v', 'd']) {
-    const event = pressShortcut(harness, row(harness, 'a.js'), key);
-    assert.equal(event.defaultPrevented, false);
-  }
-
-  assert.equal(harness.tree.clipboard.hasContent(), false);
-  assert.deepEqual(harness.bridge.calls.copyEntry, []);
-  assert.deepEqual(harness.bridge.calls.rename, []);
-  assert.equal(harness.panel.querySelector('.ide-tree-row--cut'), null);
-});
 
 test('copy pastes two selected files into the focused directory and survives reuse', async (t) => {
   const harness = await createHarness({
@@ -195,7 +179,6 @@ test('an unrendered focused path pastes into its parent instead of the workspace
     refreshDirectory: async (path) => { refreshes.push(path); },
     parentDirOf: treeMarkup.parentDirOf,
     nameOf: treeMarkup.nameOf,
-    isQolEnabled: () => true,
   });
   clipboard.copy();
 
@@ -239,7 +222,7 @@ test('refreshRoot clears cut state so a later paste is a no-op', async (t) => {
   assert.equal(harness.panel.querySelector('.ide-tree-row--cut'), null);
 });
 
-test('flag-on directory menu adds clipboard items and hints while flag-off stays legacy', async (t) => {
+test('directory menu adds clipboard items and hints', async (t) => {
   const harness = await createHarness({ files: { 'a.js': 'a' }, dirs: ['dst'] });
   t.after(() => harness.dispose());
 
@@ -261,14 +244,6 @@ test('flag-on directory menu adds clipboard items and hints while flag-off stays
   ]);
   openContextMenu(harness, harness.panel.querySelector('.ide-tree'));
   assert.ok(menuItems(harness).some((item) => item.label === 'Paste' && item.hint === 'Ctrl+V'));
-
-  const legacy = await createHarness({ files: { 'a.js': 'a' }, dirs: ['dst'], qol: false });
-  t.after(() => legacy.dispose());
-  openContextMenu(legacy, row(legacy, 'dst'));
-  assert.deepEqual(
-    menuItems(legacy).filter((item) => ['Cut', 'Copy', 'Duplicate', 'Paste'].includes(item.label)),
-    []
-  );
 });
 
 test('copy filters a selected descendant when its ancestor is also selected', async (t) => {
@@ -331,7 +306,6 @@ function createUndoHarness({ withStat = true } = {}) {
     showUndoToast: (message, undo) => { log.toasts.push(message); if (undo) log.undo = undo; },
     parentDirOf: treeMarkup.parentDirOf,
     nameOf: treeMarkup.nameOf,
-    isQolEnabled: () => true,
   });
   return { items, addItem, log, clipboard };
 }

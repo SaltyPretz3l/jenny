@@ -459,3 +459,22 @@ describe('the subagents rail mode is renderer-local', () => {
     assert.doesNotMatch(written[0], /subagents|"mode"/);
   });
 });
+
+describe('the notes rail mode is renderer-local', () => {
+  const prefsUtils = require('../renderer/features/renderer-artifact-review-prefs');
+
+  test('the normalizer accepts the mode; the loader never restores it', () => {
+    assert.equal(prefsUtils.normalizeArtifactReviewMode('notes'), 'notes');
+    assert.equal(prefsUtils.normalizeArtifactReviewMode(' Notes '), 'notes');
+    const windowRef = { localStorage: { getItem: () => JSON.stringify({ enabled: true, mode: 'notes' }) } };
+    assert.equal(prefsUtils.loadArtifactReviewPreferences(windowRef, 'k').mode, 'artifact');
+  });
+
+  test('a save never writes the mode', () => {
+    const written = [];
+    const windowRef = { localStorage: { setItem: (key, value) => written.push(value) } };
+    prefsUtils.saveArtifactReviewPreferences(windowRef, 'k', { enabled: true, mode: 'notes' });
+    assert.equal(written.length, 1);
+    assert.doesNotMatch(written[0], /notes|"mode"/);
+  });
+});

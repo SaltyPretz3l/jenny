@@ -41,6 +41,7 @@ from sidecar.ai.tools.builtins.file_state import (
     is_binary_extension,
     is_binary_file,
     load_existing_text_state_for_mutation,
+    open_regular_file,
     parse_requested_headings,
     read_capped_bytes,
     refuse_reserved_internal_path,
@@ -63,7 +64,7 @@ from sidecar.ai.tools.contracts import (
     ToolHandlerResult,
     canonicalize_tool_arguments,
 )
-from sidecar.ai.tools.hosted_file_io import hosted_file_io_enabled, open_regular_file
+from sidecar.ai.tools.hosted_file_io import hosted_file_io_enabled
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 logger = logging.getLogger(__name__)
@@ -443,7 +444,8 @@ def _read_file_window_streaming(
         return end_line is None or line_index < end_line
 
     try:
-        with open_regular_file(resolved, "rb") as handle:
+        root = resolved.parents[len(Path(relative_path).parts) - 1]
+        with open_regular_file(resolved, "rb", authorized_root=root) as handle:
             while True:
                 chunk = handle.read(READ_WINDOW_CHUNK_BYTES)
                 if not chunk:

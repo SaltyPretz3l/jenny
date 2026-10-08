@@ -1,4 +1,4 @@
-const { readSessionMessagesForReferenceScan } = require('../backend/session-reference-scan');
+const { readSessionMessagesForReferenceScan, readSessionRecordForReferenceScan } = require('../backend/session-reference-scan');
 const { collectAssetPaths } = require('../attachment-service');
 const { createArtifactRetentionService } = require('../artifact-retention-service');
 const { payloadPathsFromMessages } = require('../backend/ipc-payload-retention');
@@ -8,15 +8,22 @@ const { pruneLegacySessionFiles } = require('../backend/session-legacy-file-prun
 // mutation bumps updated_at (append/update/replace/truncate) — the
 // non-bumping writes (active-turn touches, turn events, pin/archive/meta)
 // never touch attachments. So `updated_at|message_count` is a sound
-// change stamp for a session's referenced-asset set, letting the periodic
-// sweep skip re-reading unchanged sessions entirely.
+// change stamp for message attachments. Tool-result event refs are read with
+// the same body and cached with it; an event appended without a stamp bump is
+// seen at the next full read (next start or stamp change), which is sound
+// because a freshly produced tool asset is far younger than the 30-day age.
 function sessionAttachmentStamp(summary) {
   return `${summary?.updated_at || ''}|${Number(summary?.message_count || 0)}`;
 }
 
-// Walks every session body ONCE and returns whichever reference sets the caller
-// asked for. Both retention sweeps read the same message arrays, so collecting
-// them separately meant parsing every session file twice at startup.
+function toolResultAssetPaths(refs) {
+  return collectAssetPaths((Array.isArray(refs) ? refs : []).map(ref => ({
+    kind: 'image', assetPath: ref?.asset_path || ref?.assetPath,
+  })));
+}
+
+// Both retention sweeps share one walk of the session bodies on a cache miss
+// (messages and the persisted turn events, whose tool-result refs are media).
 //
 // `payloadKeys` is opt-in and only sound on a pass that reads every session: a
 // memo hit answers a session without reading it, which is fine for attachments
@@ -41,10 +48,14 @@ function collectSessionReferences(sessionStore, { cache = null, collectPayloadKe
         continue;
       }
     }
-    const messages = readSessionMessagesForReferenceScan(sessionStore, session);
+    const { messages, turnEvents } = readSessionRecordForReferenceScan(sessionStore, session);
     const paths = [];
     for (const message of messages) {
       paths.push(...collectAssetPaths(message?.attachments));
+      paths.push(...toolResultAssetPaths(message?.tool_result?.trusted_attachment_refs));
+    }
+    for (const event of turnEvents) {
+      if (event?.kind === 'tool_result') paths.push(...toolResultAssetPaths(event.payload?.trusted_attachment_refs));
     }
     if (payloadKeys) {
       for (const key of payloadPathsFromMessages(messages)) {
@@ -174,8 +185,7 @@ function scheduleStartupRetentionTasks({
     // 149-session profile to do one pass of useful work.
     //
     // Persistent per-schedule memo: only sessions whose change stamp moved
-    // since the last sweep are re-read, so the 30-minute interval stops
-    // re-parsing every session file. The first pass of a run still reads
+    // since the last sweep are re-read. The first pass of a run still reads
     // everything once -- which is exactly why the payload half rides along with
     // that pass and then stops.
     const attachmentSweepCache = new Map();

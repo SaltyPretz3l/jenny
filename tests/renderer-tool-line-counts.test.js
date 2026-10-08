@@ -61,6 +61,16 @@ test('both render paths display one accessible trailing count group for Edit and
   }
 });
 
+test('the accessible count pluralizes each side on its own count (gate F8)', () => {
+  const single = { diff: { additions: 1, deletions: 1, review_state: 'full' } };
+  for (const markup of renderRows('edit_file', single)) {
+    const dom = new JSDOM(markup);
+    try {
+      assert.equal(dom.window.document.querySelector('.tool-call-line-counts .sr-only').textContent, '1 line added, 1 line removed');
+    } finally { dom.window.close(); }
+  }
+});
+
 test('renderers omit unknown/error totals but preserve confirmed zero and truncated totals', () => {
   for (const markup of [...renderRows('edit_file', {}), ...renderRows('edit_file', metadata, true), ...renderRows('move_file', metadata)]) {
     assert.doesNotMatch(markup, /class="tool-call-line-counts"/);

@@ -27,7 +27,6 @@ from typing import Any, Callable
 from sidecar.ai.container import BrainContainer
 from sidecar.ai.error_codes import (
     CMP_CFG_WORKSPACE_MISSING,
-    CMP_CHAT_INVALID_PARAMS,
     CMP_CHAT_STREAM_FAILED,
     CMP_PROTO_VERSION_MISMATCH,
     CMP_RESOURCE_EXCEEDED,
@@ -116,7 +115,6 @@ PROTOCOL_VERSION_MISMATCH = CMP_PROTO_VERSION_MISMATCH
 # module load is byte-identical.
 TOOL_APPROVAL_TIMEOUT_SECONDS = 600.0
 UNATTENDED_PAUSE_APPROVAL_TIMEOUT_SECONDS = 4 * 60 * 60.0
-MAX_REASON_CODE_LENGTH = 64
 
 
 def _pause_outcome_or_failure(
@@ -212,59 +210,6 @@ def _with_stack_generation_lease(func: Callable[..., ProcessOutcome]) -> Callabl
     return wrapped
 
 
-def _with_plugin_runtime_admission(
-    func: Callable[..., ProcessOutcome],
-) -> Callable[..., ProcessOutcome]:
-    @wraps(func)
-    def wrapped(*args: Any, **kwargs: Any) -> ProcessOutcome:
-        brain_container = kwargs.get("brain_container")
-        params = kwargs.get("params")
-        initialized = kwargs.get("initialized", False)
-        message_id = kwargs.get("message_id")
-        admission = kwargs.pop("plugin_runtime_admission", None)
-        if admission is None:
-            raw_authority = (
-                params.get("plugin_runtime_authority") if isinstance(params, dict) else None
-            )
-            admit_runtime = getattr(brain_container, "admit_plugin_runtime", None)
-            if not callable(admit_runtime):
-                return func(*args, **kwargs)
-            try:
-                admission = admit_runtime(raw_authority)
-            except Exception as error:  # noqa: BLE001 - normalized cross-boundary refusal
-                code = str(getattr(error, "code", CMP_CHAT_INVALID_PARAMS))
-                reason = str(getattr(error, "reason_code", "plugin_authority_invalid"))
-                safe_reason = (
-                    reason
-                    if reason.replace("_", "").isalnum()
-                    and len(reason) <= MAX_REASON_CODE_LENGTH
-                    else "plugin_authority_invalid"
-                )
-                return ProcessOutcome(
-                    initialized=bool(initialized),
-                    shutdown_requested=False,
-                    response=error_response(
-                        message_id,
-                        code=INVALID_PARAMS_CODE,
-                        message="chat.send plugin runtime authority rejected",
-                        data={
-                            "code": code,
-                            "reason": safe_reason,
-                            "retryable": getattr(error, "retryable", False) is True,
-                        },
-                    ),
-                    notifications=[],
-                )
-        try:
-            with admission.bind():
-                return func(*args, **kwargs)
-        finally:
-            admission.release()
-
-    return wrapped
-
-
-@_with_plugin_runtime_admission
 @_with_stack_generation_lease
 @with_request_safety  # per-request safety_mode / auto_approve_streak_cap (owner D3)
 def process_chat_send_request(

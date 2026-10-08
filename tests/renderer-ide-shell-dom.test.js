@@ -27,16 +27,17 @@ test('workspace IDE chrome renders through the real registry dom resolution', as
     const ideView = doc.getElementById('ideView');
     assert.equal(ideView.classList.contains('active-view'), true, 'ide view activates');
 
-    // The rail activity bar only renders when the controller's getDom
-    // actually resolved the ide dom slice (not just ideView).
-    const activityButtons = doc.querySelectorAll('#ideActivityBar [data-ide-rail-panel]');
-    assert.equal(activityButtons.length, 4, 'explorer/search/changes/source-control activity buttons render');
+    // The workbench only renders its stacks when the controller's getDom
+    // actually resolved the ide dom slice (not just ideView): the left stack's
+    // Files / Search / Git tabs prove it.
+    const leftTabs = doc.querySelectorAll('#ideWorkbench [data-wb-tab="explorer"], #ideWorkbench [data-wb-tab="search"], #ideWorkbench [data-wb-tab="source-control"]');
+    assert.equal(leftTabs.length, 3, 'explorer/search/source-control workbench tabs render');
 
-    // The rail panel hosts the explorer tree markup (the harness has no
+    // The Explorer host holds the explorer tree markup (the harness has no
     // workspaceFs bridge, so the tree renders its unavailable notice - the
-    // point is that the panel element resolved and rendered at all).
-    const railPanel = doc.getElementById('ideRailPanel');
-    assert.ok(railPanel.innerHTML.includes('ide-tree'), 'explorer tree rendered into the rail panel');
+    // point is that the host element resolved and rendered at all).
+    const explorerHost = doc.getElementById('wbView-explorer');
+    assert.ok(explorerHost.innerHTML.includes('ide-tree'), 'explorer tree rendered into the Explorer host');
   } finally {
     await app.dispose();
   }

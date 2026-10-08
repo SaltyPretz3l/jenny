@@ -1,6 +1,6 @@
 /* renderer/features/renderer-ide-editor-host-panes.js - the non-Monaco
- * document kinds of the Workspace IDE editor host: image previews (W7),
- * rendered-markdown previews (W8) and binary documents (PDF / DOCX panes,
+ * document kinds of the Workspace IDE editor host: image previews (W7)
+ * and binary documents (PDF / DOCX panes,
  * docs/plans/WORKSPACE_DOCUMENT_EDITING.md). Extracted from
  * renderer-ide-editor-host.js, which sits at the file-size ceiling. The host
  * keeps the shared `docs` map and dispatches on `doc.kind`; this module owns
@@ -78,14 +78,12 @@
     const onDirtyChange = typeof deps?.onDirtyChange === 'function' ? deps.onDirtyChange : () => {};
     const onDocumentEdit = typeof deps?.onDocumentEdit === 'function' ? deps.onDocumentEdit : () => {};
     const onSaveRequest = typeof deps?.onSaveRequest === 'function' ? deps.onSaveRequest : () => {};
-    const onPreviewDomInjected = typeof deps?.onPreviewDomInjected === 'function' ? deps.onPreviewDomInjected : () => {};
     // Hides the Monaco/diff/fallback surfaces so a pane can overlay #ideEditorHost.
     const hideEditorSurfaces = typeof deps?.hideEditorSurfaces === 'function' ? deps.hideEditorSurfaces : () => {};
     const log = typeof deps?.log === 'function' ? deps.log : null;
     const getHost = () => getDom().ideEditorHost || null;
 
     const imageHostUtils = deps?.imageHostUtils || resolveModule('rendererIdeImageHost', './renderer-ide-image-host') || {};
-    const previewHostUtils = deps?.previewHostUtils || resolveModule('rendererIdePreviewHost', './renderer-ide-preview-host') || {};
     const imageMemoryUtils = deps?.imageMemoryUtils || resolveModule('rendererIdeImageMemory', './renderer-ide-image-memory') || {};
     // UIUX-034: decoded-image budget + blob URL ownership for image docs.
     const imageMemory = imageMemoryUtils.createImageMemory?.({
@@ -93,10 +91,6 @@
       ...deps?.imageMemoryOptions,
     }) || null;
     const imagePane = imageHostUtils.createIdeImagePane?.({ getHost }) || null;
-    const previewPane = previewHostUtils.createIdePreviewPane?.({
-      getHost,
-      postRender: (containerEl) => onPreviewDomInjected(containerEl),
-    }) || null;
 
     // Per-format document panes, created on first use so the PDF/DOCX
     // modules (and pdf.js) only load when such a file opens. A factory
@@ -207,7 +201,6 @@
     // the diff editor or the fallback textarea.
     function hideAll() {
       imagePane?.hide();
-      previewPane?.hide();
       hideDocumentPanes();
     }
 
@@ -237,46 +230,8 @@
     function activateImageDocument(normalizedPath, doc) {
       imageMemory?.touch(normalizedPath);
       hideEditorSurfaces();
-      previewPane?.hide();
       hideDocumentPanes();
       imagePane?.show(doc);
-      return true;
-    }
-
-    // ── Markdown/Mermaid preview documents (W8) ──
-
-    function openPreviewDocument({ id, label = '', sourcePath = '' } = {}) {
-      const normalizedId = String(id || '');
-      if (!normalizedId) {
-        return null;
-      }
-      let doc = getDoc(normalizedId);
-      if (!doc) {
-        doc = { kind: 'preview', model: null, viewState: null, dirty: false, html: '' };
-        docs.set(normalizedId, doc);
-      }
-      doc.id = normalizedId;
-      doc.label = String(label || doc.label || 'Preview');
-      doc.sourcePath = String(sourcePath || doc.sourcePath || '');
-      return doc;
-    }
-
-    // Stores sanitized HTML; re-injects live when this preview is visible.
-    function updatePreview(id, html) {
-      const doc = getDoc(id);
-      if (!doc || doc.kind !== 'preview') {
-        return false;
-      }
-      doc.html = String(html || '');
-      previewPane?.update(doc);
-      return true;
-    }
-
-    function activatePreviewDocument(normalizedId, doc) {
-      hideEditorSurfaces();
-      imagePane?.hide();
-      hideDocumentPanes();
-      previewPane?.show(doc);
       return true;
     }
 
@@ -350,7 +305,6 @@
     function activateBinaryDocument(normalizedPath, doc) {
       hideEditorSurfaces();
       imagePane?.hide();
-      previewPane?.hide();
       for (const { pane } of documentPanes.values()) {
         if (pane && pane !== doc.pane) pane.hide?.();
       }
@@ -391,7 +345,6 @@
     // Hides whichever overlay the closing document was showing.
     function hideForClose(doc) {
       if (doc?.kind === 'image') imagePane?.hide();
-      else if (doc?.kind === 'preview') previewPane?.hide();
       else if (doc?.kind === 'document') doc.pane?.hide?.();
     }
 
@@ -407,7 +360,6 @@
         if (doc?.kind === 'image') imageMemory?.release(doc);
       }
       imagePane?.dispose();
-      previewPane?.dispose();
       for (const { pane } of documentPanes.values()) {
         pane?.dispose?.();
       }
@@ -417,7 +369,6 @@
     return {
       activateBinaryDocument,
       activateImageDocument,
-      activatePreviewDocument,
       dispose,
       getDocumentBytes,
       getDocumentFormat,
@@ -426,9 +377,7 @@
       markDocumentSaved,
       openBinaryDocument,
       openImageDocument,
-      openPreviewDocument,
       release,
-      updatePreview,
     };
   }
 

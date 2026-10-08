@@ -31,19 +31,14 @@
     const workspaceRootService = deps?.workspaceRootService || null;
     const callbacks = deps?.callbacks || {};
     const {
-      escapeHtml = (value) => String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;'),
+      escapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml,
       appendClientLog = noop,
       showToastMessage = noop,
       showShellErrorToast = noop,
       toErrorMessage = (error, fallback) => String(error?.message || error || fallback || ''),
       // Same canonical turn view-models the chat code-review rail reads;
       // threaded in from the lifecycle composition via the service registry.
-      getTurnViewModelsForActiveSession = () => [],
+      getTurnViewModelsForActiveSession = () => [], getSessionMessages = () => [], getChangesUndoController = () => null,
       onSendToJenny = noop, activateWorkspaceSession = noop, getProjectSwitcher = null, peekProjectSwitcher = null,
     } = callbacks;
 
@@ -52,9 +47,9 @@
     const editorHostUtils = resolveModule('rendererIdeEditorHost', './renderer-ide-editor-host');
     const tabsUtils = resolveModule('rendererIdeTabs', './renderer-ide-tabs');
     const wiringUtils = resolveModule('rendererIdeExplorerWiring', './renderer-ide-explorer-wiring');
-    const railUtils = resolveModule('rendererIdeRail', './renderer-ide-rail');
+    const workbenchWiringUtils = resolveModule('rendererIdeWorkbenchWiring', './renderer-ide-workbench-wiring');
+    const stageSwitchUtils = resolveModule('rendererIdeStageSwitch', './renderer-ide-stage-switch');
     const searchPanelUtils = resolveModule('rendererIdeSearchPanel', './renderer-ide-search-panel');
-    const changesPanelUtils = resolveModule('rendererIdeChangesPanel', './renderer-ide-changes-panel');
     const statusBarUtils = resolveModule('rendererIdeStatusBar', './renderer-ide-statusbar');
     const ledgerUtils = resolveModule('rendererJennyChangeLedger', '../chat/renderer-jenny-change-ledger');
     const tabsControllerUtils = resolveModule('rendererIdeTabsController', './renderer-ide-tabs-controller');
@@ -78,10 +73,10 @@
     const gitFeatureUtils = resolveModule('rendererIdeGitFeature', './renderer-ide-git-feature');
     const problemsPanelUtils = resolveModule('rendererIdeProblemsPanel', './renderer-ide-problems-panel');
     const debugInspectorUtils = resolveModule('rendererIdeDebugInspector', './renderer-ide-debug-inspector');
-    const bottomPanelUtils = resolveModule('rendererIdeBottomPanel', './renderer-ide-bottom-panel');
-    const secondarySidebarUtils = resolveModule('rendererIdeSecondarySidebar', './renderer-ide-secondary-sidebar');
+    const layoutModel = resolveModule('jennyWorkbenchLayoutModel', '../shared/workbench-layout-model');
     const mruUtils = resolveModule('rendererIdeMru', './renderer-ide-mru');
     const chatDockUtils = resolveModule('rendererIdeChatDock', './renderer-ide-chat-dock');
+    const workspaceChatsUtils = resolveModule('rendererIdeWorkspaceChats', './renderer-ide-workspace-chats');
     const layoutUtils = resolveModule('rendererIdeLayout', './renderer-ide-layout');
     const commandsUtils = resolveModule('rendererIdeCommands', './renderer-ide-commands');
     const navBookmarksUtils = resolveModule('rendererIdeNavBookmarks', './renderer-ide-nav-bookmarks');
@@ -149,23 +144,22 @@
       onCursorActivity(info) {
         // Cursor choke point -> nav-bookmarks facade (drops the null non-file
         // diff/preview case; nav-history coalesces the rest).
-        navBookmarks?.recordCursorNav(info);
         statusBar?.render();
+        // A focused group's cursor (W7) feeds the status bar only.
+        if (editorHost?.getFocusedGroupPath?.()) return;
+        navBookmarks?.recordCursorNav(info);
         // After statusBar (which owns #ideBreadcrumbs innerHTML) so the symbol
         // path segments survive its file-path render.
         symbolNav?.render();
       },
       onModelChange(path) {
-        fileLifecycle?.noteEdit(path); previewController?.handleModelChange(path);
+        fileLifecycle?.noteEdit(path);
         qol?.previewStage?.handleModelChange(path);
         qol?.presentation?.noteEdit(); // recent-typing signal for presentation policy
         gutterDecorations?.schedule(path);
         autoSave?.onChange(path);
       },
       onGlyphMarginClick(line) { navBookmarks?.toggleAtGlyph(line); },
-      onPreviewDomInjected(containerEl) {
-        previewController?.handlePreviewDomInjected(containerEl);
-      },
       onMonacoReady(monacoApi) {
         // Swap the load-time vs-dark default for the palette-matched theme.
         themeBridge?.handleMonacoReady(monacoApi);
@@ -196,13 +190,13 @@
         onOpenFile: (path) => openFile(path),
       }) || null;
     // Debounced auto-save (default-OFF via the per-user autoSaveEnabled pref).
-    // Reuses saveActiveFile so the
+    // Saves the edited path (a secondary group's file too) through saveFile, so the
     // mtime-conflict + stale guards hold; the module skips non-file/stale tabs and
     // is cancelled on tab switch/close (debounce + gating live in the module).
     const autoSave = autoSaveUtils.createIdeAutoSave?.({
       editorHost,
       getIde: () => getIde(),
-      saveActiveFile: () => saveActiveFile({ unattended: true }),
+      saveFile: (path) => (fileLifecycle ? fileLifecycle.saveFile(path, { unattended: true }) : false),
       isSaving: () => fileLifecycle?.isSaving() === true,
       isEnabled: () => getIde().autoSaveEnabled === true,
     }) || null;
@@ -214,57 +208,76 @@
       requestStatusRender: () => statusBar?.render(),
     }) || null;
     const tabStrip = tabsUtils.createIdeTabStrip?.({ getDom, escapeHtml }) || null;
-    // Each rail panel is a SINGLE instance whose home side follows
-    // ide.panelLocations (the "Move View" model): getMountEl resolves the host
-    // from the location, isActivePanel is the shared per-side visibility gate,
-    // and onMovePanel re-homes a panel (keeping >=1 in the rail).
-    const panelHost = (id) => (ideStateUtils.getPanelLocation(getIde(), id) === 'secondary'
-      ? getDom().ideSecondarySidebarPanel
-      : getDom().ideRailPanel);
-    const panelDeps = (id) => ({
-      getMountEl: () => panelHost(id),
-      isActivePanel: () => ideStateUtils.isPanelActive(getIde(), id),
-    });
-    const onMovePanel = (id, target) => {
-      ideStateUtils.movePanelLocation(getIde(), id, target);
-      schedulePersist();
-      renderIde();
-    };
-    // Show a panel on whichever side hosts it (reveal / find / Ctrl+Shift+F / Changes).
-    const showPanel = (id) => ideStateUtils.showPanel(getIde(), id, { openSecondary: (p) => secondarySidebar?.open(p), schedulePersist, requestRender: renderIde });
+    const tabRestore = resolveModule('rendererIdeTabRestore', './renderer-ide-tab-restore')
+      .createIdeTabRestore?.({ getDom, escapeHtml, editorHost, getWorkspaceFsApi, registerCleanup }) || null;
+    // Workbench (row 40 W3): the layout tree of splits and stacks. Every panel is a
+    // SINGLE instance rendering into its own persistent view host and gated on its
+    // view being visible; showPanel reveals a view wherever it lives.
+    const workbenchWiring = workbenchWiringUtils.createIdeWorkbenchWiring?.({
+      getDom, getIde: () => getIde(), ideStateUtils, schedulePersist: () => schedulePersist(), requestRender: () => renderIde(),
+      focusEditor: () => focusIdeEditor(), focusTerminal: () => terminals?.focusTerminal?.() === true,
+      // Problems shows only while there are markers of any severity (F7; the statusbar count stays);
+      // test output only while the config it shows has output (F6).
+      isViewAvailable: (id) => (id === 'test-runner' ? testRunnerWiring?.isAvailable() !== false
+        : id === 'chat' || id === 'changes' ? state?.features?.featureFlags?.ide_chat_dock === true
+          : id === 'chat-2' || id === 'changes-2' ? workspaceChats?.isAvailable(id) === true // W6b: a second split-view pane
+          : id === 'problems' ? problemsPanel?.hasMarkers?.() === true
+            : id === 'test-output' ? testOutputPanel?.hasOutput() === true : true),
+      counts: {
+        'source-control': () => gitFeature?.getDirtyCount() || 0,
+        problems: () => problemCount(),
+        changes: () => ideChatDock?.getChangesWaitingCount?.() || 0,
+        'changes-2': () => workspaceChats?.secondWaitingCount() || 0,
+      },
+      // New chat activity while that chat was off screen.
+      unread: { chat: () => ideChatDock?.hasUnread?.() === true, 'chat-2': () => workspaceChats?.hasSecondUnread() === true },
+      labels: { run: () => runScripts?.getRunLabel?.() || '' }, // F5: the Run tab names its task
+      viewActions: (id) => terminalActions(id), onViewAction: (id, name) => runTerminalAction(id, name),
+      getGroupElement: (id) => editorGroups?.getElement(id) || null, getEditorGroups: () => editorGroups,
+    }) || null;
+    function problemCount() {
+      return problemsPanel?.getBadgeCount?.() || 0;
+    }
+    // Terminal headers (F3): + opens the next of four terminals beside this one; Kill ends this one.
+    let terminalNear = 'terminal';
+    function terminalActions(id) {
+      if (!terminals || !(layoutModel?.terminalSlot?.(id) > 0)) return [];
+      const icons = workbenchWiringUtils.ACTION_ICONS || {};
+      return [
+        ...(terminals.canAdd() ? [{ name: 'new-terminal', label: jt('ide.terminal.new', 'New Terminal'), icon: icons.add }] : []),
+        { name: 'kill-terminal', label: jt('ide.terminal.kill', 'Kill Terminal'), icon: icons.trash },
+      ];
+    }
+    function runTerminalAction(id, name) {
+      if (name === 'new-terminal') {
+        terminalNear = id;
+        terminals?.newTerminal({ start: true });
+      } else if (name === 'kill-terminal') {
+        terminals?.closeTerminal(id);
+      }
+    }
+    // Palette New Terminal and Ctrl+Shift+`: the + path, offered only while the + is.
+    const newTerminalAction = () => (terminals?.canAdd() ? () => terminals.newTerminal({ start: true, near: workbenchWiring?.groupBinding?.boundTerminal() || '' }) : undefined); // W7c: beside the focused group's terminal
+    const panelDeps = (id) => workbenchWiring?.viewDeps(id) || {};
+    const bottomPanel = workbenchWiring?.bottomPanel || null;
+    const showPanel = (id) => workbenchWiring?.showPanel(id) === true;
     const explorer = wiringUtils.createIdeExplorerWiring?.({
       getDom, escapeHtml, getIde, getWorkspaceFsApi, openFile,
       buildFileContextMenuItems, buildPathUtilityMenuItems, schedulePersist,
       getWorkspaceRootApi, showShellErrorToast, appendClientLog, panelDeps,
+      showToastMessage: (...args) => showToastMessage(...args),
       getChooseWorkspaceRoot: () => chooseWorkspaceRoot, getProjectSwitcher, peekProjectSwitcher,
       getFileLifecycle: () => fileLifecycle, getSearchPanel: () => searchPanel,
       getCloseOrchestrator: () => closeOrchestrator, getConfirmDialog: () => confirmDialog,
-      getGitFeature: () => gitFeature, getTerminalPanel: () => terminalPanel, getBottomPanel: () => bottomPanel,
+      getGitFeature: () => gitFeature, getTerminalPanel: () => terminals, getBottomPanel: () => bottomPanel,
       getFeatureFlags: () => state?.features?.featureFlags,
     }) || null;
     const tree = explorer?.tree || null;
-    const rail = railUtils.createIdeRail?.({
-      getDom,
-      getIde: () => getIde(),
-      requestRender: () => renderIde(),
-      schedulePersist: () => schedulePersist(),
-      onToggleSecondary: () => secondarySidebar?.toggle(),
-      onToggleChatDock: () => ideChatDock?.toggle(),
-      // The other columns are budgeted against the shown rail: re-apply them per gesture step.
-      onWidthApplied: () => { secondarySidebar?.syncWidth?.(); ideChatDock?.syncWidth?.(); },
-      isChatDockEnabled: () => state?.features?.featureFlags?.ide_chat_dock === true,
-      onMovePanel,
-      // Stage-surface entries (two-entry-kind activity strip): flag getters
-      // read per render; activation routes through the stage-surface machine
-      // (qol is built later — the thunks resolve lazily on click/render).
-      onActivateStageSurface: (surface) => qol?.stageSurface?.toggle(surface),
-      isStageSurfaceEnabled: (surface) => (surface === 'preview'
-        ? state?.features?.featureFlags?.workspace_preview_surface === true
-        : surface === 'file_map' && state?.features?.featureFlags?.workspace_file_map === true),
-      getActiveStageSurface: () => qol?.stageSurface?.getEffectiveSurface() || 'editor',
-      // Viewport-aware drag ceiling (layout owns the budget; thunk — layout
-      // is constructed later).
-      getMaxRailWidth: () => layout?.maxRailWidth() ?? Infinity,
+    // Preview / File map toggles at the end of the editor tab row (qol is built later; thunks).
+    const stageSwitch = stageSwitchUtils.createIdeStageSwitch?.({
+      getMountEl: () => getDom().ideStageSwitch, actionButton,
+      onToggle: (surface) => qol?.stageSurface?.toggle(surface),
+      getActiveSurface: () => qol?.stageSurface?.getEffectiveSurface() || 'editor',
     }) || null;
     // The panel owns its find-AND-replace controller internally (keeps this
     // controller under the line cap); it just needs editor-host + save context.
@@ -277,35 +290,23 @@
       onOpenResult: handleSearchResultOpen, appendClientLog, showShellErrorToast: (...args) => showShellErrorToast(...args),
       renderTabs: () => renderTabs(),
       isSaving: () => fileLifecycle?.isSaving() === true,
-      // Find-in-Folder shows Search on whichever side hosts it (rail or secondary).
+      // Find-in-Folder reveals Search wherever it lives.
       onActivateSearch: () => showPanel('search'),
     };
     const searchPanel = searchPanelUtils.createIdeSearchPanel?.({ ...searchDeps, ...panelDeps('search') }) || null;
-    const changesDeps = {
-      getDom,
-      escapeHtml,
-      getIde: () => getIde(),
-      getWorkspaceId: () => String(state.workspaceRoot?.rootId || ''),
-      getChangeLedger,
-      getDirtyPaths: () => Object.keys(getIde().dirtyByPath || {}),
-      onOpenChangeDiff: (change) => {
-        openChangeDiff(change);
-      },
-      onCompareUnsaved: (path) => {
-        openUnsavedCompare(path);
-      },
-      onRevert: (change) => diffController?.revertChange(change), appendClientLog,
-    };
-    const changesPanel = changesPanelUtils.createIdeChangesPanel?.({ ...changesDeps, ...panelDeps('changes') }) || null;
 
     const ptyTerminalPanelUtils = resolveModule('rendererIdePtyTerminalPanel', './renderer-ide-pty-terminal-panel');
-    const terminalPanel = resolveModule('rendererIdeTerminalWiring', './renderer-ide-terminal-wiring').createIdeTerminalPanel?.({
-      getPtyMountEl: () => getDom().ideBottomTerminalHost, ptyTerminalPanelUtils,
-      deps: {
-        getDom, getIde: () => getIde(), appendClientLog, getMountEl: () => getDom().ideBottomPanelContent, getWorkspacePtyApi,
-        isActivePanel: () => getIde().bottomPanelOpen === true && getIde().bottomPanelActiveView === 'terminal',
+    // Up to four terminals, one PTY panel per terminal view; the layout says which exist.
+    const terminals = resolveModule('rendererIdeTerminalWiring', './renderer-ide-terminal-wiring').createIdeTerminalSet?.({
+      ptyTerminalPanelUtils, model: layoutModel || {}, viewDeps: panelDeps,
+      baseDeps: {
+        getDom, getIde: () => getIde(), appendClientLog, getWorkspacePtyApi,
         showError: (message, meta) => showShellErrorToast(message, meta), toErrorMessage: (...args) => toErrorMessage(...args),
       },
+      listTerminalViews: () => workbenchWiring?.listViews() || [],
+      addTerminalView: (id, near) => workbenchWiring?.addView(id, near || (workbenchWiring.isVisible(terminalNear) ? terminalNear : 'terminal')),
+      removeTerminalView: (id) => workbenchWiring?.removeView(id),
+      revealView: (id, options) => workbenchWiring?.showPanel(id, options),
     }) || null;
 
     const statusBar = statusBarUtils.createIdeStatusBar?.({
@@ -313,15 +314,15 @@
       escapeHtml,
       getIde: () => getIde(),
       callbacks: {
-        getCursorInfo: () => editorHost?.getCursorInfo() || null,
-        getActiveLanguageId: () => editorHost?.getActiveLanguageId() || '',
+        getCursorInfo: () => editorHost?.getFocusedCursorInfo?.() || null, getStatusPath: () => editorHost?.getFocusedGroupPath?.() || '',
+        getActiveLanguageId: () => editorHost?.getFocusedLanguageId?.() || '',
         getBranch: () => gitFeature?.getBranch() || '',
         getDirtyCount: () => gitFeature?.getDirtyCount() || 0,
         getProblemCounts: () => problemsPanel?.getCounts() || null,
-        getBottomPanelOpen: () => getIde().bottomPanelOpen === true, getRunning: () => runScripts?.isRunning() === true,
+        getBottomPanelOpen: () => bottomPanel?.isOpen() === true, getRunning: () => runScripts?.isRunning() === true,
         onSwitchBranch: () => branchSwitcher?.open(),
         onOpenProblems: () => bottomPanel?.open('problems'),
-        onToggleBottomPanel: () => bottomPanel?.toggle(), onKillRun: () => runScripts?.kill(),
+        onToggleBottomPanel: () => bottomPanel?.toggle(), onOpenRun: () => bottomPanel?.open('run'),
         getEol: (path) => editorHost?.getEol(path) || 'lf',
         getTabSize: () => editorHost?.getTabSize?.() || 2,
         onPickTabSize: (anchor) => chipPicker?.openTabSizePicker(anchor),
@@ -349,8 +350,8 @@
         isDirty: (path) => editorHost?.isDirty(path) === true,
         isDiffTabId: (path) => ideStateUtils.isDiffTabId?.(path) === true,
         isPreviewTabId: (path) => ideStateUtils.isPreviewTabId?.(path) === true,
-        buildExtraMenuItems: (path) => buildFileContextMenuItems(path),
-        revealInExplorer: (path) => revealInExplorer(path),
+        buildExtraMenuItems: (path, opts) => [...(opts?.review ? [] : buildFileContextMenuItems(path)), ...(editorGroups?.moveMenuItems(path) || [])],
+        revealInExplorer: (path) => revealInExplorer(path), onDropTab: (payload, index) => editorGroups?.moveToGroup(payload.path, '', index),
         schedulePersist: () => schedulePersist(),
         renderTabs: () => renderTabs(),
         showShellErrorToast: (...args) => showShellErrorToast(...args),
@@ -359,21 +360,20 @@
       },
     }) || null;
 
+    // Secondary editor groups (row 40 W5): their views, layout stacks and split/move/close intents.
+    const editorGroups = resolveModule('rendererIdeEditorGroupsWiring', './renderer-ide-editor-groups-wiring').createIdeEditorGroupsWiring?.({
+      getIde: () => getIde(), getDom, editorHost, escapeHtml, getWorkbenchWiring: () => workbenchWiring, getCloseOrchestrator: () => closeOrchestrator,
+      loadDocument: (path) => fileLifecycle?.openFile(path, { background: true }) || Promise.resolve(false), activatePrimary: (path) => activateTab(path),
+      requestCloseTab: (path) => requestCloseTab(path), saveFile: (path) => saveFile(path), revealInExplorer: (path) => revealInExplorer(path),
+      onActivated: (path) => ideMru.record(path), renderReviewBar: (el, path) => diffController?.renderToolbarFor(el, path),
+      getBoundGroups: () => workbenchWiring?.groupBinding?.boundGroups() || [], getBoundText: (id) => workbenchWiring?.groupBinding?.boundText(id) || '', unbindGroup: (id) => workbenchWiring?.groupBinding?.unbindGroup(id),
+      schedulePersist: () => schedulePersist(), requestRender: () => renderIde(),
+    }) || null;
+
     const previewController = previewControllerUtils.createIdePreviewController?.({
-      getIde: () => getIde(),
-      getWorkspaceFsApi,
       callbacks: {
-        hasDocument: (path) => editorHost?.hasDocument(path) === true,
-        getValue: (path) => editorHost?.getValue(path) || '',
-        openPreviewDocument: (payload) => editorHost?.openPreviewDocument(payload),
-        updatePreview: (id, html) => editorHost?.updatePreview(id, html),
-        activateDocument: (id) => editorHost?.activateDocument(id),
-        renderTabs: () => renderTabs(),
-        showShellErrorToast: (...args) => showShellErrorToast(...args), appendClientLog,
-        // Unified Preview stage retarget (workspace_preview_surface): flag-on
-        // routes Open Preview to the stage surface; flag-off keeps preview tabs.
+        // Open Preview routes to the unified Preview stage surface.
         openPreviewStage: (path) => qol?.previewStage?.open(path),
-        isPreviewStageEnabled: () => state?.features?.featureFlags?.workspace_preview_surface === true,
       },
     }) || null;
 
@@ -423,7 +423,9 @@
     const debugInspector = debugInspectorUtils.createIdeDebugInspector?.({
       editorHost, getWorkspacePtyApi, getWorkspaceRootApi, appendClientLog, showToastMessage, saveFile: (path) => saveForLaunch(path),
       openTerminalPanel: () => bottomPanel?.open('terminal'),
-      sendTerminalCommand: (builder) => terminalPanel?.sendCommand?.(builder) ?? false,
+      sendTerminalCommand: (builder) => terminals?.sendCommand?.(builder) ?? false,
+      // Its own terminal (never the user's shell) when the terminal set is up.
+      openTaskTerminal: terminals ? (near) => terminals.openTaskTerminal(near) : undefined, captureTaskTarget: () => workbenchWiring?.groupBinding?.boundTerminal(),
       isDiffTabId: (path) => ideStateUtils.isDiffTabId?.(path) === true,
       getClipboardApi: () => windowRef.jennyShell?.clipboard || null,
     }) || null;
@@ -463,7 +465,19 @@
       editorHost, appendClientLog,
       toggleMinimap: () => editorPrefsUtils.toggleMinimap?.(getIde(), editorHost, commitEditorPreference, () => statusBar?.render()),
       reopenClosedTab: () => reopenClosedTab(), showPanel,
-      workspaceSymbolPicker: () => symbolNav?.openPicker(), openFileMap: () => qol?.mapController?.openFileMap(), isFileMapEnabled: () => state.features?.featureFlags?.workspace_file_map === true, revealInMap: () => qol?.revealActiveFileInMap?.(), showBlastRadius: () => qol?.blastActiveFileInMap?.(), toggleExplodedView: () => qol?.explodeController?.toggleActiveTab(), openPreviewSurface: () => qol?.stageSurface?.activate('preview'), previewActiveFile: () => qol?.previewStage?.open(getIde().activeTabPath || ''), isPreviewSurfaceEnabled: () => state.features?.featureFlags?.workspace_preview_surface === true,
+      layoutActions: workbenchWiring ? {
+        togglePrimarySide: () => workbenchWiring.togglePrimarySide(), togglePanel: () => bottomPanel?.toggle(), resetLayout: () => workbenchWiring.resetLayout(),
+        get newTerminal() { return newTerminalAction(); },
+        // Editor groups need Monaco: the rows show once it has loaded (getters, read per palette open).
+        get splitRight() { return editorHost?.getMonaco?.() ? () => editorGroups?.splitActive('right') : undefined; },
+        get splitDown() { return editorHost?.getMonaco?.() ? () => editorGroups?.splitActive('down') : undefined; },
+        get focusNextGroup() { return editorHost?.getMonaco?.() ? () => editorGroups?.focusNextGroup() : undefined; },
+        // Keyboard move (W4): the menu for the panel focus was last in, anchored on its tab.
+        moveView: () => { const wb = workbenchWiring.workbench; const viewId = wb?.getFocusedView?.(); return viewId ? wb.openMoveMenu(viewId) : false; },
+        // Read per palette open: the flag can hydrate after the controller is built.
+        get toggleChat() { return state?.features?.featureFlags?.ide_chat_dock === true ? () => ideChatDock?.toggle() : undefined; },
+      } : null,
+      workspaceSymbolPicker: () => symbolNav?.openPicker(), openFileMap: () => qol?.mapController?.openFileMap(), revealInMap: () => qol?.revealActiveFileInMap?.(), showBlastRadius: () => qol?.blastActiveFileInMap?.(), toggleExplodedView: () => qol?.explodeController?.toggleActiveTab(), openPreviewSurface: () => qol?.stageSurface?.activate('preview'), previewActiveFile: () => qol?.previewStage?.open(getIde().activeTabPath || ''),
       ...(navBookmarks?.bookmarkActions),
       helpOverlayFactory: helpOverlayUtils.createHelpOverlay,
       buildShortcutsHtml: () => ideShortcutsUtils.buildIdeShortcutsHtml?.() || '',
@@ -483,15 +497,15 @@
     const chipPicker = chipPickerUtils.createIdeChipPicker?.({
       getDom,
       editorHost,
-      getActivePath: () => editorHost?.getActivePath() || '',
+      getActivePath: () => editorHost?.getFocusedPath?.() || '',
       escapeHtml,
       actionButton: typeof actionButton === 'function' ? actionButton : null,
       popover: typeof popoverUtils === 'function' ? popoverUtils : popoverUtils?.default,
       onAfterChange: (change) => { void editorPrefsUtils.persistChipChange?.(getIde(), change, commitEditorPreference); },
     }) || null;
 
-    // Breadcrumb clicks / "Reveal in Explorer": show the explorer on its side
-    // (rail or secondary), then route tree focus (which scrolls) to the path.
+    // Breadcrumb clicks / "Reveal in Explorer": reveal Files wherever it lives,
+    // then route tree focus (which scrolls) to the path.
     function revealInExplorer(path, options) {
       showPanel('explorer');
       tree?.revealPath(path, options);
@@ -511,6 +525,7 @@
     // Diff review-tab flows live in renderer-ide-diff-controller (extracted
     // for the file-size ceiling); same editorHost/diff-tab plumbing.
     const diffController = diffControllerUtils.createIdeDiffController?.({
+      showDiffTab: (id) => editorGroups?.activateInGroup(id) || editorHost.activateDocument(id),
       getIde: () => getIde(),
       getDom,
       getWorkspaceFsApi,
@@ -521,12 +536,15 @@
       callbacks: {
         renderTabs: () => renderTabs(),
         showShellErrorToast: (...args) => showShellErrorToast(...args), appendClientLog,
-        buildHunksSummaryText: (change) => changesPanelUtils.buildHunksSummaryText?.(change) || '',
       },
     }) || null;
 
-    function openChangeDiff(change) {
-      return diffController ? diffController.openChangeDiff(change) : false;
+    // W7c: a diff opened from a bound chat (origin.pane) lands in that chat's group.
+    function openDiffFrom(origin, open, id) {
+      return workbenchWiring?.groupBinding ? workbenchWiring.groupBinding.openDiffFrom(origin?.pane, open, id) : open();
+    }
+    function openChangeDiff(change, origin) {
+      return openDiffFrom(origin, () => (diffController ? diffController.openChangeDiff(change) : false), diffController?.changeDiffId(change));
     }
 
     function openUnsavedCompare(path) {
@@ -535,9 +553,13 @@
 
     // Git client + status store + Source Control panel; the tree + statusbar read its getters.
     const gitFeature = gitFeatureUtils.createIdeGitFeature?.({
+      showDiffTab: (id) => editorGroups?.activateInGroup(id) || editorHost.activateDocument(id),
       windowRef, getDom, getIde, editorHost, getWorkspaceFsApi, getFileLifecycle: () => fileLifecycle, onDeleteUntracked: (path) => tree?.deleteEntry(path, 'file'), confirmDialog, escapeHtml,
-      appendClientLog, showShellErrorToast, renderTabs, schedulePersist, requestRender: renderIde,
+      appendClientLog, showShellErrorToast, renderTabs, schedulePersist, requestRender: renderIde, showPanel,
       onChange: () => { tree?.applyGitDecorations(); statusBar?.render(); gutterDecorations?.refreshActive(); },
+      // F8 (row 40 W6): rows Jenny changed carry a marker that opens her turn in Changes.
+      getJennyChange: (path) => workspaceChats?.jennyChangeFor(path) || null,
+      onOpenJennyChange: ({ turnId, fileKey }) => ideChatDock?.openChanges?.({ turnId, fileKey }),
       // Single Source Control view; its host + active-gate follow the panel's
       // location like the other panels.
       ...panelDeps('source-control'),
@@ -567,73 +589,82 @@
     // rows reveal through the same open-then-revealPosition path search uses.
     const problemsPanel = problemsPanelUtils.createIdeProblemsPanel?.({
       getDom, getIde, escapeHtml, editorHost, requestRender: renderIde,
-      getMountEl: () => getDom().ideBottomPanelContent,
-      isActivePanel: () => getIde().bottomPanelOpen === true && getIde().bottomPanelActiveView === 'problems',
+      ...panelDeps('problems'),
       onReveal: (path, line, column) => handleSearchResultOpen(path, line, column),
     }) || null;
     const runScripts = resolveModule('rendererIdeRunScripts', './renderer-ide-run-scripts').createIdeRunScripts?.({
       getDom, escapeHtml, editorHost, getWorkspaceFsApi, appendClientLog, showToastMessage, saveFile: (path) => saveForLaunch(path),
-      isActivePanel: () => getIde().bottomPanelOpen === true && getIde().bottomPanelActiveView === 'run',
+      ...panelDeps('run'),
       isDiffTabId: (p) => ideStateUtils.isDiffTabId?.(p) === true || ideStateUtils.isPreviewTabId?.(p) === true,
-      openRunPanel: () => bottomPanel?.open('run'), onRunStateChange: () => statusBar?.render(),
+      openRunPanel: (near) => workbenchWiring?.groupBinding?.revealTask('run', near) || bottomPanel?.open('run'), getRunTarget: () => workbenchWiring?.groupBinding?.boundTerminal() || '', onAskJenny: onSendToJenny,
+      // The statusbar, and the Run tab's "Run: <script>" label (workbench chrome only).
+      onRunStateChange: () => { statusBar?.render(); if (state.ui?.activeView === 'ide') workbenchWiring?.render(); },
     }) || null;
-    const testRunnerWiring = resolveModule('rendererIdeTestRunnerWiring', './renderer-ide-test-runner-wiring').createIdeTestRunnerWiring?.({ windowRef, actionButton, getMountEl: () => getDom().ideBottomPanelContent, isActiveView: () => getIde().bottomPanelOpen === true && getIde().bottomPanelActiveView === 'test-runner', showShellErrorToast }) || null;
-    // Collapsible bottom panel (Terminal/Problems/Run).
+    const testRunnerWiring = resolveModule('rendererIdeTestRunnerWiring', './renderer-ide-test-runner-wiring').createIdeTestRunnerWiring?.({ windowRef, actionButton, getMountEl: () => panelDeps('test-runner').getMountEl?.() || null, isActiveView: () => workbenchWiring?.isVisible('test-runner') === true, showShellErrorToast, onAvailabilityChange: () => renderIde(),
+      // F6: Show output selects the config and opens its Test output tab; a new run repaints it.
+      onShowOutput: (configId) => { testOutputConfigId = String(configId || ''); showPanel('test-output'); testOutputPanel?.render(); },
+      onOutputChange: () => { if (state.ui?.activeView === 'ide') renderIde(); } }) || null;
+    let testOutputConfigId = '';
+    const testOutputPanel = resolveModule('rendererIdeTestOutputPanel', './renderer-ide-test-output-panel').createIdeTestOutputPanel?.({
+      ...panelDeps('test-output'), actionButton, escapeHtml, onAskJenny: onSendToJenny,
+      getSelection: () => (testOutputConfigId ? { configId: testOutputConfigId } : null),
+      getRunOutput: (id) => testRunnerWiring?.getLastRunOutput(id) || null, getConfigLabel: (id) => testRunnerWiring?.getConfigLabel(id) || id,
+      onRunAgain: (id) => testRunnerWiring?.runConfig(id),
+    }) || null;
+    // Focus fallback when a panel closes or hides: the editor (true only if focus got there).
     const focusIdeEditor = () => { editorHost?.focus?.(); const host = getDom().ideEditorHost; return Boolean(host?.contains?.(host.ownerDocument?.activeElement)); };
-    const bottomPanel = bottomPanelUtils.createIdeBottomPanel?.({
-      getDom, getIde: () => getIde(), escapeHtml,
-      requestRender: () => renderIde(), schedulePersist: () => schedulePersist(),
-      renderTerminal: () => terminalPanel?.renderTerminalPanel(),
-      renderProblems: () => problemsPanel?.renderPanel(), renderRun: () => runScripts?.renderRunPanel(), renderTestRunner: () => testRunnerWiring?.render(), hasPersistentTerminalHost: () => true,
-      // Focus hooks: open lands in xterm; collapse lands in the editor (true only if focus got there).
-      focusTerminal: () => terminalPanel?.focusTerminal?.() === true,
-      focusEditor: focusIdeEditor,
-    }) || null;
-    // Secondary sidebar: a second static side container opposite the rail. The
-    // module owns the chrome (which panels live here + the visibility/width);
-    // the single panel instances render into it via their location-aware hosts.
-    const secondarySidebar = secondarySidebarUtils.createIdeSecondarySidebar?.({
-      getDom, getIde: () => getIde(),
-      requestRender: () => renderIde(), schedulePersist: () => schedulePersist(),
-      onMovePanel, focusEditor: focusIdeEditor, // closing lands focus in the editor (else the rail tab)
-      getMaxWidth: () => layout?.maxSecondaryWidth() ?? Infinity,
-      onWidthApplied: () => { rail?.syncWidth?.(); ideChatDock?.syncWidth?.(); },
-    }) || null;
-    // Workspace Chat Dock (ide_chat_dock): the chat subtree relocated into an
-    // outermost #ideShell column. The module owns the chrome + the idempotent
+    // Workspace Chat Dock (ide_chat_dock): the chat subtree relocated into the
+    // workbench's chat view. The module owns the session row + the idempotent
     // host reconcile; the chat render pipeline ALSO drives reconcile() from the
     // top of renderLayout before visibility toggles. New-chat
     // reuses the live #newChatButton handler (the button stays in #chatView).
+    // The Workspace's chats (row 40 W6): both Changes bindings, the second chat and the Git links.
+    const workspaceChats = workspaceChatsUtils?.createIdeWorkspaceChats?.({
+      state, getWorkbench: () => workbenchWiring, getTurnViewModels: (sessionId) => getTurnViewModelsForActiveSession(sessionId) || [],
+      getSessionMessages: (sessionId) => getSessionMessages(String(sessionId || '')) || [], buildLedger: ledgerUtils.buildJennyChangeLedgerFromTurnViewModels,
+      getGitFeature: () => gitFeature, requestRender: () => renderIde(), loadChangesView: async () => globalThis.rendererChangesView || null,
+      onCountChange: () => { if (state.ui?.activeView === 'ide') workbenchWiring?.render(); },
+      viewDeps: {
+        buildLedger: ledgerUtils.buildJennyChangeLedgerFromTurnViewModels, openChangeDiff: (change, origin) => openChangeDiff(change, origin), getUndoController: getChangesUndoController,
+        escapeHtml, appendClientLog, openSuggestionDiff: (sessionId, id, origin) => openDiffFrom(origin, () => diffController?.openSuggestionDiff(sessionId, id), diffController?.suggestionDiffId(sessionId)),
+      },
+    }) || null;
     const ideChatDock = chatDockUtils.createIdeChatDock?.({
       state, getDom, getIde: () => getIde(),
-      requestRender: () => renderIde(), schedulePersist: () => schedulePersist(),
-      layoutIdeEditor: () => layoutIdeEditor(), getMaxWidth: () => layout?.maxChatDockWidth() ?? Infinity,
+      layoutIdeEditor: () => layoutIdeEditor(), focusEditor: focusIdeEditor,
+      // The workbench owns open/closed (the chat stack), the Chat | Changes tabs and the Changes host.
+      workbench: workbenchWiring ? {
+        setOpen: (open) => workbenchWiring.setChatOpen(open), reveal: (id) => workbenchWiring.showPanel(id),
+        isVisible: (id) => workbenchWiring.isVisible(id), getChangesHost: () => panelDeps('changes').getMountEl?.() || null,
+        onCountChange: () => { if (state.ui?.activeView === 'ide') workbenchWiring.render(); }, // the Changes tab's waiting count; chrome only
+      } : null,
       onNewChat: () => getDom().ideChatDock?.ownerDocument?.getElementById('newChatButton')?.click(),
-      onSelectSession: (sessionId) => activateWorkspaceSession(sessionId), showShellErrorToast, appendClientLog, noteProgrammaticWrite: (reason) => callbacks.noteScrollProgrammaticWrite?.(reason),
+      // The second chat's session is already on screen as Chat 2: reveal it rather than swap pane 0.
+      onSelectSession: (sessionId) => (workspaceChats?.isSecondSession(sessionId) ? workspaceChats.revealSecondChat() : activateWorkspaceSession(sessionId)),
+      revealSecondChanges: (target) => workspaceChats?.revealSecondChanges(target) === true, showShellErrorToast, appendClientLog, noteProgrammaticWrite: (reason) => callbacks.noteScrollProgrammaticWrite?.(reason),
       // Split view: the dock hosts pane 0, so pane 0 holds focus while docked.
       onHostChanged: (docked) => globalThis.rendererAppPaneComposition?.getPaneComposition?.()?.handleChatDocked?.(docked),
+      // Chat | Changes tabs (row 34 S5): the IDE script manifest has already loaded the view.
+      changesView: { loadChangesView: async () => globalThis.rendererChangesView || null, viewDeps: workspaceChats?.primaryViewDeps || {}, onSync: () => workspaceChats?.sync() },
     }) || null;
-    // Layout owns the panel render fan-out + secondary-sidebar + bottom-panel
-    // render. Each panel render fn self-targets (getMountEl) and self-gates
-    // (isActivePanel), so the layout calls all four unconditionally.
+    // Layout: the workbench reconcile, then every panel's render (each self-targets
+    // its own view host and self-gates on its view being visible), then the dock.
     const layout = layoutUtils.createIdeLayout?.({
-      getDom, getIde: () => getIde(),
-      renderActivityBar: () => rail?.renderActivityBar(),
+      workbenchWiring,
       renderExplorer: () => tree?.renderExplorer(),
       renderSearch: () => searchPanel?.renderSearchPanel(),
-      renderChanges: () => changesPanel?.renderChangesPanel(),
       renderSourceControl: () => gitFeature?.renderPanel(),
-      bottomPanel,
-      secondarySidebar,
+      renderTerminal: () => { terminals?.renderAll(); terminals?.bindEvents(); }, // a new terminal binds on its first paint
+      renderProblems: () => problemsPanel?.renderPanel(),
+      renderRun: () => runScripts?.renderRunPanel(),
+      renderTestRunner: () => testRunnerWiring?.render(),
+      renderTestOutput: () => testOutputPanel?.render(),
       chatDock: ideChatDock,
     }) || null;
-    async function handleSearchResultOpen(path, line, column) {
-      const opened = await openFile(path);
-      if (opened) {
-        editorHost?.revealPosition(
-          ideStateUtils.normalizeIdeRelativePath?.(path) || '', line, column
-        );
-      }
+    async function handleSearchResultOpen(path, line, column, origin) {
+      const opened = await openFile(path, origin?.pane === undefined ? undefined : { group: workbenchWiring?.groupBinding?.chatTarget(origin.pane) }); // W7c: a bound chat's group
+      const normalized = ideStateUtils.normalizeIdeRelativePath?.(path) || '';
+      if (opened) editorHost?.revealPosition(normalized, line, column); // a grouped file's group editor included
       return opened === true;
     }
 
@@ -643,15 +674,14 @@
       // Drop nav-history entries + bookmarks for files no longer open (close /
       // rename) so Go Back never reveals a dead path and stale glyphs are gone.
       navBookmarks?.prune((ide.openTabs || []).map((tab) => tab.path));
-      tabStrip?.renderTabs({
-        openTabs: ide.openTabs,
-        activeTabPath: ide.activeTabPath,
-        dirtyByPath: ide.dirtyByPath,
-        staleByPath: ide.staleByPath || {},
-      });
+      // The primary strip shows the primary group; each secondary group renders its own.
+      const primaryTabs = ide.openTabs.filter((tab) => !tab.group);
+      tabStrip?.renderTabs({ openTabs: primaryTabs, activeTabPath: ide.activeTabPath, dirtyByPath: ide.dirtyByPath, staleByPath: ide.staleByPath || {} });
+      tabRestore?.render(ide);
+      editorGroups?.renderViews();
       const dom = getDom();
       if (dom.ideEmptyState) {
-        dom.ideEmptyState.classList.toggle('hidden', ide.openTabs.length > 0);
+        dom.ideEmptyState.classList.toggle('hidden', primaryTabs.length > 0);
       }
       tree?.syncSelection();
       statusBar?.render();
@@ -662,10 +692,11 @@
     const persistence = resolveModule('rendererIdePersistence', './renderer-ide-persistence')
       .createIdePersistence?.({
         getIde: () => getIde(),
-        getWorkspaceIdeApi,
+        getWorkspaceIdeApi, getTabRestore: () => tabRestore,
         ideStateUtils,
         appendClientLog, showToastMessage: (...args) => showToastMessage(...args),
         onHydrated: (ide) => welcome?.seedRecent((ide.openTabs || []).map((tab) => tab.path)),
+        onLateHydrated: (ide) => { if (!activated || disposed) return; renderIde(); if (ide.activeTabPath) { qol?.stageSurface?.suppressNextActivationReset(); void openFile(ide.activeTabPath); } },
         onPreferenceCommitted: () => statusBar?.render(),
         onPreferenceError: (key) => showShellErrorToast(jt('ide.controller.preferenceSaveFailed', 'That editor preference could not be saved. Your previous setting is still active.'), { title: jt('ide.controller.preferenceSaveFailedTitle', 'Editor Setting Not Saved'), dedupeKey: `ide:preference:${String(key || 'unknown')}` }),
       }) || null;
@@ -689,7 +720,7 @@
       onOpenFile: (p) => openFile(p), activateTab: (p) => activateTab(p),
       onRevealInExplorer: (p) => revealInExplorer(p, { expandSelf: true }), onOpenSymbolPicker: () => editorHost?.runAction('editor.action.quickOutline'),
       getWorkspaceId: () => String(state.workspace?.activeWorkspaceId || ''), getFeatureFlags: () => state.features?.featureFlags || {}, sendToJenny: (payload) => onSendToJenny(payload), getGitDecoration: (p) => gitFeature?.getDecoration(p), subscribeGitChange: (fn) => gitFeature?.subscribe(fn), ideStateUtils, requestRender: () => renderIde(), activityBus: state.workspaceActivityBus || null, getActiveSessionId: () => String(state.currentSessionId || ''), // Shared bus + active-session accessor for the map controller's presenter
-      getWorkspaceRootContext: () => state.workspaceRoot || null, chooseWorkspaceRoot: (...args) => chooseWorkspaceRoot(...args), getChangeLedger: () => getChangeLedger(), openChangeDiff: (change) => openChangeDiff(change), openChangesPanel: () => showPanel('changes'), showShellErrorToast: (...args) => showShellErrorToast(...args), // Root context is the canonical File Map identity, never 'default'
+      getWorkspaceRootContext: () => state.workspaceRoot || null, chooseWorkspaceRoot: (...args) => chooseWorkspaceRoot(...args), getChangeLedger: () => getChangeLedger(), openChangeDiff: (change) => openChangeDiff(change), openChangesPanel: () => ideChatDock?.openChanges?.({}), showShellErrorToast: (...args) => showShellErrorToast(...args), // Root context is the canonical File Map identity, never 'default'
       schedulePersist: () => schedulePersist(), getFileOperations: () => fileLifecycle?.fileOperations,
     }) || null;
 
@@ -702,9 +733,10 @@
       .createIdeFileLifecycle?.({
         getIde: () => getIde(),
         ideStateUtils,
-        editorHost,
+        editorHost, getTabRestore: () => tabRestore,
         getWorkspaceFsApi,
         closedTabs,
+        moveToGroup: (path, id) => editorGroups?.moveToGroup(path, id),
         welcome: {
           drop: (path) => welcome?.drop(path),
           noteOpened: (path) => welcome?.noteOpened(path),
@@ -729,10 +761,18 @@
     // Thin facade: the rest of the controller keeps calling these by name; each
     // delegates to the lifecycle module (degrading to a no-op if it is absent).
     function openFile(path, options) {
-      return fileLifecycle ? fileLifecycle.openFile(path, options) : Promise.resolve(false);
+      // A file already in a secondary group shows there (W5); a background open never activates.
+      if (options?.background === true) return fileLifecycle ? fileLifecycle.openFile(path, options) : Promise.resolve(false);
+      workbenchWiring?.workbench?.showEditor?.();
+      const rel = ideStateUtils.normalizeIdeRelativePath?.(path) || '';
+      const open = () => (fileLifecycle ? fileLifecycle.openFile(path, options) : Promise.resolve(false));
+      // A preview open (tree arrow keys) stays in the primary group.
+      return editorGroups?.openInGroup(rel) || (editorGroups && options?.preview !== true ? editorGroups.openFollowingFocus(rel, open, options?.group) : open());
     }
     function activateTab(path) {
       autoSave?.cancel();
+      workbenchWiring?.workbench?.showEditor?.();
+      if (editorGroups?.activateInGroup(path)) return;
       fileLifecycle?.activateTab(path);
     }
     function closeTab(path) {
@@ -762,13 +802,8 @@
       showToastMessage: (...args) => showToastMessage(...args),
       renderTabs: () => renderTabs(), appendClientLog,
       onTreeExternalChanges: (changes, opts) => { tree?.handleExternalChanges(changes, opts); quickOpen?.handleExternalChanges(changes, opts); },
-      refreshChangesPanelIfOpen: () => {
-        if (ideStateUtils.isPanelActive(getIde(), 'changes')) {
-          changesPanel?.renderChangesPanel();
-        }
-      },
       onExternalDelete: (path) => fileLifecycle?.closeExternalDelete(path),
-      onExternalPreviewChange: (change) => { previewController?.handleExternalChange?.(change); qol?.previewStage?.handleExternalChange?.(change); },
+      onExternalPreviewChange: (change) => { qol?.previewStage?.handleExternalChange?.(change); },
     }) || null;
     // Shell-owned transaction facade refreshes this controller only after commit.
     const chooseWorkspaceRoot = welcomeUtils.createChooseWorkspaceRoot?.({
@@ -799,9 +834,9 @@
       saveActiveFile,
       tabsController,
       quickOpen,
-      bottomPanel,
+      bottomPanel, newTerminal: () => newTerminalAction()?.(),
       chatDock: ideChatDock, isChatDockEnabled: () => state?.features?.featureFlags?.ide_chat_dock === true,
-      mruSwitcher: qol?.mruSwitcher || null,
+      mruSwitcher: qol?.mruSwitcher || null, editorGroups,
       reopenClosedTab, showPanel,
       workspaceSymbolPicker: () => symbolNav?.openPicker(),
       navBack: () => navBookmarks?.back(),
@@ -824,17 +859,14 @@
       tabsController?.bindEvents();
       welcome?.bindEvents();
       // Capture-phase so the save shortcut wins even when focus sits in the
-      // tree/rail; Monaco's own Ctrl+S command covers editor focus.
+      // tree or a panel; Monaco's own Ctrl+S command covers editor focus.
       dom.ideView.addEventListener('keydown', handleViewKeydown, true);
-      explorer?.bindAll(); rail?.bindEvents();
-      searchPanel?.bindEvents(); changesPanel?.bindEvents();
-      diffController?.bindEvents(); terminalPanel?.bindEvents();
+      explorer?.bindAll(); stageSwitch?.bindEvents(); editorGroups?.bindEvents();
+      searchPanel?.bindEvents();
+      diffController?.bindEvents(); terminals?.bindEvents();
       statusBar?.bindEvents(); gitFeature?.bindEvents();
       problemsPanel?.bindEvents();
-      bottomPanel?.bindEvents(); runScripts?.bindEvents(); testRunnerWiring?.bindEvents();
-      // Secondary-sidebar chrome only; the panels are single instances bound
-      // above (each binds BOTH hosts, so a moved panel stays live).
-      secondarySidebar?.bindEvents();
+      runScripts?.bindEvents(); testRunnerWiring?.bindEvents();
       ideChatDock?.bindEvents();
       symbolNav?.bindEvents(); qol?.bindAll();
       chipPicker?.initHandlers();
@@ -842,11 +874,12 @@
       // the dashboard scratchpad beforeunload flush) so edits are not lost.
       const flushOnUnload = () => { persistence?.flushIfPending(); };
       windowRef.addEventListener?.('beforeunload', flushOnUnload);
-      // Debounced viewport-clamp re-render (resize streams events).
+      // Debounced re-render on resize: the workbench solver re-fits the stacks.
       let resizeTimer = null;
       const onWindowResize = () => {
         if (resizeTimer) { clearTimeout(resizeTimer); }
-        resizeTimer = setTimeout(() => { resizeTimer = null; renderIde(); }, 120);
+        // Hidden Workspace: skip; activateIde() always re-renders when it is shown again.
+        resizeTimer = setTimeout(() => { resizeTimer = null; if (state.ui?.activeView === 'ide') renderIde(); }, 120);
       };
       windowRef.addEventListener?.('resize', onWindowResize);
       registerCleanup(function disposeIdeBindings() {
@@ -864,18 +897,16 @@
         windowRef.removeEventListener?.('resize', onWindowResize);
         if (resizeTimer) { clearTimeout(resizeTimer); resizeTimer = null; }
         watchController?.stop(); fileLifecycle?.dispose();
-        debugInspector?.dispose(); previewController?.dispose();
+        debugInspector?.dispose();
         quickOpen?.dispose(); branchSwitcher?.dispose();
         tabsController?.dispose(); statusBar?.dispose();
-        gitFeature?.dispose(); problemsPanel?.dispose();
-        bottomPanel?.dispose(); runScripts?.dispose(); testRunnerWiring?.dispose();
-        secondarySidebar?.dispose();
+        gitFeature?.dispose(); problemsPanel?.dispose(); workspaceChats?.dispose();
+        runScripts?.dispose(); testRunnerWiring?.dispose();
+        workbenchWiring?.dispose(); stageSwitch?.dispose(); editorGroups?.dispose();
         ideChatDock?.dispose();
-        terminalPanel?.dispose();
-        changesPanel?.dispose();
+        terminals?.dispose(); testOutputPanel?.dispose();
         diffController?.dispose();
         searchPanel?.dispose();
-        rail?.dispose();
         explorer?.disposeAll();
         themeBridge?.dispose();
         autoSave?.dispose();
@@ -886,11 +917,14 @@
       });
     }
 
-    // Layout (rail + bottom panel) lives in renderer-ide-layout.js; renderTabs
+    // Layout (the workbench + panel fan-out) lives in renderer-ide-layout.js; renderTabs
     // stays here (it touches the tree / tab strip / statusbar).
     function renderIde() {
+      editorGroups?.reconcile(); // editor stacks follow the tabs' groups before the workbench renders
+      workspaceChats?.reconcileLayout(); // and Chat 2 / Changes 2 join it once a second chat exists
       layout?.render();
       renderTabs();
+      stageSwitch?.render();
       // Single visibility owner: the stage-surface controller shows/hides the
       // map/exploded/preview stage hosts (they can never stack).
       qol?.stageSurface?.sync();
@@ -903,21 +937,22 @@
       if (!activated) {
         activated = true;
         appendClientLog('INFO', 'ide.view_first_activation', {});
-        await hydratePersistedState();
-        if (!lifecycleCurrent(epoch)) return;
-        await welcome?.render();
-        if (!lifecycleCurrent(epoch)) return;
-        renderIde();
-        watchController?.start();
-        const ide = getIde();
-        if (ide.activeTabPath) {
-          // Hydrate-time restore must not reset a persisted preview/file_map
-          // surface — suppress the stage machine's activation reset once.
-          qol?.stageSurface?.suppressNextActivationReset();
-          await openFile(ide.activeTabPath);
+        // Quiet window for missing files: from hydrate until the first render settles.
+        return (tabRestore ? tabRestore.runRestore : (action) => action())(async () => {
+          await hydratePersistedState();
           if (!lifecycleCurrent(epoch)) return;
-        }
-        return;
+          await welcome?.render();
+          if (!lifecycleCurrent(epoch)) return;
+          renderIde();
+          watchController?.start();
+          const ide = getIde();
+          if (ide.activeTabPath) {
+            // Hydrate-time restore must not reset a persisted preview/file_map
+            // surface — suppress the stage machine's activation reset once.
+            qol?.stageSurface?.suppressNextActivationReset();
+            await openFile(ide.activeTabPath);
+          }
+        });
       }
       renderIde();
       // Re-apply editor prefs so a change made in the Settings "Editor" section
@@ -931,7 +966,7 @@
 
     async function handleWorkspaceRootCommitted({ context } = {}) { if (disposed) return;
       const epoch = ++lifecycleEpoch;
-      fileLifecycle?.resetForRoot(context); ideStateUtils.resetIdeRootState?.(getIde()); tree?.resetForRoot?.(); searchPanel?.resetForRoot?.(); diffController?.resetForRoot?.(); quickOpen?.invalidate(); ideMru?.clear?.(); navBookmarks?.resetForRoot?.(); tabsController?.resetForRoot?.(); testRunnerWiring?.resetForRoot?.(); gitFeature?.resetForRoot?.(); // Git presentation must not survive a root switch.
+      fileLifecycle?.resetForRoot(context); ideStateUtils.resetIdeRootState?.(getIde()); tree?.resetForRoot?.(); searchPanel?.resetForRoot?.(); diffController?.resetForRoot?.(); quickOpen?.invalidate(); ideMru?.clear?.(); navBookmarks?.resetForRoot?.(); tabsController?.resetForRoot?.(); editorGroups?.resetForRoot(); testRunnerWiring?.resetForRoot?.(); runScripts?.resetForRoot?.(); gitFeature?.resetForRoot?.(); // Git presentation must not survive a root switch.
       // The decoupled composer singletons (@-mention autocomplete, active-file consent) hear root commits only via this window event — they have no controller wire by design.
       try { windowRef.dispatchEvent?.(new windowRef.CustomEvent('ide:workspace-root-committed', { detail: { context } })); } catch (_error) { /* stub windows without CustomEvent */ }
       await persistence?.hydrateForContext(context); if (!lifecycleCurrent(epoch)) return; watchController?.start(); qol?.handleWorkspaceRootCommitted?.({ context });
@@ -952,7 +987,7 @@
       // Chat-dock surface for the render pipeline's renderLayout reconcile.
       chatDock: ideChatDock,
       openFile,
-      openFileAtLine: (path, line, column) => handleSearchResultOpen(path, line, column), // Chat timeline path chips and cite links use the same open-then-revealPosition seam as search; resolves true only when the file actually opened.
+      openFileAtLine: (path, line, column, origin) => handleSearchResultOpen(path, line, column, origin), // Chat timeline path chips and cite links use the same open-then-revealPosition seam as search; resolves true only when the file actually opened.
       saveActiveFile,
       // Surfaced for the command palette + the global "?" router (shell bindings).
       // both halves stay empty off the IDE view so other surfaces stay uncluttered.
@@ -967,7 +1002,7 @@
       },
       openHelpOverlay: () => { ideCommands?.openHelpOverlay(); },
       // Transcript diff rows resolve a ledger changeId to its record and open the diff://change/ review tab.
-      openLedgerChangeById: (changeId) => { const id = String(changeId || '').trim(); const change = id ? (getChangeLedger().changes || []).find((entry) => String(entry?.changeId || '') === id) : null; return change ? openChangeDiff(change) : false; },
+      openLedgerChangeById: (changeId, options) => { const id = String(changeId || '').trim(); const ledger = options?.secondChat === true ? workspaceChats?.secondLedger() : getChangeLedger(); const change = id ? (ledger?.changes || []).find((entry) => String(entry?.changeId || '') === id) : null; return change ? openChangeDiff(change, { pane: options?.secondChat === true ? 1 : 0 }) : false; },
     };
   }
 

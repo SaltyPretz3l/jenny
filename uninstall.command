@@ -77,6 +77,7 @@ case "$RESULT" in
       remove_profile_child "plugins"
       remove_profile_child "Preferences"
       remove_profile_child "project-delete-operations.json"
+      remove_profile_child "project-notes"
       remove_profile_child "projects.json"
       remove_profile_child "session-runtime"
       remove_profile_child "session-runtime-budgets"

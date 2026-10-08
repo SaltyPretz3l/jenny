@@ -43,10 +43,20 @@ test('spawns an explicit PowerShell shell on win32 with the command as ONE -Comm
   });
   assert.equal(spawns.length, 1);
   assert.equal(spawns[0].shell, 'powershell.exe');
-  assert.deepEqual(spawns[0].args, ['-NoLogo', '-NoProfile', '-Command', "node 'src/app.js'"]);
+  assert.deepEqual(spawns[0].args.slice(0, 3), ['-NoLogo', '-NoProfile', '-Command']);
+  assert.equal(spawns[0].args.length, 4);
+  assert.equal(spawns[0].args[3].split('\n')[1], "node 'src/app.js'", 'the command is one line of its own');
   assert.equal(spawns[0].options.cwd, 'C:/ws');
   assert.equal(spawns[0].options.detached, false);
   assert.deepEqual(spawns[0].options.stdio, ['ignore', 'pipe', 'pipe'], 'no stdin: fire-and-forget task, not an interactive session');
+});
+
+test('a failing command reports its own exit code, not the shell\'s 1 (row 40 gate)', async () => {
+  const run = (command) => startRunTask({ command, cwd: process.cwd(), platform: process.platform, spawnImpl: spawn }).done;
+  const failed = await run(`node -e 'process.exit(3)'`);
+  assert.equal(failed.status, 'exited');
+  assert.equal(failed.exitCode, 3);
+  assert.equal((await run(`node -e 'process.exit(0)'`)).exitCode, 0);
 });
 
 test('spawns bash -c on posix with the command as one argument', () => {

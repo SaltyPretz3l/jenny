@@ -384,23 +384,10 @@ describe('sandboxed HTML routing', () => {
     assert.equal(h.host.querySelector('[data-file-preview-view="read"]'), null);
   });
 
-  test('the html render kill switch restores the legacy code-only view', async (t) => {
+  test('a .htm file renders in the sandboxed frame by default', async (t) => {
     const h = makeHarness(t, {
       workspaceFs: { readText: () => Promise.resolve(textPayload('<h1>Preview</h1>')) },
     });
-    h.state.features = { featureFlags: { file_preview_html_render: false } };
-    await h.controller.openFilePreviewTarget({ path: 'site/page.html' });
-
-    assert.ok(h.host.querySelector('.artifact-file-preview-row'));
-    assert.equal(h.host.querySelector('[data-file-preview-view]'), null);
-    assert.equal(h.calls.frames.length, 0);
-  });
-
-  test('an absent html flag key keeps the default-on render path enabled', async (t) => {
-    const h = makeHarness(t, {
-      workspaceFs: { readText: () => Promise.resolve(textPayload('<h1>Preview</h1>')) },
-    });
-    h.state.features = { featureFlags: {} };
     await h.controller.openFilePreviewTarget({ path: 'site/page.htm' });
 
     assert.equal(h.calls.frames.length, 1);

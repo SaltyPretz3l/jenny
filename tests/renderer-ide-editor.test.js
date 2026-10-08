@@ -353,7 +353,7 @@ test('ide controller opens a second file, switches tabs, and closes back', async
   const lastPersist = harness.bridge.calls.updateState.at(-1);
   assert.equal(lastPersist.expectedRootId, 'root_fake');
   assert.equal(lastPersist.expectedGeneration, 1);
-  assert.deepEqual(lastPersist.rootState.openTabs, [{ path: 'src/app.js' }]);
+  assert.deepEqual(lastPersist.rootState.openTabs, [{ path: 'src/app.js', line: 1, top: 1 }]);
 });
 
 test('ide controller surfaces save conflicts as error toasts', async (t) => {

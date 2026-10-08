@@ -31,6 +31,7 @@
   function createComposerModelPicker(deps) {
     const options = deps || {};
     const state = options.state || {};
+    const reader = root.jennyModelLoadFailure || (typeof require === 'function' ? require('../shared/model-load-failure') : null);
     const documentRef = options.documentRef
       || (typeof document !== 'undefined' ? document : null);
     const inventory = options.inventory || root.inventory || {};
@@ -352,16 +353,19 @@
       if (pill.getAttribute('aria-label') !== ariaLabel) pill.setAttribute('aria-label', ariaLabel);
 
       const resolvedModel = inputs.preferredModel || inputs.backendModel;
+      const failure = reader?.readModelLoadFailure(state.backend);
+      const isFailed = Boolean(resolvedModel && failure)
+        && formatUtils.canonicalOllamaTag(resolvedModel) === formatUtils.canonicalOllamaTag(failure.model);
       const isLoaded = Boolean(resolvedModel && inputs.loadedModel)
         && formatUtils.canonicalOllamaTag(resolvedModel)
           === formatUtils.canonicalOllamaTag(inputs.loadedModel);
       let dot = pill.querySelector('.composer-model-pill-dot');
-      if (isLoaded) {
+      if (isFailed || isLoaded) {
         if (!dot) {
           dot = documentRef.createElement('span');
-          dot.className = 'composer-model-pill-dot status-dot status-dot--ok';
           dot.setAttribute('aria-hidden', 'true');
         }
+        dot.className = 'composer-model-pill-dot status-dot status-dot--' + (isFailed ? 'error' : 'ok');
         if (pill.firstChild !== dot) pill.insertBefore(dot, pill.firstChild);
       } else if (dot) {
         dot.remove();

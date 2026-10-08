@@ -256,14 +256,7 @@
     const settings = deps || {};
     const escapeHtml = typeof settings.escapeHtml === 'function'
       ? settings.escapeHtml
-      : function fallbackEscapeHtml(value) {
-        return String(value || '')
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#39;');
-      };
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
     function buildSyntheticRowId(messageId) {
       return `shell:${String(messageId || '').trim()}`;

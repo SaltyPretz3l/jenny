@@ -8,6 +8,9 @@ const {
   reconcileTurnRows,
 } = require('../renderer/chat/renderer-turn-reducer');
 const { projectTurnRows } = require('../renderer/chat/renderer-turn-row-projector');
+const { projectPersistedEventsWithReducer } = require('../renderer/chat/renderer-stream-rehydrate');
+const { createTurnRowRenderUtils } = require('../renderer/chat/renderer-turn-row-render-utils');
+const { JSDOM } = require('jsdom');
 
 function applyPayload(state, payload, context = {}) {
   const ordinal = Number(state.__testOrdinal || 0);
@@ -59,3 +62,59 @@ test('user questions keep one tool_call identity from pending input through hydr
   assert.equal(reconciledRow.payload.user_questions_result_kind, 'user_questions_answered');
   assert.deepEqual(reconciledRow.payload.user_questions_answers, [{ id: 'choice', value: 'A' }]);
 });
+
+for (const resultKind of ['user_questions_answered', 'user_questions_declined']) {
+  test(`reducer reconciliation preserves the structured question receipt (${resultKind})`, (t) => {
+    const state = createTurnReducerState();
+    applyPayload(state, { type: 'started', streamId: 'stream-questions' });
+    applyPayload(state, {
+      type: 'tool_use', callId: 'call-question', toolName: 'ask_user', status: 'running', input: {},
+    });
+    applyPayload(state, {
+      type: 'user_questions_requested', callId: 'call-question', toolName: 'ask_user', questionRef: 'question-ref',
+      questions: [
+        { id: 'single', prompt: 'Pick one', options: ['Alpha'], multi_select: false },
+        { id: 'multi', prompt: 'Pick many', options: ['One', 'Two'], multi_select: true },
+      ],
+    });
+    const answers = [{ id: 'single', value: 'Alpha' }, { id: 'multi', value: ['One', 'Two'], other: 'note' }];
+    const turn = applyPayload(state, {
+      type: 'tool_result', callId: 'call-question', toolName: 'ask_user', content: 'answered',
+      metadata: { result_kind: resultKind, answers },
+    });
+    const projected = projectPersistedEventsWithReducer(turn.events, { turnId: turn.turn_id });
+    const row = projected.rows.find((candidate) => candidate.kind === 'tool_call');
+    const live = turn.rows.find((candidate) => candidate.kind === 'tool_call');
+    const canonical = projectTurnRows(turn.events).find((candidate) => candidate.kind === 'tool_call');
+    for (const candidate of [live, row]) {
+      assert.equal(candidate.payload.user_questions_result_kind, resultKind);
+      assert.deepEqual(candidate.payload.user_questions_answers, canonical.payload.user_questions_answers);
+      assert.deepEqual(candidate.payload.user_questions, canonical.payload.user_questions);
+      assert.equal(candidate.payload.question_ref, 'question-ref');
+      assert.equal(candidate.payload.state, 'completed');
+    }
+    const metadataAnswers = turn.events.find((event) => event.kind === 'tool_result').payload.metadata.answers;
+    assert.notEqual(row.payload.user_questions_answers, metadataAnswers);
+    assert.notEqual(row.payload.user_questions_answers[1], metadataAnswers[1]);
+    assert.notEqual(row.payload.user_questions_answers[1].value, metadataAnswers[1].value);
+    metadataAnswers[1].value.push('changed');
+    assert.deepEqual(row.payload.user_questions_answers, answers);
+    const renderer = createTurnRowRenderUtils({
+      renderToolCallBlock() { return 'generic tool'; },
+      renderMarkdown(value) { return String(value || ''); },
+      getFeatureFlags() { return {}; },
+      MESSAGE_STATUS: { STREAMING: 'streaming' },
+    });
+    const dom = new JSDOM(renderer.buildToolCallRowMarkup(row, []));
+    t.after(() => dom.window.close());
+    const receipt = dom.window.document.querySelector('.user-questions-receipt');
+    assert.ok(receipt, 'reconcile renders a structured receipt');
+    if (resultKind === 'user_questions_answered') {
+      assert.match(receipt.textContent, /Pick one/);
+      assert.match(receipt.textContent, /Pick many/);
+      assert.match(receipt.textContent, /One, Two/);
+    } else {
+      assert.match(receipt.textContent, /Questions skipped/);
+    }
+  });
+}

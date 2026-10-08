@@ -2,8 +2,9 @@
  * One 30 px dot replaces the old J disc. renderer-sprite-morph.js builds
  * .chat-sprite-dot inside .chat-assistant-sprite and sets data-activity; this
  * sheet owns every form, tone, loop and reduced-motion pose. All geometry is
- * in px relative to the root's center. The root alone takes the breakpoint
- * scale; the sprite element's transform belongs to the positioning pipeline.
+ * in px relative to the root's center. The root alone takes the throbber and
+ * breakpoint scale (--tl-throbber-scale, chat-timeline-tokens.css); the
+ * sprite element's transform belongs to the positioning pipeline.
  *
  * Parity rule: for every looping element the static declaration in its state
  * rule equals that loop's 0% keyframe, so the engine can ease the frozen frame
@@ -16,7 +17,7 @@
   --sprite-dot-error: var(--tl-status-error);
   --sprite-dot-ok: var(--tl-status-ok);
   --sprite-dot-muted: var(--tl-status-muted);
-  --sprite-dot-scale: 1;
+  --sprite-dot-scale: var(--tl-throbber-scale);
   --sprite-morph-duration: 280ms;
   --sprite-morph-urgent: 140ms;
   --sprite-morph-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
@@ -52,10 +53,11 @@
 }
 
 /* At the 22-24 px sprite breakpoint (chat-media-queries.css: --chat-sprite-size
- * is 24 px wherever the rail still shows) only the inner root scales. */
+ * is 24 px wherever the rail still shows) only the inner root scales, by
+ * 24 / 30 on top of the throbber scale. */
 @media (max-width: 700px) {
   .chat-view {
-    --sprite-dot-scale: 0.8;
+    --sprite-dot-scale: calc(0.8 * var(--tl-throbber-scale));
   }
 }
 

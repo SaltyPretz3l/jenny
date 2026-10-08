@@ -97,13 +97,23 @@ function createClientLogBatchHandler({
   };
 }
 
-function registerClientLogIpcHandler(ipcMainLike, options = {}) {
+function registerClientLogIpcHandler(ipcMainLike, { authorize = null, ...options } = {}) {
   if (!ipcMainLike || typeof ipcMainLike.on !== 'function') {
     return;
   }
   const handler = createClientLogBatchHandler(options);
-  ipcMainLike.on(getBridgeChannel('diagnostics.logs.appendRendererBatch', 'send'), handler);
-  ipcMainLike.on(getBridgeChannel('logs.clientAppend', 'send'), handler);
+  for (const methodPath of ['diagnostics.logs.appendRendererBatch', 'logs.clientAppend']) {
+    const channel = getBridgeChannel(methodPath, 'send');
+    const registeredHandler = typeof authorize === 'function' ? (event, batch) => {
+      try {
+        if (authorize(event, { methodPath, channel }) !== true) return;
+      } catch (_error) {
+        return;
+      }
+      handler(event, batch);
+    } : handler;
+    ipcMainLike.on(channel, registeredHandler);
+  }
 }
 
 module.exports = {

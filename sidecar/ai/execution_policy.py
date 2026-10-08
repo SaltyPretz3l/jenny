@@ -21,6 +21,7 @@ DESKTOP_SANDBOX_TYPED_FILE_TOOL_NAMES: frozenset[str] = frozenset(
         "read_file",
         "write_file",
         "edit_file",
+        "propose_change",
         "glob_files",
         "grep_search",
         "list_dir",

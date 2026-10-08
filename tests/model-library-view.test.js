@@ -13,6 +13,26 @@ test.afterEach(() => {
   delete require.cache[MODEL_VIEW_PATH];
 });
 
+test('a card whose load failed shows the badge, plain words and the cause-matched actions instead of Use', () => {
+  const failure = { cause: 'out_of_memory', message: 'model requires more system memory', context: 40960, at: '2026-10-07T12:00:00.000Z', engine: 'ollama', model: 'acme/model:q6' };
+  const html = view.buildModelRow(card({ loadFailure: failure }), { actions: ['use', 'unload', 'tune', 'menu', 'retry', 'loadSmaller', 'showFits', 'diagnostics', 'copyDetails'], pull: {}, activation: { status: 'idle', key: '', message: '' } });
+  const dom = new JSDOM(html);
+  const row = dom.window.document.querySelector('.model-row');
+  assert.equal(row.dataset.loadFailed, 'true');
+  assert.match(row.querySelector('.model-row-title').textContent, /Didn't load/);
+  const note = row.querySelector('.model-card-note--failed');
+  assert.equal(note.textContent, 'Not enough memory to load it. A smaller context needs less.');
+  assert.equal(note.title, 'model requires more system memory');
+  const actions = [...row.querySelectorAll('[data-model-card-action]')].map((node) => node.dataset.modelCardAction);
+  assert.deepEqual(actions, ['loadSmaller', 'showFits', 'tune', 'menu'], 'the memory fixes replace Use; Tune and the menu stay');
+  assert.equal(row.querySelector('[data-model-card-action="loadSmaller"]').textContent.trim(), 'Load at 32K context');
+  const unreachable = new JSDOM(view.buildModelRow(card({ loadFailure: { ...failure, cause: 'engine_unreachable' } }), { actions: ['use', 'retry', 'diagnostics', 'copyDetails'], pull: {}, activation: {} }));
+  assert.deepEqual([...unreachable.window.document.querySelectorAll('[data-model-card-action]')].map((node) => node.dataset.modelCardAction), ['diagnostics', 'retry']);
+  const plain = new JSDOM(view.buildModelRow(card(), { actions: ['use', 'retry', 'loadSmaller'], pull: {}, activation: {} }));
+  assert.deepEqual([...plain.window.document.querySelectorAll('[data-model-card-action]')].map((node) => node.dataset.modelCardAction), ['use'], 'no failure, no recovery actions');
+  assert.equal(plain.window.document.querySelector('.model-row').dataset.loadFailed, 'false');
+});
+
 function card(overrides = {}) {
   return {
     key: 'acme/model:q6',

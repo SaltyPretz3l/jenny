@@ -31,6 +31,20 @@ test('ipc contract descriptors use unique invoke/send/subscribe channels', () =>
   }
 });
 
+test('projectNotes descriptors pin the invoke channels and the changed subscription', () => {
+  const expected = {
+    'projectNotes.get': ['invoke', 'project-notes:get'],
+    'projectNotes.save': ['invoke', 'project-notes:save'],
+    'projectNotes.undo': ['invoke', 'project-notes:undo'],
+    'projectNotes.lease': ['invoke', 'project-notes:lease'],
+    'projectNotes.onChanged': ['subscribe', 'project-notes:changed'],
+  };
+  for (const [methodPath, [kind, channel]] of Object.entries(expected)) {
+    assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], { kind, channel });
+    assert.equal(getBridgeChannel(methodPath, kind), channel);
+  }
+});
+
 test('reminder descriptors pin the fired, open, and snooze channels', () => {
   const expected = {
     'reminders.onFired': ['subscribe', 'reminders:fired'],
@@ -54,13 +68,18 @@ test('desktop notification descriptors pin the notify send and open subscribe ch
   }
 });
 
-test('workspaceRecovery invoke descriptors use the five canonical unique channels', () => {
+test('workspaceRecovery invoke descriptors use the ten canonical unique channels', () => {
   const expected = {
     'workspaceRecovery.listChangeSets': 'workspace-recovery:list-change-sets',
     'workspaceRecovery.preflightUndo': 'workspace-recovery:preflight-undo',
     'workspaceRecovery.undoChangeSet': 'workspace-recovery:undo-change-set',
+    'workspaceRecovery.reapplyChangeSet': 'workspace-recovery:reapply-change-set',
     'workspaceRecovery.restoreTrashEntry': 'workspace-recovery:restore-trash-entry',
     'workspaceRecovery.abandonRestore': 'workspace-recovery:abandon-restore',
+    'workspaceRecovery.preflightCheckpointFiles': 'workspace-recovery:preflight-checkpoint-files',
+    'workspaceRecovery.restoreCheckpointFiles': 'workspace-recovery:restore-checkpoint-files',
+    'workspaceRecovery.preflightSafetyCopy': 'workspace-recovery:preflight-safety-copy',
+    'workspaceRecovery.restoreSafetyCopy': 'workspace-recovery:restore-safety-copy',
   };
   const channels = Object.entries(expected).map(([methodPath, channel]) => {
     assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], { kind: 'invoke', channel });
@@ -69,7 +88,7 @@ test('workspaceRecovery invoke descriptors use the five canonical unique channel
   assert.equal(new Set(channels).size, channels.length);
 });
 
-test('the preload bridge materializes all five workspaceRecovery methods', async () => {
+test('the preload bridge materializes all ten workspaceRecovery methods', async () => {
   const calls = [];
   const bridge = createJennyShellBridge({
     ipcRenderer: {
@@ -84,15 +103,25 @@ test('the preload bridge materializes all five workspaceRecovery methods', async
   await bridge.workspaceRecovery.listChangeSets({});
   await bridge.workspaceRecovery.preflightUndo({ changeSetId: 'set' });
   await bridge.workspaceRecovery.undoChangeSet({ changeSetId: 'set', decisions: {} });
+  await bridge.workspaceRecovery.reapplyChangeSet({ changeSetId: 'set' });
   await bridge.workspaceRecovery.restoreTrashEntry({ name: 'trash' });
   await bridge.workspaceRecovery.abandonRestore({ workspaceId: 'root', changeSetId: 'set' });
+  await bridge.workspaceRecovery.preflightCheckpointFiles({ ref: 'r', files: [] });
+  await bridge.workspaceRecovery.restoreCheckpointFiles({ ref: 'r', paths: [] });
+  await bridge.workspaceRecovery.preflightSafetyCopy({ token: 't' });
+  await bridge.workspaceRecovery.restoreSafetyCopy({ token: 't', paths: [] });
 
   assert.deepEqual(calls, [
     { channel: 'workspace-recovery:list-change-sets', args: [{}] },
     { channel: 'workspace-recovery:preflight-undo', args: [{ changeSetId: 'set' }] },
     { channel: 'workspace-recovery:undo-change-set', args: [{ changeSetId: 'set', decisions: {} }] },
+    { channel: 'workspace-recovery:reapply-change-set', args: [{ changeSetId: 'set' }] },
     { channel: 'workspace-recovery:restore-trash-entry', args: [{ name: 'trash' }] },
     { channel: 'workspace-recovery:abandon-restore', args: [{ workspaceId: 'root', changeSetId: 'set' }] },
+    { channel: 'workspace-recovery:preflight-checkpoint-files', args: [{ ref: 'r', files: [] }] },
+    { channel: 'workspace-recovery:restore-checkpoint-files', args: [{ ref: 'r', paths: [] }] },
+    { channel: 'workspace-recovery:preflight-safety-copy', args: [{ token: 't' }] },
+    { channel: 'workspace-recovery:restore-safety-copy', args: [{ token: 't', paths: [] }] },
   ]);
 });
 
@@ -255,8 +284,13 @@ test('ipc contract exposes a stable sorted method inventory', () => {
   assert.ok(invokePaths.includes('workspaceRecovery.listChangeSets'));
   assert.ok(invokePaths.includes('workspaceRecovery.preflightUndo'));
   assert.ok(invokePaths.includes('workspaceRecovery.undoChangeSet'));
+  assert.ok(invokePaths.includes('workspaceRecovery.reapplyChangeSet'));
   assert.ok(invokePaths.includes('workspaceRecovery.restoreTrashEntry'));
   assert.ok(invokePaths.includes('workspaceRecovery.abandonRestore'));
+  assert.ok(invokePaths.includes('workspaceRecovery.preflightCheckpointFiles'));
+  assert.ok(invokePaths.includes('workspaceRecovery.restoreCheckpointFiles'));
+  assert.ok(invokePaths.includes('workspaceRecovery.preflightSafetyCopy'));
+  assert.ok(invokePaths.includes('workspaceRecovery.restoreSafetyCopy'));
   assert.ok(invokePaths.includes('models.delete'));
   assert.ok(invokePaths.includes('sessions.setMeta'));
   assert.ok(invokePaths.includes('sessions.sweepEmpty'));
@@ -304,14 +338,7 @@ test('ipc contract exposes a stable sorted method inventory', () => {
   assert.equal(getBridgeChannel('mcpDiscovery.refresh', 'invoke'), 'mcp-discovery:refresh');
   assert.equal(getBridgeChannel('mcpDiscovery.testServer', 'invoke'), 'mcp-discovery:test-server');
   assert.equal(getBridgeChannel('setup.onModelPullProgress', 'subscribe'), 'setup:model-pull-progress');
-  assert.equal(getBridgeChannel('chat.onStreamEnvelope', 'subscribe'), 'chat:stream-envelope');
-  assert.equal(
-    getBridgeChannel('chat.onStreamRecoveryRequired', 'subscribe'),
-    'chat:stream-recovery-required'
-  );
   assert.equal(getBridgeChannel('updates.onChanged', 'subscribe'), 'updates:changed');
-  assert.ok(listBridgeMethodPaths({ kind: 'subscribe' }).includes('chat.onStreamEnvelope'));
-  assert.ok(listBridgeMethodPaths({ kind: 'subscribe' }).includes('chat.onStreamRecoveryRequired'));
   assert.ok(listBridgeMethodPaths({ kind: 'subscribe' }).includes('window.onStateChanged'));
   assert.ok(allPaths.length > invokePaths.length);
 });
@@ -341,6 +368,28 @@ test('bridge methods with no renderer, preload, hosted or remote caller stay ret
     'plugins.listRollbackCandidates',
     'plugins.rollback',
     'plugins.selectOfflineMirror',
+    // Plugin retirement stage 5: the plugin platform was deleted outright.
+    'plugins.getState',
+    'plugins.getDetails',
+    'plugins.getOperation',
+    'plugins.installLocalPackage',
+    'plugins.installLocalPackageFromPath',
+    'plugins.enable',
+    'plugins.disable',
+    'plugins.setContributionEnabled',
+    'plugins.updateSettings',
+    'plugins.uninstall',
+    'plugins.exportAudit',
+    'plugins.getDistributionState',
+    'plugins.openView',
+    'plugins.setViewBounds',
+    'plugins.setViewZoom',
+    'plugins.closeView',
+    'plugins.focusView',
+    'plugins.viewBridge',
+    'plugins.onViewHostCommand',
+    'plugins.onChanged',
+    'plugins.onOperationProgress',
     'codexCli.openLoginTerminal',
     'workspaceFs.readFileBase64',
     // Legacy policy write with no authority check; the store's setPolicy stays

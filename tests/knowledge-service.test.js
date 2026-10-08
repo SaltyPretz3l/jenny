@@ -61,6 +61,23 @@ test('addFolder persists a root and a new instance reflects it', () => {
   assert.equal(snapshot.enabled, true);
 });
 
+test('getAllRootPaths lists every registered root and is empty when the layer is off', () => {
+  const { userDataPath, rootsHome } = makeTempDirs('jenny-knowledge-allroots');
+  const first = path.join(rootsHome, 'notes');
+  const second = path.join(rootsHome, 'papers');
+  fs.mkdirSync(first, { recursive: true });
+  fs.mkdirSync(second, { recursive: true });
+  const service = makeService(userDataPath);
+  assert.deepEqual(service.getAllRootPaths(), []);
+  assert.equal(service.addFolder({ path: first }).ok, true);
+  assert.equal(service.addFolder({ path: second }).ok, true);
+  assert.deepEqual(
+    service.getAllRootPaths().map((root) => fs.realpathSync(root)).sort(),
+    [fs.realpathSync(first), fs.realpathSync(second)].sort()
+  );
+  assert.deepEqual(makeService(userDataPath, { enabled: false }).getAllRootPaths(), []);
+});
+
 test('addFolder rejects a sensitive path with a structured reason', () => {
   const { userDataPath, rootsHome } = makeTempDirs('jenny-knowledge-sensitive');
   const sshDir = path.join(rootsHome, '.ssh');

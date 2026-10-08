@@ -19,6 +19,12 @@ const {
   readsNewerSchema,
   enterNewerSchemaFreeze,
 } = require('./session-storage-guards');
+const {
+  createIndexStore,
+  deleteSessionJournals,
+  installIndexStore,
+  resolveMigrationValue,
+} = require('./session-journal-wiring');
 
 const SPLIT_MIGRATION_BATCH_SIZE = 25;
 
@@ -60,7 +66,7 @@ function migrateFromMonolithic(self) {
     logger: self._logger,
   });
   const readStatus = readWithRetry(monolithicStore, null);
-  if (readStatus.corrupted && readStatus.errorCode) {
+  if (readStatus.unreadable) {
     leaveUnreadableLegacyFile(self, readStatus);
     return;
   }
@@ -123,12 +129,13 @@ function migrateFromMonolithic(self) {
     sessions: indexSessions,
   };
   try {
-    const indexStore = new FileJsonStore(self._indexPath, {
-      writeDebounceMs: 0,
-      compact: true,
-      logger: self._logger,
+    // A throwaway writer of the first base: no write hooks, disposed before the
+    // backend's own index store (installed below) takes over the file.
+    const indexStore = createIndexStore(self, {
+      writeDebounceMs: 0, onWriteSettled: undefined, onWriteMeasured: undefined,
     });
     indexStore.writeImmediate(indexPayload);
+    indexStore.dispose();
   } catch (error) {
     logWriteFailed(
       self._logger,
@@ -141,12 +148,7 @@ function migrateFromMonolithic(self) {
     return;
   }
 
-  self._indexStore = new FileJsonStore(self._indexPath, {
-    writeDebounceMs: self._writeDebounceMs,
-    compact: true,
-    onWriteSettled: () => self._notifyCacheAvailability(),
-    logger: self._logger,
-  });
+  installIndexStore(self);
   self._cachedIndex = indexPayload;
 
   const backupPath = `${self._legacyMonolithicPath}.migrated-${Date.now()}`;
@@ -228,6 +230,7 @@ function cleanupAfterFailedMigration(self) {
     }
     try {
       unlinkIfExists(store.filePath);
+      deleteSessionJournals(self, path.basename(store.filePath, '.json'), store.filePath);
     } catch (error) {
       logWriteFailed(
         self._logger,
@@ -335,7 +338,9 @@ async function runSplitLayoutMigrationAsync(self, { batchSize = SPLIT_MIGRATION_
     }
     const filePath = path.join(self._rootDir, entry.name);
     try {
-      const raw = await readJsonFileAsync(filePath);
+      // A journaled chat (written under a pending migration, then a crash) is
+      // read with its journals replayed; the epoch key never reaches a record.
+      const raw = resolveMigrationValue(self, filePath, await readJsonFileAsync(filePath));
       if (readsNewerSchema(self, raw)) {
         // A future-schema session file during a downgrade migration: a newer app
         // owns this store. Freeze and skip it; the post-loop guard aborts so we

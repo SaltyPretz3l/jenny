@@ -70,14 +70,64 @@
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-header {
-  display: grid;
-  gap: var(--space-1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
   padding: var(--space-5) var(--space-6) var(--space-3);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-summary {
+  min-width: 0;
   color: var(--text-muted);
   font-size: var(--font-size-caption);
+}
+
+/* Project scope: a quiet menu button that names whose tasks the rail shows.
+ * Accent only while the scope is a project other than the chat's. */
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 60%;
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-scope:hover,
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-scope:focus-visible,
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-scope[aria-expanded="true"] {
+  background: var(--rail-hover-bg);
+  color: var(--text-primary);
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-scope:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-scope--away {
+  color: var(--accent);
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-scope-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-scope svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-filters {
@@ -296,4 +346,82 @@
   .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row {
     transition: none;
   }
+}
+
+/* Project notes entry (FG-002 C3): toggle accent dot and the chat row for a Jenny write. */
+.chat-timeline-notes-toggle {
+  position: relative;
+}
+
+.chat-timeline-notes-dot {
+  position: absolute;
+  inset-block-start: 3px;
+  inset-inline-end: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.chat-timeline-notes-dot[hidden] {
+  display: none;
+}
+
+/* In a narrow chat pane the actions wrap under the text instead of clipping
+   Undo to its first letter. */
+.notes-chat__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+  padding: var(--space-2) 0;
+  font-size: var(--tl-font-ui);
+}
+
+.notes-chat__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.notes-chat__icon svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+}
+
+.notes-chat__title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--tl-weight-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notes-chat__meta {
+  flex: 1 1 10ch;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notes-chat__open,
+.notes-chat__undo {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.notes-chat__undone,
+.notes-chat__stale {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  white-space: nowrap;
 }

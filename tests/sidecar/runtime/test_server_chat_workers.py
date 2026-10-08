@@ -7,7 +7,6 @@ import threading
 from typing import Any
 
 from sidecar.ai.error_codes import (
-    CMP_PLUGIN_EXPECTED_GENERATION_CONFLICT,
     CMP_PROTO_DUPLICATE_REQUEST_ID,
     CMP_RESOURCE_EXCEEDED,
 )
@@ -457,7 +456,7 @@ class TestMakeChatSendWorkerSuccess:
         approval_calls = [c for c in transport.send_control_calls if isinstance(c, dict) and c.get("method") == "tool.request_approval"]
         assert len(approval_calls) == 1
 
-    def test_paused_outcome_is_enqueued_after_plugin_release_and_verified_unregister(
+    def test_paused_outcome_is_enqueued_after_verified_unregister(
         self,
     ) -> None:
         order: list[str] = []
@@ -482,10 +481,6 @@ class TestMakeChatSendWorkerSuccess:
                 order.append("terminal")
                 super().send_terminal_result(notifications, response)
 
-        class _Admission:
-            def release(self) -> None:
-                order.append("plugin_release")
-
         handle = _PauseHandle()
         transport = _PauseTransport(cancel_handle=handle)
         outcome = ProcessOutcome(
@@ -497,12 +492,12 @@ class TestMakeChatSendWorkerSuccess:
         worker = make_chat_send_worker(
             message={"id": 1}, transport=transport, cancel_handle=handle,
             request_id="stream-pause", chat_send_runner=lambda *_args, **_kwargs: outcome,
-            logger=RecordingLogger(), plugin_runtime_admission=_Admission(),
+            logger=RecordingLogger(),
         )
 
         worker()
 
-        assert order == ["plugin_release", "unregister", "verify_unregister", "terminal"]
+        assert order == ["unregister", "verify_unregister", "terminal"]
         assert transport.send_terminal_result_calls == [
             (outcome.notifications, outcome.response)
         ]
@@ -526,35 +521,6 @@ class TestMakeChatSendWorkerSuccess:
             message={"id": 1}, transport=transport, cancel_handle=_PauseHandle(),
             request_id="stream-pause", chat_send_runner=lambda *_args, **_kwargs: outcome,
             logger=RecordingLogger(),
-        )
-
-        worker()
-
-        assert len(transport.unregister_turn_calls) == 1
-        assert transport.send_terminal_result_calls == []
-
-    def test_paused_plugin_cleanup_failure_still_unregisters_and_suppresses_success(self) -> None:
-        class _PauseHandle(FakeCancelHandle):
-            session_id = "session-pause"
-
-        class _PauseTransport(FakeTransport):
-            def has_active_session_turn(self, _session_id: str) -> bool:
-                return False
-
-        class _BrokenAdmission:
-            def release(self) -> None:
-                raise RuntimeError("release failed")
-
-        transport = _PauseTransport()
-        outcome = ProcessOutcome(
-            initialized=True, shutdown_requested=False,
-            response={"jsonrpc": "2.0", "id": 1, "result": {"status": "paused"}},
-            notifications=[], deliver_after_worker_cleanup=True,
-        )
-        worker = make_chat_send_worker(
-            message={"id": 1}, transport=transport, cancel_handle=_PauseHandle(),
-            request_id="stream-pause", chat_send_runner=lambda *_args, **_kwargs: outcome,
-            logger=RecordingLogger(), plugin_runtime_admission=_BrokenAdmission(),
         )
 
         worker()
@@ -599,31 +565,6 @@ class TestMakeChatSendWorkerError:
         assert response["error"]["code"] == -32603
         assert "SpecificError" in response["error"]["message"]
         assert response["id"] == "err-req"
-
-    def test_plugin_release_failure_still_unregisters_a_completed_turn(self) -> None:
-        class _BrokenAdmission:
-            def release(self) -> None:
-                raise RuntimeError("release failed")
-
-        cancel_handle = FakeCancelHandle()
-        transport = FakeTransport(cancel_handle=cancel_handle)
-        worker = make_chat_send_worker(
-            message={"id": "rel-req"}, transport=transport, cancel_handle=cancel_handle,
-            request_id="rel-req", chat_send_runner=lambda *_args, **_kwargs: _make_outcome(),
-            logger=RecordingLogger(), plugin_runtime_admission=_BrokenAdmission(),
-        )
-
-        raised: list[Exception] = []
-        try:
-            worker()
-        except RuntimeError as error:
-            raised.append(error)
-
-        assert [str(error) for error in raised] == ["release failed"]
-        # A leaked registration would reject every later send for the session.
-        assert transport.unregister_turn_calls == [
-            {"request_id": "rel-req", "expected_handle": cancel_handle}
-        ]
 
     def test_unregister_turn_still_called_after_exception(self) -> None:
         cancel_handle = FakeCancelHandle()
@@ -712,34 +653,34 @@ def _base_message(request_id: str = "r1") -> dict[str, Any]:
 
 
 class TestStartChatSendWorkerIfAllowed:
-    def test_plugin_authority_rejection_precedes_capacity_and_turn_registration(self) -> None:
-        transport = FakeTransport()
-        logger = RecordingLogger()
+    def test_retired_plugin_runtime_authority_param_is_an_ordinary_unknown_key(self) -> None:
+        cancel_handle = FakeCancelHandle()
+        transport = FakeTransport(cancel_handle=cancel_handle)
+        worker_threads: set[Any] = set()
+        runner_calls: list[dict[str, Any]] = []
 
-        class AuthorityConflict(RuntimeError):
-            code = CMP_PLUGIN_EXPECTED_GENERATION_CONFLICT
-            reason_code = "plugin_authority_mismatch"
-            retryable = True
+        def runner(msg: Any, **kwargs: Any) -> ProcessOutcome:
+            runner_calls.append(kwargs)
+            return _make_outcome()
+
+        message = _base_message("retired-authority")
+        message["params"]["plugin_runtime_authority"] = {"mode": "plugin", "generation": 3}
 
         result = start_chat_send_worker_if_allowed(
-            message=_base_message("stale-plugin-authority"),
+            message=message,
             transport=transport,
-            worker_threads={FakeThread(alive=True)},
+            worker_threads=worker_threads,
             active_cancel_handles={},
-            chat_send_runner=lambda *a, **kw: _make_outcome(),
-            logger=logger,
-            max_active_workers=1,
-            plugin_admission_resolver=lambda _message: (_ for _ in ()).throw(
-                AuthorityConflict("stale")
-            ),
+            chat_send_runner=runner,
+            logger=RecordingLogger(),
+            max_active_workers=5,
         )
 
-        assert result is False
-        assert transport.register_turn_calls == []
-        assert transport.send_data_calls == []
-        error_data = transport.send_control_calls[0]["error"]["data"]
-        assert error_data["code"] == CMP_PLUGIN_EXPECTED_GENERATION_CONFLICT
-        assert error_data["reason"] == "plugin_authority_mismatch"
+        assert result is True
+        next(iter(worker_threads)).join(timeout=5.0)
+        assert transport.send_control_calls == []
+        assert len(runner_calls) == 1
+        assert "plugin_runtime_admission" not in runner_calls[0]
 
     def test_returns_false_and_send_control_when_at_capacity(self) -> None:
         transport = FakeTransport()
@@ -765,60 +706,6 @@ class TestStartChatSendWorkerIfAllowed:
         assert len(transport.send_control_calls) == 1
         ctrl = transport.send_control_calls[0]
         assert ctrl["error"]["data"]["code"] == CMP_RESOURCE_EXCEEDED
-
-    def test_capacity_rejection_releases_prepared_plugin_admission(self) -> None:
-        transport = FakeTransport()
-        logger = RecordingLogger()
-
-        class Admission:
-            released = False
-
-            def release(self) -> None:
-                self.released = True
-
-        admission = Admission()
-        result = start_chat_send_worker_if_allowed(
-            message=_base_message("capacity-plugin"),
-            transport=transport,
-            worker_threads={FakeThread(alive=True)},
-            active_cancel_handles={},
-            chat_send_runner=lambda *a, **kw: _make_outcome(),
-            logger=logger,
-            max_active_workers=1,
-            plugin_admission_resolver=lambda _message: admission,
-        )
-
-        assert result is False
-        assert admission.released is True
-        assert transport.register_turn_calls == []
-
-    def test_capacity_rejection_releases_plugin_admission_before_answering(self) -> None:
-        order: list[str] = []
-
-        class _OrderedTransport(FakeTransport):
-            def send_control(self, message: Any) -> None:
-                order.append("send_control")
-                super().send_control(message)
-
-        class Admission:
-            def release(self) -> None:
-                order.append("plugin_release")
-
-        transport = _OrderedTransport()
-        result = start_chat_send_worker_if_allowed(
-            message=_base_message("capacity-order"),
-            transport=transport,
-            worker_threads={FakeThread(alive=True)},
-            active_cancel_handles={},
-            chat_send_runner=lambda *a, **kw: _make_outcome(),
-            logger=RecordingLogger(),
-            max_active_workers=1,
-            plugin_admission_resolver=lambda _message: Admission(),
-        )
-
-        assert result is False
-        # A transport failure while answering must not leak the admission.
-        assert order == ["plugin_release", "send_control"]
 
     def test_returns_false_and_no_thread_when_at_capacity(self) -> None:
         transport = FakeTransport()

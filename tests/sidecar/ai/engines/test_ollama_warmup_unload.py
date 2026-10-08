@@ -4,12 +4,54 @@ import http.client
 import threading
 import time
 from typing import Any
+from urllib.error import HTTPError
 
 import pytest
 
 from sidecar.ai.engines import ollama as ollama_module
 from sidecar.ai.engines.ollama import OllamaEngine
 from sidecar.ai.exceptions import GenerationError
+
+
+def test_failed_warmup_notifies_once_and_success_clears_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = OllamaEngine(host="http://localhost:11434", configured_context_length=8192)
+    failures: list[dict[str, Any]] = []
+    engine.set_load_failure_listener(failures.append)
+
+    def fail(*_args: Any, **_kwargs: Any) -> Any:
+        raise HTTPError(engine.host, 500, "model requires more system memory", None, None)
+
+    monkeypatch.setattr(engine, "_post", fail)
+    thread = engine._warmup_model_async("qwen3:8b")
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert len(failures) == 1
+    assert failures[0]["cause"] == "out_of_memory"
+    assert failures[0]["context"] == 8192
+    assert engine.last_load_failure == failures[0]
+    monkeypatch.setattr(engine, "_post", lambda *_args, **_kwargs: {"done": True})
+    thread = engine._warmup_model_async("qwen3:8b")
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert engine.last_load_failure is None
+    assert len(failures) == 1
+
+
+def test_swap_aborted_warmup_does_not_notify(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = OllamaEngine(host="http://localhost:11434")
+    failures: list[dict[str, Any]] = []
+    engine.set_load_failure_listener(failures.append)
+
+    def abort(*_args: Any, **_kwargs: Any) -> Any:
+        engine._cancel_pending_warmup()
+        raise ConnectionAbortedError("swap aborted")
+
+    monkeypatch.setattr(engine, "_post", abort)
+    thread = engine._warmup_model_async("qwen3:8b")
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert failures == []
+    assert getattr(engine, "last_load_failure", None) is None
 
 
 def test_unload_is_final_request_when_warmup_is_blocked(

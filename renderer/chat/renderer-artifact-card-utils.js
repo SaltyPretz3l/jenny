@@ -156,14 +156,7 @@
     return null;
   })();
 
-  function fallbackEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const fallbackEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
   var escapeHtml = stringUtils && typeof stringUtils.escapeHtml === 'function'
     ? stringUtils.escapeHtml
     : fallbackEscapeHtml;

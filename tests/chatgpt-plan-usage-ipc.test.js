@@ -8,6 +8,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const { createTrustedSenderAuthorizer, unauthorizedIpcResult } = require('../services/main/ipc-sender-authorization');
 
 const { getBridgeDescriptor } = require('../services/ipc-contract');
 const { registerChatGptPlanUsageIpc } = require('../services/main/chatgpt-plan-usage-ipc');
@@ -127,6 +129,39 @@ test('a store change is forwarded as chatgptPlanUsage.onSnapshot with a fresh pa
   assert.equal(pushed[0].methodPath, 'chatgptPlanUsage.onSnapshot');
   assert.equal(pushed[0].payload.snapshot.primary.used_percent, 40);
   assert.equal(pushed[0].payload.snapshot.source, 'chat_done');
+});
+
+test('snapshot authorization rejects foreign and subframe senders before building a payload', async (t) => {
+  const ipc = createFakeIpcMain();
+  const url = pathToFileURL(path.resolve(__dirname, '..', 'index.html')).href;
+  const mainFrame = { url };
+  const webContents = { id: 7, mainFrame, getURL: () => url };
+  const mainWindow = { webContents };
+  const { deps } = baseDeps({
+    authorization: {
+      authorize: createTrustedSenderAuthorizer({ getMainWindow: () => mainWindow }),
+      unauthorizedResult: unauthorizedIpcResult,
+    },
+  });
+  const teardown = registerChatGptPlanUsageIpc(ipc, deps);
+  t.after(teardown);
+  const snapshot = t.mock.method(deps.backendService.chatgptPlanUsageStore, 'getSnapshot');
+  const status = t.mock.method(deps.backendService.chatgptAuthService, 'getStatus');
+  const handler = ipc.invoke.get('chatgpt-plan-usage:get-snapshot');
+  for (const event of [
+    { sender: { id: 8 }, senderFrame: { url } },
+    { sender: webContents, senderFrame: { url } },
+  ]) {
+    assert.deepEqual(await handler(event), unauthorizedIpcResult());
+  }
+  assert.equal(snapshot.mock.callCount(), 0);
+  assert.equal(status.mock.callCount(), 0);
+  const payload = await handler({ sender: webContents, senderFrame: mainFrame });
+  assert.equal(payload.ok, true);
+  assert.equal(payload.provider_id, 'chatgpt');
+  assert.deepEqual(payload.account, { email: 'person@example.com', plan_type: 'plus' });
+  assert.equal(snapshot.mock.callCount(), 1);
+  assert.equal(status.mock.callCount(), 1);
 });
 
 test('an auth status change pushes a fresh payload (e.g. sign-out clears the account)', async () => {

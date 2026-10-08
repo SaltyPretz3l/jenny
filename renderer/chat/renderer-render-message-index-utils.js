@@ -35,14 +35,31 @@
     return Object.prototype.hasOwnProperty.call(SOURCE_RANK, tag) ? SOURCE_RANK[tag] : 0;
   }
 
+  function isDiscardedDraftRow(row) {
+    const kind = normalizeId(row && row.kind);
+    return (kind === 'assistant_text' || kind === 'reasoning')
+      && (row.discarded === true || (row.payload && row.payload.discarded === true))
+      && Boolean(normalizeId(row.row_id));
+  }
+
+  // Tombstoned drafts can share a message id with the live row that follows
+  // a reset; key them by row_id so the first-wins tie never drops live text.
   function rowDedupKey(row) {
     if (!row || typeof row !== 'object') {
       return '';
     }
+    return isDiscardedDraftRow(row)
+      ? `${normalizeId(row.kind)}|discarded|${normalizeId(row.row_id)}`
+      : liveRowDedupKey(row);
+  }
+
+  function liveRowDedupKey(row) {
     const kind = normalizeId(row.kind);
     if (kind === 'assistant_text') {
       const messageId = normalizeId(row.primary_message_id);
-      return messageId ? `assistant_text|${messageId}` : '';
+      const groupIndex = row.segment_group_index;
+      const groupSuffix = Number.isFinite(groupIndex) && groupIndex > 0 ? `|${groupIndex}` : '';
+      return messageId ? `assistant_text|${messageId}${groupSuffix}` : '';
     }
     if (kind === 'reasoning') {
       const messageId = normalizeId(row.primary_message_id);
@@ -223,9 +240,13 @@
         }
         const existing = bucketState.get(dedupKey);
         if (!existing) {
-          // First sighting — reserve a slot at the current insertion point.
-          const slotIndex = bucket.length;
-          bucket.push(row);
+          // First sighting — reserve a slot at the current insertion point. A
+          // discarded draft whose replacement already holds a slot (e.g. a
+          // hydrated twin) goes just above it, so the fold never trails the answer.
+          const twin = isDiscardedDraftRow(row) ? bucketState.get(liveRowDedupKey(row)) : null;
+          const slotIndex = twin ? twin.slotIndex : bucket.length;
+          if (twin) bucketState.forEach((state) => { if (state.slotIndex >= slotIndex) state.slotIndex += 1; });
+          bucket.splice(slotIndex, 0, row);
           rowsByRenderMessageId.set(renderMessageId, bucket);
           bucketState.set(dedupKey, { row, slotIndex });
           continue;

@@ -1,8 +1,0 @@
-{
-  "commit_epoch": 1,
-  "committed_at": "2026-08-02T00:00:00Z",
-  "generation_digest": "aecb61978a93edd511beea116af8849aa9340089ea1f9986c82a0c17c57b48de",
-  "generation_id": "gen-release-v1",
-  "registry_schema_version": 1,
-  "revision": 1
-}

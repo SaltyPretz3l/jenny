@@ -10,5 +10,6 @@ test('task board description requires task completion and stays identical across
   assert.ok(descriptor);
   assert.match(descriptor.description, /complete/);
   assert.match(descriptor.description, /task id/i);
+  assert.match(descriptor.description, /scoped to the current chat's project/);
   assert.equal(taskBoardTool.description, descriptor.description);
 });

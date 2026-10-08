@@ -23,6 +23,7 @@ from tests.sidecar.ai.engines.test_ollama_runtime import (
     _patch_urlopen,
     _raising_post,
 )
+from tests.sidecar.ai.engines.test_ollama_stream_terminal_evidence import _build_engine
 
 # ---------------------------------------------------------------------------
 # Land review 2026-09-20: every Ollama exception handler completed the provider
@@ -94,6 +95,43 @@ def test_non_streaming_success_still_records_completed() -> None:
     engine = FakeEngine(post_response={"message": {"content": "ok"}, "done": True})
     generate(engine, prompt="hi")
     assert engine.outcomes == ["completed"]
+
+
+@pytest.mark.parametrize(
+    ("done_reason", "has_tool_calls", "expected_finish_reason"),
+    [
+        pytest.param("length", False, "length", id="length_without_tool_calls"),
+        pytest.param("length", True, "tool_calls", id="length_with_native_tool_call"),
+        pytest.param("stop", False, "stop", id="stop"),
+    ],
+)
+def test_non_streaming_generate_with_tools_finish_reason(
+    monkeypatch, done_reason, has_tool_calls, expected_finish_reason
+) -> None:
+    engine = _build_engine()
+    native_calls = (
+        [{"function": {"name": "read_file", "arguments": {"path": "R"}}}]
+        if has_tool_calls
+        else []
+    )
+    response = {
+        "message": {"content": "answer", "tool_calls": native_calls},
+        "done": True,
+        "done_reason": done_reason,
+    }
+    monkeypatch.setattr(engine, "_post", lambda *_args, **_kwargs: response)
+
+    result = engine.generate_with_tools(
+        prompt="hi",
+        tools=[{"name": "read_file", "parameters": {"type": "object"}}],
+        max_tokens=8,
+    )
+
+    assert result.finish_reason == expected_finish_reason
+    assert result.content == "answer"
+    assert [call.arguments for call in result.tool_calls] == (
+        [{"path": "R"}] if has_tool_calls else []
+    )
 
 
 # ---------------------------------------------------------------------------

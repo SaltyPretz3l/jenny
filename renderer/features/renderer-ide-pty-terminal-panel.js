@@ -62,12 +62,17 @@
   }
 
   function createIdePtyTerminalPanel(deps) {
+    // Workspace terminal slot 1..4 (the main process keys sessions by slot);
+    // sent in every spawn so a second terminal never attaches to the first.
+    const slotDep = Math.floor(Number(deps?.slot));
+    const slot = slotDep >= 1 && slotDep <= 4 ? slotDep : 1;
+    const onSessionChange = typeof deps?.onSessionChange === 'function' ? deps.onSessionChange : null;
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
-    const escapeHtml = typeof deps?.escapeHtml === 'function' ? deps.escapeHtml : (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const escapeHtml = typeof deps?.escapeHtml === 'function' ? deps.escapeHtml : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     const getMountEl = typeof deps?.getMountEl === 'function'
       ? deps.getMountEl
-      : () => getDom().ideBottomPanelContent || null;
+      : () => null;
     const isActivePanel = typeof deps?.isActivePanel === 'function'
       ? deps.isActivePanel
       : () => getIde().bottomPanelActiveView === 'terminal';
@@ -194,6 +199,24 @@
       return Boolean(sessionId);
     }
 
+    // Fires deps.onSessionChange(sessionId) when this panel's session id changes
+    // ('' = ended); deduped so every start/end path may call it freely.
+    let notifiedSessionId = '';
+    function notifySession() {
+      if (!onSessionChange || notifiedSessionId === sessionId) {
+        return;
+      }
+      notifiedSessionId = sessionId;
+      try { onSessionChange(sessionId); } catch (error) { logIgnoredError('session_change', error); }
+    }
+
+    // With four panels sharing one bridge, an event naming ANOTHER slot is never
+    // ours, even while our own session id is still unknown (pre-ready buffering).
+    function isOtherSlot(payload) {
+      const eventSlot = Number(payload?.slot);
+      return Number.isFinite(eventSlot) && eventSlot >= 1 && eventSlot !== slot;
+    }
+
     function getPanelEl() {
       const panel = getMountEl();
       if (!panel || !isActivePanel()) {
@@ -239,7 +262,6 @@
       }
       return '<div class="ide-terminal-panel">'
         + '<div class="ide-terminal-toolbar">'
-        + '<span class="ide-terminal-title">Terminal</span>'
         + '<span class="ide-terminal-status" data-ide-terminal-status></span>'
         + '<span class="ide-terminal-toolbar-actions">'
         + buildToolbarButton('start', 'Start', jt('ide.ptyTerminal.startSession', 'Start a terminal session'))
@@ -546,12 +568,15 @@
     }
 
     function applyDataEvent(payload) {
-      if (payload && String(payload.sessionId || '') === sessionId && term) {
+      if (payload && !isOtherSlot(payload) && String(payload.sessionId || '') === sessionId && term) {
         queueWrite(payload.data);
       }
     }
 
     function applyExitEvent(payload) {
+      if (isOtherSlot(payload)) {
+        return;
+      }
       const exitedId = String(payload?.sessionId || '');
       if (exitedId && exitedId !== sessionId) {
         return;
@@ -560,6 +585,7 @@
       // after it — flush the coalesced write queue synchronously first.
       flushPendingWrites();
       sessionId = '';
+      notifySession();
       const code = payload?.exitCode == null ? '' : jt('ide.ptyTerminal.exitCode', ' (code {code})', { code: payload.exitCode });
       if (term) {
         try { term.writeln('\r\n' + jt('ide.ptyTerminal.sessionEnded', '[terminal] session ended{code}', { code })); } catch (error) { logIgnoredError('exit_banner', error); }
@@ -585,6 +611,9 @@
     function subscribeBridge(api) {
       if (!unsubscribeData && typeof api.onData === 'function') {
         unsubscribeData = api.onData((payload) => {
+          if (isOtherSlot(payload)) {
+            return;
+          }
           if (isBuffering()) {
             preReadyEvents.push('data', payload);
             return;
@@ -594,6 +623,9 @@
       }
       if (!unsubscribeExit && typeof api.onExit === 'function') {
         unsubscribeExit = api.onExit((payload) => {
+          if (isOtherSlot(payload)) {
+            return;
+          }
           if (isBuffering()) {
             preReadyEvents.push('exit', payload);
             return;
@@ -688,7 +720,7 @@
         applyFit(); // fit-then-spawn: measure before we ask the pty for a size
         const spawnCols = term.cols;
         const spawnRows = term.rows;
-        const result = await api.spawn({ cols: spawnCols, rows: spawnRows });
+        const result = await api.spawn({ cols: spawnCols, rows: spawnRows, slot });
         if (disposed || epoch !== lifecycleEpoch) {
           const lateSessionId = String(result?.sessionId || '');
           if (lateSessionId && typeof api.kill === 'function') {
@@ -720,6 +752,7 @@
           // session-ended line and cleared status.
           return false;
         }
+        notifySession();
         setStatusMessage('');
         applyFitAndResize();
         return true;
@@ -797,6 +830,7 @@
         if (isRunning() && api && typeof api.kill === 'function') {
           const dyingId = sessionId;
           sessionId = '';
+          notifySession();
           try { await api.kill({ sessionId: dyingId }); } catch (error) { logIgnoredError('kill_restart', error); } // exit event settles state
         }
         clearTerminal();
@@ -852,6 +886,7 @@
       lifecycleEpoch += 1; // an in-flight spawn from the old root is killed on arrival
       const dyingId = sessionId;
       sessionId = '';
+      notifySession();
       lastSentCols = 0;
       lastSentRows = 0;
       discardPreReadyBuffer();
@@ -917,6 +952,7 @@
       mountedEl = null;
       const dyingId = sessionId;
       sessionId = '';
+      notifySession();
       const api = getApi();
       if (dyingId && typeof api?.kill === 'function') {
         try { Promise.resolve(api.kill({ sessionId: dyingId })).catch(() => {}); } catch (error) { logIgnoredError('kill_dispose', error); } // main owns refusal logging
@@ -927,11 +963,15 @@
       bindEvents,
       dispose,
       focusTerminal,
+      getSessionId: () => sessionId,
+      getSlot: () => slot,
       isRunning,
       renderTerminalPanel,
       resetForRoot,
       sendCommand,
       startSession,
+      // Kill this panel's own session and return to the not-started state.
+      stopSession: resetForRoot,
     };
   }
 

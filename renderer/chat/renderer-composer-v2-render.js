@@ -38,6 +38,11 @@
       icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
       hint: jt('composer.runMode.planHint', 'Read-only: Jenny plans first and presents it before acting.'),
     }),
+    propose: Object.freeze({
+      label: jt('composer.runMode.propose', 'Propose'),
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+      hint: jt('composer.runMode.proposeHint', 'Jenny suggests exact changes for you to review. Nothing in your files changes until you accept.'),
+    }),
   });
 
   function escapeCssString(value) {
@@ -118,6 +123,8 @@
   }
 
   const normalizeRunMode = composerState.normalizeRunMode;
+  // Every run-mode class derives from the canonical order, so a new mode cannot leave a stale class behind.
+  const RUN_MODE_CLASSES = Object.freeze(composerState.RUN_MODE_ORDER.map((m) => `composer-run-mode-${m}`));
 
   // Gate C13 (2026-09-26): an unchanged apply (every focus move) writes nothing.
   const appliedRunModeChips = new WeakMap();
@@ -127,7 +134,7 @@
      the same slot. The stylesheet shows the segments only inside the open
      popover and hides the chip there; the toolbar keeps the chip. Clicks
      route through the settings bindings (`data-run-mode-option`). */
-  const RUN_MODE_SEGMENT_ORDER = Object.freeze(['ask', 'auto', 'plan']);
+  const RUN_MODE_SEGMENT_ORDER = Object.freeze(['ask', 'auto', 'plan', 'propose']);
 
   // Plain inventory action buttons (the raw-primitive policy); '' without the
   // primitive, and every segment sync below then no-ops.
@@ -192,7 +199,7 @@
     const mode = normalizeRunMode(runMode);
     const nextMode = typeof composerState?.nextRunMode === 'function'
       ? composerState.nextRunMode(mode)
-      : ({ ask: 'auto', auto: 'plan', plan: 'ask' })[mode];
+      : ({ ask: 'auto', auto: 'plan', plan: 'propose', propose: 'ask' })[mode];
     const copy = MODE_CHIP_COPY[mode];
     const nextCopy = MODE_CHIP_COPY[nextMode];
     // The mode's hint sentence rides the chip: its tooltip and the end of its label.
@@ -204,12 +211,13 @@
     // a segments mount or a disabled flip still writes; an unchanged apply not.
     const key = [mode, ariaLabel, title, disabled ? 'disabled' : ''].join('\u0000');
     const applied = appliedRunModeChips.get(chip);
+    const modeClass = `composer-run-mode-${mode}`;
     if (applied && applied.key === key && applied.segments === segments
-        && chip.classList.contains(`composer-run-mode-${mode}`)) return true;
+        && RUN_MODE_CLASSES.every((c) => chip.classList.contains(c) === (c === modeClass))) return true;
     syncRunModeSegmentsPressed(segments, mode);
     if (segments) syncRunModeSegmentsDisabled(segments, disabled);
-    chip.classList.remove('composer-run-mode-ask', 'composer-run-mode-auto', 'composer-run-mode-plan', 'inv-chip--on');
-    chip.classList.add(`composer-run-mode-${mode}`);
+    chip.classList.remove(...RUN_MODE_CLASSES, 'inv-chip--on');
+    chip.classList.add(modeClass);
     chip.classList.toggle('inv-chip--on', mode === 'auto');
     const icon = chip.querySelector('.inv-chip-icon');
     const label = chip.querySelector('.inv-chip-label');
@@ -342,10 +350,49 @@
       : jt('composer.sendBlocked.modelLoadingUnnamed', 'Jenny is loading the model. You can type; Send turns on when it is ready.');
   }
 
+  // Row 38 item 1 (B): the failed state, told once above the input while the
+  // model is unavailable. '' otherwise. Send stays enabled: sending retries.
+  function loadFailureUtils() {
+    return (typeof globalThis !== 'undefined' && globalThis.jennyModelLoadFailure)
+    || (typeof require === 'function' ? require('../shared/model-load-failure') : null);
+  }
+  function formatContextShort(value) {
+    return value >= 1024 ? `${Math.round(value / 1024)}K` : String(value);
+  }
+  function describeModelFailure(backend) {
+    const utils = loadFailureUtils();
+    const failure = utils?.readModelLoadFailure?.(backend);
+    if (!failure) return '';
+    return jt('composer.modelFailure.line', "{model} didn't load · {cause}", { model: failure.model, cause: utils.causePhrase(failure) });
+  }
+  // Two plain actions beside the line: the cause's first fix, and the library.
+  function buildModelFailureActions(backend) {
+    const utils = loadFailureUtils();
+    const failure = utils?.readModelLoadFailure?.(backend);
+    if (!failure || typeof inventoryActionButton !== 'function') return '';
+    const fix = utils.recoveryActions(failure)[0];
+    const fixLabel = fix === 'loadSmaller'
+      ? jt('composer.modelFailure.loadAt', 'Load at {context}', { context: formatContextShort(utils.retryContext(failure)) })
+      : fix === 'showFits'
+        ? jt('models.library.showModelsThatFit', 'Show models that fit')
+        : fix === 'diagnostics'
+          ? jt('composer.modelFailure.openDiagnostics', 'Open Diagnostics')
+          : jt('composer.modelFailure.retry', 'Retry');
+    const othersLabel = jt('composer.modelFailure.otherModels', 'Other models');
+    const action = (id, label) => inventoryActionButton({
+      plain: true, className: 'composer-loading-line-action', label, title: label,
+      dataset: { 'composer-failure-action': id, 'composer-failure-model': failure.model },
+    });
+    return action(fix, fixLabel) + action('models', othersLabel);
+  }
+
+  // The failure markup last painted into a line (innerHTML re-serializes entities, so it cannot be compared).
+  const paintedFailureHtml = new WeakMap();
+
   // The line sits in the row under the input, before the turn timer.
   // `scope` is the document (pane 0's id-addressed composer) or a split-view
   // pane root, whose composer nodes are addressed by data-chat-node.
-  function syncComposerLoadingLine(scope, text) {
+  function syncComposerLoadingLine(scope, text, actionsHtml = '') {
     const paneScoped = Boolean(scope) && typeof scope.getElementById !== 'function';
     const byName = (name) => (paneScoped
       ? scope.querySelector?.(`[data-chat-node="${name}"]`) || null
@@ -365,16 +412,34 @@
       line.className = 'composer-loading-line';
       row.insertBefore(line, byName('composerTurnTimer') || null);
     }
+    if (actionsHtml && typeof inventoryActionButton === 'function') {
+      const html = `<span>${inventoryActionButton.escapeHtml(message)}</span>${actionsHtml}`;
+      if (line.dataset.tone !== 'failed' || paintedFailureHtml.get(line) !== html) {
+        line.innerHTML = html;
+        paintedFailureHtml.set(line, html);
+        line.dataset.tone = 'failed';
+        line.setAttribute('role', 'status');
+      }
+      return line;
+    }
+    if (line.dataset.tone) {
+      delete line.dataset.tone;
+      line.removeAttribute('role');
+      paintedFailureHtml.delete(line);
+    }
     if (line.textContent !== message) line.textContent = message;
     return line;
   }
 
   // A model load is app-wide, so every pane's composer tells it: pane 0 by id,
   // each further split-view pane in its own run-mode row.
-  function syncComposerLoadingLines(doc, text) {
-    syncComposerLoadingLine(doc, text);
+  // `text` may be a resolver `(paneId) => [text, actionsHtml]` when the line differs per pane
+  // (the hero's words show only in a pane whose conversation is empty).
+  function syncComposerLoadingLines(doc, text, actionsHtml = '') {
+    const resolve = typeof text === 'function' ? text : () => [text, actionsHtml];
+    syncComposerLoadingLine(doc, ...resolve(0));
     const panes = doc?.querySelectorAll?.('.chat-pane[data-pane-id]:not([data-pane-id="0"])') || [];
-    for (const pane of panes) syncComposerLoadingLine(pane, text);
+    for (const pane of panes) syncComposerLoadingLine(pane, ...resolve(Number(pane.dataset.paneId)));
   }
 
   function createComposerBlockedSendTooltipRenderer(deps) {
@@ -388,7 +453,7 @@
     }
     const defaultTitle = String(deps && deps.defaultTitle !== undefined
       ? deps.defaultTitle
-      : sendButton.getAttribute('title') || '');
+      : sendButton.getAttribute('title') || '') || jt('composer.sendTitle', 'Send message (Enter)');
 
     const doc = sendButton.ownerDocument || (typeof document !== 'undefined' ? document : null);
     const win = (doc && doc.defaultView) || (typeof window !== 'undefined' ? window : null);
@@ -721,6 +786,8 @@
     createComposerBlockedSendTooltipRenderer,
     createComposerFailedSendNoticeRenderer,
     describeModelLoading,
+    describeModelFailure,
+    buildModelFailureActions,
     syncComposerLoadingLine,
     syncComposerLoadingLines,
     mountInventoryButton,

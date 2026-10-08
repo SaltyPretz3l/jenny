@@ -749,6 +749,8 @@
         String(row.segment_group_index || ''),
         String(payload.state || ''),
         String(payload.subkind || ''),
+        // A reset's fold stamps change paint without changing identity.
+        payload.discard_anchor === true ? 'A' : (payload.discard_hidden === true ? 'H' : ''),
       ], hash);
       hash = ((hash << 5) + hash + 124) | 0;
     }

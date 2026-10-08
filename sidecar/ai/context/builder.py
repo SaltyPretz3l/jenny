@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,16 +22,9 @@ from sidecar.ai.context.builder_shared import (
 )
 from sidecar.ai.context.builder_shared import (
     MAX_WORKSPACE_CONTEXT_PROMPT_BYTES,
-    REASONING_STATUS_BLOCK_V2,
 )
 from sidecar.ai.context.builder_shared import (
     MAX_WORKSPACE_INSTRUCTION_BYTES as MAX_WORKSPACE_INSTRUCTION_BYTES,
-)
-from sidecar.ai.context.builder_shared import (
-    REASONING_STATUS_MAX_WORDS as REASONING_STATUS_MAX_WORDS,
-)
-from sidecar.ai.context.builder_shared import (
-    REASONING_STATUS_MIN_WORDS as REASONING_STATUS_MIN_WORDS,
 )
 from sidecar.ai.context.builder_shared import (
     RUNTIME_SYSTEM_MESSAGE_HEADINGS as RUNTIME_SYSTEM_MESSAGE_HEADINGS,
@@ -109,16 +101,12 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         disabled_skill_ids: tuple[str, ...] = (),
         skills_system_enabled: bool = False,
         strict_skill_loading: bool = False,
-        runtime_overlay_provider: Callable[[], Sequence[str]] | None = None,
     ) -> None:
         self._workspace_root = workspace_root
         self._skill_scopes = skill_scopes
         self._disabled_skill_ids = frozenset(disabled_skill_ids)
         self._skills_system_enabled = skills_system_enabled is True
         self._strict_skill_loading = strict_skill_loading is True
-        # Generic injected seam. The default path has no plugin import and no
-        # package/user-data access; Stage 4 wires a lazy provider explicitly.
-        self._runtime_overlay_provider = runtime_overlay_provider
         self._cached_bootstrap_blocks: list[str] | None = None
         self._cached_bootstrap_mtime: str | None = None
         self._skill_cache: dict[Any, Any] = {}  # keyed by SkillAuthority (None = startup)
@@ -173,7 +161,6 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         self,
         runtime_system_prompt: str,
         learned_lessons: list[LearnedLesson] | None = None,
-        include_reasoning_status_markers: bool = False,
         *,
         cache_aware: bool = False,
         session_start_date: str | None = None,
@@ -284,8 +271,6 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         workspace_source_block = turn_sections.get("workspace_source_guidance", "")
         if workspace_source_block:
             prompt_blocks.append(workspace_source_block)
-        if include_reasoning_status_markers:
-            prompt_blocks.append(REASONING_STATUS_BLOCK_V2)
         learned_lessons_block = self._render_learned_lessons(learned_lessons or [])
         if learned_lessons_block:
             prompt_blocks.append(learned_lessons_block)
@@ -394,14 +379,6 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
                     name="workspace_source_guidance",
                     content=workspace_source_block,
                     cacheable=False,
-                )
-            )
-        if include_reasoning_status_markers:
-            sections.append(
-                CacheSection(
-                    name="reasoning_status",
-                    content=REASONING_STATUS_BLOCK_V2,
-                    cacheable=True,
                 )
             )
         if learned_lessons_block:
@@ -533,15 +510,6 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
             *overlay_messages,
             *filtered_messages[insertion_index:],
         ]
-
-    def build_delegated_runtime_system_messages(self) -> tuple[str, ...]:
-        provider = self._runtime_overlay_provider
-        if provider is None:
-            return ()
-        # Do not turn an admitted plugin turn into core-only after authority was
-        # accepted. A provider failure must abort that turn before output.
-        values = provider()
-        return tuple(value for value in values if isinstance(value, str) and value.strip())
 
     @staticmethod
     def _log_partial_context(*, source_kind: str, source_name: str, reason: str) -> None:

@@ -31,8 +31,6 @@ function createService(rootPath, extra = {}) {
   const coordinator = extra.coordinator || createCoordinator(rootPath);
   return new WorkspaceImportService({
     rootContextProvider: () => coordinator,
-    isQolEnabled: () => true,
-    isImportEnabled: () => true,
     ...extra,
   });
 }
@@ -75,22 +73,6 @@ function importPayload(importId, source, extra = {}) {
 
 test.afterEach(async () => {
   await cleanupTrackedResources();
-});
-
-test('feature flag refusal is typed for preview, import, and cancel and writes nothing', async () => {
-  const { workspace, outside } = makeRoots();
-  const source = path.join(outside, 'source.txt');
-  fs.writeFileSync(source, 'source');
-  const service = createService(workspace, { isImportEnabled: () => false });
-
-  for (const operation of [
-    () => service.previewImport({ sources: [source] }),
-    () => service.importExternal(importPayload('disabled', source)),
-    () => service.cancelImport({ importId: 'disabled' }),
-  ]) {
-    await assert.rejects(operation, (error) => error.code === IMPORT_ERROR_CODES.FEATURE_DISABLED);
-  }
-  assert.deepEqual(fs.readdirSync(workspace), []);
 });
 
 test('preview reports nested totals, basenames, truncation, and the injected huge-tree cap', async () => {

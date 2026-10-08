@@ -181,6 +181,18 @@ def _placeholder_arguments_reason(call: Any, descriptor: Any | None) -> str | No
     return None
 
 
+def _failure_review_metadata(error: object) -> dict[str, object]:
+    """Row 34: only the review keys of a failure's user-only result metadata."""
+    carried = getattr(error, "result_metadata", None)
+    if not isinstance(carried, dict):
+        return {}
+    return {
+        key: carried[key]
+        for key in _tool_contracts.TOOL_FAILURE_RESULT_METADATA_KEYS
+        if key in carried
+    }
+
+
 def _blocked_outcome(
     call: Any,
     *,
@@ -554,6 +566,10 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     )
                 if call_position == 0 and restored_first_input is not None:
                     trusted_execution_kwargs["restored_inputs"] = restored_first_input
+                if call.tool_id == "propose_change":
+                    # Plan Plus: the overlap and batch rules see this request's
+                    # earlier suggestions (router-injected, never model-supplied).
+                    trusted_execution_kwargs["request_outcomes"] = tuple(outcomes)
                 if (
                     tool_policy_call_key(call)
                     in trusted_plan_artifact_write_call_ids
@@ -592,6 +608,7 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
             failure_metadata: dict[str, object] = {
                 key: value for key, value in exc.to_error_data().items()
             }
+            failure_metadata.update(_failure_review_metadata(exc))
             # HB-017: the failure text keeps real paths for the model; the log does not.
             log_message = _sanitization.redact_error_paths(exc.message)
             log_event(
@@ -670,9 +687,15 @@ APPROVAL_WINDOW_DROPPED_OUTPUT_TEMPLATE = (
 # not read the drop as a refusal of the tool itself (dogfood TR-009).
 APPROVAL_WINDOW_DROPPED_AFTER_OUTPUT_TEMPLATE = (
     "Tool '{tool_id}' was not executed: this batch paused for approval of "
-    "'{approved_tool}', and only that call (plus earlier read-only calls) was in "
-    "the approved execution window. Nothing from this call happened. Re-issue "
-    "it now if it is still needed."
+    "'{approved_tool}', and the approved execution window held only that call "
+    "plus read-only calls that need no approval. Nothing from this call "
+    "happened. Re-issue it now if it is still needed."
+)
+# One line on the last dropped row, so the model re-issues the whole remainder
+# in one go instead of rediscovering it a call at a time (Pocket Wild dogfood).
+APPROVAL_WINDOW_BATCH_SUMMARY_TEMPLATE = (
+    "\nBatch status: approved window {ran} (see their results); "
+    "not run, re-issue these: {dropped}."
 )
 
 
@@ -689,13 +712,15 @@ def settle_dropped_tool_calls(  # noqa: PLR0913 -- mirrors the filtered-outcome 
     iteration_calls: list[Any],
     streamed_event_types: set[str],
     approved_tool_id: str = "",
+    window_calls: Sequence[Any] = (),
 ) -> int:
     """Give every admitted-but-unexecuted tool call an explicit terminal outcome.
 
     Approval resume executes only the approved window; the remaining calls in
     the frozen plan were still reserved against the turn tool budget. Settling
     them here keeps budget accounting consistent (every reserved call has a
-    terminal row) instead of silently discarding them.
+    terminal row) instead of silently discarding them. With ``window_calls``
+    the last row also lists what ran and everything to re-issue.
     """
 
     if not dropped_calls:
@@ -706,8 +731,18 @@ def settle_dropped_tool_calls(  # noqa: PLR0913 -- mirrors the filtered-outcome 
         if approved_tool_id
         else APPROVAL_WINDOW_DROPPED_OUTPUT_TEMPLATE
     )
+    def _names(calls: Sequence[Any]) -> str:
+        return ", ".join(str(getattr(call, "tool_id", "") or "") for call in calls) or "nothing"
+
+    summary = (
+        APPROVAL_WINDOW_BATCH_SUMMARY_TEMPLATE.format(
+            ran=_names(window_calls), dropped=_names(dropped_calls)
+        )
+        if window_calls
+        else ""
+    )
     outcome_index = len(outcomes)
-    for call in dropped_calls:
+    for position, call in enumerate(dropped_calls, start=1):
         outcome_index += 1
         _record_filtered_outcome(
             kernel=kernel,
@@ -721,7 +756,7 @@ def settle_dropped_tool_calls(  # noqa: PLR0913 -- mirrors the filtered-outcome 
                 output=template.format(
                     tool_id=str(getattr(call, "tool_id", "") or ""),
                     approved_tool=approved_tool_id,
-                ),
+                ) + (summary if position == len(dropped_calls) else ""),
                 error_code=CMP_TOOL_APPROVAL_WINDOW_DROPPED,
                 metadata={"approval_window_dropped": True},
             ),

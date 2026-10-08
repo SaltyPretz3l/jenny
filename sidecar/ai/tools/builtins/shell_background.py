@@ -122,6 +122,13 @@ def active_job_ids(*, store_key: str | None = None) -> list[str]:
         )
 
 
+def owned_job_running(job_id: str) -> bool:
+    """True while this process owns the job and its process has not exited."""
+    with _lock:
+        job = _active_jobs.get(job_id)
+        return job is not None and job.process.poll() is None
+
+
 def _cleanup_active_jobs() -> None:
     """Best-effort cleanup of lingering background processes."""
     with _lock:

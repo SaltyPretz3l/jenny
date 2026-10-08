@@ -110,6 +110,7 @@
   !insertmacro RemoveJennyProfileChild "plugins"
   !insertmacro RemoveJennyProfileChild "Preferences"
   !insertmacro RemoveJennyProfileChild "project-delete-operations.json"
+  !insertmacro RemoveJennyProfileChild "project-notes"
   !insertmacro RemoveJennyProfileChild "projects.json"
   !insertmacro RemoveJennyProfileChild "session-runtime"
   !insertmacro RemoveJennyProfileChild "session-runtime-budgets"

@@ -64,6 +64,9 @@ _DEFAULT_TOOL_DEFAULTS = {
     "grep_search": POLICY_DECISION_AUTO,
     "write_file": POLICY_DECISION_ASK,
     "edit_file": POLICY_DECISION_ASK,
+    # Plan Plus: records a suggestion for review and writes nothing, so it never
+    # prompts; applying a suggestion is its own consented path.
+    "propose_change": POLICY_DECISION_AUTO,
     "run_command": POLICY_DECISION_ASK,
     "run_temp_script": POLICY_DECISION_ASK,
     "monitor": POLICY_DECISION_ASK,
@@ -83,6 +86,9 @@ _DEFAULT_TOOL_DEFAULTS = {
     # Durable task-board writes have the same bounded, user-owned Open Loops
     # safety posture as the Electron-side Home actions.
     "task_board": POLICY_DECISION_AUTO,
+    # Project-note writes touch only the user's own per-project note, are
+    # bounded, attributed to the assistant and one-click undoable.
+    "project_notes": POLICY_DECISION_AUTO,
     # The in-session todo list is the model's own scratch state; approval is
     # for the user's files and commands (owner, 2026-09-22).
     "todo_write": POLICY_DECISION_AUTO,
@@ -117,7 +123,9 @@ def approval_presentation_for_call(
         scope = "Local command execution"
         consequence = "May run a local command and change local state."
     else:
-        workspace_names = {"read_file", "write_file", "edit_file", "glob_files"}
+        workspace_names = {
+            "read_file", "write_file", "edit_file", "propose_change", "glob_files",
+        }
         if family in _APPROVAL_WORKSPACE_FAMILIES or name in workspace_names:
             scope = "Workspace files"
         elif family in _APPROVAL_WEB_FAMILIES:

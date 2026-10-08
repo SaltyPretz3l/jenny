@@ -259,10 +259,10 @@ test('managed sidecar runtime emits approval_wait phase notifications around blo
   await service.stop();
 });
 
-test('managed chat stream runtime stamps V2 stream metadata on raw events before bridge coalescing', () => {
+test('managed chat stream runtime stamps stream metadata on raw events before bridge coalescing', () => {
   const emitted = [];
   const service = {
-    featureFlags: { stream_envelope_v2: true, phase_events: true },
+    featureFlags: { phase_events: true },
     emit(eventName, payload) {
       if (eventName === 'chat-stream') {
         emitted.push(payload);
@@ -379,7 +379,7 @@ test('managed chat stream runtime stamps V2 stream metadata on raw events before
 test('managed chat stream runtime captures canonical turn.event without renderer duplication', () => {
   const emitted = [];
   const service = {
-    featureFlags: { stream_envelope_v2: true, canonical_turn_events: true },
+    featureFlags: { canonical_turn_events: true },
     emit(eventName, payload) {
       if (eventName === 'chat-stream') {
         emitted.push(payload);
@@ -448,7 +448,7 @@ test('managed chat stream runtime captures canonical turn.event without renderer
 test('managed chat stream runtime does not stamp response deltas with stale reasoning phase', () => {
   const emitted = [];
   const service = {
-    featureFlags: { stream_envelope_v2: true, phase_events: true },
+    featureFlags: { phase_events: true },
     emit(eventName, payload) {
       if (eventName === 'chat-stream') {
         emitted.push(payload);
@@ -905,7 +905,7 @@ test('managed chat stream runtime surfaces reasoning-only completion as CMP-STRE
   // CMP-STREAM-REASONING-ONLY code instead of chat.done, the managed
   // runtime must propagate the error rather than fabricate an empty
   // assistant completion. Verifies the wire-surface behavior of the
-  // reasoning-only fail-closed path added in `chat_streaming.py`.
+  // reasoning-only fail-closed path in the routed generation stream.
   const service = {
     featureFlags: {},
     emit() {},

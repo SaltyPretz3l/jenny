@@ -27,6 +27,16 @@ const {
   safeBrowserReason,
   sanitizePageResult,
 } = require('./browser-interaction-utils');
+const {
+  focusSelector,
+  holdFrameProduction,
+  hoverSelector,
+  pressKey,
+  sendKeyPress,
+  throwIfAborted: _throwIfAborted,
+  waitForAbortable: _waitForAbortable,
+  waitForFreshFrame,
+} = require('./browser-session-input');
 
 const DEFAULT_MAX_ACTIVE_SESSIONS = 4;
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
@@ -69,43 +79,6 @@ function _toPngBuffer(captureResult) {
     return Buffer.isBuffer(png) ? Buffer.from(png) : Buffer.from(png || []);
   }
   return Buffer.from([]);
-}
-
-function _abortError() {
-  const error = new Error('Browser operation aborted.');
-  error.name = 'AbortError';
-  return error;
-}
-
-function _throwIfAborted(signal) {
-  if (signal?.aborted) {
-    throw _abortError();
-  }
-}
-
-function _waitForAbortable(promise, signal) {
-  if (!signal || typeof signal.addEventListener !== 'function') {
-    return promise;
-  }
-  _throwIfAborted(signal);
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      cleanup();
-      reject(_abortError());
-    };
-    const cleanup = () => signal.removeEventListener('abort', onAbort);
-    signal.addEventListener('abort', onAbort, { once: true });
-    Promise.resolve(promise).then(
-      (value) => {
-        cleanup();
-        resolve(value);
-      },
-      (error) => {
-        cleanup();
-        reject(error);
-      }
-    );
-  });
 }
 
 class BrowserSessionService {
@@ -292,14 +265,24 @@ class BrowserSessionService {
       const timeoutMs = boundedPositiveInt(
         options.timeout_ms, DEFAULT_BROWSER_ACTION_TIMEOUT_MS, MAX_BROWSER_ACTION_TIMEOUT_MS
       );
-      const capture = Promise.resolve(capturePage.call(
-        session.webContents || session.window, undefined, { stayHidden: true }
-      ));
-      const captureResult = await this._withTimeout(
-        _waitForAbortable(capture, signal),
-        timeoutMs,
-        'Browser screenshot timed out.'
-      );
+      // The window is hidden and paints nothing on its own, so capturePage
+      // returns the last produced frame. Keep frames flowing through a forced
+      // fresh frame and the capture, or the PNG can lag the DOM by an update.
+      const releaseFrames = holdFrameProduction(session);
+      let captureResult;
+      try {
+        await waitForFreshFrame(this, session, signal);
+        const capture = Promise.resolve(capturePage.call(
+          session.webContents || session.window, undefined, { stayHidden: true }
+        ));
+        captureResult = await this._withTimeout(
+          _waitForAbortable(capture, signal),
+          timeoutMs,
+          'Browser screenshot timed out.'
+        );
+      } finally {
+        releaseFrames();
+      }
       _throwIfAborted(signal);
       const buffer = _toPngBuffer(captureResult);
       const dimensions = parsePngDimensions(buffer);
@@ -337,6 +320,24 @@ class BrowserSessionService {
         page_errors: session.pageErrors.slice(-20),
       };
     });
+  }
+
+  async hover(sessionId, options = {}) {
+    return this._runSessionOperation(sessionId, options, (session, signal) => (
+      hoverSelector(this, session, signal, options)
+    ));
+  }
+
+  async focus(sessionId, options = {}) {
+    return this._runSessionOperation(sessionId, options, (session, signal) => (
+      focusSelector(this, session, signal, options)
+    ));
+  }
+
+  async press(sessionId, options = {}) {
+    return this._runSessionOperation(sessionId, options, (session, signal) => (
+      pressKey(this, session, signal, options)
+    ));
   }
 
   async inspect(sessionId) {
@@ -429,14 +430,8 @@ class BrowserSessionService {
     }
       await Promise.resolve(session.webContents.insertText(text));
       _throwIfAborted(signal);
-    if (options.press_enter === true) {
-      const sendInputEvent = session.webContents?.sendInputEvent;
-      if (typeof sendInputEvent !== 'function') {
-        throw new Error('Browser keyboard input is unavailable.');
-      }
-      sendInputEvent.call(session.webContents, { type: 'keyDown', keyCode: 'Enter' });
-      sendInputEvent.call(session.webContents, { type: 'keyUp', keyCode: 'Enter' });
-    }
+    // The char event is what submits the form; sendKeyPress also waits for the page.
+    if (options.press_enter === true) await sendKeyPress(this, session, signal, 'Enter', { withChar: true });
       return this._browserActionResult(session, 'typed', {
       selector,
       text_length: text.length,
@@ -630,6 +625,9 @@ class BrowserSessionService {
         experimentalFeatures: false,
         webviewTag: false,
         plugins: false,
+        // The frame wait before a screenshot depends on rAF/timers running in
+        // these hidden one-shot windows.
+        backgroundThrottling: false,
       },
     };
   }
@@ -792,11 +790,11 @@ class BrowserSessionService {
     }
   }
 
-  async _focusSelector(session, selector, { clear = false, timeoutMs } = {}) {
+  async _focusSelector(session, selector, { clear = false, timeoutMs, focusAny = false } = {}) {
     try {
       return await this._executePageScript(
         session,
-        buildSelectorProbeScript(selector, { focus: true, clear }),
+        buildSelectorProbeScript(selector, focusAny ? { focusAny: true } : { focus: true, clear }),
         timeoutMs,
         'Browser selector focus timed out.'
       );

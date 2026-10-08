@@ -289,6 +289,25 @@ describe('cleanupJennyData', () => {
     }
   });
 
+  it('removes the per-project notes directory and its atomic-write leftovers', async () => {
+    const root = makeTempRoot();
+    try {
+      const userDataPath = path.join(root, 'profile');
+      const notesDir = path.join(userDataPath, 'project-notes');
+      fs.mkdirSync(notesDir, { recursive: true });
+      fs.writeFileSync(path.join(notesDir, 'project_alpha.json'), '{"version":1}');
+      fs.writeFileSync(path.join(notesDir, 'project_alpha.json.1760000000000.0123456789ab.tmp'), '{}');
+
+      const result = await cleanupJennyData({ userDataPath });
+
+      assert.equal(result.status, 'complete');
+      assert.deepEqual(result.unknownUserDataChildren, []);
+      assert.equal(fs.existsSync(notesDir), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('removes preserved damaged copies, migration backups and orphaned write temps of known files', async () => {
     const root = makeTempRoot();
     try {

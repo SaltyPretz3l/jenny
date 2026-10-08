@@ -61,11 +61,11 @@
         featureState?.featureFlags?.pretext_layout === true ? 'true' : 'false';
     }
 
-    // katex_math reaches the stateless markdown pipeline through the shared
+    // KaTeX math reaches the stateless markdown pipeline through the shared
     // markdown-math-utils module toggle: renderSanitizedMarkdown consults it
-    // per render (cache keys are partitioned by the bit, so a flip mid-
-    // session can never serve stale HTML).
-    function syncMathRenderingFlag(featureState) {
+    // per render (cache keys are partitioned by the bit, so a flip can never
+    // serve stale HTML). The renderer turns it on once feature state applies.
+    function enableMathRendering() {
       let mathUtils = windowRef?.markdownMathUtils
         || (typeof globalThis !== 'undefined' ? globalThis.markdownMathUtils : null);
       if (!mathUtils) {
@@ -74,7 +74,7 @@
       if (!mathUtils || typeof mathUtils.setMathRenderingEnabled !== 'function') {
         return;
       }
-      mathUtils.setMathRenderingEnabled(featureState?.featureFlags?.katex_math === true);
+      mathUtils.setMathRenderingEnabled(true);
     }
 
     function loadSurfaceGallery(featureState) {
@@ -117,7 +117,7 @@
         };
       }
       syncPretextLayoutDataset(state.features);
-      syncMathRenderingFlag(state.features);
+      enableMathRendering();
       loadSurfaceGallery(state.features);
       return state.features;
     }

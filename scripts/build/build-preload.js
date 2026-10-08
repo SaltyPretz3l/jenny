@@ -17,12 +17,11 @@ let lastBuildSkipped = false;
 // spawns its own esbuild process, and serial spawns sat on the critical
 // path of every dev launch (start.js rebuilds on boot). entryNames maps
 // preload.js -> preload.bundle.js, uninstall-preload.js ->
-// uninstall-preload.bundle.js, and so on for the plugin-view
-// preload. No `splitting` (cjs), so each output stays self-contained.
+// uninstall-preload.bundle.js. No `splitting` (cjs), so each output stays
+// self-contained.
 const PRELOAD_ENTRY_BASENAMES = [
   'preload.js',
   'uninstall-preload.js',
-  'plugin-view-preload.js',
 ];
 
 function computeStamp(root, inputs, esbuildVersion, buildOptions) {

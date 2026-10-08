@@ -130,31 +130,6 @@ test('does not record when a match is never found within the poll timeout', asyn
   observer.dispose();
 });
 
-test('ignores trigger when flag is disabled', async () => {
-  const clock = makeFakeClock();
-  const store = makeStore();
-  const backend = makeBackend({
-    residentModelsSequence: [[{ name: 'x', digest: 'd', sizeBytes: 100, vramBytes: 100 }]],
-  });
-  const observer = createModelFitObserver({
-    backendService: backend,
-    store,
-    getHardwareProfile: () => GPU_PROFILE,
-    flagEnabled: () => false,
-    now: clock.now,
-    setTimeoutFn: clock.setTimeoutFn,
-    clearTimeoutFn: clock.clearTimeoutFn,
-  });
-
-  backend.emit('backend-status', { phase: 'ready', engine: 'ollama', model: 'x' });
-  await flush();
-  clock.advance(5000);
-  await flush();
-
-  assert.equal(store.records.length, 0);
-  observer.dispose();
-});
-
 test('ignores trigger when GPU is unknown', async () => {
   const clock = makeFakeClock();
   const store = makeStore();

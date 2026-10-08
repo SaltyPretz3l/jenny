@@ -297,8 +297,7 @@
 
 .ide-picker-row--selected,
 .ide-picker-row--selected:hover {
-  background: var(--bg-surface);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .ide-picker-name {
@@ -480,11 +479,6 @@
   padding: 0 10px;
   border-bottom: 1px solid var(--line);
   font-size: var(--font-size-footnote);
-}
-
-.ide-terminal-title {
-  color: var(--text-primary);
-  font-weight: 500;
 }
 
 .ide-terminal-status {

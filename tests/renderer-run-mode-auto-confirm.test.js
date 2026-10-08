@@ -454,7 +454,7 @@ test('a segment click (on its icon too) sets that exact mode, and the chip click
   assert.equal(segment(harness, 'ask').getAttribute('aria-pressed'), 'false');
   harness.doc.getElementById('composerRunModeChip').click();
   await settleRunMode();
-  assert.equal(harness.prefs.runMode, 'ask', 'Plan cycles to Ask');
+  assert.equal(harness.prefs.runMode, 'propose', 'Plan cycles to Propose');
 });
 
 test('an Auto segment click sets Auto without the confirmation dialog (FG-003)', async (t) => {

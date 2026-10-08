@@ -71,6 +71,9 @@ move_file_tool = _lazy_tool_handler(
     "sidecar.ai.tools.builtins.move_file", "move_file_tool"
 )
 edit_file_tool = _lazy_tool_handler("sidecar.ai.tools.builtins.edit_file", "edit_file_tool")
+propose_change_tool = _lazy_tool_handler(
+    "sidecar.ai.tools.builtins.propose_change", "propose_change_tool"
+)
 read_file_tool = _lazy_tool_handler("sidecar.ai.tools.builtins.filesystem", "read_file_tool")
 list_dir_tool = _lazy_tool_handler(
     "sidecar.ai.tools.builtins.filesystem_listing", "list_dir_tool"
@@ -200,6 +203,9 @@ def _add_file_operation_bindings(
         bindings["grep_search"] = grep_search_tool
     if _extract_flag_enabled(config, "tools_edit_file_enabled", default=True):
         bindings["edit_file"] = edit_file_tool
+        # Plan Plus: suggestions validate with edit_file's matching, so they share
+        # its flag; the manifest's propose_mode_only keeps them out of other modes.
+        bindings["propose_change"] = propose_change_tool
     if _extract_flag_enabled(config, "tools_delete_file_enabled", default=True):
         bindings["delete_file"] = delete_file_tool
     if _extract_flag_enabled(config, "tools_move_file_enabled", default=True):
@@ -273,10 +279,12 @@ def _add_knowledge_bindings(
     config: Any | None,
     enabled: bool,
 ) -> None:
+    from sidecar.ai.semantic.runtime import configure_semantic_catalog
     from sidecar.ai.tools.builtins.knowledge.roots import (
         configure_knowledge_tools,
     )
 
+    configure_semantic_catalog(config)
     if not enabled:
         # Reset module state so a flag flip never leaves stale roots behind.
         configure_knowledge_tools(None)

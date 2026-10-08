@@ -21,6 +21,12 @@ from sidecar.ai.context.token_budget import (
 
 
 class TestCharEstimationBackend:
+    def test_headroom_factor(self) -> None:
+        assert CharEstimationBackend().headroom_factor == 0.30
+
+    def test_is_not_an_exact_match(self) -> None:
+        assert CharEstimationBackend().is_exact_match is False
+
     def test_empty_string_returns_zero(self) -> None:
         backend = CharEstimationBackend()
         assert backend.count_tokens("") == 0
@@ -456,6 +462,40 @@ class _Qwen38Config:
 
 
 class TestApplyBudgetCheck:
+    def test_char_fallback_compacts_before_digit_heavy_prompt_overflows(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from types import SimpleNamespace
+
+        backend = CharEstimationBackend()
+        monkeypatch.setattr(
+            "sidecar.ai.context.token_budget._create_best_backend", lambda _config: backend,
+        )
+        window = 65_536
+        output_reservation = 8_192
+        row = "00001,2026-09-28,-1234.56,ACH DEBIT 00007919\n"
+        history = [
+            {"role": "user", "content": (row * (200_000 // len(row) + 1))[:200_000]},
+        ]
+        estimate = estimate_messages_tokens(history, backend)
+        assert estimate == 50_004
+        # HB-028: the real digit-heavy prompt alone exceeds the model window.
+        assert estimate * 1.37 > window
+        engine = SimpleNamespace(
+            get_model_context_length=lambda: window,
+            get_model_max_output_tokens=lambda: output_reservation,
+        )
+        config = SimpleNamespace(context_length=window, max_tokens=output_reservation)
+        messages, budget, tracker = apply_budget_check(history, config, engine, num_tools=0)
+        assert messages is history
+        assert budget is not None and tracker is not None
+        assert tracker.backend is backend
+        assert budget.max_output_tokens == output_reservation
+        status = check_budget(estimate_messages_tokens(messages, tracker.backend), budget)
+        assert status.level in {"auto_compact", "error"}
+        assert status.should_compact
+        assert budget.context_window == int(window * 0.70)
+
     def test_returns_budget_from_engine(self) -> None:
         messages = [{"role": "user", "content": "hello"}]
         msgs, budget, tracker = apply_budget_check(
@@ -465,7 +505,7 @@ class TestApplyBudgetCheck:
             num_tools=0,  # type: ignore[arg-type]
         )
         assert budget is not None
-        assert budget.context_window == 100_000
+        assert budget.context_window == 70_000  # Char fallback reserves 30% headroom.
         assert budget.max_output_tokens == 8_000
         assert tracker is not None
         assert msgs is messages  # unchanged
@@ -479,7 +519,7 @@ class TestApplyBudgetCheck:
             num_tools=0,  # type: ignore[arg-type]
         )
         assert budget is not None
-        assert budget.context_window == 50_000
+        assert budget.context_window == 35_000  # Char fallback reserves 30% headroom.
         assert budget.max_output_tokens == 4_000
 
     def test_reasoning_reservation_accounts_for_hidden_and_visible_output(self) -> None:

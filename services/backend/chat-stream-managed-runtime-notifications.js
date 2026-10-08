@@ -23,6 +23,7 @@ const {
   normalizeAgentProgressNotification,
 } = require('./work-lifecycle-coordinator');
 const { normalizePendingQuestionBatch } = require('./message-normalization');
+const { noteDiscardedDraft } = require('./chat-stream-discarded-drafts');
 const { mergeLocalGeneratedArtifactPaths } = require('./chat-stream-tool-payload-utils');
 const {
   buildStreamToolResultMessageId,
@@ -647,6 +648,29 @@ function handleNotification(ctx, notification, {
     // fabricated content into the transcript.
     const preservePriorSegments = preserveToolContinuation
       || resetReason === 'model_winddown';
+    // What this reset erases (see the stream_reset emit below); decided before
+    // anything is cleared so the discarded-drafts receipt sees the real state.
+    const discardScope = !preservePriorSegments
+      ? 'all'
+      : (preserveToolContinuation ? 'none' : 'live_slice');
+    // Receipt count: only a reset that erased visible content (text or
+    // reasoning of the live slice; for 'all' also earlier segments) counts.
+    // ctx.reasoningEntries spans the whole turn; the collector's slice phases
+    // hold only the unsaved live slice's reasoning.
+    const liveSliceErased = Boolean(String(ctx.currentSegmentText || '').trim())
+      || (transcriptCollector.slice?.phases || []).some((phase) => (
+        phase?.phase_kind === 'reasoning' && phase.entries?.length > 0
+      ));
+    if (
+      (discardScope === 'live_slice' && liveSliceErased)
+      || (discardScope === 'all' && (
+        liveSliceErased
+        || ctx.persistedTextSegmentIds?.length > 0
+        || ctx.refusedTextSegments?.length > 0
+      ))
+    ) {
+      ctx.discardedDrafts = noteDiscardedDraft(ctx.discardedDrafts, resetReason);
+    }
     if (!preservePriorSegments) {
       discardPersistedTextSegmentsForReset();
       // The reset discards the persisted segment messages, so the live-captured
@@ -733,15 +757,12 @@ function handleNotification(ctx, notification, {
     //                   scoped to assistantBaseMessageId (the unsaved live
     //                   slice) are dropped. model_winddown.
     //   'none'       -> nothing erased. tool_continuation.
-    const discardScope = !preservePriorSegments
-      ? 'all'
-      : (preserveToolContinuation ? 'none' : 'live_slice');
     emitChatStream({
       type: 'stream_reset',
-      // The renderer stamps a "restarted" truncation marker on the latest
-      // assistant rows for discarding resets; a preserved tool_continuation
-      // reset is genuine commentary and must not be marked. Forward the
-      // sidecar's reason so the live reducer can tell the two apart.
+      // The renderer folds a discarding reset's erased rows into one "Draft
+      // discarded" line; a preserved tool_continuation reset is genuine
+      // commentary and must not fold. Forward the sidecar's reason so the live
+      // reducer can tell the two apart and name it.
       reason: resetReason,
       next_assistant_message_id: nextAssistantMessageId,
       preserve_prior_segments: preservePriorSegments,

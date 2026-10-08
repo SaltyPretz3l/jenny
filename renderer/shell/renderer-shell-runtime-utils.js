@@ -691,6 +691,36 @@
         await restartSidecarForRecovery();
         return;
       }
+      if (action === 'resume_paused_reply' || action === 'rerun_interrupted_reply') {
+        // Gate F9: one copy of an interrupted reply. Resume moves the run the
+        // restart paused; a run with no checkpoint cannot resume, so Run again
+        // discards it first and then regenerates. A refused resume or discard
+        // is already named in the composer.
+        const controller = state.runtimeSendController;
+        const key = await controller?.interruptedReplyKey?.(
+          String(payload?.sessionId || '').trim() || state.currentSessionId, payload?.streamId) || '';
+        if (action === 'rerun_interrupted_reply') {
+          if (key && !await controller.withdraw(key)) return;
+          const targetMessageId = resolveActionMessageId(payload?.contextNode, payload?.messageId);
+          if (!targetMessageId) {
+            showComposerActionError(new Error('No assistant response is available to retry.'), jt('shell.runtime.retryUnavailable', 'Retry Unavailable'));
+            return;
+          }
+          await handleRegenerateMessage(targetMessageId, { failureRetry: true });
+          return;
+        }
+        if (key) {
+          await controller.resume(key);
+        } else {
+          showToastMessage(jt('shell.runtime.resumeUnavailableMessage', 'This reply can no longer be resumed. Send the message again to rerun it.'), {
+            title: jt('shell.runtime.resumeUnavailableTitle', 'Resume unavailable'),
+            tone: 'info',
+            source: TOAST_SOURCE.chatStream,
+            dedupeKey: `${TOAST_SOURCE.chatStream}:resume-unavailable`,
+          });
+        }
+        return;
+      }
       if (action === 'open_diagnostics' || action === 'open_logs') {
         openLogsForStream(payload?.streamId);
         return;

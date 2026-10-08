@@ -15,7 +15,6 @@ const ELAPSED_SELECTOR = '[data-turn-elapsed][data-elapsed-started-at]';
 function createHarness(t, {
   currentSessionId = 'session-a',
   sendBusy = false,
-  timerEnabled = true,
   turnClockEntries = [],
 } = {}) {
   const dom = new JSDOM(`<!doctype html><body>
@@ -60,7 +59,6 @@ function createHarness(t, {
     attachments: { queued: [] },
     queuedSendBySession: new Map(),
     turnClockBySession: new Map(turnClockEntries),
-    features: { featureFlags: { composer_turn_timer: timerEnabled } },
     ui: { activeView: 'chat', composerPopoverOpen: false, commandPopoverOpen: false, followLatest: true },
     status: {},
     modelList: {},
@@ -159,22 +157,6 @@ test('a running entry derives its terminal stamp when send-busy is already false
   const timer = document.getElementById('composerTurnTimer');
   assert.equal(timer.dataset.turnTimerState, 'done');
   assert.equal(timer.textContent, formatElapsedLabel(entry.endedAt - entry.startedAt));
-});
-
-test('flag-off projection stays empty even when the current entry is running', (t) => {
-  const { document, pipeline } = createHarness(t, {
-    sendBusy: true,
-    timerEnabled: false,
-    turnClockEntries: [['session-a', { startedAt: Date.now() - 5_000, endedAt: null }]],
-  });
-
-  pipeline.renderComposerState();
-
-  const timer = document.getElementById('composerTurnTimer');
-  assert.equal(timer.hasAttribute('data-turn-elapsed'), false);
-  assert.equal(timer.hasAttribute('data-elapsed-started-at'), false);
-  assert.equal(timer.dataset.turnTimerState, 'idle');
-  assert.equal(timer.textContent, '');
 });
 
 function createFakeTimerNode(startedAt) {

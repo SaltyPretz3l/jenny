@@ -162,7 +162,7 @@ def test_plan_mode_prose_plan_gets_one_exit_plan_mode_nudge() -> None:
     assert second[-1]["content"] == PLAN_PROSE_NUDGE
     assert second[-2] == {"role": "assistant", "content": _PROSE_PLAN}
     assert any(
-        isinstance(event, StreamResetEvent) and event.reason == "post_tool_restart"
+        isinstance(event, StreamResetEvent) and event.reason == "nudge_retry"
         for event in events
     )
     assert _approval_tool(decision) == "exit_plan_mode"

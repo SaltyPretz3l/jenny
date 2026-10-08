@@ -1,8 +1,8 @@
 'use strict';
 
 const { SessionExecutionAuthority } = require('../backend/session-execution-authority');
-const { getManagedPluginRuntime } = require('../backend/managed-plugin-runtime');
 const { ProjectApplicationService } = require('./project-application-service');
+const { GENERAL_PROJECT_ID } = require('./project-schema');
 const { RuntimeApplicationService } = require('../session-runtime/application-service');
 const { ensureWorkspaceProject } = require('./workspace-project-provisioner');
 const { getConfiguredToolsWorkspaceRoot } = require('../backend/managed-sidecar-config');
@@ -38,9 +38,6 @@ function initializeSessionExecutionAuthority(service) {
     knowledgeService,
     skillsService: service.skillsService,
     resolveProjectWorkspaceServices: service.resolveProjectWorkspaceServices,
-    resolvePluginToolAuthority: (expectedAuthority) => (
-      getManagedPluginRuntime(service)?.captureExecutionToolAuthority(expectedAuthority)
-    ),
     resolveSessionDisabledTools: (sessionId) => resolveSessionToolDenyList(
       typeof service.sessionStore.getSessionSummary === 'function'
         ? service.sessionStore.getSessionSummary(sessionId)
@@ -68,6 +65,30 @@ function initializeSessionExecutionAuthority(service) {
       moveProjectMemories(service, from, to)
     ),
     projectDeleteJournal: service.projectDeleteJournal || null,
+    // Agent tasks follow their chat between projects (and back on Undo).
+    onSessionProjectChanged: ({ sessionId, projectId }) => (
+      service.configService?.restampAgentTasksForSession?.(sessionId, projectId)
+    ),
+    // A deleted project takes its note with it (nothing restores a deleted project);
+    // its remaining agent tasks (rail-added, or from chats deleted earlier) move to General.
+    // Each step runs on its own: a task re-stamp failure must not keep the note alive, nor the reverse.
+    // The delete operation logs `failed` (the project is gone either way; cleanup covers an orphaned note file).
+    onProjectDeleted: (projectId) => {
+      const failed = [];
+      const steps = {
+        tasks: () => service.configService?.restampAgentTasksForProject?.(projectId, GENERAL_PROJECT_ID),
+        notes: () => service.projectNotesService?.deleteProjectNotes?.(projectId),
+      };
+      for (const [step, run] of Object.entries(steps)) {
+        try {
+          const result = run();
+          if (result && result.ok === false) failed.push(`${step}:${String(result.reason || 'failed').slice(0, 40)}`);
+        } catch (error) {
+          failed.push(`${step}:${String(error?.code || error?.message || 'threw').slice(0, 40)}`);
+        }
+      }
+      return { ok: failed.length === 0, failed };
+    },
     onPermissionChanged() {
       // Live calls recheck the canonical policy through runtime.operation.
       // Reinitialization must not disturb an admitted turn or its live waiter.

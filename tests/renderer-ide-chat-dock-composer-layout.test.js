@@ -126,7 +126,6 @@ test('S5: rehost events refit the composer moving from Chat to the dock and back
       const dock = document.getElementById('ideChatDockBody');
       document.body.appendChild(dock);
       Object.assign(dock.style, { position: 'fixed', insetInlineStart: '0', insetBlockStart: '0', inlineSize: '320px', blockSize: '800px' });
-      dock.style.setProperty('--ide-chat-dock-width', '320px');
       dock.appendChild(document.getElementById('composerWrap'));
       document.getElementById('chatView').style.display = 'none';
       window.dispatchEvent(new window.CustomEvent('chat-surface:rehost', { detail: { surface: 'workspace' } }));

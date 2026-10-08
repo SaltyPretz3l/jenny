@@ -28,14 +28,7 @@
   const COPY_NO_ROOT = jt('ide.welcome.pickFolderPrompt', 'Pick a folder and Jenny makes it a project: file tools work inside it and new chats start there.');
   const COPY_NO_BRIDGE = jt('ide.welcome.fileAccessUnavailable', 'Workspace file access is unavailable in this shell mode.');
 
-  function defaultEscape(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const defaultEscape = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function basename(path) {
     const str = String(path || '');

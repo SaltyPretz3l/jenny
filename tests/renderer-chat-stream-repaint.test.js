@@ -334,6 +334,16 @@ test('live multi-tool stream: post-tool deltas keep painting, no mid-stream inte
     'no interrupted_running_tool_hydration signal may fire while the turn is live'
   );
 
+  // Model the current sessions.getMessages contract at settlement: persisted
+  // events preserve text groups on both sides of a tool result. A messages-only
+  // fixture collapses those groups into one string and cannot prove row parity.
+  const liveTurn = window.__rendererState.ui.chatTimelineLiveStateBySession.get(sessionId).turns_by_id[streamId];
+  const turnEvents = structuredClone(liveTurn.events).map((event, eventSeq) => ({ ...event, event_seq: eventSeq }));
+  shell.sessions.getMessages = async () => ({
+    data: structuredClone(window.__rendererState.messagesBySession.get(sessionId)),
+    turn_events: turnEvents,
+    turn_event_log_version: 4,
+  });
   await emit({ type: 'complete', content: '', interactiveProtocolDrift: false, interactiveProtocolDriftPreview: '' });
   await waitForUi(window, 150);
 
@@ -341,7 +351,7 @@ test('live multi-tool stream: post-tool deltas keep painting, no mid-stream inte
   assert.equal(
     collectRolloutSignals(window, 'stale_row_deletion').length,
     0,
-    'no stale_row_deletion signal may fire at the terminal handoff'
+    `no stale_row_deletion signal may fire at the terminal handoff: ${JSON.stringify(collectRolloutSignals(window, 'stale_row_deletion'))}`
   );
   assert.match(timeline.textContent, /Sentence four\./, 'settled transcript retains the full streamed text');
 });

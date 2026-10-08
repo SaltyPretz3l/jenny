@@ -92,7 +92,6 @@ const PRESENTATION_DEFAULTS = Object.freeze({
 // Env pins every scene needs so the replay engine's call index is owned by the
 // script, not by an unrelated planner call (the same pins the GUI tool-approval smoke uses).
 const REPLAY_ENV_PINS = Object.freeze({
-  JENNY_ENABLE_INTERACTIVE_POST_ROUTER_QUESTIONS: '0',
   JENNY_ENABLE_TOKEN_BUDGET: '0',
 });
 
@@ -279,8 +278,8 @@ const DEMO_SCENES = Object.freeze([
       { type: 'caption', text: 'Git gutter · uncommitted change' },
       { type: 'pause', ms: 1500 },
       { type: 'caption', text: 'Terminal' },
-      { type: 'click', selector: '[data-ide-bottom-handle]' },
-      { type: 'wait-selector', selector: '#ideBottomPanel:not(.hidden)', timeoutMs: UI_TIMEOUT_MS },
+      { type: 'click', selector: '[data-wb-tab="terminal"]' },
+      { type: 'wait-selector', selector: '[data-wb-stack][data-state="open"] #wbView-terminal:not([hidden])', timeoutMs: UI_TIMEOUT_MS },
       { type: 'pause', ms: 500 },
       { type: 'click', selector: '[data-ide-terminal-action="start"]' },
       { type: 'wait-selector', selector: '.ide-terminal-status--running', timeoutMs: UI_TIMEOUT_MS },
@@ -292,7 +291,7 @@ const DEMO_SCENES = Object.freeze([
       { type: 'press', key: 'Enter' },
       { type: 'pause', ms: 2600 },
       { type: 'caption', text: 'Ask Jenny from the workspace' },
-      { type: 'click', selector: '[data-ide-rail-chatdock]' },
+      { type: 'click', selector: '[data-wb-strip="chat"]' },
       { type: 'wait-selector', selector: '#ideChatDock:not(.hidden) #chatInput', timeoutMs: UI_TIMEOUT_MS },
       { type: 'pause', ms: 500 },
       { type: 'click', selector: '#chatInput' },

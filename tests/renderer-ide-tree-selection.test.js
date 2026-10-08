@@ -5,11 +5,10 @@ const assert = require('node:assert/strict');
 
 const { createIdeTree } = require('../renderer/features/renderer-ide-tree');
 const { createIdeTreeSelection } = require('../renderer/features/renderer-ide-tree-selection');
-const { INTERNAL_FEATURE_FLAG_KEYS, buildFeatureFlags } = require('../services/feature-flags');
 const ideStateUtils = require('../renderer/features/renderer-ide-state');
 const { buildIdeDom, createBridgeStub, settle } = require('./helpers/ide-tree-harness');
 
-async function createHarness({ files = {}, dirs = [], expanded = [], activeTabPath = '', qol = true } = {}) {
+async function createHarness({ files = {}, dirs = [], expanded = [], activeTabPath = '' } = {}) {
   const domHarness = buildIdeDom();
   const bridge = createBridgeStub({ files, dirs });
   const ide = ideStateUtils.createIdeUiState();
@@ -23,7 +22,6 @@ async function createHarness({ files = {}, dirs = [], expanded = [], activeTabPa
     getIde: () => ide,
     getMountEl: () => domHarness.getDom().ideRailPanel,
     isActivePanel: () => true,
-    isQolEnabled: () => qol,
     getWorkspaceFsApi: () => bridge.jennyShell.workspaceFs,
     getMutationContext: async () => ({ rootId: 'root-test', generation: 1, phase: 'ready' }),
     preflightMutation: async () => ({ ready: true, paths: [] }),
@@ -78,26 +76,6 @@ function findMenuItem(harness, label) {
   return [...harness.dom.window.document.querySelectorAll('.inv-context-menu-item')]
     .find((item) => item.textContent.includes(label)) || null;
 }
-
-test('flag off preserves legacy active-tab markup and ctrl-click behavior', async (t) => {
-  assert.equal(buildFeatureFlags({}).workspace_explorer_qol, true);
-  assert.equal(buildFeatureFlags({ JENNY_ENABLE_WORKSPACE_EXPLORER_QOL: '0' }).workspace_explorer_qol, false);
-  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('workspace_explorer_qol'));
-  const harness = await createHarness({ files: { 'active.js': 'a' }, activeTabPath: 'active.js', qol: false });
-  t.after(() => harness.dispose());
-
-  assert.equal(harness.panel.innerHTML.includes('ide-tree--qol'), false);
-  assert.equal(harness.panel.innerHTML.includes('ide-tree-row--active'), false);
-  assert.equal(harness.panel.innerHTML.includes('aria-multiselectable'), false);
-  const activeRow = harness.panel.querySelector('[data-ide-tree-path="active.js"]');
-  assert.ok(activeRow.classList.contains('ide-tree-row--selected'));
-  assert.equal(activeRow.getAttribute('aria-selected'), 'true');
-  assert.equal(activeRow.hasAttribute('aria-current'), false);
-
-  clickRow(harness, 'active.js', { ctrlKey: true });
-  assert.deepEqual(harness.opened, [{ path: 'active.js', options: { preview: true } }]);
-  assert.equal(harness.tree.selection.size(), 0);
-});
 
 test('flag on ctrl-click toggles selection markup without opening files', async (t) => {
   const harness = await createHarness({ files: { 'a.js': 'a' } });

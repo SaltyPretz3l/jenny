@@ -579,9 +579,18 @@ function buildToolObservabilityFacet(service) {
   return { available: true, ...snapshot };
 }
 
-function buildResourcesFacet(service, harnessFacet, redactor) {
+function buildResourcesFacet(service, systemPressure, redactor) {
   const errors = [];
   let system = null;
+  let appMemoryBytes = null;
+  if (typeof service?.appMemoryProvider === 'function') {
+    try {
+      const value = service.appMemoryProvider();
+      appMemoryBytes = Number.isFinite(value) ? value : null;
+    } catch (error) {
+      errors.push(redactor.error(error));
+    }
+  }
   if (typeof service?.systemStatsProvider === 'function') {
     try {
       system = redactor.value(service.systemStatsProvider(), null);
@@ -591,13 +600,11 @@ function buildResourcesFacet(service, harnessFacet, redactor) {
   } else {
     errors.push('System stats provider is unavailable.');
   }
-  const systemPressure = harnessFacet?.available === true
-    ? cloneJsonSafe(harnessFacet.snapshot?.runtime?.system_pressure, null)
-    : null;
   const systemAvailable = system && typeof system === 'object' && !Array.isArray(system);
   const sidecarAvailable = systemPressure && typeof systemPressure === 'object' && !Array.isArray(systemPressure);
   return {
-    available: Boolean(systemAvailable || sidecarAvailable),
+    available: Boolean(systemAvailable || sidecarAvailable || appMemoryBytes !== null),
+    app_memory_bytes: appMemoryBytes,
     system_available: Boolean(systemAvailable),
     system: systemAvailable ? system : null,
     sidecar: {
@@ -804,6 +811,41 @@ function buildSchemasFacet(backendStatus) {
   };
 }
 
+// The health pill and the Diagnostics view poll the status, so the two sidecar reads behind the resources
+// facet (the resident-model /api/ps round trip, the runtime section for the system pressure) are shared
+// across calls for a few seconds; a failed read is remembered for the same window.
+const SHARED_READ_TTL_MS = 10000;
+// One read per service per window; concurrent callers share the in-flight promise, and a failed read
+// settles to null for the rest of the window.
+function sharedRead(cache, service, read) {
+  const cached = cache.get(service);
+  const now = Date.now();
+  if (cached && now - cached.at < SHARED_READ_TTL_MS) return cached.promise;
+  const promise = Promise.resolve().then(read).catch(() => null);
+  cache.set(service, { at: now, promise });
+  return promise;
+}
+
+const residentModelsCache = new WeakMap();
+function residentModelsFor(service) {
+  if (!service || typeof service.getResidentModels !== 'function') return Promise.resolve(null);
+  return sharedRead(residentModelsCache, service, () => service.getResidentModels());
+}
+
+// The Diagnostics view asks for the status without the harness facet (the full tools/memories/skills
+// snapshot) and opts into `include_system_pressure`, which reads the runtime section alone; the
+// jenny_status tool and the health pill skip the harness entirely and get no sidecar pressure.
+const systemPressureCache = new WeakMap();
+async function sidecarSystemPressure(service, harnessFacet, options) {
+  if (harnessFacet?.available === true) return cloneJsonSafe(harnessFacet.snapshot?.runtime?.system_pressure, null);
+  const requested = options?.include_system_pressure === true || options?.includeSystemPressure === true;
+  if (!requested || harnessFacet?.skipped !== true || !service || typeof service.inspectHarness !== 'function') return null;
+  return sharedRead(systemPressureCache, service, async () => {
+    const snapshot = await service.inspectHarness({ sections: ['runtime'], include_recent_history: false, recent_history_limit: 0, include_disabled: false });
+    return cloneJsonSafe(snapshot?.runtime?.system_pressure, null);
+  });
+}
+
 async function getJennyStatus(service, options = {}) {
   const redactor = createStatusRedactor(service);
   const generatedAt = new Date().toISOString();
@@ -849,11 +891,12 @@ async function getJennyStatus(service, options = {}) {
     payload.harness = { ...buildUnavailableFacet(error, redactor), snapshot: null };
   }
   try {
-    payload.resources = buildResourcesFacet(service, payload.harness, redactor);
+    payload.resources = buildResourcesFacet(service, await sidecarSystemPressure(service, payload.harness, options), redactor);
   } catch (error) {
     payload.resources = {
       ...buildUnavailableFacet(error, redactor),
       system_available: false,
+      app_memory_bytes: null,
       system: null,
       sidecar: {
         available: false,
@@ -861,6 +904,20 @@ async function getJennyStatus(service, options = {}) {
       },
     };
   }
+  payload.resources.resident_models = null;
+  try {
+    const models = await residentModelsFor(service);
+    // The resident list is Ollama's: an empty list is a real zero only while Ollama is the active engine;
+    // with another engine active (a llama-server model loaded, say) it says nothing about residency.
+    const ollamaActive = normalizeString(service?.currentStatus?.engine).toLowerCase() === 'ollama';
+    // The resident normalizer loses raw-size provenance, so ambiguous zero sizes remain unknown.
+    if (Array.isArray(models) && (models.length > 0 || ollamaActive)) payload.resources.resident_models = models.map((model) => ({
+      name: redactor.text(normalizeString(model?.name)),
+      size_bytes: Number.isFinite(model?.sizeBytes) && model.sizeBytes > 0 ? model.sizeBytes : null,
+      vram_bytes: Number.isFinite(model?.vramBytes) && model.vramBytes > 0 ? model.vramBytes : null,
+    }));
+  } catch { /* Resident model evidence is optional. */ }
+  if (payload.resources.resident_models !== null) payload.resources.available = true;
   try {
     payload.automations = await buildAutomationsFacet(service, redactor);
   } catch (error) {

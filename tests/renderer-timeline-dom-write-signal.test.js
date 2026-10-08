@@ -29,13 +29,12 @@ function assertTimelineWrite(call, lane) {
   }
 }
 
-test('full_render emits timeline_dom_write and keeps the telemetry gate', (t) => {
+test('full_render emits timeline_dom_write', (t) => {
   const enabledDom = createRenderDom();
   const enabled = createPipelineHarness({
     dom: enabledDom,
     visibleMessages: [{ id: 'u1', role: 'user', status: 'complete', content: 'hello' }],
   });
-  enabled.state.features = { featureFlags: { chat_timeline_render_telemetry: true } };
   t.after(() => enabled.pipeline.dispose?.());
   withWindowGlobals(enabledDom, () => enabled.pipeline.renderMessages({ forceFullRender: true }));
 
@@ -43,21 +42,6 @@ test('full_render emits timeline_dom_write and keeps the telemetry gate', (t) =>
     (call) => call.details?.lane === 'full_render'
   );
   assertTimelineWrite(enabledWrite, 'full_render');
-
-  const disabledDom = createRenderDom();
-  const disabled = createPipelineHarness({
-    dom: disabledDom,
-    visibleMessages: [{ id: 'u2', role: 'user', status: 'complete', content: 'hello' }],
-  });
-  disabled.state.features = { featureFlags: { chat_timeline_render_telemetry: false } };
-  t.after(() => disabled.pipeline.dispose?.());
-  withWindowGlobals(disabledDom, () => disabled.pipeline.renderMessages({ forceFullRender: true }));
-
-  assert.equal(
-    timelineWrites(disabled.rolloutSignals).length,
-    0,
-    'full_render should not emit timeline_dom_write when telemetry is disabled'
-  );
 });
 
 test('streaming_article emits timeline_dom_write for both rebuild sub-paths', () => {
@@ -82,7 +66,6 @@ test('streaming_article emits timeline_dom_write for both rebuild sub-paths', ()
     auth: { authenticated: true },
     backend: { phase: 'ready' },
     features: { featureFlags: {
-      chat_timeline_render_telemetry: true,
       chat_timeline_streaming_article_morph: true,
     } },
   };
@@ -164,7 +147,6 @@ test('active_turn_root emits timeline_dom_write', () => {
     windowRef: dom.window,
     chatTimeline: dom.window.document.getElementById('timeline'),
     reducedMotionQuery: { matches: false },
-    state: { features: { featureFlags: { chat_timeline_render_telemetry: true } } },
     recordChatTimelineRolloutSignal(sessionId, signal, details) {
       signalCalls.push({ sessionId, signal, details });
       return { logged: true, count: signalCalls.length };
@@ -214,7 +196,6 @@ test('turn_row_list emits timeline_dom_write', () => {
     windowRef: dom.window,
     chatTimeline: timeline,
     reducedMotionQuery: { matches: false },
-    state: { features: { featureFlags: { chat_timeline_render_telemetry: true } } },
     escapeSelectorValue: (value) => String(value || ''),
     recordChatTimelineRolloutSignal(sessionId, signal, details) {
       signalCalls.push({ sessionId, signal, details });

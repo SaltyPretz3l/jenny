@@ -278,10 +278,11 @@ def _try_fallback(
     system_prompt: Any,
     tool_schemas: list[dict[str, Any]],
     runtime: Any | None,
+    attempt_event_types: set[str],
 ) -> tuple[GenerationResult, set[str]] | None:
     if not kernel._config.fallback_models or not _is_fallback_eligible(error):
         return None
-    return attempt_fallback_generation(
+    fallback_result = attempt_fallback_generation(
         kernel,
         original_error=error,
         latest_user_content=latest_user_content,
@@ -292,6 +293,11 @@ def _try_fallback(
         tool_schemas=tool_schemas,
         runtime=runtime,
     )
+    if fallback_result is not None and runtime is not None and runtime.streaming:
+        _reset_stream_before_provider_retry(
+            runtime, attempt_event_types, fallback_result[1],
+        )
+    return fallback_result
 
 
 def generate_step(
@@ -438,6 +444,7 @@ def generate_step(
             system_prompt=system_prompt,
             tool_schemas=tool_schemas,
             runtime=runtime,
+            attempt_event_types=attempt_stream_event_types,
         )
         if fallback_result is not None:
             return fallback_result
@@ -485,6 +492,7 @@ def generate_step(
             system_prompt=system_prompt,
             tool_schemas=tool_schemas,
             runtime=runtime,
+            attempt_event_types=attempt_stream_event_types,
         )
         if fallback_result is not None:
             return fallback_result

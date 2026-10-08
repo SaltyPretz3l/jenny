@@ -27,8 +27,8 @@ const {
 // Constants
 // ---------------------------------------------------------------------------
 
-test('STORE_SCHEMA_VERSION === 22', () => {
-  assert.equal(STORE_SCHEMA_VERSION, 22);
+test('STORE_SCHEMA_VERSION === 24', () => {
+  assert.equal(STORE_SCHEMA_VERSION, 24);
 });
 
 test('v20 normalizes only the five boolean session tool override keys', () => {
@@ -245,7 +245,7 @@ test('migrateStorePayload from v1 lands on the current schema and adds durable t
     },
   };
   const result = migrateStorePayload(payload);
-  assert.equal(result.schema_version, 22);
+  assert.equal(result.schema_version, 24);
   // 's1' is the session id (self), 'x' appears twice -> deduped to ['x']
   assert.deepEqual(result.sessions.s1.linked_session_ids, ['x']);
   assert.equal(result.sessions.s1.session_incarnation, '');
@@ -262,7 +262,7 @@ test('normalizeStorePayload returns only schema_version and sessions (no extra t
     extra_key: 'should be dropped',
   };
   const result = normalizeStorePayload(payload);
-  assert.equal(result.schema_version, 22);
+  assert.equal(result.schema_version, 24);
   assert.deepEqual(Object.keys(result).sort(), ['schema_version', 'sessions']);
   assert.deepEqual(result.sessions.s1.linked_session_ids, ['x']);
 });
@@ -336,7 +336,7 @@ test('migrateStorePayload from v14 applies durable identity repair and lands on 
     },
   });
 
-  assert.equal(result.schema_version, 22);
+  assert.equal(result.schema_version, 24);
   assert.equal(result.sessions.missing.session_incarnation, '');
   assert.equal(result.sessions.missing.turn_generation, 0);
   assert.equal(result.sessions.valid.session_incarnation, 'inc_existing');

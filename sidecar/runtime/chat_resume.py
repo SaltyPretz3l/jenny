@@ -19,6 +19,7 @@ from sidecar.ai.feature_flags import (
     FEATURE_CANONICAL_TURN_EVENTS,
     is_feature_flag_enabled,
 )
+from sidecar.ai.routing.auto_checkpoint import prepare_resume_restore_point
 from sidecar.ai.routing.iteration_limits import (
     effective_chunk_inactivity_seconds,
     effective_max_loop_wall_seconds,
@@ -37,7 +38,6 @@ from sidecar.ai.routing.tool_resource_deferral import DecisionSuspensionError, T
 from sidecar.ai.tools.assembly import engine_receives_native_tool_schemas
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.plan_artifact_policy import PLAN_ARTIFACT_WRITE_ARG
-from sidecar.ai.tools.tool_actions import effective_side_effecting
 from sidecar.runtime.approval_plan import (
     ApprovalPlan,
     build_effective_args_fingerprint,
@@ -46,6 +46,11 @@ from sidecar.runtime.approval_plan import (
     build_model_identity_fingerprint,
     build_sampling_params_hash,
     build_tool_contract_hash,
+)
+from sidecar.runtime.approval_resume_window import (  # noqa: F401 - re-exported by chat.py
+    _approval_resume_call_window,
+    _approval_resume_descriptor,
+    approved_call,
 )
 from sidecar.runtime.chat_decision_render import _chat_response_from_decision
 from sidecar.runtime.chat_helpers import notification_context
@@ -181,70 +186,6 @@ def _approval_audit_metadata_map(
             "approval_injected_arg_keys": audit_injected_arg_keys,
         }
     return metadata_by_call
-
-
-def _approval_resume_descriptor(
-    *,
-    kernel: Any,
-    tool_contract: Any | None,
-    call: Any,
-) -> Any | None:
-    entry_lookup = getattr(tool_contract, "entry", None)
-    entry = entry_lookup(call.tool_id) if callable(entry_lookup) else None
-    if entry is not None:
-        return entry.descriptor
-    mcp_client = getattr(kernel, "_mcp_client", None)
-    descriptor_lookup = getattr(mcp_client, "tool_descriptor", None)
-    if callable(descriptor_lookup):
-        return descriptor_lookup(call.tool_id)
-    return None
-
-
-def _approval_resume_call_window(
-    plan: ApprovalPlan,
-    *,
-    kernel: Any,
-    tool_contract: Any | None,
-) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
-    """Return ``(selected, dropped)`` calls for the approved execution window.
-
-    ``dropped`` carries every plan call that this resume will NOT execute even
-    though the whole batch was already reserved against the turn tool budget:
-    earlier side-effecting calls, earlier calls with no descriptor, and every
-    call after the approved one. Callers must settle them explicitly -- a silent
-    discard leaves the budget debited for work that never ran.
-    """
-
-    approved_call_id = str(plan.approved_call_id or plan.call_id or "").strip()
-    selected: list[Any] = []
-    dropped: list[Any] = []
-    for index, call in enumerate(plan.tool_calls):
-        call_id = str(getattr(call, "call_id", "") or "").strip()
-        if approved_call_id and call_id == approved_call_id:
-            selected.append(call)
-            dropped.extend(plan.tool_calls[index + 1 :])
-            return tuple(selected), tuple(dropped)
-        descriptor = _approval_resume_descriptor(
-            kernel=kernel,
-            tool_contract=tool_contract,
-            call=call,
-        )
-        if descriptor is not None and not bool(
-            effective_side_effecting(descriptor, getattr(call, "arguments", {}) or {})
-        ):
-            selected.append(call)
-        else:
-            dropped.append(call)
-
-    raise InnerRetryableTurnError(
-        reason="Approved tool call is missing from the cached approval plan.",
-        retry_prompt=(
-            "The approved tool call is no longer present in the frozen tool plan. "
-            "Re-evaluate the request and emit a fresh tool plan."
-        ),
-        terminal_subcode="approval_plan_drift",
-        diagnostic_components=("approved_call",),
-    )
 
 
 def _approval_resume_tool_budget(
@@ -726,6 +667,7 @@ def resume_chat_send_response_from_approval_plan(
             plan,
             kernel=kernel,
             tool_contract=tool_contract,
+            recheck_trailing=True,
         )
         if effective_runtime.quota_registry is not None:
             effective_runtime.quota_registry.validate_pending_admissions(
@@ -741,7 +683,10 @@ def resume_chat_send_response_from_approval_plan(
             working_messages=working_messages,
             iteration_calls=iteration_calls,
             streamed_event_types=streamed_event_types,
-            approved_tool_id=str(getattr(resume_tool_calls[-1], "tool_id", "") or ""),
+            approved_tool_id=str(
+                getattr(approved_call(plan, resume_tool_calls), "tool_id", "") or ""
+            ),
+            window_calls=resume_tool_calls,
         )
         approved_call_id = str(plan.approved_call_id or plan.call_id or "").strip()
         audit_metadata_by_call = _approval_audit_metadata_map(
@@ -777,6 +722,10 @@ def resume_chat_send_response_from_approval_plan(
             ).strip())), ""
         )
         effective_runtime.__dict__["_jenny_change_set_id"] = resumed_change_set_id
+        prepare_resume_restore_point(  # row 34 S5: approved scripted calls name one too
+            effective_runtime, remaining_calls, kernel=kernel, request_id=plan.request_id,
+            session_id=plan.session_id, outcomes=outcomes,
+        )
         bind_run_context(effective_runtime)
         try:
             if remaining_calls:

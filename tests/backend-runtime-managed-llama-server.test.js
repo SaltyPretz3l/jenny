@@ -7,6 +7,23 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { loadModel } = require('../services/backend/backend-runtime');
+const { managedLoadPatch } = require('../services/backend/managed-engine-load');
+
+test('managed load failures carry their cause while a reused server remains unloaded', () => {
+  for (const [state, lastError, expectedCause] of [
+    ['stopped', 'llama_server_exited:1', 'other'],
+    ['crashed', 'llama_server_readiness_timeout', 'timeout'],
+    ['failed', 'failed to allocate memory', 'out_of_memory'],
+    ['ready', '', null],
+  ]) {
+    const service = {};
+    service._modelLifecycle = managedLoadPatch(service, { state: 'starting', alias: 'qwen3:8b' });
+    const patch = managedLoadPatch(service, { state, lastError, reused: state === 'ready' });
+    assert.equal(patch.state, expectedCause ? 'unavailable' : 'unloaded');
+    assert.equal(patch.failure?.cause ?? null, expectedCause);
+    if (expectedCause) assert.equal(patch.failure.model, 'qwen3:8b');
+  }
+});
 
 function makeManagedLlamaLoadService({ managerState = 'ready', managerError = '', ensureState = 'ready',
   enabled = true, perModelEngine = 'llama-server', unloadError = null, fallbackAfterInit = null,

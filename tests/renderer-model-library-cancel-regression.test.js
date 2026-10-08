@@ -54,7 +54,7 @@ test('structured pull-cancellation failure keeps progress subscribed and reports
   };
   const controller = createModelLibrarySectionController({
     state: {
-      features: { featureFlags: { model_management_ui: true } },
+      features: { featureFlags: {} },
       status: { model: '' },
       offline: { preferredLocalModel: '' },
       ui: { activeSettingsSection: 'models' },

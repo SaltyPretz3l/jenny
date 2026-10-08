@@ -240,7 +240,9 @@ def test_tool_catalog_includes_knowledge_descriptors() -> None:
         assert descriptor.availability.workspace_required is False
         assert descriptor.read_only is True
         assert descriptor.side_effecting is False
-    assert search.input_schema["required"] == ["pattern"]
+    # pattern (regex), query (by meaning) or both; the handler requires one.
+    assert search.input_schema["required"] == []
+    assert {"pattern", "query"} <= set(search.input_schema["properties"])
     assert view.input_schema["required"] == ["path"]
     assert exec_descriptor.input_schema["required"] == ["op"]
     assert exec_descriptor.input_schema["properties"]["op"]["enum"] == [

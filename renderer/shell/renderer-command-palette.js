@@ -183,14 +183,7 @@
     const {
       appendClientLog = function noopLog() {},
       showToastMessage = function noopToast() {},
-      escapeHtml = function fallbackEscape(value) {
-        return String(value || '')
-          .replaceAll('&', '&amp;')
-          .replaceAll('<', '&lt;')
-          .replaceAll('>', '&gt;')
-          .replaceAll('"', '&quot;')
-          .replaceAll("'", '&#39;');
-      },
+      escapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml,
     } = callbacks;
 
     const OVERLAY_ID = COMMAND_PALETTE_OVERLAY_ID;

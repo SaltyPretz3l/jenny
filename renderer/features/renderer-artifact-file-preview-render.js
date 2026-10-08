@@ -69,11 +69,7 @@
     ? inventoryActionButton
     : function unavailableActionButton() { return ''; };
 
-  function defaultEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  }
+  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function escaperFrom(options) {
     return typeof options?.escapeHtml === 'function' ? options.escapeHtml : defaultEscapeHtml;

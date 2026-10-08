@@ -11,12 +11,14 @@ const {
 
 const { RUNTIME_LEASE_OPERATIONS, RUNTIME_GLOBAL_MUTATIONS, RUNTIME_OPERATIONS,
   createRuntimeCommandDispatcher, submissionKey } = require('../services/host/runtime-commands');
+const { SUGGESTED_MUTATIONS, SUGGESTED_OPERATIONS,
+  createSuggestedChangesCommandDispatcher } = require('../services/host/suggested-changes-commands');
 
 const LEASE_OPERATIONS = new Set([
   ...RUNTIME_LEASE_OPERATIONS,
   'sessions.rename', 'sessions.delete', 'sessions.preferences', 'chat.send',
   'chat.cancel', 'approval.resolve', 'questions.answer', 'questions.decline',
-  ...PROJECT_LEASE_OPERATIONS,
+  ...PROJECT_LEASE_OPERATIONS, ...SUGGESTED_MUTATIONS,
 ]);
 const MAX_SESSIONS = 10_000;
 const TERMINAL_STREAM_TYPES = new Set(['complete', 'error', 'cancelled', 'canceled', 'failed']);
@@ -120,6 +122,9 @@ function createCommandRouter({
     authorization: { identity, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority, assertPostAwaitIdentity },
     transaction: { runReceipt }, result: { bumpRevision, publish, trustedChatOptions },
   });
+  const suggestedDispatcher = createSuggestedChangesCommandDispatcher({ getService: () => backend.suggestedChanges || null,
+    authorization: { identity, mutationGuard, assertMutationAuthority, assertPostAwaitAuthority },
+    transaction: { runReceipt }, result: { bumpRevision, publish } });
 
   function currentRevision(sessionId) {
     const value = revisions.get(sessionId);
@@ -372,7 +377,8 @@ function createCommandRouter({
     const failure = mutationGuard(command, context); if (failure) return failure;
     return runReceipt(command, context, async () => {
       assertMutationAuthority(command, context);
-      const value = await backend.setSessionPreferences(command.session_id, { plan_mode: command.params.plan_mode });
+      // Only the given keys change: entering Propose leaves plan_mode alone.
+      const value = await backend.setSessionPreferences(command.session_id, { ...command.params });
       assertPostAwaitAuthority(command, context);
       const session = safeSession(unwrapData(value));
       if (!session) return hostFailure('persistence', 'session_preferences_failed', command.request_id);
@@ -543,6 +549,7 @@ function createCommandRouter({
       }
       if (RUNTIME_OPERATIONS.has(command.operation)) return runtimeDispatcher.dispatch(command, context);
       if (PROJECT_OPERATIONS.has(command.operation)) return projectDispatcher.dispatch(command, context);
+      if (SUGGESTED_OPERATIONS.has(command.operation)) return suggestedDispatcher.dispatch(command, context);
       switch (command.operation) {
         case 'sessions.list': return listSessions(command);
         case 'requests.status': return receipts.status(command.params.request_id, context.deviceId);

@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "id": "embeddinggemma",
+      "label": "EmbeddingGemma",
+      "match": { "architectures": ["gemma-embedding"], "namePatterns": ["embeddinggemma"] },
+      "query": "task: search result | query: {text}",
+      "document": "title: {title} | text: {text}",
+      "dims": [768, 512, 256, 128],
+      "defaultDims": 256
+    },
+    {
+      "id": "nomic",
+      "label": "Nomic Embed",
+      "match": { "architectures": ["nomic-bert", "nomic-bert-moe"], "namePatterns": ["nomic-embed"] },
+      "query": "search_query: {text}",
+      "document": "search_document: {text}",
+      "dims": []
+    },
+    {
+      "id": "e5",
+      "label": "E5",
+      "match": { "architectures": [], "namePatterns": ["(^|[^a-z])e5([^a-z]|$)"] },
+      "query": "query: {text}",
+      "document": "passage: {text}",
+      "dims": []
+    },
+    {
+      "id": "bge",
+      "label": "BGE",
+      "match": { "architectures": [], "namePatterns": ["bge"] },
+      "query": "Represent this sentence for searching relevant passages: {text}",
+      "document": "{text}",
+      "dims": []
+    },
+    {
+      "id": "qwen3-embedding",
+      "label": "Qwen3 Embedding",
+      "match": { "architectures": [], "namePatterns": ["qwen3-embedding"] },
+      "query": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: {text}",
+      "document": "{text}",
+      "dims": []
+    },
+    {
+      "id": "none",
+      "label": "No prompt",
+      "match": { "architectures": [], "namePatterns": [] },
+      "query": "{text}",
+      "document": "{text}",
+      "dims": []
+    }
+  ]
+}

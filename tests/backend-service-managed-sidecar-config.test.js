@@ -181,7 +181,7 @@ test('managed sidecar config forwards internal MCP resource flag default-off', a
   assert.equal(enabledConfig.tools_mcp_resources_enabled, true);
 });
 
-test('managed sidecar config threads mcp_http_transport flag into mcpDiscoveryService.getSidecarConfig', async () => {
+test('managed sidecar config merges the mcpDiscoveryService.getSidecarConfig result', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-managed-mcp-http-transport-config-'));
   trackDirectory(userDataPath);
 
@@ -194,22 +194,40 @@ test('managed sidecar config threads mcp_http_transport flag into mcpDiscoverySe
     defaultModel: DEFAULT_MANAGED_SHELL_MODEL,
   });
   service.mcpDiscoveryService = {
-    getSidecarConfig(arg) {
-      capturedArgs.push(arg);
-      return {};
+    getSidecarConfig(...args) {
+      capturedArgs.push(args);
+      return { mcp_sse_enabled: true };
     },
   };
 
-  buildManagedSidecarConfig(service);
-  service.featureFlags = {
-    ...(service.featureFlags || {}),
-    mcp_http_transport: true,
-  };
-  buildManagedSidecarConfig(service);
+  const config = buildManagedSidecarConfig(service);
 
-  assert.equal(capturedArgs.length, 2);
-  assert.deepEqual(capturedArgs[0], { httpTransportEnabled: false });
-  assert.deepEqual(capturedArgs[1], { httpTransportEnabled: true });
+  assert.deepEqual(capturedArgs, [[]]);
+  assert.equal(config.mcp_sse_enabled, true);
+});
+
+test('managed sidecar config and secrets carry the semantic catalog contribution (row 41)', async () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-managed-semantic-catalog-'));
+  trackDirectory(userDataPath);
+  const service = new BackendService({
+    userDataPath,
+    repoRoot: process.cwd(),
+    pythonExecutable: process.execPath,
+    safeStorage: createFakeSafeStorage(),
+    defaultModel: DEFAULT_MANAGED_SHELL_MODEL,
+  });
+  assert.equal(buildManagedSidecarConfig(service).semantic_catalog, undefined);
+  assert.equal(buildManagedSidecarSecrets(service).semantic_catalog_api_key, undefined);
+
+  service.semanticCatalogService = {
+    getSidecarConfig: () => ({ semantic_catalog: { enabled: true, base_url: 'http://127.0.0.1:50123/v1' } }),
+    getSidecarSecrets: () => ({ semantic_catalog_api_key: 'a'.repeat(32) }),
+  };
+  assert.deepEqual(buildManagedSidecarConfig(service).semantic_catalog, {
+    enabled: true,
+    base_url: 'http://127.0.0.1:50123/v1',
+  });
+  assert.equal(buildManagedSidecarSecrets(service).semantic_catalog_api_key, 'a'.repeat(32));
 });
 
 test('managed sidecar config resolves a bearer secret_ref into auth.token and drops secret_ref', async () => {

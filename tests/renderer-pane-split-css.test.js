@@ -394,3 +394,10 @@ test('gate §C: with two panes the toast stack starts below the pane kicker row,
     top: 'var(--toast-split-top, calc(var(--titlebar-height) + var(--space-8) + 32px))',
   });
 });
+
+test('the empty-chat hero fits a narrow split pane: the stage track shrinks, so the stack max-width caps it', () => {
+  const stage = read('styles/chat-thread.css').match(/\n\.hero-stage \{([^}]*)\}/)[1];
+  assert.match(stage, /grid-template-columns: minmax\(0, 1fr\);/);
+  const stack = read('styles/chat-thread.css').match(/\n\.hero-stack \{([^}]*)\}/)[1];
+  assert.match(stack, /max-width: 100%;/);
+});

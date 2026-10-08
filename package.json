@@ -1,6 +1,6 @@
 {
   "name": "jenny",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "private": true,
   "license": "MIT",
   "author": "Jenny Project",
@@ -40,7 +40,6 @@
     "build:preload": "node scripts/build/build-preload.js",
     "build:preload:force": "node scripts/build/build-preload.js --force",
     "build:sidecar": "python scripts/packaging/build_sidecar_artifact.py",
-    "plugin:validate": "node scripts/plugins/validate-plugin.mjs",
     "pack:dir": "npm run build:preload && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --dir --config electron-builder.yml --publish never",
     "pack:release": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --config electron-builder.yml --publish never",
     "pack:linux": "npm run build:preload:force && npm run check:python-runtime-bundle && npm run check:media-site && npm run build:sidecar && npm run sbom:sidecar && npm exec -- electron-builder --linux --config electron-builder.yml --publish never",

@@ -47,6 +47,7 @@ from sidecar.ai.config_parsing import (
     _parse_mcp_servers,
     codex_cli_unavailable_reason,  # noqa: F401  (re-exported for backward-compat imports)
     normalize_chatgpt_model_catalog,
+    parse_semantic_catalog_config,
 )
 from sidecar.ai.execution_policy import (
     desktop_policy_from_config,
@@ -72,7 +73,9 @@ _DEFAULT_MAX_OUTPUT_TOKENS = 16384
 # payload still carry them, so they load silently instead of tripping the
 # unknown-key WARN on every config load. Drop an entry once nothing sends it.
 _RETIRED_TOP_LEVEL_KEYS: frozenset[str] = frozenset({"tools_subagent_batch_enabled"})
-_KNOWN_TOP_LEVEL_KEYS: frozenset[str] = _RETIRED_TOP_LEVEL_KEYS | frozenset(
+# Secret raw keys folded into a nested RuntimeConfig field rather than their own.
+_NESTED_SECRET_KEYS: frozenset[str] = frozenset({"semantic_catalog_api_key"})
+_KNOWN_TOP_LEVEL_KEYS: frozenset[str] = _RETIRED_TOP_LEVEL_KEYS | _NESTED_SECRET_KEYS | frozenset(
     f.name for f in fields(RuntimeConfig) if not f.name.startswith("resolved_app_profile_")
 )
 
@@ -531,6 +534,10 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         raw_config.get("tools_task_board_enabled"),
         default=False,
     )
+    tools_project_notes_enabled = _as_bool(
+        raw_config.get("tools_project_notes_enabled"),
+        default=False,
+    )
     tools_rich_files_enabled = _as_bool(
         raw_config.get("tools_rich_files_enabled"),
         default=True,
@@ -540,6 +547,9 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         default=False,
     )
     knowledge_roots = _normalize_knowledge_roots(raw_config.get("knowledge_roots"))
+    semantic_catalog = parse_semantic_catalog_config(
+        raw_config.get("semantic_catalog"), api_key=raw_config.get("semantic_catalog_api_key")
+    )
     tool_policy_snapshot = _normalize_tool_policy_snapshot(raw_config.get("tool_policy_snapshot"))
     tools_shell_enabled = _as_bool(raw_config.get("tools_shell_enabled"), default=False)
     tools_confirm_side_effects = _as_bool(
@@ -818,9 +828,11 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         tools_image_generate_enabled=tools_image_generate_enabled,
         tools_home_enabled=tools_home_enabled,
         tools_task_board_enabled=tools_task_board_enabled,
+        tools_project_notes_enabled=tools_project_notes_enabled,
         tools_rich_files_enabled=tools_rich_files_enabled,
         tools_knowledge_enabled=tools_knowledge_enabled,
         knowledge_roots=knowledge_roots,
+        semantic_catalog=semantic_catalog,
         tool_policy_snapshot=tool_policy_snapshot,
         tools_shell_enabled=tools_shell_enabled,
         tools_confirm_side_effects=tools_confirm_side_effects,

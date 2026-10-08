@@ -17,6 +17,7 @@ const {
   readPidFile,
   resolveProjectorPath,
   startLlamaServer,
+  sweepStaleApiKeyFiles,
 } = require('../services/llama-server-lifecycle');
 const { cleanupTrackedResources } = require('./helpers/resource-cleanup');
 const {
@@ -294,4 +295,128 @@ test('a launch sweeps key files a dead main process left behind', async () => {
   assert.equal(fs.existsSync(stale), false, 'stale per-launch key is swept');
   assert.equal(fs.existsSync(path.join(userDataPath, 'unrelated.key')), true, 'only llama-server-*.key files are touched');
   assert.deepEqual(fs.readdirSync(userDataPath).filter((name) => /^llama-server-.*\.key$/.test(name)), []);
+});
+
+test('a prefixed launch writes its own key file and pid record and never sweeps another prefix', async () => {
+  const userDataPath = makeUserDataDir('jenny-llama-key-prefix-');
+  const chatKey = path.join(userDataPath, 'llama-server-0badf00d.key');
+  const staleEmbeddingKey = path.join(userDataPath, 'embedding-server-deadbeef.key');
+  fs.writeFileSync(chatKey, 'chat-secret\n');
+  fs.writeFileSync(staleEmbeddingKey, 'stale-secret\n');
+  const port = await getClosedPort();
+  let keyName = '';
+  let pidAtSpawn = 0;
+  await assert.rejects(
+    startLlamaServer({
+      modelTag: 'jenny-embedding',
+      binaryPath: path.join(userDataPath, 'llama-server.exe'),
+      modelPath: path.join(userDataPath, 'embed.gguf'),
+      userDataPath,
+      port,
+      adopt: false,
+      pidFileName: 'embedding-server.pid',
+      apiKeyFilePrefix: 'embedding-server',
+      readinessTimeoutMs: 1,
+      readinessPollIntervalMs: 1,
+      platform: 'win32',
+      spawnImpl: (_command, args) => {
+        keyName = path.basename(args[args.indexOf('--api-key-file') + 1]);
+        const child = new FakeChildProcess(42006);
+        setImmediate(() => {
+          pidAtSpawn = readPidFile(path.join(userDataPath, 'embedding-server.pid')).pid;
+        });
+        return child;
+      },
+      spawnSyncImpl: () => ({ status: 0 }),
+      isProcessAliveImpl: () => false,
+    }),
+    /llama_server_readiness_timeout/
+  );
+  assert.match(keyName, /^embedding-server-[0-9a-f]{8}\.key$/);
+  assert.equal(pidAtSpawn, 42006, 'the record lands in the named pid file');
+  assert.equal(fs.existsSync(path.join(userDataPath, PID_FILENAME)), false, 'the chat record is untouched');
+  assert.equal(fs.existsSync(staleEmbeddingKey), false, 'its own stale key is swept');
+  assert.equal(fs.existsSync(chatKey), true, 'the chat server key is never swept by another prefix');
+});
+
+test('the default sweep leaves another prefix\'s key files alone', () => {
+  const userDataPath = makeUserDataDir('jenny-llama-key-default-sweep-');
+  for (const name of ['llama-server-deadbeef.key', 'embedding-server-deadbeef.key', 'llama-server-deadbeef.keyx']) {
+    fs.writeFileSync(path.join(userDataPath, name), 'x\n');
+  }
+  sweepStaleApiKeyFiles(userDataPath);
+  assert.deepEqual(fs.readdirSync(userDataPath).sort(), ['embedding-server-deadbeef.key', 'llama-server-deadbeef.keyx']);
+  sweepStaleApiKeyFiles(userDataPath, fs, 'Bad Prefix');
+  sweepStaleApiKeyFiles(userDataPath, fs, 'embedding-server');
+  assert.deepEqual(fs.readdirSync(userDataPath), ['llama-server-deadbeef.keyx']);
+});
+
+test('an invalid key-file prefix fails before anything is spawned', async () => {
+  const userDataPath = makeUserDataDir('jenny-llama-key-prefix-invalid-');
+  for (const apiKeyFilePrefix of ['', 'ab', 'Embedding', '../escape', '9lives', 'a'.repeat(33), 42]) {
+    await assert.rejects(
+      startLlamaServer({
+        modelTag: 'jenny-embedding',
+        modelPath: path.join(userDataPath, 'embed.gguf'),
+        userDataPath,
+        apiKeyFilePrefix,
+        spawnImpl: () => assert.fail('must not spawn'),
+      }),
+      { message: 'llama_server_key_prefix_invalid' }
+    );
+  }
+});
+
+test('an unauthenticated launch passes no key args, writes and sweeps no key file, and probes unkeyed', async () => {
+  const userDataPath = makeUserDataDir('jenny-llama-unkeyed-');
+  const strayKey = path.join(userDataPath, 'llama-server-deadbeef.key');
+  fs.writeFileSync(strayKey, 'chat-secret\n');
+  const child = new FakeChildProcess(42007);
+  const authorization = [];
+  const spawnArgs = [];
+  let keyFilesAtSpawn = null;
+  const server = http.createServer((request, response) => {
+    authorization.push(request.headers.authorization);
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({ object: 'list', data: [{ id: 'jenny-embedding' }] }));
+  });
+  const baseUrl = await listen(server);
+  await closeServer(server);
+  const port = Number(new URL(baseUrl).port);
+  try {
+    const handle = await startLlamaServer({
+      modelTag: 'jenny-embedding',
+      binaryPath: path.join(userDataPath, 'llama-server.exe'),
+      modelPath: path.join(userDataPath, 'embed.gguf'),
+      userDataPath,
+      port,
+      adopt: false,
+      authenticate: false,
+      pidFileName: 'embedding-server.pid',
+      readinessTimeoutMs: 2000,
+      readinessPollIntervalMs: 1,
+      platform: 'win32',
+      spawnImpl: (_command, args) => {
+        spawnArgs.push(...args);
+        keyFilesAtSpawn = fs.readdirSync(userDataPath).filter((name) => name.endsWith('.key'));
+        // The "server" starts listening only once spawned (adopt is off).
+        server.listen(port, '127.0.0.1');
+        return child;
+      },
+      spawnSyncImpl: () => ({ status: 0 }),
+      isProcessAliveImpl: () => false,
+    });
+    assert.equal(handle.apiKey, '');
+    assert.equal(spawnArgs.includes('--api-key-file'), false);
+    assert.equal(spawnArgs.includes('--api-key'), false);
+    assert.equal(spawnArgs.includes('--no-slots'), false);
+    assert.deepEqual(keyFilesAtSpawn, ['llama-server-deadbeef.key'], 'no key file is written');
+    assert.equal(fs.existsSync(strayKey), true, 'no sweep runs for an unkeyed launch');
+    assert.ok(authorization.length >= 1);
+    assert.ok(authorization.every((value) => value === undefined), 'readiness sends no key');
+    assert.equal(readPidFile(path.join(userDataPath, 'embedding-server.pid')).pid, 42007);
+    assert.deepEqual(await handle.stop(), { confirmed: true });
+  } finally {
+    if (server.listening) await closeServer(server);
+  }
 });

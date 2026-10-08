@@ -37,6 +37,18 @@ test('pending plan renders as an expanded first-class document with safe markup'
   assert.equal(markup.includes('<details'), false);
 });
 
+test('model-written plan text takes its own direction inside an RTL interface', () => {
+  const markup = documentUi.fullDocumentMarkup({
+    plan_id: 'p', tool_call_id: 'call', title: 'Add mul3', summary: 'Summary.',
+    steps: ['Insert mul3.', 'Export it.'], notes: 'Note.', verification: 'Run tests.',
+    files_read: [], state: 'pending',
+  }, { renderMarkdown: (text) => `<p>${text}</p>` });
+  const doc = new JSDOM(`<body dir="rtl">${markup}</body>`).window.document;
+  const texts = doc.querySelectorAll('.plan-document__title, .plan-document__summary, [data-plan-step-text], .plan-document__notes, .plan-document__verification p');
+  assert.equal(texts.length, 6);
+  for (const node of texts) assert.equal(node.getAttribute('dir'), 'auto', node.className || node.tagName);
+});
+
 test('terminal and legacy plans render as collapsed inert receipts', () => {
   const approved = documentUi.fullDocumentMarkup({
     title: 'Done', steps: ['A'], state: 'approved', plan_edited: true,

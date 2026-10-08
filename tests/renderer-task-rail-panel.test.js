@@ -2,120 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
-
-function row(id, title, overrides = {}) {
-  return {
-    id: `followup:${id}`,
-    followUpId: id,
-    title,
-    body: `${title} notes`,
-    status: 'active',
-    sessionId: 'origin-session',
-    sessionTitle: 'Origin chat',
-    sourceKind: 'agent_task',
-    sourceBadge: 'Agent task',
-    actions: [],
-    isDue: false,
-    timingLabel: '',
-    ...overrides,
-  };
-}
-
-function companionState(board = {}) {
-  const active = board.active || [];
-  const deferred = board.deferred || [];
-  const recentResolved = board.recentResolved || [];
-  const archived = board.archived || [];
-  const toFollowUp = (entry, section) => ({
-    id: entry.followUpId,
-    label: entry.title,
-    body: entry.body,
-    status: section === 'active' ? 'active' : section === 'deferred' ? 'deferred' : 'resolved',
-    sessionId: entry.sessionId,
-    sourceKind: entry.sourceKind,
-    sourceMeta: { sessionTitle: entry.sessionTitle },
-    createdAt: '2026-03-19T10:00:00.000Z',
-    updatedAt: '2026-03-19T11:00:00.000Z',
-    deferredUntil: section === 'deferred' ? '2026-03-20T09:00:00.000Z' : '',
-    deferPreset: section === 'deferred' ? 'tomorrow' : '',
-    resolvedAt: section === 'recentResolved' || section === 'archived' ? '2026-03-19T11:30:00.000Z' : '',
-    archivedAt: section === 'archived' ? '2026-03-19T11:45:00.000Z' : '',
-  });
-  return {
-    loaded: true,
-    followUps: [
-      ...active.map((entry) => toFollowUp(entry, 'active')),
-      ...deferred.map((entry) => toFollowUp(entry, 'deferred')),
-      ...recentResolved.map((entry) => toFollowUp(entry, 'recentResolved')),
-      ...archived.map((entry) => toFollowUp(entry, 'archived')),
-    ],
-    openLoopsBoard: {
-      active,
-      deferred,
-      recentResolved,
-      archived,
-    },
-  };
-}
-
-function bootOptions(board, overrides = {}) {
-  return {
-    windowInnerWidth: 1600,
-    windowInnerHeight: 900,
-    persistedActiveView: 'chat',
-    shell: {
-      companion: { state: companionState(board) },
-      features: { state: { featureFlags: { tools_task_board_enabled: true } } },
-    },
-    ...overrides,
-  };
-}
-
-function stubWorkspaceLayout(doc, width = 1600) {
-  const workspace = doc.getElementById('workspace');
-  workspace.getBoundingClientRect = () => ({ width, height: 900, top: 0, left: 0, right: width, bottom: 900, x: 0, y: 0 });
-}
-
-async function boot(board = {}, overrides = {}) {
-  const app = await loadRendererApp(bootOptions(board, overrides));
-  const { window } = app;
-  stubWorkspaceLayout(window.document, Number(overrides.workspaceWidth || 1600));
-  window.document.getElementById('newChatButton').click();
-  await waitForUi(window, 30);
-  return app;
-}
-
-async function openTasks(app) {
-  const { window } = app;
-  const toggle = window.document.getElementById('chatTimelineTasksToggle');
-  assert.ok(toggle, 'task toggle should be installed after feature hydration');
-  toggle.click();
-  await waitForUi(window, 20);
-  return window.document.getElementById('artifactReviewPanel');
-}
-
-function checklistMessage(items, timestamp = '2026-09-21T10:00:00.000Z') {
-  return {
-    kind: 'tool_result',
-    timestamp,
-    tool_result: {
-      tool_name: 'todo_write',
-      output_text: JSON.stringify({ count: items.length, todos: items }),
-      is_error: false,
-      error_code: '',
-    },
-  };
-}
-
-function setSessionChecklist(app, sessionId, items, timestamp) {
-  app.window.__rendererState.messagesBySession.set(sessionId, [checklistMessage(items, timestamp)]);
-}
-
-function menuItem(app, label) {
-  return Array.from(app.window.document.querySelectorAll('.inv-context-menu-item'))
-    .find((button) => button.textContent.includes(label));
-}
+const {
+  loadRendererApp, waitForUi, row, companionState, bootOptions, stubWorkspaceLayout,
+  checklistMessage, setSessionChecklist, menuItem,
+  boot, openTasks,
+} = require('./helpers/task-rail-panel-fixture');
 
 test('toggle opens tasks mode with rail layout and narrow overlay behavior', async (t) => {
   const app = await boot({ active: [row('open-1', 'Open one')] });
@@ -284,6 +175,36 @@ test('starts linked sessions and recognizes an existing linked session', async (
   panel.querySelector('[data-action="task-rail-overflow"]').click();
   assert.ok(menuItem(app, 'Open session'));
   assert.equal(menuItem(app, 'Start a session'), undefined);
+});
+
+test('starting a session passes the task project and omits it for a project-less task', async (t) => {
+  const app = await boot({
+    active: [
+      row('task-proj', 'Project work', { projectId: 'project_abc' }),
+      row('task-bare', 'Bare work', { projectId: '' }),
+    ],
+  });
+  t.after(() => app.dispose());
+  const panel = await openTasks(app);
+  // Unstamped and other-project tasks only show under All projects.
+  app.window.__rendererState.ui.taskRail.scope = 'all';
+  const calls = [];
+  app.window.rendererTaskSessionActions = { start: async (payload) => { calls.push(payload); } };
+  // The renderer companion normalizer (outside this slice) does not carry projectId yet, so seed it on the board entry.
+  app.window.__rendererState.companion.openLoopsBoard.active
+    .find((entry) => entry.followUpId === 'task-proj').projectId = 'project_abc';
+  app.window.rendererTaskRailActions.open();
+  await waitForUi(app.window, 10);
+  for (const taskId of ['task-proj', 'task-bare']) {
+    panel.querySelector(`[data-action="task-rail-overflow"][data-task-id="${taskId}"]`).click();
+    menuItem(app, 'Start a session').click();
+    await new Promise((resolve) => setImmediate(resolve));
+    await waitForUi(app.window, 5);
+  }
+  const withProject = calls.find((call) => call.linkedTaskId === 'task-proj');
+  const bare = calls.find((call) => call.linkedTaskId === 'task-bare');
+  assert.equal(withProject.projectId, 'project_abc');
+  assert.equal(Object.hasOwn(bare, 'projectId'), false);
 });
 
 test('send list composes open tasks only', async (t) => {

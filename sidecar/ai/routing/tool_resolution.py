@@ -157,15 +157,12 @@ def _catalog_for_kernel(
 ) -> tuple[Any, ...]:
     effective_config = config if config is not None else kernel._config
     runtime_descriptors = tuple(getattr(kernel._mcp_client, "available_tools", ()) or ())
-    plugin_provider = getattr(kernel, "_plugin_runtime_tool_provider", None)
-    plugin_descriptors = tuple(plugin_provider() or ()) if callable(plugin_provider) else ()
     return build_tool_catalog(
         config=effective_config,
         runtime_descriptors=(
             *runtime_descriptors,
             *_electron_bridge_runtime_descriptors(
                 effective_config, runtime_children_enabled=runtime_children_enabled),
-            *plugin_descriptors,
         ),
     )
 
@@ -245,6 +242,7 @@ def _context_from_request(
         engine_supports_inband_tool_calling=engine_supports_inband_tool_calling(kernel),
         mode=request_context.mode,
         plan_mode=request_context.plan_mode,
+        propose_mode=request_context.propose_mode,
         read_only=request_context.read_only,
         tool_preferences=tool_preferences,
         resolution_context=resolution_context,
@@ -276,13 +274,10 @@ def assemble_tool_contract(
     lockdown_disabled_tools = frozenset(
         descriptor.name
         for descriptor in catalog
-        if (
-            descriptor.server_name not in {
-                BUILTIN_MCP_SERVER_NAME,
-                ELECTRON_TOOL_BRIDGE_SERVER_NAME,
-            }
-            or str(descriptor.source_kind or "").startswith("plugin")
-        )
+        if descriptor.server_name not in {
+            BUILTIN_MCP_SERVER_NAME,
+            ELECTRON_TOOL_BRIDGE_SERVER_NAME,
+        }
     )
     return _assemble_tool_contract(
         catalog,

@@ -20,7 +20,6 @@ FEATURE_CHAT_CANCEL = "chat_cancel"
 FEATURE_PHASE_EVENTS = "phase_events"
 FEATURE_CANONICAL_TURN_EVENTS = "canonical_turn_events"
 FEATURE_RESOURCE_DISCIPLINE = "resource_discipline"
-FEATURE_VISION_UNIFIED_TURN = "vision_unified_turn"
 
 
 def normalize_feature_flags(value: Any) -> dict[str, bool]:

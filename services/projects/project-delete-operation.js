@@ -45,6 +45,8 @@ class ProjectDeleteOperation {
   constructor({
     projects, projectStore, sessions, shadow = null, permissions, isSessionBusy, sessionIsBusy,
     knowledge = null, moveMemories = null, journal = null, folderStatus, isCurrentProject, now, fail,
+    onSessionProjectChanged = null,
+    onProjectDeleted = null,
   }) {
     this._projects = projects;
     this._projectStore = projectStore;
@@ -56,6 +58,8 @@ class ProjectDeleteOperation {
     this._knowledge = knowledge;
     this._moveMemories = moveMemories;
     this._journal = journal;
+    this._onSessionProjectChanged = typeof onSessionProjectChanged === 'function' ? onSessionProjectChanged : null;
+    this._onProjectDeleted = typeof onProjectDeleted === 'function' ? onProjectDeleted : null;
     // Projects whose delete is between its record and its return: reconcile
     // leaves them to the delete that owns them.
     this._inFlight = new Set();
@@ -134,6 +138,17 @@ class ProjectDeleteOperation {
         // so its memories still follow it to General.
         if (this._projects.get(projectId)) this._clearRecord(projectId);
         return fail('project_memories_unavailable', { memory_reason: memory.reason, ...undone });
+      }
+    }
+    // Past the point of no return: the project's own data (its notes) goes with it.
+    if (this._onProjectDeleted) {
+      try {
+        const outcome = this._onProjectDeleted(projectId);
+        if (outcome && outcome.ok === false) {
+          this._log('WARN', 'projects.delete_hook_failed', { hook: 'project_deleted', steps: Array.isArray(outcome.failed) ? outcome.failed : [] });
+        }
+      } catch (error) {
+        this._log('WARN', 'projects.delete_hook_failed', { hook: 'project_deleted', message: error?.message || String(error) });
       }
     }
     const droppedGrants = this._dropProjectGrants(projectId);
@@ -303,13 +318,21 @@ class ProjectDeleteOperation {
   }
 
   _assignDurably(sessionId, projectId) {
-    return assignSessionProjectDurably({
+    const result = assignSessionProjectDurably({
       sessionStore: this._sessions,
       shadowStore: this._shadow,
       sessionId,
       projectId,
       updatedAt: this._now(),
     });
+    if (result?.ok === true && this._onSessionProjectChanged) {
+      try {
+        this._onSessionProjectChanged({ sessionId, projectId });
+      } catch (_error) {
+        // A hook failure never fails or rolls back the move.
+      }
+    }
+    return result;
   }
 
   // Best-effort rollback, newest step first. `moved_sessions` reports the

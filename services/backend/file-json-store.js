@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { notifyWriteMeasured } = require('./session-write-meter');
+const { corruptedReadResult, readFileWithRetry, unreadableReadResult } = require('./file-read-retry');
 const MAX_FLUSH_PASSES = 8;
 
 function buildTempPath(filePath) {
@@ -76,7 +78,11 @@ class FileJsonStore {
     this.filePath = filePath;
     const logger = options && typeof options.logger === 'function' ? options.logger : null;
     this._logger = logger;
+    // Stores of user-authored text keep the unparsable bytes out of every log line.
+    this._redactReadErrors = options?.redactReadErrors === true;
     this._onWriteSettled = typeof options?.onWriteSettled === 'function' ? options.onWriteSettled : null;
+    // Observation-only hook: { bytes, ms, serializeMs, sync } after each successful disk write.
+    this._onWriteMeasured = typeof options?.onWriteMeasured === 'function' ? options.onWriteMeasured : null;
     // High-churn machine-only stores (sessions, the session index, usage
     // history) skip pretty-printing: every rewrite is 20-30% fewer bytes.
     this._jsonIndent = options?.compact === true ? undefined : 2;
@@ -113,8 +119,9 @@ class FileJsonStore {
   }
 
   // Like read(), but reports WHY the default was returned so callers can
-  // distinguish a genuinely missing file from a corrupt/unreadable one
-  // (e.g. to quarantine the bytes instead of treating them as absent).
+  // distinguish a missing file, an `unreadable` one (the read itself failed,
+  // after a brief retry of transient errors) and a `corrupted` one (the bytes
+  // were read and do not parse), e.g. to quarantine only corrupt bytes.
   readWithStatus(defaultValue) {
     if (this.hasPendingWrite() && this._lastUnflushedValue !== undefined) {
       return {
@@ -127,15 +134,9 @@ class FileJsonStore {
         errorMessage: null,
       };
     }
+    let raw;
     try {
-      const raw = fs.readFileSync(this.filePath, 'utf8');
-      return {
-        value: JSON.parse(raw),
-        missing: false,
-        corrupted: false,
-        errorCode: null,
-        errorMessage: null,
-      };
+      raw = readFileWithRetry(this.filePath);
     } catch (error) {
       if (error && error.code === 'ENOENT') {
         return {
@@ -146,30 +147,21 @@ class FileJsonStore {
           errorMessage: error.message || String(error),
         };
       }
-      // File exists but is corrupted or unreadable; surface for diagnostics.
-      try {
-        console.error(`FileJsonStore: failed to read ${this.filePath}: ${error.message}`);
-      } catch (logError) {
-        void logError;
-      }
-      if (this._logger) {
-        try {
-          this._logger('WARN', 'store.corrupted', {
-            filePath: this.filePath,
-            errorCode: error.code || null,
-            errorMessage: error.message || String(error),
-          });
-        } catch (loggerError) {
-          void loggerError;
-        }
-      }
+      // The file exists but could not be read (locked, access denied): that
+      // says nothing about its bytes, so it is `unreadable`, never `corrupted`.
+      return unreadableReadResult(this.filePath, error, defaultValue, this._logger);
+    }
+    try {
       return {
-        value: defaultValue,
+        value: JSON.parse(raw),
         missing: false,
-        corrupted: true,
-        errorCode: (error && error.code) || null,
-        errorMessage: (error && error.message) || String(error),
+        corrupted: false,
+        errorCode: null,
+        errorMessage: null,
       };
+    } catch (error) {
+      // The bytes were read but do not parse; surface for diagnostics.
+      return corruptedReadResult(this.filePath, error, defaultValue, this._logger, { redactMessage: this._redactReadErrors });
     }
   }
 
@@ -501,13 +493,16 @@ class FileJsonStore {
   _writeNow(value) {
     const dir = path.dirname(this.filePath);
     fs.mkdirSync(dir, { recursive: true });
+    const startedAt = performance.now();
     const payload = JSON.stringify(value, null, this._jsonIndent);
+    const serializedAt = performance.now();
     const tempPath = buildTempPath(this.filePath);
     try {
       fs.writeFileSync(tempPath, payload, 'utf8');
       syncFile(tempPath);
       fs.renameSync(tempPath, this.filePath);
       syncDirectory(dir);
+      notifyWriteMeasured(this._onWriteMeasured, payload, startedAt, serializedAt, true);
     } catch (error) {
       try {
         fs.unlinkSync(tempPath);
@@ -523,7 +518,9 @@ class FileJsonStore {
     const dir = path.dirname(this.filePath);
     await fs.promises.mkdir(dir, { recursive: true });
     if (generation !== this._writeGeneration || generation <= this._durableGeneration) return false;
+    const startedAt = performance.now();
     const payload = JSON.stringify(value, null, this._jsonIndent);
+    const serializedAt = performance.now();
     const tempPath = buildTempPath(this.filePath);
     try {
       await fs.promises.writeFile(tempPath, payload, 'utf8');
@@ -544,6 +541,7 @@ class FileJsonStore {
       }
       this._durableGeneration = generation;
       this._failedGeneration = 0;
+      notifyWriteMeasured(this._onWriteMeasured, payload, startedAt, serializedAt, false);
       return true;
     } catch (error) {
       if (generation === this._writeGeneration) {
@@ -585,6 +583,7 @@ class FileJsonStore {
 module.exports = {
   buildTempPath,
   FileJsonStore,
+  syncDirectory,
   syncDirectoryAsync,
   syncFileAsync,
 };

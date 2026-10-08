@@ -75,14 +75,7 @@
       stepModalUtils = {},
     } = modules;
     const {
-      escapeHtml = function fallbackEscapeHtml(value) {
-        return String(value || '')
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#39;');
-      },
+      escapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml,
       appendClientLog = noop,
       noteScrollProgrammaticWrite = noop,
       showToastMessage = noop,
@@ -120,6 +113,8 @@
       buildPersonalityStatusTextModel = noopObj,
       resolvePreferredPersonalityTab = noopStr,
       getTurnViewModelsForActiveSession = noopArr,
+      getSessionMessages = noopArr,
+      getChangesUndoController = noopNull,
       chatInput = null,
       composerOfflineLabel = null,
       homeView = null,
@@ -419,6 +414,8 @@
         toErrorMessage: (...args) => toErrorMessage(...args),
         setActiveView: (...args) => setActiveView(...args),
         getTurnViewModelsForActiveSession: (...args) => getTurnViewModelsForActiveSession(...args),
+        getSessionMessages: (...args) => getSessionMessages(...args),
+        getChangesUndoController: () => getChangesUndoController(),
         activateWorkspaceSession: (...args) => activateWorkspaceSession(...args),
         handleCreateSession: (...args) => handleCreateSessionWithWorkspace(...args),
         syncComposerInputHeight: (...args) => syncComposerInputHeight(...args),
@@ -591,7 +588,6 @@
       }
       try {
         const homeDom = lazyDom.getHomeDom?.() || {};
-        const setupHubEnabled = state?.features?.featureFlags?.setup_hub === true;
         const offlineBridge = windowRef?.jennyShell?.offline || null;
         const featuresBridge = windowRef?.jennyShell?.features || null;
         const persistPreferredModel = (tag) => (offlineBridge && typeof offlineBridge.updateSettings === 'function' ? offlineBridge.updateSettings({ preferredLocalModel: tag }) : Promise.resolve(null));
@@ -610,7 +606,7 @@
             homeSetupModalRoot: documentRef?.getElementById?.('homeSetupModalRoot') || null,
           },
           modules: {
-            setupHub: setupHubEnabled ? setupHubUtils : {},
+            setupHub: setupHubUtils,
             scenes: {
               acknowledgement: setupSceneFactories.acknowledgement,
               workspaceRoot: setupSceneFactories.workspaceRoot,
@@ -624,9 +620,7 @@
                 || globalRef.rendererSetupSceneModelLibrary?.createScene,
               ollamaEngine: setupSceneFactories.ollamaEngine || globalRef.rendererSetupSceneOllamaEngineGate?.createScene,
               capabilities: setupSceneFactories.capabilities,
-              setupHub: setupHubEnabled
-                ? (setupSceneFactories.setupHub || globalRef.rendererSetupSceneSetupHub?.createScene)
-                : undefined,
+              setupHub: setupSceneFactories.setupHub || globalRef.rendererSetupSceneSetupHub?.createScene,
             },
             stepModal: stepModalUtils,
           },
@@ -833,6 +827,7 @@
     const layoutIdeEditorSafe = ideSafe((...args) => ensureIdeController()?.layoutIdeEditor?.(...args));
     const reconcileChatDockHostSafe = () => { try { return ideController?.chatDock?.reconcile?.() === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.reconcile_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } }; // chat render must not construct the IDE controller
     const prepareChatDockSessionTransitionSafe = (...args) => { try { return ideController?.chatDock?.prepareSessionTransition?.(...args) === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.anchor_capture_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } };
+    const revealIdeChangesSafe = (target) => { try { return ideController?.chatDock?.revealChanges?.(target) === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.reveal_changes_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } }; // only a live dock can show it
     const getIdeCommandItemsSafe = ideSafe((...args) => ensureIdeController()?.getIdeCommandItems?.(...args) || []);
     const openIdeHelpOverlaySafe = ideSafe((...args) => openIdeHelpOverlay(...args)); const openIdeChangeDiffSafe = openIdeAfterLoad('openLedgerChangeById'); const openIdeFileAtLineSafe = openIdeAfterLoad('openFileAtLine'); // an explicit user click may construct it
     const clearApprovedMemoryDraftSafe = memorySafe((...args) => clearApprovedMemoryDraft(...args));
@@ -938,7 +933,7 @@
       ensureIdeController, ensureIdeLoaded,
       renderIdeSafe,
       activateIdeSafe,
-      layoutIdeEditorSafe, reconcileChatDockHostSafe, prepareChatDockSessionTransitionSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe,
+      layoutIdeEditorSafe, reconcileChatDockHostSafe, prepareChatDockSessionTransitionSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, revealIdeChangesSafe,
       getIdeCommandItemsSafe,
       openIdeHelpOverlaySafe,
       clearApprovedMemoryDraftSafe,

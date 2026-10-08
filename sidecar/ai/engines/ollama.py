@@ -37,6 +37,7 @@ from sidecar.ai.engines.ollama_metadata import (
 from sidecar.ai.engines.ollama_metadata import (
     resolve_template_diagnostics_payload as _resolve_template_diagnostics_helper,
 )
+from sidecar.ai.engines.ollama_residency import residency_held
 from sidecar.ai.engines.ollama_shared import (
     _DEFAULT_REQUEST_TIMEOUT,
     _HEALTH_TIMEOUT,
@@ -61,6 +62,11 @@ from sidecar.ai.engines.ollama_telemetry import (
 from sidecar.runtime.diagnostics import emit_startup_audit_mark
 from sidecar.runtime.local_engine.contracts import (
     normalize_local_runtime_source,
+)
+from sidecar.runtime.local_engine.load_failure import (
+    clear_ollama_load_failure,
+    record_ollama_load_failure,
+    set_ollama_load_failure_listener,
 )
 from sidecar.runtime.local_engine.messages import (
     merge_consecutive_system_messages as _merge_consecutive_system_messages,  # noqa: F401
@@ -320,6 +326,9 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
     def clear_request_context(self, *, request_id: str | None = None) -> None:
         _clear_shared_request_context(self, request_id=request_id)
 
+    def set_load_failure_listener(self, callback: Callable[[dict[str, Any]], None] | None) -> None:
+        set_ollama_load_failure_listener(self, callback)
+
     def load_model(
         self,
         model_path: str,
@@ -329,6 +338,7 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
         name = str(model_path or "").strip()
         if not name:
             raise ValueError("model_path must not be empty")
+        clear_ollama_load_failure(self)
         try:
             self.model_name = name
             self._tool_calls_enabled = True
@@ -477,6 +487,7 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
                     finally:
                         _post_abort_scope.request = None
                         self._warmup_abort = None
+                    clear_ollama_load_failure(self)
                 duration_ms = int((time.monotonic() - started_at) * 1000)
                 logger.info(
                     "OllamaEngine: warmup complete (model=%s, duration_ms=%d).",
@@ -501,6 +512,7 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
                     duration_ms,
                     error,
                 )
+                record_ollama_load_failure(self, error, name, stop)
                 emit_startup_audit_mark(
                     logger,
                     "warmup-end",
@@ -556,11 +568,14 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
     def _release_residency_claim(self) -> bool:
         """Drop this instance's claim; True when it must issue ``keep_alive: 0``.
 
-        An engine that never claimed (never loaded, or a test double) returns
-        True so eviction stays exactly as eager as it was before refcounting.
+        An engine that never claimed (a failed load, a warmup-only instance, a
+        test double) stays as eager as before refcounting unless another engine
+        holds this model: then the runner is theirs and nothing is evicted.
         """
         claim = getattr(self, "_residency_claim", None)
         self._residency_claim = None
+        if claim is None:
+            return not residency_held(self.host, self.model_name)
         return release_residency(claim)
 
     def unload_model(self, name: str | None = None) -> None:

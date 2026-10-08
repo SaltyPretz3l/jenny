@@ -8,6 +8,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 _WINDOWS_REPARSE_POINT_ATTRIBUTE = 0x400
 
@@ -87,6 +88,12 @@ def read_bounded_context_text(
     """Read one regular UTF-8 file without following workspace links."""
     if max_bytes <= 0:
         return BoundedContextText(None, "invalid_budget")
+    try:
+        relative = Path(os.path.abspath(path)).relative_to(Path(os.path.abspath(authorized_root)))
+        authorized_root = authorized_root.resolve(strict=True)
+        path = authorized_root / relative
+    except (OSError, ValueError):
+        return BoundedContextText(None, "unsafe_path")
     authorized = _authorized_paths(path, authorized_root)
     if authorized is None:
         return BoundedContextText(None, "unsafe_path")
@@ -95,9 +102,13 @@ def read_bounded_context_text(
         expected = resolved_path.stat(follow_symlinks=False)
     except OSError:
         return BoundedContextText(None, "identity_failed")
+    if not stat.S_ISREG(expected.st_mode):
+        # Decided from the stat, before any open: a FIFO would block the open.
+        return BoundedContextText(None, "not_regular_file")
     return _read_regular_utf8_file(
         resolved_path,
         expected=expected,
+        authorized_root=authorized_root,
         max_bytes=max_bytes,
         truncate=truncate,
     )
@@ -107,10 +118,13 @@ def _read_regular_utf8_file(
     path: Path,
     *,
     expected: os.stat_result,
+    authorized_root: Path,
     max_bytes: int,
     truncate: bool,
 ) -> BoundedContextText:
-    read_result = _read_regular_file_bytes(path, expected=expected, max_bytes=max_bytes)
+    read_result = _read_regular_file_bytes(
+        path, expected=expected, authorized_root=authorized_root, max_bytes=max_bytes
+    )
     if isinstance(read_result, BoundedContextText):
         return read_result
     raw, oversized = read_result
@@ -134,6 +148,7 @@ def _read_regular_file_bytes(
     path: Path,
     *,
     expected: os.stat_result,
+    authorized_root: Path,
     max_bytes: int,
 ) -> tuple[bytes, bool] | BoundedContextText:
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -151,6 +166,14 @@ def _read_regular_file_bytes(
             stat.S_IFMT(expected.st_mode),
         ):
             return BoundedContextText(None, "identity_changed")
+        try:
+            from sidecar.ai.tools.builtins import file_state
+
+            file_state.verify_authorized_handle(
+                SimpleNamespace(fileno=lambda: fd), path, authorized_root
+            )
+        except Exception:  # noqa: BLE001 - any containment verification failure must fail closed.
+            return BoundedContextText(None, "unsafe_path")
         chunks: list[bytes] = []
         remaining = max_bytes + 1
         while remaining > 0:

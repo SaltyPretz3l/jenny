@@ -163,18 +163,18 @@ test('the switcher titles the Explorer with the project whose folder is the Work
   assert.equal(switcher.title(), 'Workspace');
 });
 
-test('switcher rows: current project first and checked with chat counts, then New / No folder / Manage', async (t) => {
+test('switcher rows: current project first and checked with chat counts, then No folder / Open folder / Manage (F9)', async (t) => {
   const state = { workspaceRoot: { path: 'D:\\Projects\\Ascend' }, sessions: [{ id: 's1', project_id: 'project_ascend' }, { id: 's2', project_id: 'project_ascend' }, { id: 's3' }] };
   const { switcher } = makeSwitcher(t, { state });
   await switcher.refresh();
   const rows = switcher.switcherRows();
-  assert.deepEqual(rows.map((row) => row.id), ['project_ascend', 'project_budget', 'project_grants', '__new', '__clear', '__manage']);
+  assert.deepEqual(rows.map((row) => row.id), ['project_ascend', 'project_budget', 'project_grants', '__clear', '__new', '__manage']);
   assert.equal(rows[0].selected, true);
   assert.equal(rows[0].count, 2);
   assert.equal(rows[2].danger, true);
   assert.equal(rows[2].detail, 'Locate…', 'a missing folder offers Locate');
   assert.equal(rows[3].separatorBefore, true);
-  assert.equal(rows[4].disabled, false, 'No folder is available while a folder is open');
+  assert.equal(rows[3].disabled, false, 'No folder is available while a folder is open');
   state.workspaceRoot.path = '';
   assert.equal(switcher.switcherRows().find((row) => row.id === '__clear').disabled, true, 'nothing to clear without a folder');
 });

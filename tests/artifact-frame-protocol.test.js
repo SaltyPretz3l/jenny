@@ -154,13 +154,3 @@ test('registerArtifactFramePrivilegedScheme registers standard+secure and nothin
   assert.ok(!('allowServiceWorkers' in privileges));
   assert.equal(registerArtifactFramePrivilegedScheme(null), false, 'fail-soft without a protocol module');
 });
-
-test('privileged scheme registration batches additional schemes into Electron single registration', () => {
-  const calls = [];
-  const additional = { scheme: 'jenny-plugin-view', privileges: { standard: true, secure: true } };
-  assert.equal(registerArtifactFramePrivilegedScheme({
-    registerSchemesAsPrivileged: (schemes) => calls.push(schemes),
-  }, [additional]), true);
-  assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].map((entry) => entry.scheme), ['jenny-artifact', 'jenny-plugin-view']);
-});

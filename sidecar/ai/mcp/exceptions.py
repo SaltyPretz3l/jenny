@@ -15,6 +15,14 @@ from sidecar.ai.error_codes import (  # noqa: F401
     CMP_MCP_TOOL_NOT_FOUND,
 )
 
+# Row 34: user-only change evidence a failed builtin call still produced. It is
+# a typed field, never ``detail``, ``to_metadata()`` or a log line.
+OBSERVED_CHANGES_KEY = "observed_changes"
+MAX_OBSERVED_CHANGES_BYTES = 512 * 1024
+_OBSERVED_CHANGE_TYPES: dict[str, type] = {"diffs": list, "scripted_change_review": dict}
+_CALL_OUTCOMES = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
+_CERTAINTIES = frozenset({"observed_during_call", "background_window"})
+
 
 class MCPError(Exception):
     def __init__(  # noqa: PLR0913 - structured transport certainty fields.
@@ -30,6 +38,7 @@ class MCPError(Exception):
         resource_cleanup: object = None,
         transport_terminated: bool | None = None,
         detail: str | None = None,
+        observed_changes: object = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -59,6 +68,10 @@ class MCPError(Exception):
             dict(resource_cleanup) if response_received and isinstance(resource_cleanup, dict)
             else None
         )
+        # Excluded from ``to_metadata()`` so it never reaches a log.
+        self.observed_changes = (
+            bounded_observed_changes(observed_changes) if self.response_received else None
+        )
 
     def to_metadata(self) -> dict[str, object]:
         metadata: dict[str, object] = {
@@ -82,7 +95,56 @@ _STRUCTURED_ERROR_DATA_KEYS = frozenset({
     "generation_id",
     "completion_status",
     "resource_cleanup",
+    OBSERVED_CHANGES_KEY,
 })
+
+
+def bounded_observed_changes(value: object) -> dict[str, object] | None:
+    """The typed ``diffs``/``scripted_change_review`` payload, or ``None``.
+
+    Only those two keys survive, each with its expected JSON type. A payload
+    over ``MAX_OBSERVED_CHANGES_BYTES`` keeps no diffs: its review is replaced
+    by an ``unavailable`` one that still says the call was observed.
+    """
+    if not isinstance(value, dict):
+        return None
+    payload = {
+        key: item for key, item in value.items()
+        if key in _OBSERVED_CHANGE_TYPES and isinstance(item, _OBSERVED_CHANGE_TYPES[key])
+    }
+    if not payload:
+        return None
+    try:
+        size = len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        return None
+    if size <= MAX_OBSERVED_CHANGES_BYTES:
+        return payload
+    return {"scripted_change_review": _over_limit_review(payload.get("scripted_change_review"))}
+
+
+def _over_limit_review(review: object) -> dict[str, object]:
+    source = review if isinstance(review, dict) else {}
+    outcome = str(source.get("call_outcome") or "")
+    certainty = str(source.get("certainty") or "")
+    # Deferred: the builtins package must not load with this low-level module.
+    from sidecar.ai.tools.builtins.scripted_restore_point import bounded_restore_point
+
+    point = bounded_restore_point(source.get("restore_point"))
+    return {
+        **({"restore_point": point} if point is not None else {}),
+        "schema_version": 1,
+        "state": "unavailable",
+        "reason": "payload_over_limit",
+        "certainty": certainty if certainty in _CERTAINTIES else "observed_during_call",
+        "call_outcome": outcome if outcome in _CALL_OUTCOMES else "failed",
+        "changed_paths": [],
+        "changed_path_count": 0,
+        "diff_count": 0,
+        "summary_only_count": 0,
+        "omitted_count": 0,
+        "coverage": "git_status_paths",
+    }
 
 
 def mcp_error_data_detail(data: object) -> str:

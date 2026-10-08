@@ -37,7 +37,7 @@ test('startSession fits before spawn, spawns measured dims, wires keystrokes and
   assert.equal(order[0], 'fit', 'a fit runs first (measure the host)');
   assert.equal(order.indexOf('spawn'), 1, 'spawn follows the initial fit (fit-then-spawn)');
   assert.ok(order.indexOf('fit') < order.indexOf('spawn'), 'fit precedes spawn');
-  assert.deepEqual(api.calls.spawn[0], { cols: 80, rows: 24 }, 'spawn got measured dims');
+  assert.deepEqual(api.calls.spawn[0], { cols: 80, rows: 24, slot: 1 }, 'spawn got measured dims and the default slot');
   assert.equal(term.opened !== null, true, 'terminal opened onto a mount element');
   assert.equal(panel.isRunning(), true);
 
@@ -355,8 +355,8 @@ test('UIUX-011: a stale marker after a sibling stomps the shared host is detecte
   assert.equal(observers[0].observed, firstMountEl, 'the observer watches the first mount');
   const fitsBefore = fit.fits;
 
-  // Simulate a sibling view (Problems/Run/Test Runner) replacing the SHARED
-  // host's innerHTML the way renderer-ide-bottom-panel.js's other views do.
+  // Simulate a sibling view (Problems/Run/Test Runner) replacing a SHARED
+  // host's innerHTML (a panel's getMountEl may still return a host several views paint into).
   // This destroys the xterm host child WITHOUT touching the JS-property
   // sentinel (__jennyIdePtyMarkup lives on the node object; innerHTML swaps
   // never clear it) — reproducing the UIUX-011 marker mismatch at HEAD.

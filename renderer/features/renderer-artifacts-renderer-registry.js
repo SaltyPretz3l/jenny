@@ -1,6 +1,6 @@
 /**
  * renderer/features/renderer-artifacts-renderer-registry.js – Artifact renderer
- * registry + kind resolver (WS2, gated by artifact_renderer_registry).
+ * registry + kind resolver (WS2).
  *
  * A small extensible dispatch table so the artifact review panel and the
  * Artifacts view render every artifact kind through one seam instead of the
@@ -28,9 +28,6 @@
   const RENDER_KINDS = Object.freeze([
     'mermaid', 'chart', 'code', 'markdown', 'html', 'svg', 'image', 'text',
   ]);
-  const BUILTIN_KIND_SET = new Set(RENDER_KINDS);
-  const PLUGIN_KIND = /^[a-z][a-z0-9_-]{0,63}:[a-z][a-z0-9_.-]{0,63}$/;
-  const pluginRenderers = new Map();
 
   /**
    * First-match kind resolution over a projected artifact. Precedence mirrors
@@ -41,8 +38,6 @@
    */
   function resolveArtifactRenderKind(artifact, deps = {}) {
     if (!artifact || typeof artifact !== 'object') return 'text';
-    const pluginKind = normalizeKind(artifact.pluginArtifactKind || artifact.artifactKind);
-    if (pluginKind.includes(':') && pluginRenderers.has(pluginKind)) return pluginKind;
     const check = (name) => typeof deps[name] === 'function' && deps[name](artifact) === true;
     if (check('isImageArtifact')) return 'image';
     if (check('isGeneratedFile')) {
@@ -97,13 +92,12 @@
 
     function get(kind) {
       const token = normalizeKind(kind);
-      return pluginRenderers.get(token) || renderers.get(token) || null;
+      return renderers.get(token) || null;
     }
 
     function kinds() {
       const listed = new Set(RENDER_KINDS);
       for (const token of renderers.keys()) listed.add(token);
-      for (const token of pluginRenderers.keys()) listed.add(token);
       return [...listed];
     }
 
@@ -115,7 +109,7 @@
      */
     function render(kind, ctx) {
       const token = normalizeKind(kind);
-      const renderKind = pluginRenderers.get(token) || renderers.get(token) || renderers.get('text');
+      const renderKind = renderers.get(token) || renderers.get('text');
       if (typeof renderKind !== 'function') return false;
       try {
         renderKind(ctx);
@@ -133,20 +127,9 @@
     return { register, has, get, kinds, render };
   }
 
-  function registerPluginRenderer(kind, renderKind) {
-    const token = normalizeKind(kind);
-    if (!PLUGIN_KIND.test(token) || BUILTIN_KIND_SET.has(token) || typeof renderKind !== 'function') return false;
-    pluginRenderers.set(token, renderKind);
-    return true;
-  }
-
-  function clearPluginRenderers() { pluginRenderers.clear(); }
-
   return {
     RENDER_KINDS,
     resolveArtifactRenderKind,
     createArtifactRendererRegistry,
-    registerPluginRenderer,
-    clearPluginRenderers,
   };
 });

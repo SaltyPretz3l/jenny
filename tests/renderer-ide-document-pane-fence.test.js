@@ -34,7 +34,7 @@ function harness(t, options = {}) {
   const fallback = documentRef.querySelector('#fallback');
   const host = createIdeEditorHost({
     getDom: () => ({ ideEditorHost: hostEl, ideEditorFallback: fallback }),
-    imageHostUtils: {}, previewHostUtils: {},
+    imageHostUtils: {},
     monacoUtils: { ensureMonacoEditorApi: async () => null },
     ...options,
   });

@@ -24,8 +24,7 @@
  * WIDE-030 (unchanged): scans run through renderer-ide-map-scan-coordinator;
  * stale completions drop; root identity is the CANONICAL rootId; a root
  * commit tears the old root's map down BEFORE the new root's scan; empty/
- * error/no-root results PHYSICALLY clear rendered surfaces. Feature flag
- * `workspace_file_map` off → permanent no-ops, no DOM ever created.
+ * error/no-root results PHYSICALLY clear rendered surfaces.
  *
  * Public: createIdeMapController(deps) → { bindEvents, dispose,
  * syncVisibility, openFileMap, handleWorkspaceRootCommitted,
@@ -109,9 +108,6 @@
     const getWorkspaceRootContext = typeof d.getWorkspaceRootContext === 'function'
       ? d.getWorkspaceRootContext
       : null;
-    const getFeatureFlags = typeof d.getFeatureFlags === 'function'
-      ? d.getFeatureFlags
-      : () => ((getIde() || {}).__unused__, {});
     const getGitDecoration = typeof d.getGitDecoration === 'function' ? d.getGitDecoration : null;
     const subscribeGitChange = typeof d.subscribeGitChange === 'function' ? d.subscribeGitChange : null;
     const sendToJenny = typeof d.sendToJenny === 'function' ? d.sendToJenny : null;
@@ -183,11 +179,6 @@
       appendClientLog,
     }) || null;
 
-    function isFlagOn() {
-      const flags = getFeatureFlags() || {};
-      return flags.workspace_file_map === true;
-    }
-
     const fileMapBridge = createFileMapBridge(windowRef);
 
     function ensureMounted() {
@@ -200,7 +191,7 @@
         return;
       }
       // Per-workspace persistence (hideTests + layer chips), constructed
-      // inside the flag-gated mount path; keys use the CANONICAL rootId.
+      // inside the mount path; keys use the CANONICAL rootId.
       prefs = resolveModule('rendererIdeMapPrefs', './renderer-ide-map-prefs')
         .createMapPrefs?.({
           storage: d.storage,
@@ -250,6 +241,7 @@
           viewportEl,
           contentEl,
           workspaceId: resolveRootIdentity().rootId,
+          getTopInset: () => (controlsHostEl ? controlsHostEl.offsetTop + controlsHostEl.offsetHeight : 0),
         }) || null;
 
       view = resolveModule('rendererIdeMapAtlasView', './renderer-ide-map-atlas-view')
@@ -691,7 +683,7 @@
     // Opens the map stage and frames relPath; returns 'revealed' |
     // 'not-in-map' | 'unavailable' so callers can report honestly.
     async function revealInMap(relPath) {
-      if (disposed || !isFlagOn() || !relPath) {
+      if (disposed || !relPath) {
         return 'unavailable';
       }
       openFileMap();
@@ -855,14 +847,14 @@
 
     // ── lifecycle ───────────────────────────────────────────────────────────
     function bindEvents() {
-      if (bound || disposed || !isFlagOn()) {
+      if (bound || disposed) {
         return;
       }
       bound = true;
     }
 
     function syncVisibility(activeTabPath) {
-      if (disposed || !isFlagOn()) {
+      if (disposed) {
         return;
       }
       const dom = getDom() || {};
@@ -883,7 +875,7 @@
     }
 
     function openFileMap() {
-      if (disposed || !isFlagOn()) {
+      if (disposed) {
         return;
       }
       activateStage('file_map');
@@ -901,7 +893,7 @@
       bindingTracker?.noteRootCommitted?.(payload && payload.context ? payload.context : null);
       const wasMounted = mounted;
       unmountMap();
-      if (wasMounted && isFlagOn()) {
+      if (wasMounted) {
         ensureMounted();
         if (mounted) {
           runScan();

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from types import SimpleNamespace
 from typing import Any
 
 from sidecar.ai.config import RuntimeConfig
@@ -12,7 +11,6 @@ from sidecar.ai.routing.router import ChatRouter
 from sidecar.ai.tools.models import GenerationResult
 from sidecar.runtime.chat import _normalize_skill_invocation
 from sidecar.runtime.chat_models import ChatRequestContext
-from sidecar.runtime.chat_streaming import _build_live_stream_messages
 
 SKILL_ID = "bundled/humanizer"
 
@@ -34,20 +32,6 @@ def _builder(tmp_path, *, disabled: bool = False, body: str = "Keep facts intact
         skill_scopes=(SkillScope(scope="bundled", root=root, enabled=True),),
         disabled_skill_ids=(SKILL_ID,) if disabled else (),
         skills_system_enabled=True,
-    )
-
-
-def _config():
-    return SimpleNamespace(
-        engine_type="ollama",
-        skills_auto_index="off",
-        system_prompt="Base system prompt.",
-        system_prompt_profile="full",
-        assistant_name="Jenny",
-        feature_flags={},
-        max_tokens=1024,
-        tools_workspace_manifest_enabled=False,
-        tools_task_capsule_enabled=False,
     )
 
 
@@ -84,24 +68,8 @@ class _StubMCPClient:
         return None
 
 
-def test_valid_skill_is_injected_once_on_live_and_router_paths_and_not_next_request(tmp_path):
+def test_valid_skill_is_injected_once_on_the_router_path_and_not_next_request(tmp_path):
     builder = _builder(tmp_path)
-    config = _config()
-    engine = SimpleNamespace(
-        capabilities={},
-        get_model_context_length=lambda: 32768,
-        get_model_max_output_tokens=lambda: 1024,
-    )
-    brain = SimpleNamespace(stack=SimpleNamespace(
-        context_builder=builder, config=config, engine=engine,
-        memory_service=None, memory_store=None, turn_diagnostics=None,
-    ))
-
-    live_messages = _build_live_stream_messages(
-        brain, [{"role": "user", "content": "Polish this"}], None,
-        latest_user_content="Polish this", request_id="req-live", session_id="session-1",
-        skill_invocation={"id": SKILL_ID},
-    )
     engine = _CapturingEngine()
     router = ChatRouter(
         config=replace(
@@ -128,10 +96,8 @@ def test_valid_skill_is_injected_once_on_live_and_router_paths_and_not_next_requ
     router_messages = engine.calls[0]["messages"]
     next_request_messages = engine.calls[1]["messages"]
 
-    assert len(_invoked(live_messages)) == 1
     assert len(_invoked(router_messages)) == 1
     assert _invoked(next_request_messages) == []
-    assert all("## Available Skills" not in str(message.get("content", "")) for message in live_messages)
 
 
 def test_disabled_skill_is_omitted_and_warned(caplog, tmp_path):

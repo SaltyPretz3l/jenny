@@ -9,9 +9,7 @@
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var REDACTED_PATH_TOKEN = '[redacted:path]';
 
-  function normalizeId(value) {
-    return String(value || '').trim();
-  }
+  var normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
 
   function normalizeDimension(value) {
     const dimension = Number(value || 0);

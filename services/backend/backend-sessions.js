@@ -574,7 +574,7 @@ async function setSessionPreferences(service, sessionId, preferences = {}) {
     const controller = service.activeStreams.get(streamId);
     if (controller) delete controller.unattendedPauseRequested;
     const approvalMode = runMode === 'auto' ? 'auto_run' : 'prompt';
-    const readOnly = runMode === 'plan' || stored.plan_mode === true;
+    const readOnly = runMode === 'plan' || runMode === 'propose' || stored.plan_mode === true;
     service.sidecarClient.notifySessionRunModeUpdated({ sessionId, approvalMode, readOnly });
     // The execution authority fails the in-flight request on its next
     // revalidation (run_mode_changed); this line is the log's only cause.

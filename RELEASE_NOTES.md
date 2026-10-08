@@ -1,5 +1,63 @@
 # Release Notes
 
+## 1.4.0 - 2026-10-08
+
+Everything landed since 1.3.1, through private `main` on 2026-10-08: 226
+commits over three days of building projects through Jenny, a Linux testing
+round on Debian 13, and six read-only audit passes over the tree. The headline
+is Propose mode: Jenny proposes exact code changes and you accept them before
+anything is written.
+
+### Changelog
+
+**Features**
+
+- Propose mode: a run mode in which Jenny proposes exact file changes instead of making them. The Changes view shows them beside the editor, grouped with their dependencies and a "Needs attention" list; you comment, accept or reject, and nothing touches the disk until you accept. History keeps Undo and Redo for what was applied.
+- Workspace panel system: every panel can be moved anywhere; editor groups each carry their own terminal, changes and chat; up to four terminals; Run and test output open as task tabs; a chat or terminal can be bound to an editor group so its diffs land there; two Workspace chats side by side.
+- Project task board and project notes: tasks are scoped to the open project (with a "Show tasks from" menu), and Jenny keeps per-project notes through a `project_notes` tool with an attribution journal and one-click undo. The Notes rail lights a dot when Jenny writes.
+- Semantic catalog: bring your own embedding GGUF and Jenny builds a passive index in its own small llama-server (CPU by default, never evicting the chat model), only after 30 seconds of idle. `knowledge_search` fuses grep with the vectors and falls back to grep. Kill switch `JENNY_ENABLE_SEMANTIC_CATALOG=0`.
+- Changes view with History, Undo and Redo replaces the IDE Changes panel. Commands, scripts and `python_execute` report the workspace files they changed as reviewable diffs, scripted tools get a checkpoint before they run, and checkpoints also capture untracked files.
+- A failed model load now says why (a classified cause with the matching fix) on the model library row, the Composer chip and Diagnostics, and the Home hero follows the model state: no model, downloading, failed, ready.
+- ChatGPT sign-in offers to paste the redirect URL when the browser does not return (10-minute window, single use).
+- The project pill sits on the Composer bar and is accented when the chat filter hides the open chat; editor tabs are restored where they were; every icon-only button carries a label.
+- Settings > Models shows the context window Jenny loads, not the estimator default. Diagnostics leads with a plain explanation and one action per issue, with the resource rows below.
+
+**Reworks**
+
+- Chats are saved by appending changes to a journal instead of rewriting the whole file, and the chat index is journaled too. A torn tail or a newline-less last record is repaired on read. Canonical sessions move from schema 22 to 24.
+- Reasoning streams as deltas by default (`JENNY_ENABLE_REASONING_WIRE_DELTAS=0` restores whole-panel updates).
+- Local engines get a prefix-stable request layout: the per-turn context rides in a trailing row, so llama-server reuses the prompt prefix on follow-up turns (prefill in well under a second instead of 20 to 40 seconds on a 9B model).
+- The plugin platform is removed. Settings > Extensions shows skill folders and MCP servers; a profile with an old `plugins/` folder starts clean; an old image chat opens read-only with a notice.
+- A reply that restarts folds its discarded draft instead of showing a "restarted" marker.
+- Settings page scripts load on first open and the Settings page paints only while it is active, so Jenny holds less memory in a long chat.
+- Shell commands: launch vectors hidden behind safe-looking names now need approval; the character-count token fallback keeps 30% headroom; an oversized compaction row is split into bounded pieces.
+- The update check uses the system proxy and certificates and logs why it failed.
+- Linux: Ollama runners orphaned when the app dies mid-shutdown are reaped at the next start.
+- The 18 non-English interface languages had a correction pass (model-authored; a native speaker's look is still welcome).
+- Housekeeping: 27 always-on flags collapsed, the legacy sidecar live-stream and vision paths retired, dead IDE preview paths removed, duplicated helpers folded into shared modules.
+
+**Fixes**
+
+- Session export redacts secrets in every exported text surface, and six IPC channels that skipped trusted-sender authorization now check it.
+- File access: context reads verify the opened handle against the authorized root, atomic writes pin the validated parent directory, non-regular workspace entries are rejected, `edit_file` refuses reserved `.jenny` state in any letter case, and a redirected scratch directory is refused before any write.
+- Chat timeline: every text group of a message is kept, a re-asked approval stays pending, a question's receipt survives the reducer, a failed reply shows its text once, typed HTML entities show as typed, and a tooltip never lingers for an element that left the page.
+- Ollama: an unload evicts only when no engine holds the model, a pull that passes its deadline closes the socket, the tools-disabled fallback keeps error terminals, and non-streaming tool calls return the provider's finish reason.
+- llama-server startup refuses to spawn beside an orphan whose kill is unconfirmed.
+- A failed session migration no longer writes stray chat files, a briefly locked chat file is not treated as corrupt, and an import with duplicate message ids is rejected before anything is written.
+- A memory whose text exceeds the new limits survives the memory-store migration; audio attachments derive their type from the bytes.
+- Visible final replies get their own size ceiling instead of the 16k tool-output cap; tool output is normalized before control tokens are stripped.
+- Paused approval cards, the queue strip and Runs no longer offer a Resume the scheduler would refuse.
+- A suggestion diff on a minified file renders inline, and the diff tab reveals the change in both panes; `grep_search` shows a window around a match on a long line; `preview_test` accepts Spacebar.
+- Retention keeps tool-result media that persisted turn events still reference; a successful provider fallback resets the failed attempt first.
+- Diagnostics wording is consistent ("app launch"), and a cut "Retained caches" label ends with an ellipsis.
+
+### Migration and qualification
+
+- Canonical sessions move from schema 22 to 24 (23: the session journal; 24: suggested changes). A profile is migrated when 1.4.0 first opens it and chats are then saved as journals; an older build opens such a profile read-only, so export anything you may want to edit in an older build before upgrading. Shell configuration stays at schema 59, sidecar memory at 8, diagnostics at 1, and the sidecar API at `2026-08-17`.
+- Propose mode, the Workspace panel system, project tasks and notes, and the semantic catalog were qualified by scripted real-app passes at three window widths and by the full local CI gate on the cut head. The maintainer's own hands-on session in Propose mode on a local model is still outstanding, so treat Propose mode as new.
+- The Linux items were built from a Debian 13 testing round on 1.3.x and have not yet been retested in a packaged 1.4.0 Linux build. Two items from that round (a Codex CLI Experimental group in Settings and a "Working in Codex CLI" turn) are not in this release.
+- Windows remains unsigned. Linux packages remain experimental. macOS remains experimental and has still not been run on a real Mac.
+
 ## 1.3.1 - 2026-10-05
 
 A fix release on 1.3.0. Most of it comes from a week of Linux testing in the

@@ -5,11 +5,13 @@ const { registerIpcInvokeHandlers } = require('./ipc-contract');
 const { API_VERSION } = require('./backend/sidecar-client');
 const { TOOL_ERROR_CODES } = require('./backend/error-codes');
 const { isPlainObject } = require('./value-utils');
+const { createWorkspaceRecoveryFileHandlers } = require('./workspace-recovery-files-ipc');
 
 const METHODS = Object.freeze({
   list: 'workspace.list_change_sets',
   preflight: 'workspace.preflight_undo',
   undo: 'workspace.undo_change_set',
+  reapply: 'workspace.reapply_change_set',
   restoreTrash: 'workspace.restore_trash_entry',
   abandonRestore: 'workspace.abandon_restore',
 });
@@ -190,10 +192,12 @@ function normalizeChangeSetSummary(value) {
   const restoreStatus = ['not_requested', 'preflight', 'in_progress', 'committed', 'interrupted', 'abandoned'].includes(value.restore_status)
     ? value.restore_status : '';
   const updatedAt = boundedText(value.updated_at, 64, { required: true });
+  const completedAt = value.restore_completed_at === undefined || value.restore_completed_at === null
+    ? null : (boundedText(value.restore_completed_at, 64, { required: true }) ?? undefined);
   const warning = boundedText(value.warning, MAX_MESSAGE_LENGTH) ?? '';
   if (!changeSetId || operationCount === null || !state || !restoreStatus || !updatedAt
-    || typeof value.partially_undoable !== 'boolean') return null;
-  return {
+    || typeof value.partially_undoable !== 'boolean' || completedAt === undefined) return null;
+  const summary = {
     change_set_id: changeSetId,
     state,
     restore_status: restoreStatus,
@@ -202,6 +206,9 @@ function normalizeChangeSetSummary(value) {
     partially_undoable: value.partially_undoable,
     warning,
   };
+  // When the undo finished (null until one did); older sidecars omit it.
+  if (value.restore_completed_at !== undefined) summary.restore_completed_at = completedAt;
+  return summary;
 }
 
 function normalizeListResult(result) {
@@ -287,7 +294,7 @@ function normalizeResult(method, result) {
   if (method === METHODS.list) return normalizeListResult(result);
   if (method === METHODS.preflight) return normalizePreflightResult(result);
   if (method === METHODS.undo) return normalizeReceipt(result);
-  if (method === METHODS.abandonRestore) return normalizeChangeSetSummary(result);
+  if (method === METHODS.abandonRestore || method === METHODS.reapply) return normalizeChangeSetSummary(result);
   return normalizeReceipt(result, { trash: true });
 }
 
@@ -328,7 +335,26 @@ async function callRecoveryRpc(backendService, method, params) {
   }
 }
 
-function registerWorkspaceRecoveryIpcHandlers({ ipcMainLike, backendService, ipcAuthorization = {} }) {
+// gitService / ideService / safetyCopies back the row 34 S5 file methods
+// (workspace-recovery-files-ipc.js); each is optional and a missing one makes
+// its methods fail closed with `recovery_unavailable`.
+function registerWorkspaceRecoveryIpcHandlers({
+  ipcMainLike,
+  backendService,
+  ipcAuthorization = {},
+  gitService = null,
+  ideService = null,
+  safetyCopies = null,
+}) {
+  const files = createWorkspaceRecoveryFileHandlers({
+    failure,
+    hasOnlyKeys,
+    callRpc: (method, params) => callRecoveryRpc(backendService, method, params),
+    methods: METHODS,
+    gitService,
+    ideService,
+    safetyCopies,
+  });
   registerIpcInvokeHandlers(ipcMainLike, {
     'workspaceRecovery.listChangeSets': (_event, payload = {}) => (
       hasOnlyKeys(payload, [])
@@ -343,15 +369,31 @@ function registerWorkspaceRecoveryIpcHandlers({ ipcMainLike, backendService, ipc
         : failure('change_set_id_invalid', 'The change set id was invalid.');
     },
     'workspaceRecovery.undoChangeSet': (_event, payload = {}) => {
-      if (!hasOnlyKeys(payload, ['changeSetId', 'decisions'])) return failure('payload_invalid', 'The undo request was invalid.');
+      if (!hasOnlyKeys(payload, ['changeSetId', 'decisions', 'captureSafetyCopy'])
+        || (payload.captureSafetyCopy !== undefined && typeof payload.captureSafetyCopy !== 'boolean')) {
+        return failure('payload_invalid', 'The undo request was invalid.');
+      }
       const changeSetId = normalizeChangeSetId(payload.changeSetId);
       const decisions = normalizeDecisions(payload.decisions);
       if (!changeSetId) return failure('change_set_id_invalid', 'The change set id was invalid.');
       if (!decisions.ok) return failure('decisions_invalid', 'The undo decisions were invalid.');
-      return callRecoveryRpc(backendService, METHODS.undo, {
+      // The flag never reaches the sidecar: both paths send the same params.
+      const params = {
         change_set_id: changeSetId,
         ...(decisions.value !== undefined ? { decisions: decisions.value } : {}),
-      });
+      };
+      return payload.captureSafetyCopy === true
+        ? files.undoWithSafetyCopy(changeSetId, params)
+        : callRecoveryRpc(backendService, METHODS.undo, params);
+    },
+    // Records that a Redo put an undone change set's bytes back; the sidecar
+    // verifies every touched file and refuses (writing nothing) otherwise.
+    'workspaceRecovery.reapplyChangeSet': (_event, payload = {}) => {
+      if (!hasOnlyKeys(payload, ['changeSetId'])) return failure('payload_invalid', 'The reapply request was invalid.');
+      const changeSetId = normalizeChangeSetId(payload.changeSetId);
+      return changeSetId
+        ? callRecoveryRpc(backendService, METHODS.reapply, { change_set_id: changeSetId })
+        : failure('change_set_id_invalid', 'The change set id was invalid.');
     },
     'workspaceRecovery.restoreTrashEntry': (_event, payload = {}) => {
       if (!hasOnlyKeys(payload, ['name', 'decision'])) return failure('payload_invalid', 'The trash restore request was invalid.');
@@ -379,6 +421,7 @@ function registerWorkspaceRecoveryIpcHandlers({ ipcMainLike, backendService, ipc
         change_set_id: changeSetId,
       });
     },
+    ...files.handlers,
   }, ipcAuthorization);
 }
 

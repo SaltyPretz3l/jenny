@@ -12,6 +12,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const PERSIST_DEBOUNCE_MS = 500;
+  const HYDRATE_RETRY_DELAYS_MS = Object.freeze([500, 2000, 8000]);
   const ROOT_STATE_KEYS = new Set([
     'openTabs',
     'activeTabPath',
@@ -70,9 +71,13 @@
       ? deps.getWorkspaceIdeApi
       : () => null;
     const ideStateUtils = deps?.ideStateUtils || {};
+    const getTabRestore = typeof deps?.getTabRestore === 'function' ? deps.getTabRestore : () => null;
     const appendClientLog = typeof deps?.appendClientLog === 'function' ? deps.appendClientLog : noop;
     const showToastMessage = typeof deps?.showToastMessage === 'function' ? deps.showToastMessage : noop;
     const onHydrated = typeof deps?.onHydrated === 'function' ? deps.onHydrated : noop;
+    // A hydrate that lands only on a retry (after the view already rendered
+    // defaults): the controller repaints and reopens the restored active tab.
+    const onLateHydrated = typeof deps?.onLateHydrated === 'function' ? deps.onLateHydrated : noop;
     const onPreferenceCommitted = typeof deps?.onPreferenceCommitted === 'function' ? deps.onPreferenceCommitted : noop;
     const onPreferenceError = typeof deps?.onPreferenceError === 'function' ? deps.onPreferenceError : noop;
     const setTimeoutImpl = typeof deps?.setTimeoutImpl === 'function' ? deps.setTimeoutImpl : setTimeout;
@@ -84,6 +89,10 @@
     let hydrated = false;
     let suspended = false;
     let dirtyWhileSuspended = false;
+    let hydrateInFlight = null;
+    let hydrateRetryTimer = null;
+    let hydrateFailures = 0;
+    let loadFailureNotified = false;
     let disposed = false;
     let hydrationToken = 0;
     let preferenceWriteQueue = Promise.resolve();
@@ -102,7 +111,8 @@
 
     function captureWrite(context = boundContext) {
       const current = normalizeContext(context);
-      const persisted = ideStateUtils.toPersistedState?.(getIde());
+      const snapshot = ideStateUtils.toPersistedState?.(getIde());
+      const persisted = snapshot && (getTabRestore()?.capture(snapshot, getIde()) || snapshot);
       if (!current || current.phase !== 'ready' || !persisted) return null;
       return {
         expectedRootId: current.rootId,
@@ -117,6 +127,11 @@
         const error = new Error('Root-aware Workspace IDE persistence is unavailable.');
         error.code = 'workspace_ide_update_unavailable';
         throw error;
+      }
+      // Keep the captured tab set/root token, but read positions at the write
+      // boundary: cursor and scroll can change after the last tab action.
+      if (boundContext?.rootId === write.expectedRootId && boundContext?.generation === write.expectedGeneration) {
+        write = { ...write, rootState: getTabRestore()?.capture(write.rootState, getIde()) || write.rootState };
       }
       const result = await api.updateState(write);
       if (!result || result.updated !== true) {
@@ -200,10 +215,41 @@
     }
 
     function flushIfPending() {
-      if (persistTimer !== null || pendingWrite) void flushPersist();
+      if (hydrated && !suspended) void flushPersist({ force: true });
+      else if (persistTimer !== null || pendingWrite) void flushPersist();
     }
 
-    async function hydrateForContext(expectedContext = null) {
+    // A late (retried) hydrate restores the saved layout but must not drop the tabs
+    // opened while it was failing: duplicates keep live state in saved order.
+    // Dropping them would also orphan a dirty buffer past the exit prompt.
+    // Main persists only the first MAX_OPEN_TABS (64) of a saved list, so a live tab
+    // appended past the cap would vanish on restart: every live tab stays and the
+    // saved-only tabs (never loaded this session) fill the remaining room in order.
+    function keepLiveTabs(ide, live) {
+      if (!live.tabs.length) return;
+      const savedTabs = ide.openTabs || [];
+      const saved = new Set(savedTabs.map((tab) => tab.path));
+      const liveTabs = new Map(live.tabs.map((tab) => [tab.path, tab]));
+      const livePaths = new Set(liveTabs.keys());
+      let room = (ideStateUtils.MAX_OPEN_TABS || 64) - livePaths.size;
+      ide.openTabs = savedTabs.filter((tab) => livePaths.has(tab.path) || room-- > 0)
+        .map((tab) => liveTabs.get(tab.path) || tab)
+        .concat(live.tabs.filter((tab) => !saved.has(tab.path)));
+      const kept = new Map(ide.openTabs.map((tab) => [tab.path, tab]));
+      const primary = (path) => kept.has(path) && !kept.get(path).group;
+      if (!primary(ide.activeTabPath)) ide.activeTabPath = primary(live.active)
+        ? live.active : (ide.openTabs.find((tab) => !tab.group)?.path || '');
+      const savedGroupActive = ide.groupActive || {};
+      ide.groupActive = { ...live.groupActive };
+      for (const [group, path] of Object.entries(savedGroupActive)) {
+        if (kept.get(path)?.group === group) ide.groupActive[group] = path;
+      }
+      for (const [group, path] of Object.entries(ide.groupActive)) {
+        if (kept.get(path)?.group !== group) delete ide.groupActive[group];
+      }
+    }
+
+    async function hydrateForContext(expectedContext = null, options = {}) {
       const api = getWorkspaceIdeApi();
       if (typeof api?.getState !== 'function') return { hydrated: false, code: 'bridge_unavailable' };
       const expected = normalizeContext(expectedContext);
@@ -221,9 +267,17 @@
         throw error;
       }
       if (disposed || token !== hydrationToken) return { hydrated: false, code: 'superseded' };
+      const probed = await getTabRestore()?.probe(persisted);
+      if (disposed || token !== hydrationToken) return { hydrated: false, code: 'superseded' };
       clearPersistTimer();
       pendingWrite = null;
-      ideStateUtils.applyPersistedState?.(getIde(), persisted);
+      const ide = getIde();
+      const live = options.keepLive && ide
+        ? { tabs: (ide.openTabs || []).slice(), active: ide.activeTabPath || '', groupActive: { ...(ide.groupActive || {}) } }
+        : null;
+      ideStateUtils.applyPersistedState?.(ide, probed?.snapshot || persisted);
+      if (live) keepLiveTabs(ide, live);
+      getTabRestore()?.hydrate(probed?.snapshot || persisted, probed?.missing);
       if (Number.isFinite(persisted.evictedRootCount) && persisted.evictedRootCount > 0) {
         showToastMessage(
           jt('ide.persistence.evictedWorkspace', "Workspace memory for an older folder was released to make room — its open tabs won't be restored there."),
@@ -238,14 +292,51 @@
       return { hydrated: true, context: { ...actual } };
     }
 
-    async function hydratePersistedState() {
-      if (hydrated) return { hydrated: true, context: { ...boundContext } };
-      try {
-        return await hydrateForContext();
-      } catch (error) {
-        logFailure('ide.hydrate_failed', error, 'workspace_ide_hydrate_failed');
-        return { hydrated: false, code: String(error?.code || 'workspace_ide_hydrate_failed') };
+    function clearHydrateRetryTimer() {
+      if (hydrateRetryTimer !== null) clearTimeoutImpl(hydrateRetryTimer);
+      hydrateRetryTimer = null;
+    }
+
+    function onHydrateFailed() {
+      if (disposed) return;
+      hydrateFailures += 1;
+      const delay = HYDRATE_RETRY_DELAYS_MS[hydrateFailures - 1];
+      if (delay !== undefined) {
+        hydrateRetryTimer = setTimeoutImpl(() => {
+          hydrateRetryTimer = null;
+          void hydratePersistedState();
+        }, delay);
+        return;
       }
+      if (loadFailureNotified) return;
+      loadFailureNotified = true;
+      showToastMessage(
+        jt('ide.persistence.loadFailed', "Workspace layout couldn't be loaded. Panel changes in this session won't be saved."),
+        { dedupeKey: 'ide:persistence-load-failed', sticky: false }
+      );
+    }
+
+    function hydratePersistedState() {
+      if (hydrated) return Promise.resolve({ hydrated: true, context: { ...boundContext } });
+      if (hydrateInFlight) return hydrateInFlight;
+      clearHydrateRetryTimer();
+      hydrateInFlight = (async () => {
+        try {
+          const result = await hydrateForContext(null, { keepLive: hydrateFailures > 0 });
+          if (result.hydrated && hydrateFailures > 0) {
+            hydrateFailures = 0;
+            onLateHydrated(getIde());
+          }
+          return result;
+        } catch (error) {
+          logFailure('ide.hydrate_failed', error, 'workspace_ide_hydrate_failed');
+          onHydrateFailed();
+          return { hydrated: false, code: String(error?.code || 'workspace_ide_hydrate_failed') };
+        } finally {
+          hydrateInFlight = null;
+        }
+      })();
+      return hydrateInFlight;
     }
 
     async function prepareTransition(context) {
@@ -263,6 +354,10 @@
         throw error;
       }
       if (!hydrated) {
+        // A root switch supersedes a pending retry for the old root: the commit
+        // path hydrates the new root itself.
+        clearHydrateRetryTimer();
+        hydrateFailures = 0;
         suspended = true;
         return { updated: false, skipped: true };
       }
@@ -287,6 +382,8 @@
         boundContext = settled;
         suspended = false;
         dirtyWhileSuspended = false;
+        // Only after a failed hydrate: a settled context is a good moment to retry now.
+        if (hydrateFailures > 0) void hydratePersistedState();
         return { settled: true, hydrated: false, context: { ...settled } };
       }
       if (!sameRoot(boundContext, settled)
@@ -311,6 +408,7 @@
       disposed = true;
       hydrationToken += 1;
       clearPersistTimer();
+      clearHydrateRetryTimer();
       pendingWrite = null;
     }
 

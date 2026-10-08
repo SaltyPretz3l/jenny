@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const { FileJsonStore } = require('./file-json-store');
+const { createSessionWriteMeter } = require('./session-write-meter');
 const {
   logNewerSchemaDetected,
   logWriteFailed,
@@ -22,8 +22,21 @@ const {
   readsNewerSchema,
   enterNewerSchemaFreeze,
   freezeRecoveredIndex,
+  skipsReadonlyModeWrite,
 } = require('./session-storage-guards');
 const { deleteSessionFromBackend } = require('./session-storage-deletion');
+const {
+  createSessionFileStore,
+  installIndexStore,
+  noteJournalStatus,
+  normalizeJournalOption,
+  preserveDamagedIndexJournals,
+  quarantineSessionJournals,
+  readIndexStatus,
+  readSessionFileStatus,
+  readSessionStatus,
+  scheduleIndexRepair,
+} = require('./session-journal-wiring');
 const { purgeSessionRecoveryCopies } = require('./session-recovery-copies');
 const { flushBackend, flushBackendAsync } = require('./session-storage-flush');
 const {
@@ -92,6 +105,8 @@ function countPendingSessions(backend) {
 //   - `monolithic_readonly`: a future-schema monolithic file was found; data
 //     stays in memory, no disk writes are scheduled, write attempts log
 //     `<store>.newer_schema_write_blocked` and return without touching disk.
+//     A failed split migration also lands here without a newer schema: the
+//     legacy file stays authoritative and mutations stay in memory, undurable.
 class SessionStorageBackend {
   constructor(rootDir, {
     legacyMonolithicPath = null,
@@ -102,6 +117,7 @@ class SessionStorageBackend {
     summarizeSession,
     migrateSummary = summary => summary,
     writeDebounceMs = 0,
+    journal = null,
     logger = null,
     storeName = 'session_store',
   } = {}) {
@@ -129,6 +145,7 @@ class SessionStorageBackend {
     this._writeDebounceMs = Math.max(0, Number(writeDebounceMs) || 0);
     this._logger = typeof logger === 'function' ? logger : null;
     this._storeName = String(storeName || 'session_store');
+    this._journal = normalizeJournalOption(journal);
 
     this._mode = 'split';
     this._newerSchemaVersion = 0;
@@ -136,6 +153,7 @@ class SessionStorageBackend {
     this._indexStore = null;
     this._indexDirty = false;
     this._sessionStores = new Map();
+    this._writeMeter = createSessionWriteMeter();
     this._loadedSessions = new Map();
     this._dirtySessionIds = new Set();
     this._durability = new SessionStorageDurability();
@@ -178,23 +196,22 @@ class SessionStorageBackend {
 
   _initializeEmpty() {
     fs.mkdirSync(this._rootDir, { recursive: true });
-    this._indexStore = new FileJsonStore(this._indexPath, {
-      writeDebounceMs: this._writeDebounceMs,
-      compact: true,
-      onWriteSettled: () => this._notifyCacheAvailability(),
-      logger: this._logger,
-    });
+    installIndexStore(this);
     this._cachedIndex = { schema_version: this._schemaVersion, sessions: {} };
   }
 
   _loadFromSplitLayout() {
-    this._indexStore = new FileJsonStore(this._indexPath, {
-      writeDebounceMs: this._writeDebounceMs,
-      compact: true,
-      onWriteSettled: () => this._notifyCacheAvailability(),
-      logger: this._logger,
-    });
-    const raw = this._indexStore.read(null);
+    installIndexStore(this);
+    const indexStatus = readIndexStatus(this);
+    // A damaged index journal yields only a prefix, which would hide the chats
+    // listed after it: such an index is rebuilt from the chat files, keeping the
+    // prefix's summary for a chat whose own file does not read. If the rebuild
+    // is not possible the prefix is still the best index there is.
+    if (indexStatus.journalStatus === 'corrupt') {
+      preserveDamagedIndexJournals(this);
+      if (this._recoverSplitIndexFromSessionFiles('damaged_index_journal', indexStatus.value?.sessions)) return;
+    }
+    const raw = indexStatus.value;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       if (this._recoverSplitIndexFromSessionFiles('unreadable_index')) {
         return;
@@ -357,7 +374,8 @@ class SessionStorageBackend {
     if (this.hasSession(sessionId)) this._durability.markLoaded(sessionId);
     const normalized = alreadyNormalized ? sessionRecord : this._normalizeSession(sessionId, sessionRecord);
 
-    if (!persist) {
+    // A failed split migration keeps accepted mutations in memory, undurable.
+    if (!persist || skipsReadonlyModeWrite(this, 'upsertSession')) {
       const summary = this._summarizeSession(normalized);
       const cachedSummary = this._cachedIndex.sessions[sessionId];
       const indexChanged = !cachedSummary || !summariesEqual(cachedSummary, summary);
@@ -459,6 +477,7 @@ class SessionStorageBackend {
   }
 
   purgeSessionRecoveryCopies(sessionId) {
+    if (skipsReadonlyModeWrite(this, 'purgeSessionRecoveryCopies')) return { removed: 0, failed: 0 };
     return purgeSessionRecoveryCopies(this, sessionId);
   }
 
@@ -480,7 +499,7 @@ class SessionStorageBackend {
     if (this._disposed && !this.hasPendingWrites()) return { disposed: true, pending: 0 };
     this._disposed = true;
     this._cacheAvailabilityListeners.clear();
-    flushBackend(this);
+    flushBackend(this, { compact: true });
     this._pruneCache();
     return { disposed: true, pending: countPendingSessions(this) };
   }
@@ -641,16 +660,18 @@ class SessionStorageBackend {
   }
 
   _readSessionFromDisk(sessionId) {
-    const store = this._sessionStores.get(sessionId) || new FileJsonStore(
-      this._sessionFilePath(sessionId),
-      {
-        writeDebounceMs: this._writeDebounceMs,
-        compact: true,
-      onWriteSettled: () => this._notifyCacheAvailability(),
-        logger: this._logger,
-      }
-    );
-    const readStatus = store.readWithStatus(null);
+    const readStatus = readSessionStatus(this, sessionId);
+    if (readStatus.unreadable) {
+      // Locked or access denied: the bytes may be healthy, so the file is not
+      // moved or replaced, and the next read tries the disk again.
+      safeEmitLog(this._logger, 'WARN', `${this._storeName}.session_file_unreadable`, {
+        sessionId,
+        filePath: this._sessionFilePath(sessionId),
+        errorCode: readStatus.errorCode,
+      });
+      return null;
+    }
+    noteJournalStatus(this, sessionId, readStatus);
     if (readStatus.corrupted) {
       return this._quarantineAndRecoverCorruptSession(sessionId, readStatus);
     }
@@ -700,9 +721,10 @@ class SessionStorageBackend {
     if (this._disposed) return null;
     const filePath = this._sessionFilePath(sessionId);
     const quarantineDir = path.join(this._rootDir, 'corrupt');
+    const stamp = Date.now();
     const quarantinePath = path.join(
       quarantineDir,
-      `${path.basename(filePath, '.json')}.${Date.now()}.json`
+      `${path.basename(filePath, '.json')}.${stamp}.json`
     );
     try {
       fs.mkdirSync(quarantineDir, { recursive: true });
@@ -716,6 +738,7 @@ class SessionStorageBackend {
       );
       return null;
     }
+    quarantineSessionJournals(this, sessionId, stamp);
     safeEmitLog(this._logger, 'ERROR', `${this._storeName}.session_file_quarantined`, {
       sessionId,
       filePath,
@@ -746,22 +769,46 @@ class SessionStorageBackend {
   _getOrCreateSessionStore(sessionId) {
     let store = this._sessionStores.get(sessionId);
     if (!store) {
-      store = new FileJsonStore(this._sessionFilePath(sessionId), {
-        writeDebounceMs: this._writeDebounceMs,
-        compact: true,
-      onWriteSettled: () => this._notifyCacheAvailability(),
-        logger: this._logger,
-      });
+      store = createSessionFileStore(this, sessionId);
       this._sessionStores.set(sessionId, store);
     }
     return store;
+  }
+
+  _measuredWrites(kind, sessionId) {
+    return (write) => this._writeMeter.record({ ...write, kind, sessionId });
+  }
+
+  takeTurnWriteVolume(sessionId) {
+    return this._writeMeter.takeTurn(String(sessionId));
+  }
+
+  // Logs the turn's disk write roll-up (INFO) and returns it, or null when the
+  // turn wrote nothing. Never throws: this runs on the commit success path.
+  logTurnWriteVolume(sessionId) {
+    try {
+      const volume = this.takeTurnWriteVolume(sessionId);
+      if (volume.session_writes + volume.index_writes === 0) return null;
+      safeEmitLog(this._logger, 'INFO', `${this._storeName}.turn_write_volume`, {
+        ...volume,
+        session_id: String(sessionId),
+      });
+      return volume;
+    } catch (volumeError) {
+      void volumeError;
+      return null;
+    }
+  }
+
+  getWriteVolumeSnapshot() {
+    return this._writeMeter.snapshot();
   }
 
   _sessionFilePath(sessionId) {
     return path.join(this._rootDir, `${sanitizeSessionId(sessionId)}.json`);
   }
 
-  _recoverSplitIndexFromSessionFiles(reason) {
+  _recoverSplitIndexFromSessionFiles(reason, knownSummaries = null) {
     if (!fs.existsSync(this._rootDir)) {
       return false;
     }
@@ -778,26 +825,26 @@ class SessionStorageBackend {
       return false;
     }
     const indexSessions = {};
+    const unreadableFiles = [];
     let recoveredCount = 0;
     for (const entry of entries) {
       if (!entry.isFile() || entry.name === '_index.json' || !entry.name.endsWith('.json')) {
         continue;
       }
       const filePath = path.join(this._rootDir, entry.name);
-      const store = new FileJsonStore(filePath, {
-        writeDebounceMs: this._writeDebounceMs,
-        compact: true,
-      onWriteSettled: () => this._notifyCacheAvailability(),
-        logger: this._logger,
-      });
-      const readStatus = store.readWithStatus(null);
-      if (readStatus.corrupted) {
-        // An unreadable chat stays listed but is not loaded: its first read goes
-        // through _quarantineAndRecoverCorruptSession, which keeps the bytes. A
-        // hashed file name does not map back to this file, so it is not listed.
+      const readStatus = readSessionFileStatus(this, filePath);
+      if (readStatus.unreadable) unreadableFiles.push(filePath);
+      if (readStatus.corrupted || readStatus.unreadable) {
+        // A damaged or unreadable chat stays listed but is not loaded: its first
+        // read either retries the disk (unreadable) or goes through
+        // _quarantineAndRecoverCorruptSession, which keeps the bytes. A hashed
+        // file name does not map back to this file, so it is not listed.
         const damagedId = path.basename(entry.name, '.json');
         if (sanitizeSessionId(damagedId) !== damagedId) continue;
-        indexSessions[damagedId] = this._summarizeSession(this._normalizeSession(damagedId, {}));
+        const known = knownSummaries && Object.hasOwn(knownSummaries, damagedId) && knownSummaries[damagedId];
+        indexSessions[damagedId] = known && typeof known === 'object'
+          ? known
+          : this._summarizeSession(this._normalizeSession(damagedId, {}));
         recoveredCount += 1;
         continue;
       }
@@ -820,6 +867,7 @@ class SessionStorageBackend {
       if (!sessionId) {
         continue;
       }
+      noteJournalStatus(this, sessionId, readStatus);
       const normalized = this._normalizeSession(sessionId, sessionRecord);
       this._loadedSessions.set(sessionId, normalized);
       this._sessionLru.add(sessionId);
@@ -836,17 +884,13 @@ class SessionStorageBackend {
     if (!recoveredCount) {
       return false;
     }
-    this._indexStore = new FileJsonStore(this._indexPath, {
-      writeDebounceMs: this._writeDebounceMs,
-      compact: true,
-      onWriteSettled: () => this._notifyCacheAvailability(),
-      logger: this._logger,
-    });
+    installIndexStore(this);
     this._cachedIndex = {
       schema_version: this._schemaVersion,
       sessions: indexSessions,
     };
     this._pruneCache();
+    scheduleIndexRepair(this, unreadableFiles);
     try {
       this._indexStore.writeImmediate(this._cachedIndex);
       this._indexDirty = false;

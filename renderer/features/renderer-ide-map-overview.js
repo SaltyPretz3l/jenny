@@ -68,14 +68,7 @@
   const textField = resolveModule('inventoryTextField', '../inventory/text-field');
   const chip = resolveModule('inventoryChip', '../inventory/chip');
 
-  function defaultEscapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   // Bounded so a huge workspace never balloons the composer prefill.
   const SUMMARY_CHAR_CAP = 4000;

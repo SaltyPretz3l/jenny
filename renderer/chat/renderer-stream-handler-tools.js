@@ -29,6 +29,8 @@
     'monitor',
     // The spawn chip is markup the field-only live patch cannot inject, so task_board takes the full re-render path.
     'task_board',
+    // The notes row (Open / Undo) likewise.
+    'project_notes',
     'web_search',
   ]);
 

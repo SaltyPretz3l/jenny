@@ -63,6 +63,7 @@ function buildFeature(over = {}) {
     showShellErrorToast: (message, meta) => spies.toasts.push({ message, meta }),
     confirmDialog,
     ...(over.getDom ? { getDom: over.getDom } : {}),
+    ...(over.getMountEl ? { getMountEl: over.getMountEl } : {}),
     ...(over.getFileLifecycle ? { getFileLifecycle: over.getFileLifecycle } : {}),
     ...(over.onDeleteUntracked ? { onDeleteUntracked: over.onDeleteUntracked } : {}),
     ...(over.client ? { client: over.client } : {}),
@@ -84,8 +85,8 @@ function deferred() {
 // panel handler -> feature callback -> store mutation -> toast. `mutateResult`
 // is the { ok } shape the store mutation resolves.
 function mountedScmPanel(over = {}) {
-  const dom = new JSDOM('<!doctype html><body><div id="ideRailPanel"></div></body>');
-  const panelEl = dom.window.document.getElementById('ideRailPanel');
+  const dom = new JSDOM('<!doctype html><body><div id="wbView-source-control"></div></body>');
+  const panelEl = dom.window.document.getElementById('wbView-source-control');
   const snapshot = {
     available: true, isRepo: true, branch: 'main', detached: false, unborn: false,
     files: [
@@ -112,7 +113,7 @@ function mountedScmPanel(over = {}) {
   };
   const { feature, spies } = buildFeature({
     store,
-    getDom: () => ({ ideRailPanel: panelEl }),
+    getDom: () => ({}), getMountEl: () => panelEl,
     railPanel: 'source-control',
   });
   feature.bindEvents();
@@ -261,8 +262,8 @@ test('confirmDiscard closes the open tab (not a reload) when the backend deleted
 });
 
 test('discard keeps the SCM row published until deferred editor reload reaches terminal state', async () => {
-  const dom = new JSDOM('<!doctype html><body><div id="ideRailPanel"></div></body>');
-  const panelEl = dom.window.document.getElementById('ideRailPanel');
+  const dom = new JSDOM('<!doctype html><body><div id="wbView-source-control"></div></body>');
+  const panelEl = dom.window.document.getElementById('wbView-source-control');
   const reload = deferred();
   let subscriber = null;
   let releaseCalls = 0;
@@ -297,7 +298,7 @@ test('discard keeps the SCM row published until deferred editor reload reaches t
     reloadAfterGitDiscard: () => reload.promise,
   };
   const { feature } = buildFeature({
-    store, editorHost, railPanel: 'source-control', getDom: () => ({ ideRailPanel: panelEl }),
+    store, editorHost, railPanel: 'source-control', getDom: () => ({}), getMountEl: () => panelEl,
     getFileLifecycle: () => lifecycle, confirmResult: true,
   });
   feature.bindEvents();

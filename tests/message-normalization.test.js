@@ -398,6 +398,68 @@ test('normalizeToolCallMetadata omits absent or empty model replay input JSON', 
 
 /* ---- normalizeToolResultMetadata ---- */
 
+function persistedAttachmentRef(overrides = {}) {
+  return {
+    id: 'image-1', source_id: 'source-1', kind: 'image', mime_type: 'image/jpeg',
+    byte_length: 29, width: 32, height: 24, asset_path: 'C:/assets/images/1.jpg',
+    ...overrides,
+  };
+}
+
+test('tool result refs drop malformed entries and retain only trimmed persisted fields', () => {
+  const malformed = [null, 'ref', Object.assign([], persistedAttachmentRef())];
+  for (const key of ['id', 'source_id', 'kind', 'mime_type', 'asset_path']) {
+    for (const value of ['', '   ', 42, {}]) {
+      malformed.push(persistedAttachmentRef({ [key]: value }));
+    }
+  }
+  malformed.push(persistedAttachmentRef({ kind: 'script' }));
+  for (const key of ['byte_length', 'width', 'height', 'page_number']) {
+    for (const value of [-1, Infinity, NaN, '2', null]) {
+      malformed.push(persistedAttachmentRef({ [key]: value }));
+    }
+  }
+  for (const key of ['byte_length', 'width', 'height']) {
+    malformed.push(persistedAttachmentRef({ [key]: undefined }));
+  }
+  const expected = persistedAttachmentRef({ kind: 'pdf_page', page_number: 2 });
+  const padded = Object.fromEntries(Object.entries(expected)
+    .map(([key, value]) => [key, typeof value === 'string' ? ` ${value} ` : value]));
+  const source = { ...padded, data_base64: 'never-persist', extra: { ignored: true } };
+  const result = normalizeMessageFields({
+    role: 'tool', kind: 'tool_result',
+    tool_result: { call_id: 'call-refs', tool_name: 'read_file', trusted_attachment_refs: [...malformed, source] },
+  });
+  assert.deepEqual(result.tool_result.trusted_attachment_refs, [expected]);
+  assert.equal(source.id, ' image-1 ');
+});
+
+test('tool result refs retain at most 32 valid entries in order', () => {
+  const refs = Array.from({ length: 40 }, (_value, index) => persistedAttachmentRef({
+    id: `image-${index}`, kind: ['image', 'pdf_page', 'chart'][index % 3],
+    byte_length: 0, width: 0, height: 0, ...(index === 0 ? { page_number: 0 } : {}),
+  }));
+  const result = normalizeToolResultMetadata({
+    call_id: 'call-cap', tool_name: 'read_file', trusted_attachment_refs: [null, ...refs],
+  });
+  assert.deepEqual(result.trusted_attachment_refs, refs.slice(0, 32));
+});
+
+test('tool results without valid refs preserve their serialized normalization output', () => {
+  const input = { call_id: 'call-plain', tool_name: 'read_file', output_text: ' plain output ' };
+  const expected = {
+    call_id: 'call-plain', tool_name: 'read_file', output_text: 'plain output', summary: '',
+    is_error: false, error_code: '', approval_state: '', exit_code: null, duration_ms: 0,
+    parent_stream_id: '', generated_artifacts: [], metadata: { late_events: [] },
+  };
+  assert.equal(JSON.stringify(normalizeToolResultMetadata(input)), JSON.stringify(expected));
+  for (const value of [undefined, null, 'refs', {}, [], [null, persistedAttachmentRef({ id: '' })]]) {
+    const normalized = normalizeToolResultMetadata({ ...input, trusted_attachment_refs: value });
+    assert.equal(Object.hasOwn(normalized, 'trusted_attachment_refs'), false);
+    assert.equal(JSON.stringify(normalized), JSON.stringify(expected));
+  }
+});
+
 // Lines 274-276: missing call_id → null
 test('normalizeToolResultMetadata: missing call_id returns null', () => {
   const result = normalizeToolResultMetadata({

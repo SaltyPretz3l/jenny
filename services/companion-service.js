@@ -24,8 +24,21 @@ const {
   compareSessionActivityDesc,
 } = require('./companion-sort-utils');
 const { buildFeatureFlagDefaults } = require('./feature-flags');
+const { normalizeProjectId } = require('./projects/project-schema');
 
 const MAX_ARCHIVED_BOARD_ITEMS = 50;
+
+// The first `limit` entries of each project (input already sorted newest first;
+// unstamped loops share one bucket).
+function takeNewestPerProject(followUps, limit) {
+  const taken = new Map();
+  return followUps.filter((followUp) => {
+    const key = String(followUp?.projectId || '');
+    const count = taken.get(key) || 0;
+    taken.set(key, count + 1);
+    return count < limit;
+  });
+}
 const RESUMABLE_SESSION_STATES = new Set(['current', 'open', 'saved']);
 
 // Reminders fire automatically while Jenny is running. Delivery and persisted
@@ -55,6 +68,7 @@ function normalizeFollowUp(record) {
     deferPreset: normalizeString(record?.deferPreset).toLowerCase(),
     archivedAt: normalizeString(record?.archivedAt),
     sessionId: normalizeString(record?.sessionId),
+    projectId: normalizeProjectId(record?.projectId),
     sourceKind: normalizeString(record?.sourceKind).toLowerCase(),
     sourceId: normalizeString(record?.sourceId),
     sourceMeta:
@@ -497,6 +511,7 @@ class CompanionService {
         body: followUp.body,
         followUpId: followUp.id,
         sessionId: followUp.sessionId,
+        projectId: followUp.projectId,
         sessionTitle,
         sessionState,
         sessionBadge,
@@ -520,10 +535,10 @@ class CompanionService {
 
     const active = activeFollowUps.map((followUp) => toBoardItem(followUp, 'active'));
     const deferred = deferredFollowUps.map((followUp) => toBoardItem(followUp, 'deferred'));
-    // Every resolved loop (bounded like the archive); the renderer shows the
-    // newest few and offers "Show all".
-    const recentResolved = resolvedFollowUps
-      .slice(0, MAX_ARCHIVED_BOARD_ITEMS)
+    // Every resolved loop, bounded per project like the archive (agent tasks are
+    // project-scoped: one busy project must not push another's completed tasks
+    // out of the rail's Done filter); the renderer shows the newest few and offers "Show all".
+    const recentResolved = takeNewestPerProject(resolvedFollowUps, MAX_ARCHIVED_BOARD_ITEMS)
       .map((followUp) => toBoardItem(followUp, 'resolved'));
     const archived = archivedFollowUps
       .slice(0, MAX_ARCHIVED_BOARD_ITEMS)

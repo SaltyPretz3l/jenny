@@ -120,6 +120,10 @@ describe('registerWorkspacePtyIpcHandlers', () => {
       await ipc.invoke.get(invokeChannel('workspacePty.kill'))({}, { sessionId: 'x' }),
       { __from: 'kill', args: [{ sessionId: 'x' }] }
     );
+    // An empty or missing id from the renderer never reaches kill(), which would end every terminal.
+    for (const payload of [{}, { sessionId: '' }, null, undefined]) {
+      assert.deepEqual(await ipc.invoke.get(invokeChannel('workspacePty.kill'))({}, payload), { ok: true, killed: false });
+    }
   });
 });
 

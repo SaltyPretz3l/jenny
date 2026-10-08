@@ -62,6 +62,7 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'plugins',
   'Preferences',
   'project-delete-operations.json',
+  'project-notes',
   'projects.json',
   'QuotaManager',
   'QuotaManager-journal',

@@ -4,16 +4,12 @@ const { registerRuntimeChildCapability } = require('../session-runtime/child-cap
 const { RuntimeOperations } = require('../session-runtime/operations');
 const { captureSessionRuntimeProviderRoute, assertSessionRuntimeProviderRouteCurrent } = require('./session-runtime-provider-route');
 const { bindRuntimeInferenceBudget, assertRuntimeWork } = require('../session-runtime/runtime-work-authority');
-const { normalizeDebugOptions } = require('./managed-sidecar-chat-helpers');
 
-function executionOptionsFor(service, request, images, cancellation) {
+function executionOptionsFor(request, cancellation) {
   const planMode = request.normalizedPreferences?.plan_mode === true;
-  const debug = normalizeDebugOptions(request.debugOptions);
-  const visionUnified = service.featureFlags?.vision_unified_turn !== false;
-  const mode = debug?.plain_chat_mode === true || (!visionUnified && images.length) ? 'chat' : 'assist';
   return {
     signal: cancellation?.signal || null,
-    mode: planMode ? 'plan' : mode,
+    mode: planMode ? 'plan' : 'assist',
     readOnly: request.runtimeChildReadOnly === true,
     toolPreferences: request.toolPreferences,
     approvalMode: request.approvalMode,

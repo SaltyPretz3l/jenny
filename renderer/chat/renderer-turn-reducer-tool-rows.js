@@ -41,6 +41,16 @@
           : [];
         if (body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)) {
           payload.metadata = deepCloneJsonValue(body.metadata);
+          const resultKind = normalizeId(body.metadata.result_kind);
+          if (payload.tool_name === 'ask_user' && ['user_questions_answered', 'user_questions_declined'].includes(resultKind)) {
+            payload.user_questions_result_kind = resultKind;
+            if (Array.isArray(body.metadata.answers)) {
+              payload.user_questions_answers = body.metadata.answers.map((answer) => {
+                const source = answer && typeof answer === 'object' && !Array.isArray(answer) ? answer : {};
+                return { ...deepCloneJsonValue(source), ...(Array.isArray(source.value) ? { value: source.value.slice() } : {}) };
+              });
+            }
+          }
         }
         payload.result_is_error = body.is_error === true;
         payload.error_code = normalizeId(body.error_code || payload.error_code);

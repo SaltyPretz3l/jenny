@@ -156,7 +156,6 @@ function buildMainIpcDeps(overrides = {}) {
     schedulerService: {},
     linkStatusService: {},
     calendarService: {},
-    chatStreamBridge: {},
     getStartupAuditConfig: () => ({ enabled: false }),
     createStartupAuditMarkHandler: () => () => ({}),
     createStartupAuditMarksBatchHandler: () => () => ({}),

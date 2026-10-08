@@ -224,15 +224,6 @@ def restore_turn_context_row(
     return messages
 
 
-def strip_turn_context_metadata(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Drop the row's bookkeeping key, and an empty row, before an engine sees them."""
-    return [
-        {key: value for key, value in message.items() if key != TURN_CONTEXT_BASE_KEY}
-        for message in messages
-        if not (is_turn_context_row(message) and not str(message.get("content") or ""))
-    ]
-
-
 __all__ = [
     "LEADING_CONTEXT_BLOCK_KINDS",
     "TRAILING_RUNTIME_HEADINGS",
@@ -248,7 +239,6 @@ __all__ = [
     "place_turn_context_row",
     "restore_turn_context_row",
     "split_context_blocks",
-    "strip_turn_context_metadata",
     "take_turn_context_row",
     "trailing_turn_context_enabled",
 ]

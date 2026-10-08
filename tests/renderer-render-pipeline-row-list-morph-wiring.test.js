@@ -68,7 +68,6 @@ function buildWiringHarness(t, {
       ui: { chatMode: 'thread', animateNextChatActivation: false },
       auth: { authenticated: true },
       backend: { phase: 'ready' },
-      features: { featureFlags: { chat_timeline_render_telemetry: true } },
     },
     dom: {
       chatTimeline: doc.getElementById('timeline'),
@@ -173,7 +172,7 @@ test('a turn article with no row list yields empty markup rather than a partial 
 
 // Wave 1 field regression (2026-08-25). The first version of the builder resolved
 // the article message with resolveTurnArticleMessageId alone. Under
-// turn_activity_envelope the whole turn renders at ONE anchor message, and the
+// the turn-activity envelope the whole turn renders at ONE anchor message, and the
 // dispatcher inside buildMessageArticleMarkup picks that anchor with a different
 // function -- so when the two disagreed the dispatcher returned a thread-compat
 // stub with no row list, the morph went inert, and the turn charged

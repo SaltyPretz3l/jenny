@@ -11,9 +11,6 @@
   const settingsSupport = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsSupport)
     || (typeof require === 'function' ? require('./renderer-settings-support') : null)
     || {};
-  const settingsOverlays = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsOverlays)
-    || (typeof require === 'function' ? require('./renderer-settings-overlays') : null)
-    || {};
   const settingsControlTowerUtils = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsControlTowerUtils)
     || (typeof require === 'function' ? require('./renderer-settings-control-tower-utils') : null)
     || {};
@@ -25,9 +22,6 @@
     || {};
   const settingsV2Surfaces = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsV2Surfaces)
     || (typeof require === 'function' ? require('./renderer-settings-v2-surfaces') : null)
-    || {};
-  const settingsComposerMeasure = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsComposerMeasure)
-    || (typeof require === 'function' ? require('./renderer-settings-composer-measure') : null)
     || {};
   const settingsFoundation = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsFoundation)
     || (typeof require === 'function' ? require('./renderer-settings-foundation') : null)
@@ -68,15 +62,11 @@
   } = settingsV2Surfaces;
 
   function createSettingsRenderer(deps) {
-    const { state, composerLayoutRuntime, shouldPatchSection = () => true } = deps;
+    const { state, shouldPatchSection = () => true } = deps;
     const { ACTIVITY_SCOPE } = deps.constants;
     const {
-      composerModelSelect, composerEffortSelect,
       appearanceSettingsSection, appearanceSurfaceEffectMeta, appearanceSurfaceEffectPreview,
       appearanceHoloList, appearanceSpellcheckList,
-      composerAttachMenu,
-      composerAttachShortcut,
-      composerCommandPopover, composerCommandPopoverList, composerTerminalShortcut,
       settingsModelCard,
       modelBadge, modelStatus, modelStartupLoadList, appearanceResetButton,
       modelCatalogEmpty,
@@ -91,13 +81,12 @@
       toolsWorkspaceProject, toolsWorkspaceChooseButton,
       editorStatus, editorSettingsFieldList,
       homeStatus, homeSettingsFieldList, notificationsSettingsSection,
-      chatInput, composerModelSelectEl,
     } = deps.dom;
     const appearanceLanguageField = deps.dom.appearanceLanguageField
       || (typeof globalThis !== 'undefined' ? globalThis.document?.getElementById('appearanceLanguageField') : null);
 
     const {
-      getCurrentRuntimePreferences, getRuntimePreferencesFromSession = null, normalizeAppearancePreferences,
+      getCurrentRuntimePreferences, normalizeAppearancePreferences,
       getPalettePresets, getTypographyPresets, getSurfaceEffectPresets,
       getThemeBundles = function fallbackGetThemeBundles() { return []; },
       getComposerHoloOptions = function fallbackGetComposerHoloOptions() {
@@ -105,40 +94,14 @@
       },
       getFontScalePresets = function fallbackGetFontScalePresets() { return []; },
       getChatWidthPresets = function fallbackGetChatWidthPresets() { return []; },
-      getChatZoomOptions = function fallbackGetChatZoomOptions() { return []; },
-      normalizeChatZoomPercent = function fallbackNormalizeChatZoomPercent(value) { return Number(value) || 100; },
       detectActiveThemeBundle = function fallbackDetectActiveThemeBundle() { return null; },
       getActivitySnapshot, getMostRecentActivity, isActivityBusy,
       applyActivityAttributes,
-      buildModelOptionMarkup, buildSelectOptionMarkup,
       isDefaultAppearancePreferences,
       renderApprovedMemoryManager, renderPersonalityEditor, renderSkillsManager, renderOfflineManager, escapeHtml,
-      resolveComposerModelSelectWidth, updateComposerSafeOffset,
-      listSlashCommands,
       getSectionDom = function noopGetSectionDom() { return {}; },
       isSectionInitialized = function alwaysReady() { return true; },
     } = deps.callbacks;
-    const overlayRenderer = settingsOverlays.createSettingsOverlayRenderer?.({
-      state,
-      dom: {
-        composerAttachMenu,
-        composerAttachShortcut,
-        composerCommandPopover,
-        composerCommandPopoverList,
-        composerTerminalShortcut,
-      },
-      callbacks: {
-        listSlashCommands,
-        escapeHtml,
-        getChatZoomOptions,
-        normalizeChatZoomPercent,
-        buildSelectOptionMarkup,
-      },
-    }) || {};
-    const composerMeasure = settingsComposerMeasure.createComposerMeasure?.({
-      state, composerLayoutRuntime, chatInput,
-      resolveComposerModelSelectWidth, updateComposerSafeOffset,
-    }) || {};
     const fieldDescriptors = globalThis.rendererSettingsFieldDescriptors
       || (typeof require === 'function' ? require('./renderer-settings-field-descriptors') : null);
     // One option list per Appearance select: the control, edit validation and
@@ -193,7 +156,6 @@
     }
 
     function renderSettings() {
-      const models = Array.isArray(state.modelList?.data) ? state.modelList.data : [];
       const activeModel = state.status?.model || state.modelList?.active_model || '';
       const modelCatalogUnavailable = state.modelList?.available === false;
       const modelCatalogReason = String(state.modelList?.reason || '').trim();
@@ -244,22 +206,6 @@
         syncSettingsControlTowerIndicators(controlTowerModel, { documentRef: settingsControlTowerHost.ownerDocument });
       }
 
-      // "Use default" (value '') runs on this model; the effort control reads it
-      // from here to offer that model's efforts. Stamped before the rebuild so
-      // the rebuild's mutation-driven reconcile sees the current pair.
-      composerModelSelect.dataset.backendModel = String(activeModel || '').trim();
-      composerModelSelect.dataset.backendEngineType = String(
-        state.status?.engine || state.status?.engine_type || state.modelList?.engine_type || ''
-      ).trim().toLowerCase();
-      // Split view W2-2a: pane 0's rail carriers carry pane 0's session (one pane: the current preferences).
-      const composerPreferences = globalThis.rendererRenderPipelineChromeUtils?.resolvePaneRuntimePreferences?.({ state, sessionId: globalThis.rendererPaneVisibilityUtils?.resolvePaneSessionId?.(state, 0), fromSession: getRuntimePreferencesFromSession, current: () => runtimePreferences }) || runtimePreferences;
-      composerModelSelect.innerHTML = buildModelOptionMarkup(models, composerPreferences.preferredModel, {
-        compact: true,
-      });
-      composerModelSelect.value = composerPreferences.preferredModel;
-      globalThis.rendererComposerModelPicker?.instance?.syncPill?.();
-      composerEffortSelect.dataset.requestedEffort = String(composerPreferences.reasoningEffort || '');
-      composerEffortSelect.value = composerPreferences.reasoningEffort;
       // Bundle and palette names run long ("Jenny XJ-9 — Night Patrol"): both
       // take the wide dropdown, so the two stack at one width.
       mountSettingRow(appearanceSettingsSection, 'appearanceThemeBundleSelect', activeThemeBundle ? activeThemeBundle.id : 'custom', { rowClassName: 'settings-field--wide-control' });
@@ -509,11 +455,7 @@
 
     return {
       renderSettings,
-      renderComposerPopover: (...args) => overlayRenderer.renderComposerPopover?.(...args),
-      renderCommandPopover: (...args) => overlayRenderer.renderCommandPopover?.(...args),
-      dispose: () => { disposeSurfaceEffectPreview(); overlayRenderer.dispose?.(); },
-      syncComposerInputHeight: (...args) => composerMeasure.syncComposerInputHeight?.(...args),
-      measureInlineTextWidth: (...args) => composerMeasure.measureInlineTextWidth?.(...args),
+      dispose: () => disposeSurfaceEffectPreview(),
     };
   }
 

@@ -16,6 +16,9 @@ _TOOL_ARGUMENT_ALIASES: dict[str, tuple[tuple[str, str], ...]] = {
     "write_file": (("path", "file_path"), ("content", "file_content")),
     "delete_file": (("path", "file_path"),),
 }
+# Row 34: the user-only change evidence a failed scripted call keeps on
+# ``ToolExecutionFailure.result_metadata`` and its failed outcome's metadata.
+TOOL_FAILURE_RESULT_METADATA_KEYS = ("diffs", "scripted_change_review")
 TOOL_FAILURE_ERROR_DETAIL_KEYS = (
     "category",
     "classification",
@@ -382,6 +385,10 @@ class ToolExecutionFailure(CompanionError):
         details = error_details or {}
         for key in TOOL_FAILURE_ERROR_DETAIL_KEYS:
             setattr(self, key, str(details.get(key) or "").strip())
+        # User-only result metadata a failed call still produced (row 34:
+        # ``TOOL_FAILURE_RESULT_METADATA_KEYS``). Never part of
+        # ``to_error_data``, model text or logs.
+        self.result_metadata: dict[str, object] = {}
 
     def to_error_data(self) -> dict[str, str]:
         return {

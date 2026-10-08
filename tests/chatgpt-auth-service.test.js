@@ -752,10 +752,133 @@ test('secure store registers and round-trips model-provider OAuth only for allow
   }
 });
 
+async function pastedFlow(t, overrides = {}, timeoutMs = 2000) {
+  const { store } = createSecureStoreFixture('jenny-chatgpt-pasted-');
+  const port = await reserveUnusedPort();
+  let openedUrl = '';
+  let exchangeBody;
+  const service = createService({
+    secureStore: store, listenPorts: [port],
+    openExternal: (url) => { openedUrl = url; return overrides.browserWait; },
+    fetchImpl: async (_url, options) => {
+      exchangeBody = new URLSearchParams(options.body);
+      return jsonResponse(200, { id_token: createIdentityToken(),
+        access_token: createAccessToken(), refresh_token: FAKE_REFRESH_TOKEN });
+    },
+    ...overrides,
+  });
+  const flight = service.start({ timeoutMs });
+  t.after(async () => { service.cancel(); await flight; });
+  await waitFor(() => openedUrl);
+  const authUrl = new URL(openedUrl);
+  const callback = new URL(authUrl.searchParams.get('redirect_uri'));
+  callback.searchParams.set('state', authUrl.searchParams.get('state'));
+  callback.searchParams.set('code', 'pasted-code-must-not-leak');
+  return { service, flight, callback, openedUrl, store, getExchange: () => exchangeBody };
+}
+
+test('pasted redirect exchanges and saves through the pending PKCE flow without HTTP', async (t) => {
+  const { service, flight, callback, openedUrl, store, getExchange } = await pastedFlow(t);
+  assert.equal(service.getPendingAuthorizeUrl(), openedUrl);
+  assert.equal(new URL(openedUrl).searchParams.has('code_verifier'), false);
+  assert.deepEqual(service.completeFromPastedUrl(callback.toString()), { ok: true });
+  assert.equal((await flight).state, 'signed_in');
+  assert.equal(getExchange().get('redirect_uri'), new URL(openedUrl).searchParams.get('redirect_uri'));
+  assert.equal(getExchange().get('code'), 'pasted-code-must-not-leak');
+  assert.equal(JSON.parse(store.getModelProviderOAuth('chatgpt')).email, 'jenny@example.com');
+  assert.equal(service.getPendingAuthorizeUrl(), '');
+  assert.deepEqual(service.completeFromPastedUrl(callback.toString()), { ok: false, reason: 'no_pending_flow' });
+});
+
+test('pasted redirect rejects invalid addresses, state and code without consuming the flow', async (t) => {
+  const { service, flight, callback } = await pastedFlow(t);
+  const altered = (change) => { const url = new URL(callback); change(url); return url.toString(); };
+  for (const raw of [null, 'not a URL', 'x'.repeat(16385),
+    altered((url) => { url.hostname = 'example.com'; }),
+    altered((url) => { url.port = url.port === '1455' ? '1457' : '1455'; }),
+    altered((url) => { url.pathname = '/wrong'; })]) {
+    assert.deepEqual(service.completeFromPastedUrl(raw), { ok: false, reason: 'invalid_url' });
+  }
+  for (const value of [null, '', 'x'.repeat(8193)]) {
+    const raw = altered((url) => {
+      if (value === null) url.searchParams.delete('code');
+      else url.searchParams.set('code', value);
+    });
+    assert.deepEqual(service.completeFromPastedUrl(raw), { ok: false, reason: 'missing_code' });
+  }
+  for (const value of [null, 'earlier-state']) {
+    const raw = altered((url) => {
+      if (value === null) url.searchParams.delete('state');
+      else url.searchParams.set('state', value);
+    });
+    assert.deepEqual(service.completeFromPastedUrl(raw), { ok: false, reason: 'state_mismatch' });
+  }
+  assert.equal(service.getStatus().state, 'connecting');
+  callback.hostname = '127.0.0.1';
+  assert.deepEqual(service.completeFromPastedUrl(callback.toString()), { ok: true });
+  assert.equal((await flight).state, 'signed_in');
+});
+
+test('pasted access denial aborts with the existing cancellation status', async (t) => {
+  const { service, flight, callback } = await pastedFlow(t);
+  callback.searchParams.set('error', 'access_denied');
+  const stale = new URL(callback.toString());
+  stale.searchParams.set('state', 'another-attempt');
+  assert.deepEqual(service.completeFromPastedUrl(stale.toString()), { ok: false, reason: 'state_mismatch' });
+  assert.notEqual(service.getPendingAuthorizeUrl(), '', 'a denial carrying a foreign state leaves the live flow alone');
+  assert.deepEqual(service.completeFromPastedUrl(callback.toString()), { ok: false, reason: 'access_denied' });
+  assert.deepEqual(service.completeFromPastedUrl('not a URL'), { ok: false, reason: 'no_pending_flow' });
+  assert.equal(service.getPendingAuthorizeUrl(), '');
+  const status = await flight;
+  assert.equal(status.state, 'signed_out');
+  assert.equal(status.error.code, 'auth_cancelled');
+});
+
+for (const winner of ['listener', 'paste']) {
+  test(`${winner} wins the shared single-use callback guard`, async (t) => {
+    let releaseBrowser;
+    const browserWait = new Promise((resolve) => { releaseBrowser = resolve; });
+    const { service, flight, callback } = await pastedFlow(t, { browserWait });
+    // Keep openExternal pending so both arrivals exercise the live listener.
+    callback.hostname = '127.0.0.1';
+    if (winner === 'listener') {
+      assert.equal((await requestUrl(callback)).statusCode, 200);
+      assert.deepEqual(service.completeFromPastedUrl(callback.toString()), { ok: false, reason: 'already_received' });
+    } else {
+      assert.deepEqual(service.completeFromPastedUrl(callback.toString()), { ok: true });
+      assert.equal((await requestUrl(callback)).statusCode, 410);
+    }
+    releaseBrowser();
+    assert.equal((await flight).state, 'signed_in');
+  });
+}
+
+test('extendPending uses the start deadline once and clears the original timeout', async (t) => {
+  let clock = NOW_MS;
+  const { service, flight, callback } = await pastedFlow(t, { now: () => clock }, 150);
+  clock += 1000;
+  assert.deepEqual(service.extendPending(), { ok: true, deadline_ms: NOW_MS + 600000 });
+  clock += 1000;
+  assert.deepEqual(service.extendPending(), { ok: true, deadline_ms: NOW_MS + 600000 });
+  await new Promise((resolve) => setTimeout(resolve, 175));
+  assert.equal(service.getStatus().state, 'connecting');
+  assert.deepEqual(service.completeFromPastedUrl(callback.toString()), { ok: true });
+  assert.equal((await flight).state, 'signed_in');
+  assert.deepEqual(service.extendPending(), { ok: false, reason: 'no_pending_flow' });
+});
+
+test('paste APIs have bounded responses when there is no pending flow', () => {
+  const service = createService();
+  assert.deepEqual(service.completeFromPastedUrl(null), { ok: false, reason: 'no_pending_flow' });
+  assert.deepEqual(service.extendPending(), { ok: false, reason: 'no_pending_flow' });
+  assert.equal(service.getPendingAuthorizeUrl(), '');
+});
+
 test('logs and thrown errors never contain fake access, refresh, or id-token values', () => {
   const serializedLogs = JSON.stringify(observedLogs);
   const serializedErrors = JSON.stringify(observedThrownMessages);
-  for (const secret of [FAKE_REFRESH_TOKEN, FAKE_ACCESS_TOKEN, FAKE_ID_TOKEN_MARKER]) {
+  for (const secret of [FAKE_REFRESH_TOKEN, FAKE_ACCESS_TOKEN, FAKE_ID_TOKEN_MARKER,
+    'pasted-code-must-not-leak', '/auth/callback?']) {
     assert.equal(serializedLogs.includes(secret), false);
     assert.equal(serializedErrors.includes(secret), false);
   }

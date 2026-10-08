@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { ensureJennyDirGitignoreSync } = require('../jenny-project-dir');
 
 const MAX_WORKSPACE_RESTORE_STAGES = 20;
 const WORKSPACE_RESTORE_JOURNAL = 'workspace-restore-journal.json';
@@ -61,6 +62,7 @@ function writeJsonDurable(filePath, value) {
 
 function createWorkspaceRestoreStage(stagingRoot) {
   fs.mkdirSync(stagingRoot, { recursive: true });
+  ensureJennyDirGitignoreSync(path.dirname(stagingRoot));
   fsyncDirectory(path.dirname(stagingRoot));
   fsyncDirectory(path.dirname(path.dirname(stagingRoot)));
   const stagePath = fs.mkdtempSync(path.join(stagingRoot, WORKSPACE_RESTORE_STAGE_PREFIX));

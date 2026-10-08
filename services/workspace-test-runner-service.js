@@ -357,9 +357,9 @@ function createWorkspaceTestRunnerService(deps = {}) {
       runHistory?.recordFinish?.(configId, runId, record);
       // The bounded, token-masked output tails are OPT-IN and ride the returned
       // record only. History stays lean because the renderer reads it wholesale
-      // on every panel render, and the renderer's own run path never asks for the
-      // tails; the model-facing `verify` tool is the one caller that needs the
-      // actual failing lines, so it is the one caller that sets includeOutput.
+      // on every panel render. Only two callers ask for the tails: the model-facing
+      // `verify` tool (it needs the actual failing lines) and the Workspace panel's
+      // own runs (it keeps the latest output per config in renderer memory).
       if (!includeOutput) {
         return { configId, runId, ...record };
       }

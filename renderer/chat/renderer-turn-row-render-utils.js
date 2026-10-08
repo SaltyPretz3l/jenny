@@ -25,14 +25,7 @@
   })();
   const defaultEscapeHtml = stringUtils && typeof stringUtils.escapeHtml === 'function'
     ? stringUtils.escapeHtml
-    : function fallbackEscapeHtml(value) {
-      return String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    };
+    : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
   function resolveTurnRowModule(globalName, modulePath) {
     if (typeof globalThis !== 'undefined' && globalThis[globalName]) return globalThis[globalName];
     if (typeof require === 'function') {
@@ -282,6 +275,7 @@
       getMessageById,
       getReasoningPhaseField,
       hasAssistantErrorRecoveryMetadata,
+      resolveSupersededErrorNotice,
       normalizeId,
       normalizeReasoningPhase,
     } = turnRowModelUtils;
@@ -309,7 +303,8 @@
       buildSendFailureChipMarkup,
       buildUserBubbleRowMarkup,
       buildEditingUserBubbleMarkup,
-      buildTruncationMarkerMarkup,
+      buildDiscardedDraftFoldMarkup,
+      buildDiscardedReceiptMarkup,
       stripCitationMarkersForDisplay,
     } = turnRowBubbleUtils.createTurnRowBubbleUtils({
       escapeHtml,
@@ -325,8 +320,14 @@
     function buildAssistantTextRowMarkup(row, messages, options) {
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
       const sourceMessage = getSourceMessage(row, messages, options);
-      const text = String(payload.text || '');
       const renderOptions = options || {};
+      if (payload.discard_hidden === true) {
+        return '';
+      }
+      if (payload.discard_anchor === true) {
+        return buildDiscardedDraftFoldMarkup(row);
+      }
+      const text = String(payload.text || '');
       const isStreaming = renderOptions.isStreaming === true;
       // Mid-turn phase kicker: a preserved commentary/intermediate slice gets
       // an SR-only label OUTSIDE
@@ -365,7 +366,7 @@
             disabled: renderOptions.resumeSendBusy === true,
           })
         : '';
-      return `${kickerMarkup}${bubbleMarkup}${attachmentsMarkup}${buildTruncationMarkerMarkup(payload)}${resumeMarkup}`;
+      return `${kickerMarkup}${bubbleMarkup}${attachmentsMarkup}${buildDiscardedReceiptMarkup(row, sourceMessage, renderOptions)}${resumeMarkup}`;
     }
 
     function buildReasoningRenderMessage(row, messages, options) {
@@ -447,6 +448,12 @@
 
     function buildReasoningRowMarkup(row, messages, options) {
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
+      if (payload.discard_hidden === true) {
+        return '';
+      }
+      if (payload.discard_anchor === true) {
+        return buildDiscardedDraftFoldMarkup(row);
+      }
       // A terminal turn can still carry stale streaming render options (a
       // streamingMessageId matching this row's shared primary_message_id);
       // reasoning must never render as streaming/auto-expanded once the
@@ -467,13 +474,12 @@
           holdOpen: !turnSettled && options?.turnLive === true && onlyReasoningFollows(options),
         }
       );
-      const truncationMarkup = buildTruncationMarkerMarkup(payload);
       if (String(widgetHtml || '').trim()) {
-        return `${widgetHtml}${truncationMarkup}`;
+        return widgetHtml;
       }
       const chunkCount = Number(payload.chunk_count) || 0;
       const label = chunkCount ? jt('chat.turnRow.thinkingChunks', 'Thinking… ({count} chunks)', { count: chunkCount }) : 'Thinking\u2026';
-      return `<div class="thinking-placeholder" role="status" aria-live="polite">${escapeHtml(label)}</div>${truncationMarkup}`;
+      return `<div class="thinking-placeholder" role="status" aria-live="polite">${escapeHtml(label)}</div>`;
     }
 
     function buildToolCallMessage(row, messages, options) {
@@ -669,7 +675,7 @@
         : '';
     }
 
-    function buildErrorCodeNoticeMarkup(row, renderMessage, suppressedErrors) {
+    function buildErrorCodeNoticeMarkup(row, renderMessage, suppressedErrors, messages, options) {
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
       const errorCode = normalizeId(renderMessage && renderMessage.error_code) || normalizeId(payload.error_code);
       if (!errorCode && !hasAssistantErrorRecoveryMetadata(renderMessage)) {
@@ -685,6 +691,7 @@
       const noticeMessage = {
         ...(renderMessage && typeof renderMessage === 'object' ? renderMessage : {}),
         ...(folded.length ? { suppressedErrors: folded } : {}),
+        ...(resolveSupersededErrorNotice(renderMessage, messages, options) ? { superseded: true } : {}),
       };
       if (streamId && !normalizeId(noticeMessage.stream_id)) {
         noticeMessage.stream_id = streamId;
@@ -760,10 +767,26 @@
         /* Same-turn dedupe (renderer-turn-row-error-dedupe-utils.js): one card per failed turn; a suppressed row returns '' HERE so it cannot leak back in via the fallback below. */
         const dedupe = resolveTurnErrorDedupe(row, options, normalizeId);
         if (dedupe.suppress) return '';
-        const errorCodeMarkup = buildErrorCodeNoticeMarkup(row, renderMessage, dedupe.suppressedErrors);
+        const errorCodeMarkup = buildErrorCodeNoticeMarkup(row, renderMessage, dedupe.suppressedErrors, messages, options);
         if (errorCodeMarkup) {
           return errorCodeMarkup;
         }
+        // A failed reply with no failure detail of its own (no stream error, error code or
+        // recovery metadata) whose text a sibling body row already shows: an empty notice keeps
+        // the row's identity without repeating the sentence (row 27 settled plugin chats). With
+        // no body row (a reasoning phase and no visible segment) the notice is the only place.
+        const sourceMessage = getSourceMessage(row, messages, options) || {};
+        const content = normalizeId(payload.content);
+        const noticeMessage = normalizeId(payload.message);
+        const messageId = normalizeId(row && row.primary_message_id);
+        const bodyShown = Array.isArray(options?.siblingRows) && options.siblingRows.some((sibling) => (
+          sibling && sibling.kind === 'assistant_text' && normalizeId(sibling.primary_message_id) === messageId));
+        const repeatsBody = bodyShown && Boolean(content) && content === normalizeId(sourceMessage.content)
+          && normalizeId(sourceMessage.status) === 'error'
+          && (!noticeMessage || noticeMessage === content)
+          && !normalizeId(payload.stream_error || sourceMessage.stream_error)
+          && !hasAssistantErrorRecoveryMetadata(renderMessage);
+        if (repeatsBody) return '';
         return renderAssistantFailureNotice(renderMessage) || buildGenericSystemNoticeMarkup(row);
       }
       return buildGenericSystemNoticeMarkup(row);

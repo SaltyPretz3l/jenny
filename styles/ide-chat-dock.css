@@ -1,6 +1,7 @@
-/* Workspace Chat Dock (ide_chat_dock) — the chat subtree relocated into a
- * full-height OUTERMOST #ideShell side column (design: CHAT_DOCK_SPEC.md,
- * Direction A + labeled featherweight header).
+/* Workspace chat (ide_chat_dock) — the chat subtree relocated into the
+ * workbench's chat view (row 40 W3; design: CHAT_DOCK_SPEC.md, Direction A +
+ * labeled featherweight header). The workbench owns the column, its width, its
+ * divider and collapse; this sheet styles what sits inside the view.
  *
  * Scope rules:
  * - ADDITIVE ONLY: once reparented, the moved nodes stop matching `.chat-view .X`
@@ -9,135 +10,35 @@
  *   hex, no gradients, so all presets work by construction.
  * - MUST NOT suppress or restyle the composer holo (the `.composer::after`
  *   focus ring, the accent halo, or the setComposerHoloState states); its
- *   treatment must match main Chat.
- * - Fully independent of the shared bottom panel: no rule here may key off the
- *   bottom-panel state, and none may alter it. */
+ *   treatment must match main Chat. */
 
-/* ── Dock container ─────────────────────────────────────────────────────────
- * Mirrors .ide-secondary-sidebar's shape (grid-area + divider facing the
- * editor), but hosts the chat surface, so it sits on --bg-base like #chatView. */
+/* ── Dock container: fills the chat view host, on --bg-base like #chatView ── */
 .ide-chat-dock {
-  grid-area: chatdock;
   position: relative;
+  /* The session picker sizes to the dock (cqi). */
+  container-type: inline-size;
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   background: var(--bg-base);
-  /* Dock right (default) -> divider on its left edge, facing the editor. */
-  border-inline-start: 1px solid var(--line);
-}
-
-.ide-shell[data-chatdock-side="left"] .ide-chat-dock {
-  border-inline-start: 0;
-  border-inline-end: 1px solid var(--line);
 }
 
 .ide-chat-dock.hidden {
   display: none;
 }
 
-.ide-chat-dock:not(.hidden) {
-  animation: scrim-in var(--motion-duration-fast) var(--motion-ease-standard);
+/* The chat view host is a flex column, not a block scroller: the transcript scrolls itself. */
+.wb-view-host[data-wb-view="chat"] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-/* ── Grid matrix (plan §8) ──────────────────────────────────────────────────
- * Gated on [data-chatdock-open="true"] so the 4 base closed-case rules in
- * ide-view.css stay byte-identical. Dock is OUTERMOST on its side. Negative
- * arms use :not() so the default rail-right / secondary-closed cases match
- * whether the attribute is absent or explicit. Tracks:
- *   R = var(--ide-rail-width, 300px)   S = var(--ide-secondary-sidebar-width, 260px)
- *   M = minmax(0, 1fr) (bare — the dock may squeeze the editor)
- *   D = var(--ide-chat-dock-width, 380px) */
-
-/* rail right · no secondary · dock right:  M R D */
-.ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"]):not([data-secondary-open="true"]):not([data-chatdock-side="left"]) {
-  grid-template-columns: minmax(0, 1fr) var(--ide-rail-width, 300px) var(--ide-chat-dock-width, 380px);
-  grid-template-areas: "main rail chatdock";
-}
-
-/* rail right · no secondary · dock left:  D M R */
-.ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"]):not([data-secondary-open="true"])[data-chatdock-side="left"] {
-  grid-template-columns: var(--ide-chat-dock-width, 380px) minmax(0, 1fr) var(--ide-rail-width, 300px);
-  grid-template-areas: "chatdock main rail";
-}
-
-/* rail right · secondary open · dock right:  S M R D */
-.ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"])[data-secondary-open="true"]:not([data-chatdock-side="left"]) {
-  grid-template-columns: var(--ide-secondary-sidebar-width, 260px) minmax(0, 1fr) var(--ide-rail-width, 300px) var(--ide-chat-dock-width, 380px);
-  grid-template-areas: "secondary main rail chatdock";
-}
-
-/* rail right · secondary open · dock left:  D S M R */
-.ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"])[data-secondary-open="true"][data-chatdock-side="left"] {
-  grid-template-columns: var(--ide-chat-dock-width, 380px) var(--ide-secondary-sidebar-width, 260px) minmax(0, 1fr) var(--ide-rail-width, 300px);
-  grid-template-areas: "chatdock secondary main rail";
-}
-
-/* rail left · no secondary · dock right:  R M D */
-.ide-shell[data-chatdock-open="true"][data-rail-side="left"]:not([data-secondary-open="true"]):not([data-chatdock-side="left"]) {
-  grid-template-columns: var(--ide-rail-width, 300px) minmax(0, 1fr) var(--ide-chat-dock-width, 380px);
-  grid-template-areas: "rail main chatdock";
-}
-
-/* rail left · no secondary · dock left:  D R M */
-.ide-shell[data-chatdock-open="true"][data-rail-side="left"]:not([data-secondary-open="true"])[data-chatdock-side="left"] {
-  grid-template-columns: var(--ide-chat-dock-width, 380px) var(--ide-rail-width, 300px) minmax(0, 1fr);
-  grid-template-areas: "chatdock rail main";
-}
-
-/* rail left · secondary open · dock right:  R M S D */
-.ide-shell[data-chatdock-open="true"][data-rail-side="left"][data-secondary-open="true"]:not([data-chatdock-side="left"]) {
-  grid-template-columns: var(--ide-rail-width, 300px) minmax(0, 1fr) var(--ide-secondary-sidebar-width, 260px) var(--ide-chat-dock-width, 380px);
-  grid-template-areas: "rail main secondary chatdock";
-}
-
-/* rail left · secondary open · dock left:  D R M S */
-.ide-shell[data-chatdock-open="true"][data-rail-side="left"][data-secondary-open="true"][data-chatdock-side="left"] {
-  grid-template-columns: var(--ide-chat-dock-width, 380px) var(--ide-rail-width, 300px) minmax(0, 1fr) var(--ide-secondary-sidebar-width, 260px);
-  grid-template-areas: "chatdock rail main secondary";
-}
-
-/* ── Resizer (mirrors .ide-secondary-sidebar-resizer mechanics) ─────────────
- * ~6px invisible hit area on the dock's INNER edge (facing the editor); the
- * visible feedback is an accent hairline (::after) on hover/drag only. */
-.ide-chat-dock-resizer {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  inset-inline-start: -3px;
-  width: 6px;
-  cursor: col-resize;
-  z-index: 2;
-}
-
-.ide-shell[data-chatdock-side="left"] .ide-chat-dock-resizer {
-  inset-inline-start: auto;
-  inset-inline-end: -3px;
-}
-
-.ide-chat-dock-resizer.hidden {
+.wb-view-host[data-wb-view="chat"][hidden] {
   display: none;
-}
-
-.ide-chat-dock-resizer::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 2px; /* rtl:physical */
-  width: 2px;
-  background: transparent;
-}
-
-.ide-chat-dock-resizer:hover::after,
-.ide-chat-dock-resizer:active::after {
-  background: color-mix(in srgb, var(--accent) 55%, transparent);
-}
-
-.ide-chat-dock-resizer:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
 }
 
 /* ── Featherweight header (spec register) ───────────────────────────────────
@@ -158,7 +59,7 @@
   flex-shrink: 0;
 }
 
-/* Ghost actions: quiet glyphs, no hover surface — text color is the only cue. */
+/* Ghost actions (New chat): quiet glyphs, no hover surface — text color is the only cue. */
 .ide-chat-dock-action {
   min-width: 22px;
   min-height: 22px;
@@ -197,8 +98,8 @@
   container-name: chatdock;
   /* 24px total side margin (12px each) — the dock is already an inset panel, so the
    * main chat's roomier 48px gutter wastes space at compact dock widths. */
-  --content-column-width: min(100%, calc(var(--ide-chat-dock-width, 380px) - 24px));
-  --composer-width: min(100%, calc(var(--ide-chat-dock-width, 380px) - 32px));
+  --content-column-width: calc(100% - 24px);
+  --composer-width: calc(100% - 32px);
   --chat-user-bubble-max-width: max(0px, calc(100% - var(--thread-dot-hit-size) - var(--space-5)));
   --context-panel-width: 0px;
   /* The main-chat offsets clear floating overlays (workbench header, floating
@@ -219,6 +120,43 @@
   grid-row: 3;
   min-width: 0;
   padding: 0 var(--space-4) var(--space-4);
+}
+
+/* ── Chat 2 (row 40 W6b): split view's second pane hosted whole in the Workspace.
+ * Its root also carries .ide-chat-dock-body; its kicker (title, close) heads it. */
+.wb-view-host > .chat-pane[data-pane-hosted] {
+  block-size: 100%;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.wb-view-host > .chat-pane[data-pane-hosted] > .chat-pane-kicker {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.wb-view-host > .chat-pane[data-pane-hosted] > .hero-stage,
+.wb-view-host > .chat-pane[data-pane-hosted] > .chat-thread-stage,
+.wb-view-host > .chat-pane[data-pane-hosted] > .chat-timeline-utility-cluster {
+  grid-column: 1;
+  grid-row: 2;
+  min-height: 0;
+}
+
+.wb-view-host > .chat-pane[data-pane-hosted] > .composer-wrap {
+  grid-column: 1;
+  grid-row: 3;
+  min-width: 0;
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.wb-view-host > .chat-pane[data-pane-hosted].chat-active .hero-stack {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The host scrolls nothing: the pane's own thread does. */
+.wb-view-host:has(> .chat-pane[data-pane-hosted]) {
+  overflow: hidden;
 }
 
 /* ── Simplified-dock suppression (plan §7 + §17.1) ─────────────────────────
@@ -496,39 +434,4 @@
 /* §17 decision 10: attachment tray hugs the composer's trailing edge. */
 .ide-chat-dock-body .attachment-tray {
   justify-content: flex-end;
-}
-
-/* ── Stacked-narrow (<860px): dock stacks as the FIRST row above the editor,
- * mirroring ide-view.css's rail/secondary stacking. Fully independent of the
- * bottom panel (which lives INSIDE #ideMain). ─────────────────────────────── */
-@media (max-width: 860px) {
-  .ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"]):not([data-secondary-open="true"]):not([data-chatdock-side="left"]),
-  .ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"]):not([data-secondary-open="true"])[data-chatdock-side="left"],
-  .ide-shell[data-chatdock-open="true"][data-rail-side="left"]:not([data-secondary-open="true"]):not([data-chatdock-side="left"]),
-  .ide-shell[data-chatdock-open="true"][data-rail-side="left"]:not([data-secondary-open="true"])[data-chatdock-side="left"] {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "chatdock" "main" "rail";
-    grid-template-rows: auto minmax(0, 1fr) auto;
-  }
-
-  .ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"])[data-secondary-open="true"]:not([data-chatdock-side="left"]),
-  .ide-shell[data-chatdock-open="true"]:not([data-rail-side="left"])[data-secondary-open="true"][data-chatdock-side="left"],
-  .ide-shell[data-chatdock-open="true"][data-rail-side="left"][data-secondary-open="true"]:not([data-chatdock-side="left"]),
-  .ide-shell[data-chatdock-open="true"][data-rail-side="left"][data-secondary-open="true"][data-chatdock-side="left"] {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "chatdock" "main" "secondary" "rail";
-    grid-template-rows: auto minmax(0, 1fr) auto auto;
-  }
-
-  .ide-chat-dock,
-  .ide-shell[data-chatdock-side="left"] .ide-chat-dock {
-    border-inline-start: 0;
-    border-inline-end: 0;
-    border-bottom: 1px solid var(--line);
-    max-height: 50%;
-  }
-
-  .ide-chat-dock-resizer {
-    display: none;
-  }
 }

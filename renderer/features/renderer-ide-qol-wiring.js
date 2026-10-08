@@ -104,7 +104,7 @@
         // WIDE-030: the map takes the CANONICAL root context, not the legacy
         // getWorkspaceId (whose production value was activeWorkspaceId ||
         // 'default' — a shared key for every root).
-        getWorkspaceRootContext, getFeatureFlags, sendToJenny, getGitDecoration, subscribeGitChange,
+        getWorkspaceRootContext, sendToJenny, getGitDecoration, subscribeGitChange,
         activityBus, getActiveSessionId,
       }) || null;
 
@@ -126,14 +126,14 @@
     // resolved lazily (it ships in a later wave / may be absent in a build).
     const stageSurface = resolveModule('rendererIdeStageSurfaceController', './renderer-ide-stage-surface-controller')
       .createIdeStageSurfaceController?.({
-        getDom, getIde, ideStateUtils, getFeatureFlags, windowRef, appendClientLog,
+        getDom, getIde, ideStateUtils, windowRef, appendClientLog,
         schedulePersist: typeof d.schedulePersist === 'function' ? d.schedulePersist : noop,
         requestRender,
         mapController,
         explodeController,
         getPreviewStage: () => previewStage,
       }) || null;
-    // Unified Preview stage (workspace_preview_surface): content owner for
+    // Unified Preview stage: content owner for
     // #idePreviewHost. Constructed AFTER the stage controller (it activates
     // through it), resolved by the controller lazily via getPreviewStage.
     let previewStage = null;
@@ -164,12 +164,14 @@
         isSurfaceEnabled: (view) => {
           const flags = getFeatureFlags() || {};
           return view === 'preview'
-            ? flags.workspace_preview_surface === true
-            : view === 'file_map'
-              ? flags.workspace_file_map === true
-              : view === 'change_diff' && flags.tools_workspace_present_enabled === true;
+            || view === 'file_map'
+            || (view === 'change_diff' && flags.tools_workspace_present_enabled === true);
         },
       }) || null;
+    // Subscribed at construction, not in bindAll(): the shell can build this
+    // IDE in the background just to deliver a request it held, and the view
+    // may never activate. bindEvents() is idempotent, so bindAll() is a no-op.
+    presentation?.bindEvents();
 
     // Palette-facing nav helpers: both act on the ACTIVE FILE tab (review
     // surfaces like map://, diff://, preview:// have no node in the graph).

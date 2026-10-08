@@ -47,6 +47,12 @@ test('a paused reply for the turn offers its own Resume key', () => {
 test('a paused reply being discarded folds its card; queued or running work is not a pause', () => {
   assert.deepEqual(resolveApprovalCardState(rendererState({ pending: [{ ...PAUSED_ROW, status: 'withdrawing' }] }), REF),
     { state: 'inactive' });
+  // Live recheck 2026-10-05: a restart-paused row with no checkpoint cannot
+  // resume, so the card is a receipt, not a Resume the scheduler would refuse.
+  assert.deepEqual(resolveApprovalCardState(rendererState({ pending: [{ ...PAUSED_ROW, resumable: false }] }), REF),
+    { state: 'inactive' });
+  assert.deepEqual(resolveApprovalCardState(rendererState({ pending: [{ ...PAUSED_ROW, resumable: true }] }), REF),
+    { state: 'paused', resumeKey: 'detached:work_1' });
   for (const status of ['pending', 'running']) {
     const state = rendererState({ pending: [{ ...PAUSED_ROW, status }] });
     assert.deepEqual(resolveApprovalCardState(state, REF), { state: 'live' }, status);
@@ -140,7 +146,8 @@ test('the state key is empty with nothing pending and moves with every input', (
     approvalCardStateKey(rendererState({ approvals: [{ approvalId: 'a', callId: 'call_1' }] }), 'sess_1'),
     approvalCardStateKey(rendererState({ inactive: ['call_1'] }), 'sess_1'),
     approvalCardStateKey(rendererState({ pending: [{ ...PAUSED_ROW, status: 'withdrawing' }] }), 'sess_1'),
+    approvalCardStateKey(rendererState({ pending: [{ ...PAUSED_ROW, resumable: false }] }), 'sess_1'),
   ]);
-  assert.equal(keys.size, 5);
+  assert.equal(keys.size, 6);
   assert.equal(approvalCardStateKey(rendererState({ pending: [{ ...PAUSED_ROW, status: 'running' }] }), 'sess_1'), '');
 });

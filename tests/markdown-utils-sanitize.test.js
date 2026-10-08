@@ -33,6 +33,10 @@ test('frontmatter metadata mode strips only empty or mapping YAML and preserves 
   const unclosed = renderMetadata('---\ntitle: Unclosed\n# Body');
   assert.match(unclosed, /Unclosed/);
 
+  const scalar = renderMetadata('---\nordinary text\n---\n# Body');
+  assert.match(scalar, /ordinary text/);
+  assert.equal((scalar.match(/<hr>/g) || []).length, 1, 'scalar YAML keeps the opening horizontal rule');
+
   const list = renderMetadata('---\n- ordinary\n- list\n---\n# Body');
   assert.match(list, /ordinary/);
   assert.equal((list.match(/<hr>/g) || []).length, 2, 'list YAML is content, not metadata');

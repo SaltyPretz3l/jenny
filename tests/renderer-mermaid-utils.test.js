@@ -55,6 +55,21 @@ function installPaletteTokens(dom, paletteId, tokenMap) {
   return style;
 }
 
+test('Mermaid icon controls carry matching titles and accessible labels', (t) => {
+  const dom = new JSDOM('<!doctype html><body></body>', { pretendToBeVisual: true });
+  installDomGlobals(dom, t);
+  const preview = createInteractivePreview(dom);
+  loadRendererMermaidUtils().attachMermaidControls(preview);
+  const buttons = [...preview.querySelectorAll('.mermaid-control-btn')];
+  assert.deepEqual(buttons.map((button) => button.title), ['Zoom out', 'Zoom in', 'Reset view', 'Enter fullscreen']);
+  for (const button of buttons) assert.equal(button.getAttribute('aria-label'), button.title);
+  buttons[3].click();
+  assert.equal(buttons[3].title, 'Exit fullscreen');
+  assert.equal(buttons[3].getAttribute('aria-label'), buttons[3].title);
+  buttons[3].click();
+  assert.equal(buttons[3].getAttribute('aria-label'), buttons[3].title);
+});
+
 test('buildThemeConfig returns a Mermaid base theme config', (t) => {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true });
   installDomGlobals(dom, t);

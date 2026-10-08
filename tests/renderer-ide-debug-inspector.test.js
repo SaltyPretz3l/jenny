@@ -437,3 +437,105 @@ test('IDE-008: a clean buffer never calls saveFile', async () => {
   assert.equal(h.calls.saveFile.length, 0);
   assert.equal(h.terminal.calls.write.length, 1);
 });
+
+// --- Multi-terminal (row 40 W4): the launch opens its OWN terminal. ---
+
+// A task-terminal handle like terminal-set.openTaskTerminal resolves: the
+// session-filtered onData plus its own sendCommand. `userTerminal` stands for
+// the user's slot-1 shell and must never be written.
+function taskHarness(opts = {}) {
+  const userTerminal = fakeTerminal();
+  const task = fakeTerminal();
+  const opened = [];
+  const h = harness({
+    ...opts,
+    terminal: userTerminal,
+  });
+  const inspector = createIdeDebugInspector({
+    editorHost: fakeEditorHost(),
+    getWorkspacePtyApi: () => userTerminal,
+    getClipboardApi: () => h.clipboard,
+    openTerminalPanel: () => { h.calls.openTerminalPanel += 1; },
+    sendTerminalCommand: (builder) => userTerminal.sendCommand(builder),
+    captureTaskTarget: opts.captureTaskTarget,
+    openTaskTerminal: async (near) => {
+      opened.push(near === undefined ? true : near);
+      if (opts.noFree) return null;
+      if (opts.startFails) return false;
+      return {
+        viewId: 'terminal-2',
+        sendCommand: (builder) => task.sendCommand(builder),
+        // Filtered like the real handle: only this terminal's session.
+        onData: (fn) => task.onData((payload) => { if (payload.sessionId === 'pty-1') fn(payload); }),
+      };
+    },
+    getWorkspaceRootApi: () => ({ captureContext: async () => ({ rootPath: '/home/u/ws', phase: 'ready' }) }),
+    showToastMessage: (message, meta) => h.toasts.push({ message, meta }),
+    appendClientLog: () => {},
+    inspectTimeoutMs: opts.inspectTimeoutMs,
+  });
+  liveInspectors.push(inspector);
+  return { ...h, inspector, userTerminal, task, opened };
+}
+
+test('task terminal: launches in its own terminal and never writes the user terminal', async () => {
+  const h = taskHarness();
+  await h.inspector.debugActiveFile();
+  assert.equal(h.opened.length, 1);
+  assert.ok(h.task.calls.onDataSeq > 0 && h.task.calls.onDataSeq < h.task.calls.writeSeq, 'subscribes to its terminal before the write');
+  assert.match(h.task.calls.write.map((w) => w.data).join(''), /node\s+--inspect-brk\s+'\/home\/u\/ws\/src\/app\.js'/);
+  assert.deepEqual(h.userTerminal.calls.write, [], 'the user terminal is never written');
+  assert.equal(h.userTerminal.calls.onDataSeq, -1, 'and never subscribed to');
+  assert.equal(h.calls.openTerminalPanel, 0, 'the task terminal reveals itself');
+
+  h.task.emitData('shell noise\n', 'pty-9');
+  h.task.emitData(banner('127.0.0.1:9229'));
+  await flush();
+  assert.equal(h.clipboard.written.length, 1, 'the banner of its own session is scraped');
+  h.userTerminal.emitData(banner('127.0.0.1:9230', UUID_B));
+  assert.equal(h.clipboard.written.length, 1, 'banners from the user terminal are not heard');
+});
+
+test('task terminal: the bound terminal is read when Debug starts, not after the save (W7c)', async () => {
+  let target = 'terminal-3';
+  const h = taskHarness({ captureTaskTarget: () => target });
+  const run = h.inspector.debugActiveFile();
+  target = 'terminal-4'; // focus moves to another group while the root is captured
+  await run;
+  assert.deepEqual(h.opened, ['terminal-3']);
+});
+
+test('task terminal: no free terminal toasts and launches nothing', async () => {
+  const h = taskHarness({ noFree: true });
+  await h.inspector.debugActiveFile();
+  assert.match(toastText(h.toasts), /Close a terminal to start the debugger \(four are open\)\./);
+  assert.deepEqual(h.task.calls.write, []);
+  assert.deepEqual(h.userTerminal.calls.write, []);
+  assert.equal(h.task.listeners.length, 0, 'nothing is left subscribed');
+  // The guard is released: a later launch can still run.
+  await h.inspector.debugActiveFile();
+  assert.equal(h.opened.length, 2);
+});
+
+test('task terminal: works with no global workspacePty bridge (the handle supplies its stream)', async () => {
+  const h = taskHarness({ noTerminal: true });
+  await h.inspector.debugActiveFile();
+  assert.equal(h.task.calls.write.length, 1);
+});
+
+test('legacy path (no openTaskTerminal) still types into the shared terminal', async () => {
+  const h = harness();
+  await h.inspector.debugActiveFile();
+  assert.equal(h.terminal.calls.write.length, 1);
+  assert.equal(h.calls.openTerminalPanel, 1);
+});
+
+test('task terminal: a terminal that could not start adds no second, wrong toast', async () => {
+  const h = taskHarness({ startFails: true });
+  await h.inspector.debugActiveFile();
+  assert.doesNotMatch(toastText(h.toasts), /four are open/, 'the panel already said why it could not start');
+  assert.deepEqual(h.task.calls.write, []);
+  assert.deepEqual(h.userTerminal.calls.write, []);
+  await h.inspector.debugActiveFile();
+  assert.equal(h.opened.length, 2, 'the guard is released');
+});

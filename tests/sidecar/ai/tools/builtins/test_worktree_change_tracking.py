@@ -411,3 +411,177 @@ def test_a_workspace_without_git_carries_no_evidence(tmp_path: Path) -> None:
     result = _run_shell(guard, lambda: (tmp_path / "repo" / "a.txt").write_text("x", "utf-8"))
 
     assert "workspace_changed" not in result.metadata
+
+
+# Row 34 S1: scripted edits carry user-only review evidence (diffs plus a
+# scripted_change_review record); the model sees one path-only line.
+def _review(result: ToolHandlerResult) -> dict[str, object]:
+    review = result.metadata["scripted_change_review"]
+    assert isinstance(review, dict)
+    return review
+
+
+def test_python_execute_rewriting_a_dirty_tracked_file_yields_a_diff(tmp_path: Path) -> None:
+    repo, guard = _repo(tmp_path)
+    (repo / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+
+    result = _run_shell(
+        guard,
+        lambda: (repo / "tracked.txt").write_text("dirty\nrewritten\n", "utf-8"),
+        tool_name="python_execute",
+    )
+
+    assert result.metadata["workspace_changed"] is True
+    diff = result.metadata["diffs"][0]
+    assert diff["path"] == "tracked.txt"
+    assert diff["status"] == "modified"
+    assert diff["diff_id"].startswith("scripted:")
+    assert "+rewritten" in diff["hunks"][0]["lines"]
+    review = _review(result)
+    assert review["schema_version"] == 1
+    assert review["state"] == "observed"
+    assert review["call_outcome"] == "succeeded"
+    assert review["certainty"] == "observed_during_call"
+    assert review["changed_paths"] == ["tracked.txt"]
+    assert review["coverage"] == "git_status_paths"
+
+
+def test_a_status_cap_breach_yields_an_unavailable_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, guard = _repo(tmp_path)
+    (repo / "dirty.txt").write_text("x\n", encoding="utf-8")
+    monkeypatch.setattr(tracking, "MAX_STATUS_PATHS", 0)
+
+    result = _run_shell(guard, lambda: (repo / "tracked.txt").write_text("e\n", "utf-8"))
+
+    review = _review(result)
+    assert (review["state"], review["reason"]) == ("unavailable", "status_over_limit")
+    assert "diffs" not in result.metadata
+    assert "workspace_changed" not in result.metadata
+    assert result.output == "ok"
+
+
+def test_a_live_baseline_no_longer_suppresses_the_shell_probe(tmp_path: Path) -> None:
+    repo, guard = _repo(tmp_path)
+    _baseline(guard)
+
+    result = _run_shell(guard, lambda: (repo / "tracked.txt").write_text("edited\n", "utf-8"))
+
+    assert result.metadata["workspace_changed"] is True
+    assert result.metadata["diffs"][0]["path"] == "tracked.txt"
+    assert result.metadata["worktree_observation"]["changed_paths"] == ["tracked.txt"]
+
+
+def test_unobserved_calls_say_why_instead_of_reporting_no_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, guard = _repo(tmp_path)
+
+    def edit() -> None:
+        (repo / "tracked.txt").write_text("edited\n", "utf-8")
+
+    background = _run_shell(guard, edit, tool_name="run_command", run_in_background=True)
+    plain_root = tmp_path / "plain"
+    (plain_root / "repo").mkdir(parents=True)
+    non_git = _run_shell(WorkspaceGuard(str(plain_root)), edit)
+    no_root = _run_shell(WorkspaceGuard(None), edit, tool_name="python_execute")
+    monkeypatch.setenv(tracking.SHELL_CHANGE_EVIDENCE_FLAG, "0")
+    disabled = _run_shell(guard, edit)
+
+    observed = {
+        name: (_review(result)["state"], _review(result)["reason"])
+        for name, result in {
+            "background": background, "non_git": non_git, "no_root": no_root, "disabled": disabled
+        }.items()
+    }
+    assert observed == {
+        "background": ("unavailable", "background"),
+        "non_git": ("unsupported", "not_git"),
+        "no_root": ("unsupported", "no_workspace"),
+        "disabled": ("unavailable", "disabled"),
+    }
+    for result in (background, non_git, no_root, disabled):
+        assert "diffs" not in result.metadata
+        assert result.output == "ok"
+
+
+def test_a_timed_out_command_maps_to_timed_out(tmp_path: Path) -> None:
+    repo, guard = _repo(tmp_path)
+
+    def timed_out() -> ToolHandlerResult:
+        (repo / "tracked.txt").write_text("half written\n", "utf-8")
+        return ToolHandlerResult(output="timeout", success=False, metadata={"timed_out": True})
+
+    result = tracking.run_with_worktree_observation(
+        side_effecting=True, tool_name="run_command", arguments={"cwd": "repo"},
+        workspace=guard, handler=timed_out, logger=logging.getLogger(__name__),
+    )
+
+    assert _review(result)["call_outcome"] == "timed_out"
+    assert result.metadata["diffs"][0]["status"] == "modified"
+    assert result.metadata["timed_out"] is True
+
+
+# Row 34 S5 step 4: routing hands each scripted call the turn's restore point
+# as a private ``_jenny_restore_point`` argument; it reaches the user-only
+# review and never the model-facing output.
+_RESTORE_POINT = {
+    "kind": "git_checkpoint",
+    "ref": "refs/jenny/checkpoints/sess-1/7",
+    "created_at": "2026-10-05T12:00:00.000Z",
+}
+
+
+def test_a_scripted_edit_review_carries_the_restore_point(tmp_path: Path) -> None:
+    repo, guard = _repo(tmp_path)
+
+    result = _run_shell(
+        guard,
+        lambda: (repo / "tracked.txt").write_text("edited\n", "utf-8"),
+        tool_name="run_command",
+        _jenny_restore_point=dict(_RESTORE_POINT),
+    )
+
+    assert _review(result)["restore_point"] == _RESTORE_POINT
+    assert _RESTORE_POINT["ref"] not in result.output
+    assert "restore_point" not in result.output
+
+
+def test_an_unobserved_call_still_carries_the_restore_point(tmp_path: Path) -> None:
+    (tmp_path / "repo").mkdir()
+    guard = WorkspaceGuard(str(tmp_path))
+    point = {"kind": "none", "reason": "not_git"}
+
+    result = _run_shell(guard, lambda: None, tool_name="python_execute", _jenny_restore_point=point)
+
+    review = _review(result)
+    assert (review["state"], review["reason"]) == ("unsupported", "not_git")
+    assert review["restore_point"] == point
+
+
+def test_a_scripted_call_without_a_restore_point_reports_none(tmp_path: Path) -> None:
+    repo, guard = _repo(tmp_path)
+
+    plain = _run_shell(guard, lambda: (repo / "tracked.txt").write_text("a\n", "utf-8"))
+    malformed = _run_shell(
+        guard,
+        lambda: (repo / "tracked.txt").write_text("b\n", "utf-8"),
+        _jenny_restore_point={"kind": "git_checkpoint", "ref": "refs/heads/main"},
+    )
+
+    assert "restore_point" not in _review(plain)
+    assert "restore_point" not in _review(malformed)
+
+
+def test_a_non_scripted_tool_never_gets_a_review_from_a_restore_point(tmp_path: Path) -> None:
+    repo, guard = _repo(tmp_path)
+
+    result = _run_shell(
+        guard,
+        lambda: (repo / "tracked.txt").write_text("c\n", "utf-8"),
+        tool_name="write_file",
+        _jenny_restore_point=dict(_RESTORE_POINT),
+    )
+
+    assert "scripted_change_review" not in result.metadata

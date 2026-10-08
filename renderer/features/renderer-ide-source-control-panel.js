@@ -5,7 +5,7 @@
  * diff / stage / unstage / discard, a Stage All action, a commit-message field,
  * and one Commit button. No index/working-tree jargon. Mirrors the changes-panel
  * delegation pattern: markup strings + a click/keydown/input listener on the
- * shared ideRailPanel, selector-guarded on data-ide-scm-* attributes, with a
+ * view's own host, selector-guarded on data-ide-scm-* attributes, with a
  * content-hash guard so identical renders don't churn the DOM. All mutations are
  * handed back to injected callbacks (the git feature owns the store). */
 (function (root, factory) {
@@ -54,19 +54,14 @@
     // Host + active-gate are injectable so the single Source Control instance can
     // render into the secondary sidebar when moved there (the "Move View" model);
     // both default to the rail for standalone use.
-    const getMountEl = typeof options.getMountEl === 'function' ? options.getMountEl : () => getDom().ideRailPanel;
+    const getMountEl = typeof options.getMountEl === 'function' ? options.getMountEl : () => null;
     const isActivePanel = typeof options.isActivePanel === 'function'
       ? options.isActivePanel
       : () => getIde().railPanel === 'source-control';
     const store = options.store || null;
     const escapeHtml = typeof options.escapeHtml === 'function'
       ? options.escapeHtml
-      : (value) => String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
     const actionButton = typeof options.actionButton === 'function' ? options.actionButton : null;
     const textField = typeof options.textField === 'function' ? options.textField : null;
     const appendClientLog = typeof options.appendClientLog === 'function' ? options.appendClientLog : noop;
@@ -76,6 +71,10 @@
     const onDiscard = typeof options.onDiscard === 'function' ? options.onDiscard : noop;
     const onDelete = typeof options.onDelete === 'function' ? options.onDelete : noop;
     const onOpenDiff = typeof options.onOpenDiff === 'function' ? options.onOpenDiff : noop;
+    // Jenny marker: getJennyChange(path) -> { turnId, fileKey } | null (her latest
+    // ledger change to that workspace-relative path); onOpenJennyChange opens it.
+    const getJennyChange = typeof options.getJennyChange === 'function' ? options.getJennyChange : null;
+    const onOpenJennyChange = typeof options.onOpenJennyChange === 'function' ? options.onOpenJennyChange : noop;
     const onCommit = typeof options.onCommit === 'function' ? options.onCommit : noop;
     // AI commit message: onGetDiff resolves the staged diff, onWriteMessage runs
     // the one-shot off-transcript local-model generation. The "Write message"
@@ -148,6 +147,32 @@
       });
     }
 
+    // Jenny's latest ledger change for a path (null when none or unwired).
+    function jennyChangeFor(path) {
+      let change = null;
+      try {
+        change = getJennyChange ? getJennyChange(path) : null;
+      } catch (error) {
+        appendClientLog('WARN', 'ide.scm_jenny_change_lookup_failed', { message: String((error && error.message) || error || '') });
+      }
+      return change && typeof change.turnId === 'string' && change.turnId ? change : null;
+    }
+
+    function buildJennyMarker(path) {
+      if (!actionButton || !jennyChangeFor(path)) {
+        return '';
+      }
+      const title = jt('ide.sourceControl.jennyMarkerTitle', 'Jenny changed this file. Open the change in Changes');
+      return actionButton({
+        plain: true,
+        className: 'ide-scm-jenny',
+        title,
+        ariaLabel: title,
+        trustedHtml: escapeHtml(jt('ide.sourceControl.jennyMarker', 'Jenny')),
+        dataset: { 'ide-scm-action': 'jenny-change' },
+      });
+    }
+
     function buildRowMarkup(file) {
       const path = String(file.path || '');
       const dirHint = parentDirOf(path);
@@ -169,12 +194,13 @@
         })
         : '';
       const actions = file.staged
-        ? actionBtn('Unstage', 'unstage', jt('ide.sourceControl.unstageFileTitle', 'Remove this file from the next commit'))
-        : actionBtn('Stage', 'stage', jt('ide.sourceControl.stageFileTitle', 'Stage this file for commit')) + (file.state === 'untracked'
-          ? actionBtn('Delete', 'delete', jt('ide.sourceControl.deleteUntrackedTitle', 'Move this untracked file to the recycle bin'), 'ide-scm-danger')
-          : actionBtn('Discard', 'discard', jt('ide.sourceControl.discardFileTitle', 'Discard changes to this file (cannot be undone)'), 'ide-scm-danger'));
+        ? actionBtn(jt('ide.sourceControl.unstage', 'Unstage'), 'unstage', jt('ide.sourceControl.unstageFileTitle', 'Remove this file from the next commit'))
+        : actionBtn(jt('ide.sourceControl.stage', 'Stage'), 'stage', jt('ide.sourceControl.stageFileTitle', 'Stage this file for commit')) + (file.state === 'untracked'
+          ? actionBtn(jt('ide.sourceControl.delete', 'Delete'), 'delete', jt('ide.sourceControl.deleteUntrackedTitle', 'Move this untracked file to the recycle bin'), 'ide-scm-danger')
+          : actionBtn(jt('ide.sourceControl.discard', 'Discard'), 'discard', jt('ide.sourceControl.discardEditsTitle', 'Discard all edits since the last commit (cannot be undone)'), 'ide-scm-danger'));
       return `<div class="ide-scm-row" data-ide-scm-path="${escapeHtml(path)}" title="${escapeHtml(path)}">`
         + fileButton
+        + buildJennyMarker(path)
         + `<span class="ide-scm-row-actions">${actions}</span>`
         + '</div>';
     }
@@ -314,7 +340,7 @@
         body = '<div class="ide-scm-empty">' + escapeHtml(jt('ide.sourceControl.workingTreeClean', 'Nothing to commit — your working tree is clean.')) + '</div>';
       } else {
         body = buildGroupMarkup(jt('ide.sourceControl.readyToCommit', 'Ready to commit'), staged)
-          + buildGroupMarkup('Changed', changed, { stageAll: changed.length > 0 });
+          + buildGroupMarkup(jt('ide.sourceControl.changedGroup', 'Changed'), changed, { stageAll: changed.length > 0 });
       }
       // The History section's container; the commit-history module paints into
       // it after this markup is written (kept empty here so a panel re-render
@@ -609,6 +635,11 @@
         onDelete(path);
       } else if (action === 'diff') {
         onOpenDiff(path);
+      } else if (action === 'jenny-change') {
+        const change = jennyChangeFor(path);
+        if (change) {
+          onOpenJennyChange({ turnId: change.turnId, fileKey: change.fileKey, path });
+        }
       }
     }
 
@@ -652,13 +683,11 @@
       }
     }
 
-    // Bind BOTH possible hosts (rail + secondary) once: the panel can be moved
-    // between them at runtime; delegation survives innerHTML swaps and every
-    // handler selector-guards on data-ide-scm-* attributes (the explorer/search/
-    // changes panels delegate on the same elements), so a moved panel stays live.
+    // Bind the panel's own persistent view host once (row 40 W3: the workbench
+    // re-parents the host when the view moves, so delegation stays live with no
+    // rebind and survives innerHTML swaps). Handlers self-filter (closest).
     function bindEvents() {
-      const dom = getDom();
-      const hosts = [dom.ideRailPanel, dom.ideSecondarySidebarPanel].filter(Boolean);
+      const hosts = [getMountEl()].filter(Boolean);
       if (!hosts.length || boundHosts.length) {
         return;
       }

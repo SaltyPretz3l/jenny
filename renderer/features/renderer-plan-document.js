@@ -22,10 +22,7 @@
     }
   }
 
-  function escapeFallback(value) {
-    return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  }
+  const escapeFallback = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function bounded(value, limit) {
     return String(value || '').trim().slice(0, limit);
@@ -86,14 +83,14 @@
     const renderMarkdown = options?.renderMarkdown || ((text) => `<p>${escapeHtml(text)}</p>`);
     const approvalRef = plan.approval_id || plan.tool_call_id;
     return `<section class="plan-document" data-plan-document="true" data-plan-state="pending" data-approval-ref="${escapeHtml(approvalRef)}">`
-      + '<header class="plan-document__header"><span class="plan-document__eyebrow">' + escapeHtml(jt('artifacts.plan.proposedPlan', 'Proposed plan')) + '</span><span class="plan-document__rule" aria-hidden="true"></span>'
+      + '<header class="plan-document__header"><span class="plan-document__eyebrow">' + escapeHtml(jt('artifacts.document.plan', 'Plan')) + '</span><span class="plan-document__rule" aria-hidden="true"></span>'
       + `<span class="plan-document__meta" data-plan-files-read-count="${plan.files_read.length}">${escapeHtml(jt('artifacts.plan.stepCount', '{count} steps', { count: plan.steps.length }))}${plan.files_read.length ? ` · ${escapeHtml(jt('artifacts.plan.filesRead', '{count} files read', { count: plan.files_read.length }))}` : ''}</span></header>`
-      + `<h3 class="plan-document__title" data-plan-title role="button" tabindex="0" aria-label="${escapeHtml(jt('artifacts.plan.editTitleLabel', 'Edit plan title'))}">${escapeHtml(plan.title)}</h3>`
-      + (plan.summary ? `<p class="plan-document__summary">${escapeHtml(plan.summary)}</p>` : '')
-      + `<ol class="plan-document__steps">${plan.steps.map((step, index) => `<li draggable="true" data-plan-step-index="${index}"><span class="plan-document__step-text" data-plan-step-text role="button" tabindex="0" aria-label="${escapeHtml(jt('artifacts.plan.editStepLabel', 'Edit step {number}', { number: index + 1 }))}">${escapeHtml(step)}</span><span class="plan-document__step-controls" data-plan-step-controls></span></li>`).join('')}</ol>`
+      + `<h3 class="plan-document__title" data-plan-title dir="auto" role="button" tabindex="0" aria-label="${escapeHtml(jt('artifacts.plan.editTitleLabel', 'Edit plan title'))}">${escapeHtml(plan.title)}</h3>`
+      + (plan.summary ? `<p class="plan-document__summary" dir="auto">${escapeHtml(plan.summary)}</p>` : '')
+      + `<ol class="plan-document__steps">${plan.steps.map((step, index) => `<li draggable="true" data-plan-step-index="${index}"><span class="plan-document__step-text" data-plan-step-text dir="auto" role="button" tabindex="0" aria-label="${escapeHtml(jt('artifacts.plan.editStepLabel', 'Edit step {number}', { number: index + 1 }))}">${escapeHtml(step)}</span><span class="plan-document__step-controls" data-plan-step-controls></span></li>`).join('')}</ol>`
       + '<div class="plan-document__add-step" data-plan-add-step></div>'
-      + (plan.notes ? `<div class="plan-document__notes markdown-body">${renderMarkdown(plan.notes)}</div>` : '')
-      + (plan.verification ? `<div class="plan-document__verification"><span>${escapeHtml(jt('artifacts.plan.verificationLabel', 'Verification'))}</span><p>${escapeHtml(plan.verification)}</p></div>` : '')
+      + (plan.notes ? `<div class="plan-document__notes markdown-body" dir="auto">${renderMarkdown(plan.notes)}</div>` : '')
+      + (plan.verification ? `<div class="plan-document__verification"><span>${escapeHtml(jt('artifacts.plan.verificationLabel', 'Verification'))}</span><p dir="auto">${escapeHtml(plan.verification)}</p></div>` : '')
       + '<div class="plan-document__decision" role="status" aria-live="polite"><span class="plan-document__edited-chip" data-plan-edited hidden>' + escapeHtml(jt('artifacts.plan.edited', 'Plan edited')) + '</span><div data-plan-actions></div></div>'
       + '</section>';
   }
@@ -117,7 +114,7 @@
       : source;
     return collapsedReceiptMarkup({
       plan_id: proposal.proposal_id,
-      title: proposal.title || jt('artifacts.plan.proposedPlan', 'Proposed plan'),
+      title: proposal.title || jt('artifacts.document.plan', 'Plan'),
       summary: proposal.intro_text,
       steps: (Array.isArray(proposal.steps) ? proposal.steps : []).map((step) => (
         typeof step === 'string' ? step : step?.label

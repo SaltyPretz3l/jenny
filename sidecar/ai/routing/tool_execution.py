@@ -413,9 +413,7 @@ def approval_if_needed(
                     retryable=False,
                 )
         auto_run = approval_mode == "auto_run" and not paranoid_mode
-        plan_mode_only = bool(
-            getattr(getattr(descriptor, "availability", None), "plan_mode_only", False)
-        )
+        plan_mode_only = _tools_assembly.mode_only_tool(descriptor)
         # Python is resource-contained but deliberately not a filesystem or
         # network sandbox. Every initial Python execution remains approval-
         # gated, even for a one-send auto-run grant or an AUTO policy rule.
@@ -664,6 +662,7 @@ def execute_tool(
     on_dispatch_ready: Callable[[], None] | None = None,
     restored_inputs: _tool_restored_inputs.RestoredToolInputs | None = None,
     on_frozen_input: Callable[[Any], Any] | None = None,
+    request_outcomes: tuple[Any, ...] | None = None,
 ) -> ToolExecutionOutcome:
     cancel_handle = getattr(runtime, "cancel_handle", None)
     if runtime is not None:
@@ -703,6 +702,7 @@ def execute_tool(
             approved_plan=getattr(request_context, "approved_plan", None),
             trusted_plan_artifact_write=trusted_plan_artifact_write,
             turn_id=logical_turn_id, execution_context=execution_context,
+            request_context=request_context, request_outcomes=request_outcomes,
         )
     scan_tool_arguments(call.arguments, tool_name=call.tool_id)
     visible_tool_arguments = dict(frozen_inputs.visible_tool_arguments)
@@ -911,12 +911,15 @@ def execute_tool(
                 error_code=failure_code,
                 summary=f"tool_execution_failed {call.tool_id}",
             )
-        raise ToolExecutionFailure(
-            code=failure_code,
-            message=error.message,
-            retryable=error.retryable,
+        failure = ToolExecutionFailure(
+            code=failure_code, message=error.message, retryable=error.retryable,
             error_details=error.to_metadata(),
-        ) from error
+        )
+        # Row 34: a failed scripted call's user-only change evidence, builtin server only.
+        builtin = getattr(descriptor, "server_name", "") == BUILTIN_MCP_SERVER_NAME
+        if error.observed_changes and builtin:
+            failure.result_metadata = dict(error.observed_changes)
+        raise failure from error
     except (TerminalChatStateError, ToolExecutionFailure):
         raise
     except Exception as error:

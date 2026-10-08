@@ -429,3 +429,43 @@ test('application authority remains store-backed and never accepts caller-provid
   });
   assert.equal(result.error.reason, 'permission_review_request_invalid');
 });
+
+test('a changed session assignment notifies the project hook once; unchanged and failed ones do not', () => {
+  const fixture = createFixture();
+  const calls = [];
+  const application = fixture.createApplication({
+    onSessionProjectChanged: (change) => calls.push(change),
+  });
+  const project = application.createProject({ name: 'Hooked' }).project;
+  const session = fixture.sessionStore.createSession({ title: 'Move me' });
+
+  fixture.busySessions.add(session.id);
+  assert.equal(application.assignSessionProject({ session_id: session.id, project_id: project.id }).ok, false);
+  assert.deepEqual(calls, []);
+  fixture.busySessions.clear();
+
+  const moved = application.assignSessionProject({ session_id: session.id, project_id: project.id });
+  assert.equal(moved.ok, true);
+  assert.deepEqual(calls, [{ sessionId: session.id, projectId: project.id }]);
+
+  const unchanged = application.assignSessionProject({ session_id: session.id, project_id: project.id });
+  assert.equal(unchanged.unchanged, true);
+  assert.equal(calls.length, 1);
+
+  // Undo is the same IPC with the previous project, so it re-notifies.
+  assert.equal(application.assignSessionProject({ session_id: session.id, project_id: GENERAL_PROJECT_ID }).ok, true);
+  assert.deepEqual(calls[1], { sessionId: session.id, projectId: GENERAL_PROJECT_ID });
+});
+
+test('a throwing session-project hook never changes the assignment result', () => {
+  const fixture = createFixture();
+  const application = fixture.createApplication({
+    onSessionProjectChanged: () => { throw new Error('hook exploded'); },
+  });
+  const project = application.createProject({ name: 'Hooked' }).project;
+  const session = fixture.sessionStore.createSession({ title: 'Move me' });
+  const result = application.assignSessionProject({ session_id: session.id, project_id: project.id });
+  assert.equal(result.ok, true);
+  assert.equal(result.unchanged, false);
+  assert.equal(fixture.sessionStore.getSessionSummary(session.id).project_id, project.id);
+});

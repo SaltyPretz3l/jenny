@@ -42,7 +42,6 @@ function duplicateRequestIdRejection() {
 function createHarness({
   attempts = [],
   engineType = 'chatgpt',
-  featureFlags = {},
   runtime = null,
   aborted = false,
   getAccessToken = null,
@@ -58,7 +57,6 @@ function createHarness({
   };
   let attemptIndex = 0;
   const service = {
-    featureFlags: { chatgpt_auth_turn_retry: true, ...featureFlags },
     sidecarClient: {
       async chatSend(params, options) {
         record.chatSendParams.push(params);
@@ -367,20 +365,6 @@ test('an already aborted controller suppresses both dispatch and retry', async (
 
   assert.equal(harness.record.chatSendParams.length, 0);
   assert.equal(harness.record.getAccessTokenCalls.length, 0);
-});
-
-test('the feature flag off short-circuits to a bare chatSend', async () => {
-  const original = authRejection();
-  const harness = createHarness({
-    attempts: [original, { status: 'completed', attempt: 2 }],
-    featureFlags: { chatgpt_auth_turn_retry: false },
-  });
-
-  await assert.rejects(harness.send(), (error) => error === original);
-
-  assert.equal(harness.record.chatSendParams.length, 1);
-  assert.equal(harness.record.getAccessTokenCalls.length, 0);
-  assert.equal(harness.record.logs.length, 0);
 });
 
 test('the turn effect probe recognizes every output/tool/approval signal', () => {

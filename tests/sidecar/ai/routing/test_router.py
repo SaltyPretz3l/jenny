@@ -243,7 +243,9 @@ def _budget_pressure_config(**overrides: Any) -> RuntimeConfig:
     config = RuntimeConfig(
         engine_type="mock",
         model="mock-v1",
-        context_length=60_000,
+        # The char fallback reserves 30% headroom (A9-F5): this raw window
+        # yields the 60,000-token budget the meter numbers below derive from.
+        context_length=85_715,
         max_tokens=1_000,
         token_budget_reserved_for_summary=0,
         token_budget_tool_overhead=0,
@@ -4544,7 +4546,8 @@ def test_router_invokes_full_compaction_generate_path() -> None:
         config=RuntimeConfig(
             engine_type="anthropic",
             model="claude-3-7-sonnet-latest",
-            context_length=2_400,
+            # 30% char-fallback headroom (A9-F5): a 2,400-token budget window.
+            context_length=3_429,
             max_tokens=256,
             tools_enabled=False,
             token_budget_reserved_for_summary=256,

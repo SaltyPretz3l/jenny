@@ -1,11 +1,10 @@
-"""Both chat lanes keep the leading prompt byte-stable across turns when the
-trailing turn-context row is on, and carry the per-turn context before the
+"""The tool-loop lane keeps the leading prompt byte-stable across turns when the
+trailing turn-context row is on, and carries the per-turn context before the
 latest user message instead."""
 
 from __future__ import annotations
 
 from dataclasses import replace
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -16,7 +15,6 @@ from sidecar.ai.context.builder import ContextBuilder, SkillScope
 from sidecar.ai.routing.router import ChatRouter
 from sidecar.ai.tools.models import GenerationResult
 from sidecar.runtime.chat_models import ChatRequestContext
-from sidecar.runtime.chat_streaming import build_live_streaming_chat_response
 
 _ACTIVE_FILE = {"kind": "active_file", "content": "## Active File\nsrc/app.py"}
 _PERSONALITY = {"kind": "personality", "content": "Warm and brief."}
@@ -29,11 +27,6 @@ class _CapturingEngine:
     def generate_with_tools(self, **kwargs: Any) -> GenerationResult:
         self.calls.append(kwargs)
         return GenerationResult(content="done", finish_reason="stop")
-
-    def stream(self, **kwargs: Any) -> Any:
-        self.calls.append(kwargs)
-        yield SimpleNamespace(kind="content", text="done")
-        yield SimpleNamespace(kind="done", text="", finish_reason="stop")
 
     def get_model_max_output_tokens(self) -> int | None:
         return None
@@ -106,64 +99,21 @@ def _router_turn(
     )
 
 
-def _live_turn(
-    engine: _CapturingEngine,
-    messages: list[dict[str, object]],
-    index: int,
-    *,
-    builder: ContextBuilder | None = None,
-    skill_invocation: dict[str, str] | None = None,
-) -> None:
-    config = SimpleNamespace(
-        mode="chat",
-        engine_type="openai-compatible",
-        model="ornith",
-        feature_flags={},
-        system_prompt="System prompt for testing.",
-        max_tokens=4096,
-        tools_workspace_manifest_enabled=False,
-        tools_task_capsule_enabled=False,
-        skills_auto_index="off",
-    )
-    stack = SimpleNamespace(
-        config=config,
-        engine=engine,
-        context_builder=builder or ContextBuilder(None),
-        memory_store=None,
-        turn_diagnostics=None,
-    )
-    build_live_streaming_chat_response(
-        request_id=f"live-{index}",
-        trace_id=None,
-        session_id="session-live-trailing",
-        latest_user_content=str(messages[-1]["content"]),
-        messages=messages,
-        brain_container=SimpleNamespace(stack=stack),
-        reasoning_effort=None,
-        learned_lessons=None,
-        max_tokens=256,
-        context_blocks=(_PERSONALITY, _ACTIVE_FILE),
-        skill_invocation=skill_invocation,
-    )
-
-
 def _leading(call: dict[str, Any]) -> tuple[str, list[str]]:
     """The system text plus every message row ahead of the conversation."""
     rows = []
     for message in call["messages"]:
         content = str(message["content"])
-        # The live lane hands rows over before the engine demotes them.
         if message["role"] != "system" or content.startswith(tc.TURN_CONTEXT_HEADER):
             break
         rows.append(content)
     return str(call.get("system") or ""), rows
 
 
-@pytest.mark.parametrize("lane", [_router_turn, _live_turn], ids=["tool-loop", "live-chat"])
-def test_leading_prompt_is_stable_across_turns(flag: bool, lane: Any) -> None:
+def test_leading_prompt_is_stable_across_turns(flag: bool) -> None:
     engine = _CapturingEngine()
     for index, messages in enumerate(_turns()):
-        lane(engine, messages, index)
+        _router_turn(engine, messages, index)
 
     first, second = engine.calls[0], engine.calls[-1]
     rows = [str(message["content"]) for message in second["messages"]]
@@ -202,9 +152,8 @@ def _skill_builder(tmp_path: Any) -> ContextBuilder:
     )
 
 
-@pytest.mark.parametrize("lane", [_router_turn, _live_turn], ids=["tool-loop", "live-chat"])
 def test_invoked_skill_rides_the_turn_row_so_the_leading_prompt_survives_it(
-    flag: bool, lane: Any, tmp_path: Any
+    flag: bool, tmp_path: Any
 ) -> None:
     """A /skill turn and the plain turn after it share one leading run; the
     skill text sits in the skill turn's trailing row, right before its prompt."""
@@ -212,8 +161,8 @@ def test_invoked_skill_rides_the_turn_row_so_the_leading_prompt_survives_it(
     engine = _CapturingEngine()
     first: list[dict[str, object]] = [{"role": "user", "content": "/insight please"}]
     second = [*first, {"role": "assistant", "content": "done"}, {"role": "user", "content": "thanks"}]
-    lane(engine, first, 0, builder=builder, skill_invocation={"id": "bundled/insight"})
-    lane(engine, second, 1, builder=builder)
+    _router_turn(engine, first, 0, builder=builder, skill_invocation={"id": "bundled/insight"})
+    _router_turn(engine, second, 1, builder=builder)
 
     skill_call, next_call = engine.calls[0], engine.calls[-1]
     leading_skill, leading_next = _leading(skill_call), _leading(next_call)

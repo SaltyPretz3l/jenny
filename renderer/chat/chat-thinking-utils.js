@@ -155,7 +155,7 @@
   }
 
   // Optional dependency: repairs whitespace-starved thinking text at display
-  // time (reasoning_prettify flag). Soft fallback keeps harnesses that never
+  // time. Soft fallback keeps harnesses that never
   // load the script on the raw join path.
   const _prettifyUtils = (typeof globalThis !== 'undefined' && globalThis.reasoningPrettifyUtils)
     || (typeof require === 'function' ? require('./reasoning-prettify-utils') : null)
@@ -217,22 +217,12 @@
     return prettified;
   }
 
-  // reasoning_prettify rides the dataset-reflection channel (mirrored off the
-  // shared feature flags by the render pipeline).
-  // Absent dataset (node tests, early boot) follows the flag's default-ON.
-  function isReasoningPrettifyEnabled() {
-    if (typeof document === 'undefined' || !document.documentElement || !document.documentElement.dataset) {
-      return true;
-    }
-    return document.documentElement.dataset.reasoningPrettify !== 'false';
-  }
-
   /**
    * Concatenate reasoning entries into the markdown body string used by both
    * the v1 thinking panel and the v2 reasoning row.
    */
   function joinReasoningEntriesMarkdown(entries, options) {
-    const prettify = prettifyReasoningMarkdown && isReasoningPrettifyEnabled();
+    const prettify = prettifyReasoningMarkdown;
     return (Array.isArray(entries) ? entries : [])
       .map((entry, index) => ({
         cacheKey: typeof options?.scope === 'string'

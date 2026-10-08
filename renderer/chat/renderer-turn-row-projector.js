@@ -486,7 +486,8 @@
         processedIndices.add(index);
         const approvalRequestEvents = [];
         const approvalResolutionEvents = [];
-        let hasApprovalResolution = false;
+        let latestApprovalRequestIndex = -1;
+        let latestApprovalResolutionIndex = -1;
         let hasToolResult = false;
         let resultEvent = null;
         // Missing ids fail closed as independent calls. Valid ids retain the
@@ -519,11 +520,12 @@
               // onto the tool_call row only when no gap row is emitted (e.g. a
               // resolved call whose canonical stream still carries the request).
               approvalRequestEvents.push(next);
+              latestApprovalRequestIndex = inner;
             } else if (next.kind === 'approval_resolved') {
               // Ownership decided after the loop as well: a receipt with no
               // request to own (a chat rebuilt from messages) owns these.
               approvalResolutionEvents.push(next);
-              hasApprovalResolution = true;
+              latestApprovalResolutionIndex = inner;
             } else {
               sourceEvents.push(next);
             }
@@ -539,7 +541,12 @@
             }
           }
         }
-        const awaitingApproval = approvalRequestEvents.length > 0 && !hasApprovalResolution && !hasToolResult;
+        const latestApprovalId = normalizeId(approvalRequestEvents[approvalRequestEvents.length - 1]?.payload?.approval_id);
+        const resolutionIds = new Set(approvalResolutionEvents.map((resolution) => normalizeId(resolution.payload?.approval_id)).filter(Boolean));
+        // A later request reopens the card; an identified answer cannot settle a different request.
+        const awaitingApproval = latestApprovalRequestIndex >= 0 && !hasToolResult
+          && (latestApprovalRequestIndex > latestApprovalResolutionIndex
+            || (latestApprovalId && resolutionIds.size > 0 && !resolutionIds.has(latestApprovalId)));
         // HB-038 H2: a resolved approval keeps its gap row as a one-line receipt,
         // settled from the call row by the same helper the live reducer uses.
         // The event log always pairs a resolution with its request; a chat

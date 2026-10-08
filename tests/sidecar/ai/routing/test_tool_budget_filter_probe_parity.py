@@ -43,7 +43,8 @@ class _Config:
     assistant_name = "Jenny"
     tools_workspace_manifest_enabled = False
     tools_task_capsule_enabled = False
-    context_length = 32_768
+    # 30% char-fallback headroom (A9-F5): a 32,768-token budget window.
+    context_length = 46_812
     max_tokens = 8_192
     token_budget_reserved_for_summary = None
     # Pinned to the flat reserve these probes were calibrated against; the
@@ -56,7 +57,7 @@ class _Config:
 
 class _Engine:
     def get_model_context_length(self) -> int:
-        return 32_768
+        return 46_812  # 32,768 after the char-fallback headroom
 
     def get_model_max_output_tokens(self) -> int:
         return 8_192
