@@ -58,6 +58,29 @@ anything is written.
 - The Linux items were built from a Debian 13 testing round on 1.3.x and have not yet been retested in a packaged 1.4.0 Linux build. Two items from that round (a Codex CLI Experimental group in Settings and a "Working in Codex CLI" turn) are not in this release.
 - Windows remains unsigned. Linux packages remain experimental. macOS remains experimental and has still not been run on a real Mac.
 
+### 1.4.0 download checksums
+
+Published 2026-10-08 from public `08a56e0` (private `a3524ddc3`, tag `v1.4.0`): Windows installer,
+experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
+release legs were green on the tagged run.
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | 25309674d44cf99809ec4d4ff7ccfcfafdd5e4304f2be0a49b180216c0535b8d |
+| dist/Jenny-Setup-x64.exe.blockmap | 08fc66dd3c06f5948e833d0c00de112233213d0054f72feeb03c31879b9d1266 |
+| dist/Jenny-amd64.deb | c5dfeedd227b44bff6a98550711f971e7eac2a35261cc18e41dc663a888e947c |
+| dist/Jenny-arm64.dmg | bb1a3b5fd162ac6640ca8586dd9602462c02f2beda2400362ad90eed26a9c67f |
+| dist/Jenny-arm64.zip | d4b26966e7aea0b176ee28a818b01db4ac2422c7896b3b5b19eb9b3917f15fa5 |
+| dist/Jenny-x86_64.AppImage | f0bd2df3c03be71b730d2b567a86da6426ee3e910e132b3a7bdb55108f6bb615 |
+| dist/SHA256SUMS-linux.txt | 202fbbf002293f3517ea6dbc63ba3138a500af726938fd37d528d711f85e79f4 |
+| dist/SHA256SUMS-mac.txt | c9f8d33470b55ee34a4722dde3559bcc658f271107a67b8391b4ae183e8d0192 |
+| dist/SHA256SUMS-windows.txt | 3cbb6007a9454047d594437a6250771a7ce963f6c3fec43c209c9acf7534982d |
+| dist/latest-linux.yml | fd8dcde64d66df5d9156b5aa53e5bbd87c28745253c4159c9bed44b385d608d2 |
+| dist/latest-mac.yml | d5b654caefb9783217f28c815529c3c96f6140ff43bbcfaf09cc23866b66100b |
+| dist/latest.yml | 989eaf5a5a85ae34b3ada7fed8dce323ac008198825641bc92cbf9f66a21936a |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
+
 ## 1.3.1 - 2026-10-05
 
 A fix release on 1.3.0. Most of it comes from a week of Linux testing in the
@@ -238,7 +261,6 @@ drafted as 1.2.1 ships here; there was no 1.2.1 release.
 Published 2026-10-04 from public `6befb7d` (private `fe1b2cf21`): Windows installer,
 experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip.
 
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
 | dist/Jenny-Setup-x64.exe | db96103cef2e647f65dda8643c572d25dfd282b7c3959ed964f5b86a635b9c5d |
@@ -253,7 +275,6 @@ experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and z
 | dist/latest-linux.yml | 869046dbedaa1dc2f6a8a9552f4b3ebaf5f19ab8ca53a48f5b9c17f1ea6a2fc6 |
 | dist/latest-mac.yml | 6d6c0c68058b7a40237bc2e5e5157d621770aeadc7fc3bbdcd7a21fe1b63122c |
 | dist/latest.yml | f35780f825ef1754896b35447e2f10f2db208093c849331fe8c8ebd8f3a2db47 |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.2.0 - 2026-09-25
 
