@@ -67,6 +67,29 @@ earlier chats.
 - Not yet covered: an installed 1.4.0 to 1.5.0 upgrade on a separate Windows account, native keyboard and IME input and a visual review, and the fluency of the Arabic and Polish interface text. Hybrid (embedding) memory recall stays off by default. NInfer's wider performance and GPU-contention behaviour and the rea live-model pass are not qualified.
 - Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental and were not retested on native hardware for 1.5.0.
 
+### 1.5.0 download checksums
+
+Published 2026-10-17 from public `88c12da` (private `cd737d318`, tag `v1.5.0`): Windows installer,
+experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
+release jobs were green on the tagged run.
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | f6ce1faee750e62ce5af8a31e31cd8fd581c836d820bf0305983273da96ff958 |
+| dist/Jenny-Setup-x64.exe.blockmap | eedae6e93d270210f1b87c29546a7b29526a6ea15307df93e8d8a0004b918e1e |
+| dist/Jenny-amd64.deb | fef5ae67d14a71a114395c2497024f279ec82dd70fa32d2a71b341e5ce6c5dd2 |
+| dist/Jenny-arm64.dmg | f1265d1346456b513cadcf329de3dac40ab74b2a427d40786c21886c1e35d887 |
+| dist/Jenny-arm64.zip | f5bb5ae9781b080d191f8817149976302487b7c24a10493aaa242c53110d0597 |
+| dist/Jenny-x86_64.AppImage | fec28c9b60b4e38dafc8e3edcd8c495c50a45d2cc7b21912149efa6c416aa372 |
+| dist/SHA256SUMS-linux.txt | 5e67b98d052b91967adba920f28144a9dfd7a1c9d12dac8576516e8689b9e499 |
+| dist/SHA256SUMS-mac.txt | cb506fc41a15a91abcefebbb5822ed39eee32cee6a90a81a670b9da59903a151 |
+| dist/SHA256SUMS-windows.txt | 71f992d18c7d66ed3e61dcdfd0601b057f12beea33b2e27600d37784d92badec |
+| dist/latest-linux.yml | 6e9910cb8836b3f6a01e3be0f677565817bd40497ca5bac86b03c05ee4d851d7 |
+| dist/latest-mac.yml | 22543edc593a9e5806ec5902722e8c5a426a1ea41509c94254d0fa9655b1032b |
+| dist/latest.yml | e5f0386afca4e738ce6c9ddf43adafb9582db69b322f403fe15d7de6ffc6bc13 |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
+
 ## 1.4.0 - 2026-10-08
 
 Everything landed since 1.3.1, through private `main` on 2026-10-08: 226
@@ -131,7 +154,6 @@ Published 2026-10-08 from public `08a56e0` (private `a3524ddc3`, tag `v1.4.0`): 
 experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
 release legs were green on the tagged run.
 
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
 | dist/Jenny-Setup-x64.exe | 25309674d44cf99809ec4d4ff7ccfcfafdd5e4304f2be0a49b180216c0535b8d |
@@ -146,7 +168,6 @@ release legs were green on the tagged run.
 | dist/latest-linux.yml | fd8dcde64d66df5d9156b5aa53e5bbd87c28745253c4159c9bed44b385d608d2 |
 | dist/latest-mac.yml | d5b654caefb9783217f28c815529c3c96f6140ff43bbcfaf09cc23866b66100b |
 | dist/latest.yml | 989eaf5a5a85ae34b3ada7fed8dce323ac008198825641bc92cbf9f66a21936a |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.3.1 - 2026-10-05
 
