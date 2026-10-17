@@ -316,6 +316,7 @@
       }
       return parts.join(' · ');
     }
+    if (meta.result_kind === 'memory') return (globalThis.rendererMemoryChatEntry || (typeof require === 'function' ? require('../features/renderer-memory-chat-entry') : null))?.formatMemoryResultMeta?.(meta) || ''; // the chip's title, resolved per render
     if (meta.result_kind === 'task_board' || meta.result_kind === 'project_notes') {
       if (normalizeString(meta.status) === 'failed') return '';
       const notesUpdated = jt('chat.toolCall.notesUpdated', 'notes updated');
@@ -725,10 +726,10 @@
     return TOOL_RUN_VERB_BY_KIND[normalizeToolKind(name)] || '';
   }
   // Rows that carry their own content (questions, plans, images, diagrams,
-  // artifacts, spawned tasks, calendar blocks, notes rows) never fold into a run.
+  // artifacts, spawned tasks, calendar blocks, notes rows, proposal cards) never fold into a run.
   const TOOL_RUN_UNFOLDABLE_TOOLS = new Set([
     'ask_user', 'exit_plan_mode', 'image_generate', 'mermaid_generate', 'create_artifact',
-    'workspace_present', 'preview_test', 'session_spawn', 'delegate', 'home', 'project_notes',
+    'workspace_present', 'preview_test', 'session_spawn', 'delegate', 'home', 'project_notes', 'memory', 'propose_git_action', 'propose_command', 'propose_session', 'complete_session_handoff',
   ]);
   // A step waiting on the user ends the run and stays its own open card.
   const TOOL_RUN_BREAK_STATUSES = new Set(['awaiting_approval', 'pending_user_input']);
@@ -940,21 +941,23 @@
     return TOOL_RUN_LIVE_STATUSES.has(toolRunStatus(status));
   }
 
-  function getTrustedToolResultImageUrls(resultMeta) {
+  // Each trusted ref's file URL; image/chart refs keep their id so the image viewer can open them.
+  function getTrustedToolResultImages(resultMeta) {
     const refs = resultMeta && Array.isArray(resultMeta.trusted_attachment_refs)
       ? resultMeta.trusted_attachment_refs
       : [];
     return refs.map((attachment) => {
       const assetPath = String(attachment?.asset_path || attachment?.assetPath || '').trim();
-      if (!assetPath || /^\\\\/.test(assetPath) || /^\/\//.test(assetPath)) return '';
+      if (!assetPath || /^\\\\/.test(assetPath) || /^\/\//.test(assetPath)) return null;
       const normalized = assetPath.replace(/\\/g, '/');
       const prefixed = normalized.startsWith('/') ? normalized : `/${normalized}`;
       try {
         const fileUrl = new URL('file:///');
         fileUrl.pathname = prefixed;
-        return fileUrl.toString();
+        const id = ['image', 'chart'].includes(attachment.kind) ? String(attachment.id || '').trim() : '';
+        return { src: fileUrl.toString(), id };
       } catch (_error) {
-        return '';
+        return null;
       }
     }).filter(Boolean);
   }
@@ -1006,7 +1009,7 @@
     statusToneFor,
     buildToolHeaderInner,
     getToolLineCounts,
-    getTrustedToolResultImageUrls,
+    getTrustedToolResultImages,
     resolveProjectedRowCallId,
   };
 });

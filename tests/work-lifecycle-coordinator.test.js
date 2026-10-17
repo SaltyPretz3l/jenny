@@ -344,3 +344,10 @@ test('mirrorAgentStatusToActiveTurn invokes adapter.touchActiveTurn when both ar
   assert.equal(idArg.request_id, 'req-1');
   assert.equal(idArg.stream_id, 'stream-1');
 });
+
+
+test('child activity frames do not touch the active-turn mirror', () => {
+  const calls = [];
+  const result = mirrorAgentStatusToActiveTurn(makeAdapter(calls), validInput({ childActivity: { sequence: 1 } }));
+  assert.equal(result, null); assert.equal(calls.length, 0);
+});

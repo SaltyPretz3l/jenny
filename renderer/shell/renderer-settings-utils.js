@@ -217,6 +217,7 @@
       mountSettingRow(appearanceSettingsSection, 'appearanceAppZoomSelect', appZoomPercent);
       mountSettingRow(appearanceSettingsSection, 'transcriptViewDefaultSelect', state.transcriptViewDefault);
       mountSettingRow(appearanceSettingsSection, 'appearanceArtifactAutoOpenToggle', appearancePreferences.artifactAutoOpen === true);
+      globalThis.rendererPerformanceSettings?.mountRows(appearanceSettingsSection, mountSettingRow);
       if (appearanceLanguageField && shouldPatchSection('appearanceLanguage')) {
         appearanceLanguageField.innerHTML = buildUiLanguageFieldMarkup({
           value: state.uiLanguage,

@@ -403,9 +403,19 @@ test('renderer persists context settings on the active session without a static 
       history_scope: 'recent',
       include_personality: false,
       include_memory: false,
+      memory_opt_out: false,
     })
   );
   assert.equal(window.document.getElementById('contextPreview'), null);
+
+  // Memory v2 (row 58 W1): "Don't remember this chat" persists on the same path.
+  sourcesList.dispatchEvent(new window.CustomEvent('inv-toggle-change', {
+    bubbles: true,
+    detail: { id: 'contextMemoryOptOutToggle', checked: true },
+  }));
+  await waitForUi(window, 20);
+  assert.equal(shell.__state.setPreferenceCalls.length, 4);
+  assert.equal(shell.__state.setPreferenceCalls.at(-1).preferences.context_preferences.memory_opt_out, true);
 });
 
 test('context source links route to the owning Personality and Memory pages', async (t) => {
@@ -459,7 +469,7 @@ test('context card shows what is sent and summaries as standard rows', async (t)
   const groups = [...card.querySelectorAll('.settings-group')];
   assert.deepEqual(groups.map((group) => group.querySelector('.settings-group-heading').textContent), ['What is sent', 'Summaries']);
   const titles = (group) => [...group.querySelectorAll('.settings-field-title')].map((title) => title.textContent);
-  assert.deepEqual(titles(groups[0]), ['History scope', 'Personality and notes', 'Approved memories']);
+  assert.deepEqual(titles(groups[0]), ['History scope', 'Personality and notes', 'Approved memories', "Don't remember this chat"]);
   assert.deepEqual(titles(groups[1]), ['Automatic summarization', 'Summary guidance']);
   assert.equal(card.querySelectorAll('input[type="checkbox"]').length, 0);
   assert.equal(card.querySelector('[data-inv-toggle="contextTokenBudgetToggle"]'), null);

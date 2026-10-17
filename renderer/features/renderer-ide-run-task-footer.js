@@ -91,7 +91,7 @@
       return '';
     }
     const button = (action, label, variant) => actionButton({
-      variant, size: 'sm', label, ariaLabel: label, title: label, dataset: { [ACTION_ATTR]: action },
+      variant, size: 'sm', label, ariaLabel: label, title: label, disabled: action === 'rerun' && options.rerunDisabled === true, dataset: { [ACTION_ATTR]: action },
     });
     return '<div class="ide-task-footer">'
       + `<span class="ide-task-footer-status">${escapeHtml(text)}</span>`

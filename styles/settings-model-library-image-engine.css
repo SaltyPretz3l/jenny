@@ -14,6 +14,13 @@
   max-width: 64ch;
 }
 
+/* The "Clear anyway" confirm reads one step louder than the help line. */
+.model-library-image-engine-confirm {
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  max-width: 64ch;
+}
+
 .model-library-image-engine-note:empty {
   display: none;
 }

@@ -25,7 +25,7 @@ function fakeSwitcher() {
   };
 }
 
-function rowMenuHarness({ sessions, switcher, wired = true } = {}) {
+function rowMenuHarness({ sessions, switcher, wired = true, extraCallbacks = {} } = {}) {
   const dom = new JSDOM(`<body><ul id="list">${sessions.map((row) => `<li class="conversation-item" data-session-id="${row.id}"><button data-session-open="${row.id}">${row.id}</button><button data-session-action="menu">⋯</button></li>`).join('')}</ul></body>`);
   const shown = [];
   const contextMenu = { show(options) { shown.push(options); }, hide() {} };
@@ -38,6 +38,7 @@ function rowMenuHarness({ sessions, switcher, wired = true } = {}) {
     callbacks: {
       renderAll() {}, renderSessions() {}, showToastMessage() {}, appendClientLog() {}, registerCleanup() {}, showSessionActionError() {},
       ...(wired ? { getProjectSwitcher: async () => switcher } : {}),
+      ...extraCallbacks,
     },
   });
   const trigger = (id) => dom.window.document.querySelector(`[data-session-id="${id}"] [data-session-action="menu"]`);
@@ -72,6 +73,37 @@ test('row menu: plugin sessions and windows without a switcher get no Move entry
   const bare = rowMenuHarness({ sessions: [{ id: 's1', title: 'Intake' }], wired: false });
   bare.controller.openSessionRowMenu({ sessionId: 's1', trigger: bare.trigger('s1') });
   assert.equal(bare.shown[0].items.some((item) => item.label === 'Move to project ›'), false);
+});
+
+test('row menu: "Send to chat…" (row 59 cp4) follows Link sessions and opens the dialog for that chat, anchored on the row ⋯', () => {
+  const opened = [];
+  const h = rowMenuHarness({
+    sessions: [{ id: 's1', title: 'Intake' }],
+    switcher: fakeSwitcher(),
+    extraCallbacks: { openSendToChat: (sessionId, trigger) => opened.push({ sessionId, trigger }), openLinkedSessions() {} },
+  });
+  const trigger = h.trigger('s1');
+  h.controller.openSessionRowMenu({ sessionId: 's1', trigger });
+  const labels = h.shown[0].items.filter((item) => !item.separator).map((item) => item.label);
+  assert.deepEqual(labels, ['Pin', 'Rename', 'Link sessions…', 'Send to chat…', 'Move to project ›', 'Archive', 'Delete']);
+  h.shown[0].items.find((item) => item.label === 'Send to chat…').action();
+  assert.deepEqual(opened, [{ sessionId: 's1', trigger }]);
+});
+
+test('row menu: no "Send to chat…" for plugin, archived or unaddressable chats, or when the messaging dialog is not wired', () => {
+  const wiredCallbacks = { openSendToChat() {} };
+  const plugin = rowMenuHarness({ sessions: [{ id: 'p1', title: 'Plugin', session_type: 'plugin' }], switcher: fakeSwitcher(), extraCallbacks: wiredCallbacks });
+  plugin.controller.openSessionRowMenu({ sessionId: 'p1', trigger: plugin.trigger('p1') });
+  assert.equal(plugin.shown[0].items.some((item) => item.label === 'Send to chat…'), false);
+  const archived = rowMenuHarness({ sessions: [{ id: 'a1', title: 'Old', archived_at: '2026-10-01T00:00:00Z' }], switcher: fakeSwitcher(), extraCallbacks: wiredCallbacks });
+  archived.controller.openSessionRowMenu({ sessionId: 'a1', trigger: archived.trigger('a1') });
+  assert.equal(archived.shown[0].items.some((item) => item.label === 'Send to chat…'), false);
+  const imported = rowMenuHarness({ sessions: [{ id: 'i1', title: 'Imported', messaging_addressable: false }], switcher: fakeSwitcher(), extraCallbacks: wiredCallbacks });
+  imported.controller.openSessionRowMenu({ sessionId: 'i1', trigger: imported.trigger('i1') });
+  assert.equal(imported.shown[0].items.some((item) => item.label === 'Send to chat…'), false, 'no session incarnation yet');
+  const bare = rowMenuHarness({ sessions: [{ id: 's1', title: 'Intake' }], switcher: fakeSwitcher() });
+  bare.controller.openSessionRowMenu({ sessionId: 's1', trigger: bare.trigger('s1') });
+  assert.equal(bare.shown[0].items.some((item) => item.label === 'Send to chat…'), false);
 });
 
 function bulkHarness(t, { switcher, wired = true } = {}) {

@@ -169,8 +169,12 @@ def select_roots(root_argument: object) -> tuple[KnowledgeRoot, ...]:
     labels = ", ".join(root.label for root in roots)
     raise ToolExecutionFailure(
         code=CMP_TOOL_INVALID_PATH,
-        message=f"unknown knowledge root '{token}'. Registered folders: {labels}",
+        message=(f"unknown knowledge root '{token}'. Registered folders: {labels}. "
+                 "For a file or subfolder, use path with the registered folder prefix; omit root"),
         retryable=False,
+        error_details={"effects": "none", "remediation": (
+            "Use path with its registered folder prefix and omit root. "
+            "No read occurred; retry once with corrected scope arguments.")},
     )
 
 

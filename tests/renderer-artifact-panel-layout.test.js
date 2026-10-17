@@ -527,7 +527,6 @@ describe('Artifact Panel V3 maximized preferences and layout', () => {
     assert.match(flatBlock[0], /box-shadow: none;/);
     for (const shell of [
       'artifact-preview-pre', 'artifact-preview-web-shell', 'artifact-preview-chart-host',
-      'artifact-preview-image-shell', 'artifact-image-shell',
     ]) {
       assert.ok(flatBlock[0].includes(`.artifact-review-panel .${shell}`), `${shell} is covered`);
     }

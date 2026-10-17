@@ -24,6 +24,7 @@ const {
 const { handleToolOutputChunkNotification } = require('./chat-stream-tool-output-chunk');
 const {
   ingestToolResultAttachments,
+  ingestedToolResultAttachmentRefs,
   toPersistedToolResultAttachmentRefs,
 } = require('./tool-result-attachments');
 const {
@@ -388,11 +389,15 @@ function handleToolNotification(service, context, notification, options = {}) {
     });
     // WIDE-019: ingest typed attachment bytes synchronously into the existing
     // AttachmentAssetStore; only stored refs (asset id/path) persist below.
-    const trustedAttachmentRefs = ingestToolResultAttachments(
+    const ingestedRefs = ingestToolResultAttachments(
       service,
       params.trusted_attachments,
       { sessionId: resolvedSessionId, streamId, callId, toolName }
     );
+    // The canonical replay carries no bytes; keep the refs the live result stored.
+    const trustedAttachmentRefs = ingestedRefs.length || options.canonicalEvent !== true
+      ? ingestedRefs
+      : ingestedToolResultAttachmentRefs(service, { sessionId: resolvedSessionId, streamId, callId });
     const persistedAttachmentRefs = toPersistedToolResultAttachmentRefs(trustedAttachmentRefs);
     const resultTraceId = String(params.trace_id || '').trim();
     const normalizedMetadata = {

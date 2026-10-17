@@ -1,0 +1,230 @@
+/* Linked chats in the sidebar (row 59 checkpoint 5a): 16 px indent per level, a quiet thread with
+ * one elbow per last child, a chevron and a count chip that are siblings of the open button, and
+ * the origin caption line. Rows stay flat siblings; depth and thread hooks come from
+ * renderer-chats-panel-tree.js (data-tree-*, --cw-depth). Row height and the state-dot vocabulary
+ * are unchanged. Imported after chats-panel.css and before chats-panel-selection.css so bulk
+ * selection still wins the grid. Split out of chats-panel.css, which sits at the 600-line ratchet. */
+
+.session-row {
+  --cw-indent: 16px;
+  /* Centre of a parent's status dot, measured from the row's start edge. */
+  --cw-thread-x: calc(var(--space-4) + var(--session-row-dot-size) / 2);
+  --cw-dot-center: calc(var(--session-row-height) / 2);
+  --cw-thread: var(--line-strong);
+  /* Own level of this row (capped with the indent): where its elbow or tick starts. */
+  --cw-own-x: calc((var(--cw-depth, 0) - 1) * var(--cw-indent) + var(--cw-thread-x));
+}
+
+.session-row[data-tree-depth]:not([data-tree-depth="0"]) {
+  padding-inline-start: calc(var(--cw-depth, 0) * var(--cw-indent));
+}
+
+.session-row[data-tree-has-children="true"] {
+  grid-template-columns: minmax(0, 1fr) auto 32px;
+}
+
+/* Thread: each child row owns the line from the gap above it to its own bottom edge, so
+ * translucent segments never overlap. Levels 1-4 draw their straight line when the row's
+ * data-tree-through lists them. */
+.session-row[data-tree-depth]:not([data-tree-depth="0"])::before {
+  content: "";
+  position: absolute;
+  inset-block: calc(-1 * var(--space-1)) 0;
+  inset-inline: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--cw-c1, transparent), var(--cw-c1, transparent)),
+    linear-gradient(var(--cw-c2, transparent), var(--cw-c2, transparent)),
+    linear-gradient(var(--cw-c3, transparent), var(--cw-c3, transparent)),
+    linear-gradient(var(--cw-c4, transparent), var(--cw-c4, transparent));
+  background-repeat: no-repeat;
+  background-size: 1px 100%;
+  background-position:
+    calc(var(--cw-thread-x)) 0,
+    calc(var(--cw-indent) + var(--cw-thread-x)) 0,
+    calc(2 * var(--cw-indent) + var(--cw-thread-x)) 0,
+    calc(3 * var(--cw-indent) + var(--cw-thread-x)) 0;
+}
+
+:dir(rtl) .session-row[data-tree-depth]:not([data-tree-depth="0"])::before {
+  background-position:
+    calc(100% - var(--cw-thread-x)) 0,
+    calc(100% - var(--cw-indent) - var(--cw-thread-x)) 0,
+    calc(100% - 2 * var(--cw-indent) - var(--cw-thread-x)) 0,
+    calc(100% - 3 * var(--cw-indent) - var(--cw-thread-x)) 0;
+}
+
+.session-row[data-tree-through~="1"] { --cw-c1: var(--cw-thread); }
+.session-row[data-tree-through~="2"] { --cw-c2: var(--cw-thread); }
+.session-row[data-tree-through~="3"] { --cw-c3: var(--cw-thread); }
+.session-row[data-tree-through~="4"] { --cw-c4: var(--cw-thread); }
+
+/* The last child: one rounded elbow into its dot. A child with later siblings: a tick that
+ * starts 1 px after the straight line. */
+.session-row[data-tree-last]:not([data-tree-depth="0"])::after {
+  content: "";
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  inline-size: calc(var(--cw-indent) - var(--session-row-dot-size) / 2 - var(--space-2));
+  border-block-end: 1px solid var(--cw-thread);
+}
+
+.session-row[data-tree-last="true"]::after {
+  inset-block-start: calc(-1 * var(--space-1));
+  inset-inline-start: var(--cw-own-x);
+  block-size: calc(var(--cw-dot-center) + var(--space-1));
+  border-inline-start: 1px solid var(--cw-thread);
+  border-end-start-radius: var(--radius-xs);
+}
+
+.session-row[data-tree-last="false"]::after {
+  inset-block-start: calc(var(--cw-dot-center) - 1px);
+  inset-inline-start: calc(var(--cw-own-x) + 1px);
+  block-size: 0;
+}
+
+/* Chevron and count chip: sibling controls of the open button, reached with Left/Right on the row. */
+.session-row__branch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-inline-end: var(--space-1);
+}
+
+.session-row__chevron,
+.session-row__children-chip {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.session-row__chevron {
+  display: grid;
+  place-items: center;
+  inline-size: 20px;
+  block-size: 20px;
+  padding: 0;
+  border-radius: var(--rail-item-radius);
+  opacity: 0;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.session-row:is(:hover, :focus-within) .session-row__chevron,
+.session-row__chevron[aria-expanded="false"] {
+  opacity: 1;
+}
+
+.session-row__chevron:is(:hover, :focus-visible) {
+  background: var(--rail-hover-bg);
+  color: var(--text-primary);
+}
+
+.session-row__chevron svg {
+  inline-size: 12px;
+  block-size: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.session-row__chevron[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+
+:dir(rtl) .session-row__chevron[aria-expanded="false"] svg {
+  transform: scaleX(-1);
+}
+
+.session-row__children-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: 18px;
+  padding-block: 0;
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--rail-hover-bg);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.session-row__children-count {
+  line-height: 1;
+  text-box: trim-both cap alphabetic;
+}
+
+/* The dot echoes the state the chip's screen-reader text already names. */
+.session-row__children-dot {
+  flex: 0 0 auto;
+  inline-size: var(--session-row-dot-size);
+  block-size: var(--session-row-dot-size);
+  border-radius: var(--radius-pill);
+  background: var(--text-muted);
+}
+
+.session-row__children-dot[data-tone="active"] { background: var(--sidebar-state-streaming-color); }
+.session-row__children-dot[data-tone="unread"] { background: var(--accent-primary); }
+
+.session-row__chevron:focus-visible,
+.session-row__children-chip:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+/* Origin caption: a second line under the title for search hits and children whose parent is not
+ * shown. The row grows only for these rows; ordinary rows keep the 40 px height. */
+.session-row[data-tree-origin] .session-row__open {
+  flex-wrap: wrap;
+  row-gap: 0;
+  block-size: auto;
+  min-block-size: var(--session-row-height);
+  padding-block: var(--space-2);
+}
+
+.session-row[data-tree-origin] .session-row__title {
+  flex: 1 1 0;
+}
+
+.session-row__origin {
+  order: 3;
+  flex: 0 0 100%;
+  box-sizing: border-box;
+  min-inline-size: 0;
+  padding-inline-start: calc(var(--session-row-dot-size) + var(--space-4));
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-row.sidebar-bulk-selecting .session-row__branch {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-row__chevron,
+  .session-row__chevron svg {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .session-row__children-dot {
+    background: CanvasText;
+  }
+
+  .session-row__children-chip {
+    border: 1px solid CanvasText;
+  }
+}

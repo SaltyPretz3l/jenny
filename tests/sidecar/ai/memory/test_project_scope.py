@@ -5,16 +5,18 @@ from pathlib import Path
 
 import pytest
 
-from sidecar.ai.memory.contracts import MemoryPolicy, build_content_digest
+from sidecar.ai.memory.contracts import MemoryPolicy, build_text_digest
 from sidecar.ai.memory.service import MemoryService
 from sidecar.ai.memory.store import MemoryStore
+from tests.sidecar.ai.memory.memory_v9_helpers import find_row, forget_row, save_row
 
 PROJECT_ALPHA = "project_alpha"
 PROJECT_BETA = "project_beta"
 
 
 def _save(store: MemoryStore, *, project_id: str, session_id: str = "session-1"):
-    return store.save_memory(
+    return save_row(
+        store,
         session_id=session_id,
         title="Preference: tea",
         lesson_text="The user prefers tea.",
@@ -41,10 +43,10 @@ def test_same_content_and_id_operations_are_isolated_by_project(tmp_path: Path) 
         assert alpha.id != beta.id
         assert alpha.project_id == PROJECT_ALPHA
         assert beta.project_id == PROJECT_BETA
-        assert store.get_memory_by_id(alpha.id, project_id=PROJECT_BETA) is None
-        assert store.delete_memory(alpha.id, project_id=PROJECT_BETA) is False
-        assert store.delete_memory(alpha.id, project_id=PROJECT_ALPHA) is True
-        assert store.get_memory_by_id(beta.id, project_id=PROJECT_BETA) == beta
+        assert find_row(store, alpha.id, project_id=PROJECT_BETA) is None
+        assert forget_row(store, alpha.id, project_id=PROJECT_BETA).reason == "not_found"
+        assert forget_row(store, alpha.id, project_id=PROJECT_ALPHA).status == "saved"
+        assert find_row(store, beta.id, project_id=PROJECT_BETA) == beta
         assert store.is_memory_suppressed(
             alpha.content_fingerprint, project_id=PROJECT_ALPHA
         )
@@ -75,6 +77,21 @@ def test_status_counts_follow_the_requested_scope(tmp_path: Path) -> None:
         store.close()
 
 
+def test_status_names_the_scopes_with_forgotten_rows(tmp_path: Path) -> None:
+    # The Memory page lists a scope's Forgotten fold even after its last
+    # active row is forgotten, so the all-projects status names those scopes.
+    store = MemoryStore(tmp_path / "memory.db")
+    try:
+        beta = _save(store, project_id=PROJECT_BETA)
+        _save(store, project_id=PROJECT_ALPHA)
+        assert store.status_snapshot(all_projects=True)["forgotten_scopes"] == []
+        assert forget_row(store, beta.id, project_id=PROJECT_BETA).status == "saved"
+        assert store.status_snapshot(all_projects=True)["forgotten_scopes"] == [PROJECT_BETA]
+        assert "forgotten_scopes" not in store.status_snapshot(project_id=PROJECT_BETA)
+    finally:
+        store.close()
+
+
 def test_pending_and_page_anchors_do_not_cross_projects(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
@@ -85,15 +102,15 @@ def test_pending_and_page_anchors_do_not_cross_projects(tmp_path: Path) -> None:
                 """
                 INSERT INTO pending_memory_candidates (
                     session_id, source_request_id, title, lesson_text, lesson_kind,
-                    confidence, source_excerpt, content_fingerprint, family_key,
+                    confidence, source_excerpt, content_fingerprint,
                     category, created_at, updated_at, project_id
-                ) VALUES ('session-1', ?, ?, ?, 'preference', 0.9, '', ?, '', '', ?, ?, ?)
+                ) VALUES ('session-1', ?, ?, ?, 'preference', 0.9, '', ?, '', ?, ?, ?)
                 """,
                 (
                     f"request-{title.lower()}",
                     title,
                     lesson,
-                    build_content_digest("preference", lesson),
+                    build_text_digest(lesson),
                     now,
                     now,
                     project_id,
@@ -136,7 +153,8 @@ def test_approved_paging_and_counts_are_project_scoped(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
         for index in range(3):
-            store.save_memory(
+            save_row(
+                store,
                 session_id=f"alpha-{index}",
                 title=f"Alpha {index}",
                 lesson_text=f"Alpha preference {index}.",
@@ -181,7 +199,7 @@ def test_recall_filters_project_before_bounded_candidates(
                     f"session-{index}",
                     f"Alpha {index}",
                     lesson,
-                    build_content_digest("preference", lesson),
+                    build_text_digest(lesson),
                     now,
                     now,
                     PROJECT_ALPHA,
@@ -193,7 +211,7 @@ def test_recall_filters_project_before_bounded_candidates(
                 "session-target",
                 "Beta target",
                 target_lesson,
-                build_content_digest("preference", target_lesson),
+                build_text_digest(target_lesson),
                 now,
                 now,
                 PROJECT_BETA,
@@ -203,9 +221,9 @@ def test_recall_filters_project_before_bounded_candidates(
             """
             INSERT INTO memories (
                 session_id, title, lesson_text, lesson_kind, confidence,
-                source_excerpt, content_fingerprint, family_key, provenance,
+                source_excerpt, content_fingerprint, origin, provenance,
                 created_at, updated_at, project_id
-            ) VALUES (?, ?, ?, 'preference', 0.9, '', ?, '', 'user_approved', ?, ?, ?)
+            ) VALUES (?, ?, ?, 'preference', 0.9, '', ?, 'user', 'user_approved', ?, ?, ?)
             """,
             rows,
         )

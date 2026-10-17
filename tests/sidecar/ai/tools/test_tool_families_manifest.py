@@ -48,6 +48,7 @@ def test_known_families_are_manifest_families_plus_documented_extras() -> None:
 
 
 def test_name_fallback_classifies_manifest_and_retired_names() -> None:
+    assert tool_family_for_status(name="recall_tool_output", tool_family=None) == "runtime"
     assert tool_family_for_status(name="run_command", tool_family=None) == "shell"
     assert tool_family_for_status(name="create_artifact", tool_family="") == "artifact"
     assert tool_family_for_status(name="browser_open", tool_family=None) == "browser"

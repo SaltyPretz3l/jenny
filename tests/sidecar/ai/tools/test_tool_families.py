@@ -111,6 +111,10 @@ def test_manifest_validator_accepts_foundation_families(family: str) -> None:
     )
 
 
+def test_session_message_is_in_the_runtime_family() -> None:
+    assert tool_family_for_status(name="session_message", tool_family="") == "runtime"
+
+
 def test_knowledge_family_registered() -> None:
     assert "knowledge" in KNOWN_TOOL_FAMILIES
     assert TOOL_FAMILY_NAMES["knowledge"] == (

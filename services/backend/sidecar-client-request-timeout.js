@@ -16,13 +16,19 @@ const { SIDECAR_TERMINAL_SUBCODES } = require('./error-codes');
 
 const MCP_INSPECT_METHOD = 'mcp.inspect';
 const CHAT_SEND_METHOD = 'chat.send';
+// The exact-command Run is a registered chat-shaped turn: the same chat.cancel stops it.
+const CHAT_TURN_METHODS = new Set([CHAT_SEND_METHOD, 'command.execute_proposal']);
+
+function isChatTurnMethod(method) {
+  return CHAT_TURN_METHODS.has(method);
+}
 
 // Best-effort chat.cancel for a pending chat.send, shared by the abort-signal
 // path and the transport timeout: once Electron gives up on the request, the
 // sidecar must stop generating instead of keeping the GPU busy on a turn the
 // UI already failed.
 function sendPendingChatCancel(client, pending, cancelReason) {
-  if (pending.method !== CHAT_SEND_METHOD || !pending.requestKey || !client._batch4TransportEnabled()) {
+  if (!isChatTurnMethod(pending.method) || !pending.requestKey || !client._batch4TransportEnabled()) {
     return;
   }
   client._recordCancelledRequestKey(pending.requestKey);
@@ -113,4 +119,4 @@ function suspendRequestTimeout(client, requestKey) {
   };
 }
 
-module.exports = { armPendingTimeout, sendPendingChatCancel, suspendRequestTimeout };
+module.exports = { armPendingTimeout, isChatTurnMethod, sendPendingChatCancel, suspendRequestTimeout };

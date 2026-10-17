@@ -11,7 +11,7 @@ REQUIRED_SNIPPETS = {
         "diagnostics:renderer-error",
         "app.unhandled_failure",
     ],
-    ROOT / "preload.js": [
+    ROOT / "services/ipc-contract.js": [
         "reportRendererError",
         "diagnostics:renderer-error",
     ],

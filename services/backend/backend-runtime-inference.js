@@ -10,8 +10,12 @@ const { assertSessionAdmissible } = require('./chat-stream-admission');
 const { getTrustedExecutionBinding } = require('./session-execution-authority');
 const { retainRuntimeSettlementHandler } = require('./sidecar-client-request-rpc');
 const { RUNTIME_ERROR_CODES } = require('./error-codes');
+const { registerPreemptibleAuxiliary } = require('./auxiliary-preemption');
+const { isLocalEngine, openAiCompatibleUrlFromService } = require('./session-lockdown-gate');
 
-const METHODS = new Set(['suggestions.generate', 'commit.generate_message', 'chat.compact']);
+const METHODS = new Set(['suggestions.generate', 'commit.generate_message', 'chat.compact', 'memory.reflect']);
+// Session-scoped methods hold the session's turn lease and captured authority.
+const SCOPED_METHODS = new Set(['chat.compact', 'memory.reflect']);
 const unsettledRequests = new WeakMap();
 
 function admissionError(reason) {
@@ -23,19 +27,23 @@ function admissionError(reason) {
 }
 
 // Auxiliary requests consume inference capacity without manufacturing a session,
-// project grant, transcript, or durable autonomous run.
+// project grant, transcript, or durable autonomous run. A `preemptible` request
+// (background work) is cancelled by chat admission; see auxiliary-preemption.js.
 async function requestRuntimeInference(service, method, params, {
-  signal, timeoutMs, sessionId = null, consumeResult = value => value,
+  signal, timeoutMs, sessionId = null, consumeResult = value => value, preemptible = false, engineType = null,
 } = {}) {
   if (!METHODS.has(method)) throw new TypeError('runtime_auxiliary_method_invalid');
-  const scoped = method === 'chat.compact';
-  if (typeof consumeResult !== 'function' || (scoped
+  const scoped = SCOPED_METHODS.has(method);
+  // Reflection is the only caller that pins its route to a captured engine.
+  const reflect = method === 'memory.reflect';
+  if (typeof consumeResult !== 'function' || (engineType !== null && !reflect) || (scoped
     ? typeof sessionId !== 'string' || !sessionId.trim() || params?.session_id !== sessionId
     : sessionId !== null)) throw new TypeError('runtime_auxiliary_scope_invalid');
   const runtime = service?.sessionRuntime;
   const client = service?.sidecarClient;
   if (!runtime) {
-    if (Object.hasOwn(service?.featureFlags || {}, 'session_runtime')) {
+    // Reflection's consent re-check needs the session lease only the runtime grants.
+    if (reflect || Object.hasOwn(service?.featureFlags || {}, 'session_runtime')) {
       throw admissionError('runtime_unavailable');
     }
     // Embedded legacy adapters without application composition retain their
@@ -51,7 +59,12 @@ async function requestRuntimeInference(service, method, params, {
   const pending = unsettledRequests.get(service) || new Map();
   unsettledRequests.set(service, pending);
   if (pending.size >= 64) throw admissionError('runtime_unresolved_capacity');
-  const route = captureSessionRuntimeProviderRoute(service);
+  const route = captureSessionRuntimeProviderRoute(service, engineType === null ? {} : { engineType });
+  // Background reflection reads a chat's history: it never leaves the machine.
+  if (reflect && (route.resource_class !== 'local'
+    || !isLocalEngine(route.engine_type, openAiCompatibleUrlFromService(service)))) {
+    throw admissionError('runtime_route_not_local');
+  }
   const requestId = `aux_${randomUUID()}`;
   const sourceProcess = client.process;
   let binding;
@@ -59,6 +72,8 @@ async function requestRuntimeInference(service, method, params, {
   let turnLease;
   let gateway;
   let unregister;
+  let preemption;
+  let responded = false;
   let sessionIdentity;
   const readSessionIdentity = () => {
     const session = service.sessionStore?.getSession?.(sessionId);
@@ -115,16 +130,25 @@ async function requestRuntimeInference(service, method, params, {
     client.runtimeOperationHandlers.set(requestId, handler);
     pending.set(requestId, gateway);
     assertCurrent();
+    if (preemptible) preemption = registerPreemptibleAuxiliary(service, { requestId, method, sessionId, signal });
     const result = await client.request(method, { ...params, request_id: requestId, inference_context: inferenceContext }, {
-      signal, timeoutMs, requestKey: requestId,
+      signal: preemption?.signal || signal, timeoutMs, requestKey: requestId,
     });
+    responded = true;
     assertCurrent();
     // Canonical compaction writes execute while this session's lane and captured
     // authority are still held; releasing capacity may invoke synchronous observers.
     if (scoped && (gateway.snapshot().active || gateway.snapshot().quarantined)) {
       throw admissionError('runtime_cleanup_uncertain');
     }
-    return await consumeResult(result);
+    preemption?.assertNotPreempted();
+    return await consumeResult(result, { assertNotPreempted: () => preemption?.assertNotPreempted() });
+  } catch (error) {
+    // No sidecar answer (`rpc` is its error reply): the producer may still run.
+    if (preemption && !responded && !error?.rpc) {
+      preemption.cancelProducer(signal?.aborted ? 'transport_abort' : 'timeout');
+    }
+    throw preemption ? preemption.mapError(error) : error;
   } finally {
     if (client.runtimeOperationHandlers.get(requestId) === handler) client.runtimeOperationHandlers.delete(requestId);
     // A returned RPC is not proof that every provider reader has stopped.
@@ -139,6 +163,8 @@ async function requestRuntimeInference(service, method, params, {
         request_id: requestId, method, quarantined: outcome.quarantined,
       });
     }
+    // Only after the lease is released or quarantined: preemption waits on this.
+    preemption?.settle();
   }
 }
 

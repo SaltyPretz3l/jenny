@@ -35,6 +35,7 @@ function normalizeLimit(value, fallback = DEFAULT_RECENT_TRACE_LIMIT) {
 }
 
 function normalizeNonNegativeNumber(value) {
+  if (value == null || value === '') return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
 }
@@ -144,6 +145,8 @@ function normalizeTimingMarkers(markers) {
     }
     const explicitRelative = normalizeNonNegativeNumber(marker.relative_ms);
     const tsMs = normalizeNonNegativeNumber(marker.ts_ms);
+    // A marker with neither time is unknown, not zero: it is skipped.
+    if (explicitRelative == null && tsMs == null) continue;
     rows.push({
       name,
       index,
@@ -163,14 +166,9 @@ function normalizeTimingMarkers(markers) {
     return left.index - right.index;
   });
   const baseTs = rows.find((row) => row.tsMs != null)?.tsMs ?? null;
-  return rows.map((row) => {
-    const relativeMs = row.relativeMs != null
-      ? row.relativeMs
-      : (baseTs != null && row.tsMs != null ? Math.max(row.tsMs - baseTs, 0) : 0);
-    return {
-      name: row.name,
-      relative_ms: relativeMs,
-    };
+  return rows.flatMap((row) => {
+    const relativeMs = row.relativeMs ?? (baseTs != null && row.tsMs != null ? row.tsMs - baseTs : null);
+    return relativeMs == null ? [] : [{ name: row.name, relative_ms: relativeMs }];
   });
 }
 
@@ -247,9 +245,9 @@ function normalizeDiagnosticPayload(payload, candidate) {
     return null;
   }
   const timingMarkers = normalizeTimingMarkers(payload.timing_markers || payload.timingMarkers);
-  const durationMs = timingMarkers.reduce(
-    (max, marker) => Math.max(max, normalizeNonNegativeNumber(marker.relative_ms) ?? 0),
-    0
+  const providerTiming = normalizeProviderTiming(payload.provider_diagnostics || payload.providerDiagnostics);
+  const durationMs = providerTiming.total_duration_ms ?? timingMarkers.reduce(
+    (max, marker) => Math.max(max ?? 0, marker.relative_ms), null
   );
   const writtenAt = normalizeIso(payload.written_at || payload.writtenAt);
   const sortMs = writtenAt ? Date.parse(writtenAt) : Number(candidate.mtimeMs || 0);
@@ -269,9 +267,7 @@ function normalizeDiagnosticPayload(payload, candidate) {
       duration_ms: durationMs,
       timing_markers: timingMarkers,
       timing_spans: buildTimingSpans(timingMarkers),
-      provider_timing: normalizeProviderTiming(
-        payload.provider_diagnostics || payload.providerDiagnostics
-      ),
+      provider_timing: providerTiming,
       tool_events: normalizeToolEventSummary(payload.tool_events || payload.toolEvents),
     },
   };
@@ -321,7 +317,10 @@ async function buildTurnDiagnosticIndex({
   const requestedSessionId = normalizeString(sessionId);
   const rows = [];
   let skippedCount = 0;
+  let slackRemaining = null;
   for (const candidate of candidates) {
+    if (slackRemaining === 0) break;
+    if (slackRemaining != null) slackRemaining -= 1;
     try {
       const normalized = await readDiagnostic(candidate);
       if (!normalized) {
@@ -332,6 +331,7 @@ async function buildTurnDiagnosticIndex({
         continue;
       }
       rows.push(normalized);
+      if (rows.length === recentLimit) slackRemaining = 5;
     } catch (_error) {
       skippedCount += 1;
     }

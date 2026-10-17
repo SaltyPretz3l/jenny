@@ -17,17 +17,9 @@
   var ATTACHMENT_AUDIO_TOKEN_ESTIMATE = 1024;
 
   var META_TOKEN_COUNTED_ROLES = new Set(['user', 'assistant']);
-  var META_EXCLUDED_KINDS = new Set([
-    'assistant_error',
-    'question_batch',
-    'interactive_round_recap',
-    'proactive_suggestion',
-    'system_notice',
-    'tool_use',
-    'tool_result',
-    'slash_command_output',
-  ]);
-  var CONTEXT_EXCLUDED_KINDS = new Set(['proactive_suggestion']);
+  var META_EXCLUDED_KINDS = new Set(['assistant_error', 'question_batch', 'interactive_round_recap', 'proactive_suggestion',
+    'system_notice', 'tool_use', 'tool_result', 'slash_command_output', 'memory_note']);
+  var CONTEXT_EXCLUDED_KINDS = new Set(['proactive_suggestion', 'memory_note']);
 
   function normalizePositiveInteger(value) {
     var parsed = Number(value);
@@ -55,6 +47,9 @@
     return length > 0 ? Math.ceil(length / 4) : 0;
   }
 
+  // SESSION_HANDOFF_PREAMBLE (sidecar/ai/context/session_handoff.py) + its blank line, counted to match the wire.
+  var HANDOFF_PREAMBLE_CHARS = 245;
+
   function getMessageTokenText(message) {
     var kind = String(message && message.kind || '').trim();
     if (kind === 'tool_use') {
@@ -72,6 +67,10 @@
         || message?.tool_result?.tool_name
         || ''
       );
+    }
+    if (kind === 'session_message') return safeStringify(message?.session_message); // sent as attributed JSON; receipts never count
+    if (kind === 'session_handoff') { // the fixed preamble plus the attributed Background projection (checkpoint 5a)
+      return ' '.repeat(HANDOFF_PREAMBLE_CHARS) + safeStringify({ kind: 'session_handoff', from_chat: message?.session_handoff?.source_session_id, background: message?.content });
     }
     if (kind === 'question_batch') return safeStringify(message?.interactive_batch);
     if (kind === 'interactive_round_recap') return safeStringify(message?.interactive_round_recap);
@@ -197,7 +196,7 @@
     }
     if (kind === 'tool_result') return Boolean(message.tool_result?.call_id);
     var role = String(message.role || '').trim();
-    return role === 'user' || role === 'assistant' || role === 'system';
+    return role === 'user' || role === 'assistant' || role === 'system' || (role === 'context' && (kind === 'session_message' || kind === 'session_handoff'));
   }
 
   function estimateContextMessagesTokens(messages, historyScope) {
@@ -581,6 +580,7 @@
   return {
     ATTACHMENT_AUDIO_TOKEN_ESTIMATE: ATTACHMENT_AUDIO_TOKEN_ESTIMATE,
     ATTACHMENT_IMAGE_TOKEN_ESTIMATE: ATTACHMENT_IMAGE_TOKEN_ESTIMATE,
+    HANDOFF_PREAMBLE_CHARS: HANDOFF_PREAMBLE_CHARS,
     RECENT_TURN_GROUP_LIMIT: RECENT_TURN_GROUP_LIMIT,
     buildContextUsageEstimate: buildContextUsageEstimate,
     buildMessageTokenMeta: buildMessageTokenMeta,

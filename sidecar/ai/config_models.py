@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -9,6 +10,47 @@ from sidecar.ai.personality import DEFAULT_ASSISTANT_NAME, DEFAULT_PERSONALITY_B
 from sidecar.ai.tools.tool_search import DEFAULT_AUTO_TOOL_SEARCH_PERCENTAGE
 
 SYSTEM_PROMPT_DEFAULT = DEFAULT_PERSONALITY_BASE_PROMPT
+MAX_SUBAGENT_PREFERRED_MODELS = 16
+
+
+def normalize_subagent_routing(value: Any) -> dict[str, dict[str, Any]]:
+    """Bound user preferences; model availability is validated at task execution."""
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    efforts = {"", "default", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
+    for provider in ("chatgpt", "codex-cli"):
+        prefix = r"(?:codex-cli/)?" if provider == "codex-cli" else ""
+        identifier = re.compile(prefix + r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+        row = value.get(provider)
+        if not isinstance(row, dict):
+            continue
+        model = row.get("defaultModel", "")
+        effort = row.get("defaultEffort", "")
+        preferred = row.get("preferredModels", [])
+        allowed = row.get("allowedModels", [])
+        maximum = row.get("maxEffort", "")
+        if (
+            set(row) - {
+                "defaultModel", "defaultEffort", "preferredModels", "allowedModels", "maxEffort"
+            }
+            or not isinstance(model, str) or (model and not identifier.fullmatch(model))
+            or not isinstance(effort, str) or effort not in efforts
+            or not isinstance(maximum, str) or maximum not in efforts - {"default"}
+            or not isinstance(allowed, list) or len(allowed) > MAX_SUBAGENT_PREFERRED_MODELS
+            or any(not isinstance(item, str) or not identifier.fullmatch(item) for item in allowed)
+            or not isinstance(preferred, list) or len(preferred) > MAX_SUBAGENT_PREFERRED_MODELS
+            or any(
+                not isinstance(item, str) or not identifier.fullmatch(item) for item in preferred
+            )
+        ):
+            continue
+        result[provider] = {
+            "defaultModel": model, "defaultEffort": effort,
+            "preferredModels": list(dict.fromkeys(preferred)),
+            "allowedModels": list(dict.fromkeys(allowed)), "maxEffort": maximum,
+        }
+    return result
 
 SYSTEM_PROMPT_MINIMAL = (
     "You are an AI assistant operating through Jenny. Follow the user's request "
@@ -95,6 +137,13 @@ class MCPServerConfig:
     # transport then cancels cooperatively instead of terminating the process.
     cooperative_cancel: bool = False
     approved_tools_digest: str | None = None
+    # Non-secret per-row configuration added to the scrubbed stdio child env
+    # (add-only; reserved and secret-like keys never parse).
+    env: tuple[tuple[str, str], ...] = ()
+    inspect_timeout_seconds: float = 15.0
+    # Owner decision 9 (row 53): approved tools whose server claims readOnlyHint,
+    # and neither openWorldHint nor destructiveHint, register as not side-effecting.
+    read_only_auto_allow: bool = False
 
 
 @dataclass(frozen=True)
@@ -173,6 +222,14 @@ class SemanticCatalogConfig:
 
 
 @dataclass(frozen=True)
+class ConversationIndexConfig:
+    """Validated ``conversation_index`` block (row 58 W4); ``None`` on RuntimeConfig when off."""
+
+    enabled: bool
+    db_path: str
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     engine_type: str = "mock"
     model: str = "mock-v1"
@@ -202,6 +259,11 @@ class RuntimeConfig:
     codex_cli_auth_reason: str | None = None
     chatgpt_access_token: str | None = None
     openai_compatible_api_key: str | None = field(default=None, repr=False)
+    managed_prefill_progress: bool = False
+    # Opt-in llama.cpp ``json_schema`` response_format for a ResponseFormat that
+    # carries a schema. Electron sets it only for the managed llama-server; any
+    # other OpenAI-compatible server keeps ``json_object``.
+    json_schema_response_format: bool = False
     chatgpt_account_id: str | None = None
     chatgpt_model_catalog: tuple[dict[str, Any], ...] = ()
     chatgpt_base_url: str | None = None
@@ -275,6 +337,8 @@ class RuntimeConfig:
     tools_home_enabled: bool = False
     tools_task_board_enabled: bool = False
     tools_project_notes_enabled: bool = False
+    tools_memory_enabled: bool = True
+    tools_conversations_enabled: bool = True
     tools_rich_files_enabled: bool = True
     tools_knowledge_enabled: bool = False
     # Absolute paths of user-registered knowledge folders (Electron-validated;
@@ -283,6 +347,8 @@ class RuntimeConfig:
     # Semantic catalog index settings; the embedder key arrives as the
     # ``semantic_catalog_api_key`` secret and lives only inside this object.
     semantic_catalog: SemanticCatalogConfig | None = None
+    # Derived past-chat index (conversations_search); Electron sends the path.
+    conversation_index: ConversationIndexConfig | None = None
     tool_policy_snapshot: ToolPolicySnapshot | None = None
     tools_shell_enabled: bool = False
     tools_confirm_side_effects: bool = True
@@ -336,6 +402,7 @@ class RuntimeConfig:
     electron_state_root: str | None = None
     electron_shell_config_path: str | None = None
     electron_sessions_path: str | None = None
+    owned_process_ledger_path: str | None = None
     electron_tool_permissions_path: str | None = None
     skills_bundled_root: str | None = None
     skills_user_root: str | None = None
@@ -353,6 +420,9 @@ class RuntimeConfig:
     mcp_servers: tuple[MCPServerConfig, ...] = ()
     mcp_sse_enabled: bool = False
     memory_db_path: str | None = None
+    # Hybrid (lexical + vector) memory recall, row 58 W4; also needs the
+    # semantic catalog's embedder. JENNY_ENABLE_MEMORY_HYBRID_RECALL=1 turns it on.
+    memory_hybrid_recall_enabled: bool = False
     background_runtime_root: str | None = None
     operation_ledger_root: str | None = None
     diagnostics_log_level: str = "info"

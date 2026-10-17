@@ -701,7 +701,7 @@ def write_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> 
                 f"Could not safely write {relative_path}: {error.message}"
             ),
             error_code=error.code,
-            metadata={"path": relative_path},
+            metadata={**error.to_error_data(), "retryable": error.retryable, "path": relative_path},
         )
 
 

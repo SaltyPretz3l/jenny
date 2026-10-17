@@ -14,7 +14,6 @@
     const getMultiStreamController = deps.getMultiStreamController || (() => null);
     const jennyShell = deps.jennyShell || {};
     const invalidateSessionArtifacts = deps.callbacks?.invalidateSessionArtifacts || (() => {});
-    const clearDismissedMemorySession = deps.callbacks?.clearDismissedMemorySession || (() => {});
     const clearInteractiveDraft = deps.callbacks?.clearInteractiveDraft || (() => {});
     const appendClientLog = deps.callbacks?.appendClientLog || (() => {});
 
@@ -122,7 +121,6 @@
       state.interactiveDraftsBySession.delete(sessionId);
       state.sessionMessageAccessOrder?.delete(sessionId);
       invalidateSessionArtifacts(sessionId);
-      clearDismissedMemorySession(sessionId);
       if (clearPostwork) {
         getMultiStreamController()?.clearTerminalPostwork?.(sessionId);
       }

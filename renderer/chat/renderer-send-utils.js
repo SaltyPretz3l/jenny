@@ -101,6 +101,7 @@
   const { createSendReceiptStore } = _sendReceiptUtils;
   const _skillSlashCommands = (typeof globalThis !== 'undefined' && globalThis.rendererSkillSlashCommands)
     || (typeof require === 'function' ? require('./renderer-skill-slash-commands') : null);
+  const _promptSlashCommands = globalThis.rendererMcpPromptSlashCommands || (typeof require === 'function' ? require('./renderer-mcp-prompt-slash-commands') : null);
   if (!_skillSlashCommands || typeof _skillSlashCommands.createSendSlashDispatch !== 'function') {
     throw new Error('renderer-skill-slash-commands must load before renderer/chat/renderer-send-utils.js');
   }
@@ -284,6 +285,7 @@
     const { isSessionBusy, restoreQueuedSendDraft, canQueueForSession } = createSendQueueGuards({
       state, multiStreamController, isSessionStreaming, hasPendingToolApprovalForSession,
       getPendingQuestionBatch, isDockApprovalSteerActive, chatInput,
+      getImageEditDraftController: () => window.rendererImageEditDraftController,
       syncComposerInputHeight, syncComposerVisualState, renderComposerState, renderMessages,
     });
 
@@ -380,22 +382,33 @@
       state, sessionContext, registry: slashCommandRegistry, chatInput, renderComposerState,
       syncComposerInputHeight, syncComposerVisualState,
       selectSlashCommand: handleSlashCommandSelection,
-      submitPrompt: (nextPrompt) => startPromptSend(nextPrompt),
+      submitPrompt: (nextPrompt) => startPromptSend(nextPrompt, { attachImageEditDraft: true }),
       // Scoped to this pane's chat: its bound project's skills, not the Workspace's.
       getSkillsState: skillsBridge?.getState ? (scope) => skillsBridge.getState(scope) : null,
       onSkillsChanged: skillsBridge?.onChanged ? (listener) => skillsBridge.onChanged(listener) : null,
       log: appendClientLog,
     });
-    async function startPromptSend(prompt, options) {
+    function startPromptSend(prompt, options = {}) {
+      const imageDrafts = window.rendererImageEditDraft || (typeof require === 'function' ? require('../features/renderer-image-edit-draft') : null);
+      return imageDrafts.sendWithDraft(startPromptSendCore, prompt, options, window.rendererImageEditDraftController,
+        String(options.sessionIdOverride || getCurrentSessionId() || '').trim(), options.failedPayloadId ? sendReceipts.getFailedPayload(options.failedPayloadId) : null);
+    }
+    async function startPromptSendCore(prompt, options) {
       let settings = options || {};
+      const composerTargetSessionId = String(settings.sessionIdOverride || getCurrentSessionId() || '').trim(); // before any await
+      if (!settings.editedMessageId && String(prompt || '').trim().startsWith('/')) await deps.promptCommands?.ensureScope({ maxAgeMs: 1000 });
       let slashDispatch = sendSlashDispatch.dispatch(prompt, settings);
       if (slashDispatch && typeof slashDispatch.then === 'function') slashDispatch = await slashDispatch;
       if (slashDispatch.handled) return null;
       prompt = slashDispatch.prompt;
       settings = slashDispatch.settings;
+      // A pending MCP prompt block rides typed sends only (the composer and slash submits mark themselves) or a drained outbox entry's own copy.
+      const promptBlock = settings.outboxDispatch ? settings.promptBlock || null : settings.attachImageEditDraft === true && String(prompt || '').trim() ? _promptSlashCommands?.getPendingPromptBlock(state, sessionContext) || null : null;
       const pendingBatch = getPendingQuestionBatch();
       const usesReplayImageAttachments = Array.isArray(settings.replayImageAttachments);
       const requestedSessionId = String(settings.sessionIdOverride || getCurrentSessionId() || '').trim(); // W2-2b: its queue is sent
+      if (requestedSessionId !== composerTargetSessionId) return { rejected: true, reason: 'session_changed', sessionId: composerTargetSessionId };
+      const imageEditDraft = settings.imageEditSnapshot;
       const sessionQueue = globalThis.rendererComposerSessionState || require('./renderer-composer-session-state');
       const queuedForSend = sessionQueue.getQueuedAttachments(state, requestedSessionId); // pane 0's live array or a pane's record
       const attachmentBudget = buildAttachmentBudget(usesReplayImageAttachments ? settings.replayImageAttachments : queuedForSend);
@@ -513,7 +526,7 @@
             ),
             meta: {
               mentionContentsSnapshot: [],
-              activeFileContextSnapshot: queuedActiveFileContext, skillInvocation,
+              activeFileContextSnapshot: queuedActiveFileContext, skillInvocation, imageEditSnapshot: imageEditDraft, promptBlock,
             },
           });
           if (!queuedEntry) {
@@ -530,7 +543,7 @@
           // target it by object IDENTITY — robust against a dispatch, clear, or a
           // newer queued send (which all replace/remove the Map entry), where a
           // createdAt timestamp could collide at ms resolution.
-          chatInput.value = '';
+          chatInput.value = ''; deps.promptCommands?.consume(promptBlock); // the queued entry carries it now
           sessionQueue.clearQueuedAttachments(state, requestedSessionId);
           syncComposerInputHeight();
           syncComposerVisualState();
@@ -577,12 +590,14 @@
       const currentMessages = getCurrentVisibleMessages();
       const shouldAnimateActivation = currentMessages.length === 0;
       const normalizedPrompt = String(prompt || '').trim();
-      const effectivePrompt = interactiveGuardrailFallback
+      let effectivePrompt = interactiveGuardrailFallback
         ? [
             normalizedPrompt,
             normalizedPrompt.includes(INTERACTIVE_GUARDRAIL_PROMPT) ? '' : INTERACTIVE_GUARDRAIL_PROMPT,
           ].filter(Boolean).join('\n\n')
         : String(prompt || '');
+      if (!settings.imageEditContextIncluded && imageEditDraft?.sessionId === requestedSessionId) effectivePrompt += window.rendererImageEditDraft?.promptContext(imageEditDraft) || '';
+      if (promptBlock) effectivePrompt = _promptSlashCommands.composePromptBlock(promptBlock, effectivePrompt); // model-facing only: the visible text and a restored draft stay the user's own
       const hasExplicitVisiblePrompt = Object.prototype.hasOwnProperty.call(settings, 'visiblePrompt');
       const visiblePrompt = String(hasExplicitVisiblePrompt ? settings.visiblePrompt : prompt).trim();
       const optimisticTitleSource = visiblePrompt || (hasExplicitVisiblePrompt ? '' : normalizedPrompt);
@@ -608,6 +623,7 @@
       let sendReceipt = sendReceipts.begin({
         sessionId: optimisticSessionId,
         prompt: effectivePrompt,
+        imageEditSnapshot: imageEditDraft,
         visiblePrompt,
         attachments: acceptedAttachments,
         runtimePreferences,
@@ -622,7 +638,7 @@
         recordFailedPayload: settings.recordFailedPayload !== false,
         failedPayloadId: retryPayloadId,
       });
-      if (!sendReceipt) return null;
+      if (!sendReceipt) return null; deps.promptCommands?.consume(promptBlock); // the receipt's Retry payload carries it; a restored draft does not
       if (durableEligible) {
         const result = await durableSend.send({ settings, optimisticSessionId, createdOptimisticSession, requestedSession,
           effectivePrompt, visiblePrompt, acceptedAttachments, attachedPaths, attachedNames, runtimePreferences,
@@ -685,7 +701,7 @@
           context_preferences: {
             history_scope: runtimePreferences.contextPreferences.historyScope,
             include_personality: runtimePreferences.contextPreferences.includePersonality !== false,
-            include_memory: runtimePreferences.contextPreferences.includeMemory !== false,
+            include_memory: runtimePreferences.contextPreferences.includeMemory !== false, memory_opt_out: runtimePreferences.contextPreferences.memoryOptOut === true,
           },
           optimistic_local: true,
           local_draft: false,

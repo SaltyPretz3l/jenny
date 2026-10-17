@@ -120,7 +120,7 @@ function fixture(t) {
   const boundary = createManagedContinuationBoundary({ context, checkpointStore,
     conversationStore, getCurrentWork: () => state.work, assertCurrent: () => state.current,
     assertProtocol: () => true, gateway, collector, historySelector });
-  const params = { api_version: '2026-08-17', schema_version: 1, kind: 'continuation',
+  const params = { api_version: '2026-10-15', schema_version: 1, kind: 'continuation',
     phase: 'checkpoint', request_id: streamId, session_id: sessionId,
     authority_revision: attempt.authority_revision, operation_id: 'call_1',
     continuation_context: context, tool_calls: snapshots.toolCalls,

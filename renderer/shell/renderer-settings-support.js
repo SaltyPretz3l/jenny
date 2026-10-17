@@ -577,7 +577,7 @@
         sub: Boolean(parentKey),
         parentOff,
         inventory: source,
-      });
+      }) + (field.key === 'subagents' ? '<div data-subagent-routing-host></div>' : '');
     }).join('');
   }
 
@@ -585,6 +585,7 @@
   // state a fresh render gives. It runs after every Tools render, because the patch
   // guard holds the lists while focus or an unsaved key is inside them.
   function syncToolDependents(root, options) {
+    globalThis.rendererSettingsSubagents?.sync?.(root);
     const source = isPlainObject(options) ? options : {};
     const toolOn = typeof source.toolOn === 'function' ? source.toolOn : () => true;
     const availability = isPlainObject(source.availability) ? source.availability : {};
@@ -660,6 +661,7 @@
         fields: [
           { id: 'contextIncludePersonalityToggle', checked: prefs.includePersonality === true, disabled: prefsDisabled },
           { id: 'contextIncludeMemoryToggle', checked: prefs.includeMemory === true, disabled: prefsDisabled },
+          { id: 'contextMemoryOptOutToggle', checked: prefs.memoryOptOut === true, disabled: prefsDisabled },
         ],
       }),
       runtime: buildSettingsToggleListMarkup({
@@ -732,9 +734,19 @@
       tools: source.tools && typeof source.tools === 'object' && !Array.isArray(source.tools)
         ? { ...source.tools }
         : {},
-      memory: source.memory && typeof source.memory === 'object' && !Array.isArray(source.memory)
-        ? { captureSuggestions: source.memory.captureSuggestions !== false }
-        : { captureSuggestions: true },
+      subagentRouting: Object.fromEntries(['chatgpt', 'codex-cli'].map((provider) => {
+        const row = source.subagentRouting?.[provider] || {};
+        return [provider, { defaultModel: String(row.defaultModel || ''), defaultEffort: String(row.defaultEffort || ''),
+          preferredModels: Array.isArray(row.preferredModels) ? [...row.preferredModels] : [],
+          allowedModels: Array.isArray(row.allowedModels) ? [...row.allowedModels] : [], maxEffort: String(row.maxEffort || '') }];
+      })),
+      subagentModelCatalogs: source.subagentModelCatalogs || {},
+      memory: {
+        takeNotes: source.memory?.takeNotes !== false,
+        askBeforeSaving: source.memory?.askBeforeSaving === true,
+        pauseSaving: source.memory?.pauseSaving === true,
+        useInChats: source.memory?.useInChats !== false,
+      },
       featureFlags: source.featureFlags && typeof source.featureFlags === 'object' && !Array.isArray(source.featureFlags)
         ? { ...source.featureFlags }
         : {},

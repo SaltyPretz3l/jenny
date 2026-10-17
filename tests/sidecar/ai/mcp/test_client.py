@@ -87,6 +87,12 @@ class _FakeTransport(MCPTransport):
         del cursor, timeout_seconds
         return {"resourceTemplates": []}
 
+    def list_prompts(self, *, cancel_handle: Any = None) -> list[dict[str, Any]]:
+        return []
+
+    def get_prompt(self, name: str, arguments: dict[str, str], **_kwargs: Any) -> dict[str, Any]:
+        raise NotImplementedError
+
     def close(self) -> None:
         self.closed = True
 
@@ -959,3 +965,99 @@ def test_client_requires_reapproval_for_legacy_digest(monkeypatch: Any) -> None:
     assert client.available_tools == []
     assert client.diagnostics().failures[0].code == "CMP-MCP-0009"
     assert transport.closed is True
+
+
+def test_client_logs_the_offending_tool_when_an_approved_surface_breaks_a_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sidecar.ai.mcp.tool_surface import summarize_tools, tools_digest
+
+    events: list[dict[str, Any]] = []
+
+    def _capture_event(_logger: logging.Logger, _level: int, **fields: Any) -> None:
+        events.append({"event": fields["event"], "data": fields["data"]})
+
+    monkeypatch.setattr("sidecar.ai.mcp.client.log_event", _capture_event)
+    summary, _ = summarize_tools([{"name": "lookup", "description": "Search"}])
+    transport = _FakeTransport("docs", [{"name": "lookup", "description": "x" * 2049}])
+    client = MCPClient()
+    monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
+    client.configure((MCPServerConfig(name="docs", transport="stdio", command="python",
+                                      approved_tools_digest=tools_digest(summary)),), sse_enabled=False)
+
+    failed = [event["data"] for event in events if event["event"] == "ai.mcp.transport_list_tools_failed"]
+    assert len(failed) == 1
+    assert failed[0]["server"] == "docs"
+    assert failed[0]["reason"] == "tool_text_exceeded"
+    assert failed[0]["tool"] == "lookup"
+    assert failed[0]["bound"] == "description_chars"
+    assert client.diagnostics().failures[0].code == "CMP-MCP-0009"
+    assert transport.closed is True
+
+
+@pytest.mark.parametrize(("auto_allow", "side_effecting"), [(False, True), (True, False)])
+def test_read_only_auto_allow_applies_to_the_approved_claiming_tools(
+    monkeypatch: Any, auto_allow: bool, side_effecting: bool,
+) -> None:
+    from sidecar.ai.mcp.tool_surface import summarize_tools, tools_digest
+
+    tools = [{"name": "list_unknowns", "annotations": {"readOnlyHint": True}},
+             {"name": "delete_session", "annotations": {"readOnlyHint": True, "destructiveHint": True}}]
+    summary, _ = summarize_tools(tools)
+    transport = _FakeTransport("rea", tools)
+    client = MCPClient()
+    monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
+    client.configure((MCPServerConfig(name="rea", transport="stdio", command="npx",
+                                      approved_tools_digest=tools_digest(
+                                          summary, read_only_claims=auto_allow),
+                                      read_only_auto_allow=auto_allow),), sse_enabled=False)
+    effects = {tool.server_tool_name: tool.side_effecting for tool in client.available_tools}
+    assert effects == {"list_unknowns": side_effecting, "delete_session": True}
+
+
+def test_read_only_auto_allow_needs_an_approved_surface(monkeypatch: Any) -> None:
+    tools = [{"name": "list_unknowns", "read_only_claim": True, "annotations": {"readOnlyHint": True}}]
+    transport = _FakeTransport("rea", tools)
+    client = MCPClient()
+    monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
+    client.configure((MCPServerConfig(name="rea", transport="stdio", command="npx",
+                                      read_only_auto_allow=True),), sse_enabled=False)
+    assert [tool.side_effecting for tool in client.available_tools] == [True]
+
+
+@pytest.mark.parametrize("served", [
+    {"name": "list_unknowns"},
+    {"name": "list_unknowns", "annotations": {"readOnlyHint": True, "openWorldHint": True}},
+])
+def test_a_changed_read_only_claim_after_approval_requires_review(monkeypatch: Any, served: dict) -> None:
+    from sidecar.ai.mcp.tool_surface import summarize_tools, tools_digest
+
+    summary, _ = summarize_tools([{"name": "list_unknowns", "annotations": {"readOnlyHint": True}}])
+    transport = _FakeTransport("rea", [served])
+    client = MCPClient()
+    monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
+    client.configure((MCPServerConfig(name="rea", transport="stdio", command="npx",
+                                      approved_tools_digest=tools_digest(
+                                          summary, read_only_claims=True),
+                                      read_only_auto_allow=True),), sse_enabled=False)
+    assert client.available_tools == []
+    assert client.diagnostics().failures[0].code == "CMP-MCP-0009"
+    assert transport.closed is True
+
+
+def test_a_surface_approved_before_claims_were_recorded_still_registers(monkeypatch: Any) -> None:
+    # Astra W2 F4: the switch is off, so the live claim is display-only and the
+    # pre-S4 digest (no claim rows) still matches.
+    from sidecar.ai.mcp.tool_surface import summarize_tools, tools_digest
+
+    served = [{"name": "list_unknowns", "annotations": {"readOnlyHint": True}}]
+    legacy_rows = [{k: v for k, v in row.items() if k != "read_only_claim"}
+                   for row in summarize_tools(served)[0]]
+    transport = _FakeTransport("rea", served)
+    client = MCPClient()
+    monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
+    client.configure((MCPServerConfig(name="rea", transport="stdio", command="npx",
+                                      approved_tools_digest=tools_digest(legacy_rows)),),
+                     sse_enabled=False)
+    assert [tool.side_effecting for tool in client.available_tools] == [True]
+    assert client.diagnostics().failures == ()

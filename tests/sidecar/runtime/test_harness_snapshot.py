@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from sidecar import server
 from sidecar.ai.config import RuntimeConfig
 from sidecar.ai.context.builder import ContextBuilder
-from sidecar.ai.memory.contracts import build_content_digest
+from sidecar.ai.memory.contracts import build_text_digest
 from sidecar.ai.memory.store import MemoryStore
 from sidecar.ai.routing.harness_helpers import MAX_RESPONSE_CHARS
 from sidecar.ai.routing.router import ChatRouter
@@ -20,6 +20,7 @@ from sidecar.runtime.provider_capability_profile import (
     ProviderCapabilityProfileStore,
 )
 from sidecar.runtime.turn_diagnostics import TurnDiagnosticsStore
+from tests.sidecar.ai.memory.memory_v9_helpers import save_row
 
 
 class _StubEngine:
@@ -102,7 +103,8 @@ def test_harness_snapshot_builder_includes_history_and_memory_provenance(tmp_pat
 
     memory_store = MemoryStore(user_data / "sidecar-memory.db")
     try:
-        approved_memory, _ = memory_store.save_memory(
+        approved_memory, _ = save_row(
+            memory_store,
             session_id="sess_1",
             title="Preference: tea",
             lesson_text="The user prefers tea over coffee.",
@@ -116,9 +118,9 @@ def test_harness_snapshot_builder_includes_history_and_memory_provenance(tmp_pat
             """
             INSERT INTO pending_memory_candidates (
                 session_id, source_request_id, title, lesson_text, lesson_kind,
-                confidence, source_excerpt, content_fingerprint, family_key,
+                confidence, source_excerpt, content_fingerprint,
                 category, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)
             """,
             (
                 "sess_1",
@@ -128,10 +130,7 @@ def test_harness_snapshot_builder_includes_history_and_memory_provenance(tmp_pat
                 "response_style",
                 0.9,
                 "be concise",
-                build_content_digest(
-                    "response_style",
-                    "Use concise answers unless the user asks for more detail.",
-                ),
+                build_text_digest("Use concise answers unless the user asks for more detail."),
                 "2026-01-01T00:00:00+00:00",
                 "2026-01-01T00:00:00+00:00",
             ),
@@ -1417,3 +1416,60 @@ def test_split_history_reads_one_session_at_a_time(tmp_path, monkeypatch) -> Non
     assert reads == [], "history loader eagerly materialized the archive"
     assert next(sessions)[0] == "s1"
     assert "s2.json" not in reads
+
+
+def test_memories_section_counts_every_project(tmp_path: Path) -> None:
+    # Diagnostics' "Memories" fact reads these counts: project notes (W1 project
+    # memories, W2 reflection notes) must count, not only General ones.
+    user_data = tmp_path / "user-data"
+    user_data.mkdir()
+    memory_store = MemoryStore(user_data / "sidecar-memory.db")
+    try:
+        for project_id, text in (
+            ("project_general", "The user prefers tea over coffee."),
+            ("project_orbit", "Staging host is atlas-2."),
+            ("project_orbit", "Deploys go out on Thursdays."),
+            ("project_garden", "Use yarn for installs."),
+        ):
+            save_row(
+                memory_store, session_id="sess_1", title=text, lesson_text=text,
+                lesson_kind="fact", confidence=0.9, source_excerpt=text,
+                provenance="user_approved", project_id=project_id,
+            )
+        memory_store._connection.execute(
+            """
+            INSERT INTO pending_memory_candidates (
+                session_id, source_request_id, title, lesson_text, lesson_kind,
+                confidence, source_excerpt, content_fingerprint,
+                category, created_at, updated_at, project_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
+            """,
+            (
+                "sess_1", "req_1", "Uses pnpm", "The team uses pnpm.", "convention", 0.9,
+                "we use pnpm", build_text_digest("The team uses pnpm."),
+                "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00", "project_orbit",
+            ),
+        )
+        memory_store._connection.commit()
+        builder = HarnessSnapshotBuilder(
+            config=RuntimeConfig(
+                engine_type="mock",
+                model="mock-v1",
+                tools_workspace_root=None,
+                electron_state_root=str(user_data),
+                memory_db_path=str(user_data / "sidecar-memory.db"),
+            ),
+            router=SimpleNamespace(tools_status={}, tool_schemas=[]),
+            engine=_StubEngine(),
+            mcp_client=_StubDiagnosticsClient(),
+            memory_store=memory_store,
+            context_builder=ContextBuilder(None),
+        )
+
+        counts = builder.inspect(sections=["memories"])["memories"]["counts"]
+
+        assert counts["approved"] == 4
+        assert counts["pending"] == 1
+        assert counts["scope"] == "all"
+    finally:
+        memory_store.close()

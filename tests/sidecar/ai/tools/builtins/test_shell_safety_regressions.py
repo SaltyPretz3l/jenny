@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -344,7 +345,8 @@ def test_windows_semicolon_is_not_reported_as_a_chained_command(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(shell_module, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(shell_module, "os", SimpleNamespace(**{**vars(os), "name": "nt"}))
+    monkeypatch.setattr(shell_module, "_which_on_explicit_path", lambda *_args, **_kwargs: "cmd.exe")
     result, body = _successful_command_with_stderr(
         monkeypatch,
         "dir ; echo hi",

@@ -192,7 +192,6 @@ function createHarness(options = {}) {
       refreshSnapshots: async () => {},
       showToastMessage(message, options) { calls.toasts.push({ message, options }); },
       dismissStreamErrors() {},
-      maybeSuggestMemoryCapture: async () => {},
       appendClientLog() {},
       handlePresenceStreamEvent(payload) { calls.presence.push(payload); },
       getInteractiveComposerStatusNotice() { return ''; },

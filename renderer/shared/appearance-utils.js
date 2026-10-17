@@ -164,20 +164,21 @@
   };
   /* Chat reading-measure axis (independent of palette, typography, and the
      chat zoom factor). `standard` (the default, owner 2026-10-02) raises the
-     transcript + composer cap from the 760px `narrow` base to 1100px by
-     swapping --chat-measure-max; the geometry lives in styles/foundation.css
-     under :root[data-chat-width="standard"]. Palette files set only color
+     transcript + composer line-length cap from 68ch (`narrow`) to 92ch of the
+     prose font by swapping --chat-measure-cap-ch; the geometry lives in
+     styles/foundation.css under :root[data-chat-width="standard"] and the
+     pane-relative measure in styles/chat-panes.css. Palette files set only color
      tokens, so this axis is palette-agnostic by construction. */
   var CHAT_WIDTH_PRESETS = {
     narrow: {
       id: 'narrow',
       label: jt('appearance.typography.chatWidth.narrow.name', 'Narrow'),
-      description: jt('appearance.typography.chatWidth.narrow.description', 'Shorter lines, capped at 760px.'),
+      description: jt('appearance.typography.chatWidth.narrow.description', 'Shorter lines, about 70 characters per line.'),
     },
     standard: {
       id: 'standard',
       label: jt('appearance.typography.chatWidth.standard.name', 'Standard'),
-      description: jt('appearance.typography.chatWidth.standard.description', 'Roomy reading measure, capped at 1100px.'),
+      description: jt('appearance.typography.chatWidth.standard.description', 'Roomy reading measure, about 90+ characters per line.'),
     },
   };
   /* Ids stored before the 2026-10-02 rename. `default` was written for every

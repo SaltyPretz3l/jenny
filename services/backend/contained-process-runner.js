@@ -7,7 +7,7 @@ const { WORKSPACE_TEST_RUNNER_ERROR_CODES } = require('./error-codes');
 const { maskTokensInText, sanitizeSpawnEnv } = require('./sanitize-spawn-env');
 const { encodeFrame, parseContentLength } = require('./sidecar-client-transport-codec');
 
-const API_VERSION = '2026-08-17';
+const API_VERSION = '2026-10-15';
 const HELPER_FLAG = '--workspace-test-runner-helper';
 const MAX_FRAME_BYTES = 1024 * 1024;
 const HELPER_EXIT_TIMEOUT_MS = 5000;

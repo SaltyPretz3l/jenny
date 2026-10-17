@@ -37,6 +37,7 @@ from sidecar.runtime.chat import (
     trace_id_from_params,
 )
 from sidecar.runtime.chat_message_validation import validate_chat_messages
+from sidecar.runtime.chat_models import inference_performance_from_params
 from sidecar.runtime.chat_normalization import (
     propose_mode_from_params,
     reasoning_effort_from_params,
@@ -193,6 +194,8 @@ def _validate_chat_send_semantics(
     *,
     params: Any,
     message_id: Any,
+    session_messages_enabled: bool = False,
+    session_handoff_enabled: bool = False,
 ) -> ChatRequestError | None:
     if not isinstance(params, dict):
         return None
@@ -225,7 +228,11 @@ def _validate_chat_send_semantics(
                 retryable=False,
             )
         try:
-            validate_chat_messages(messages)
+            validate_chat_messages(
+                messages,
+                session_messages_enabled=session_messages_enabled,
+                session_handoff_enabled=session_handoff_enabled,
+            )
         except ValueError as error:
             return ChatRequestError(
                 request_id=request_id,
@@ -410,6 +417,13 @@ def _build_chat_response(
     canonical_seq_state: dict[str, int] | None = None,
 ) -> Any:
     import sidecar.runtime.request_dispatch as _rd_hub
+
+    if isinstance(params, dict) and "inference_performance" in params:
+        params = dict(params)
+        value = inference_performance_from_params(params)
+        params.pop("inference_performance", None)
+        if value is not None:
+            params["inference_performance"] = value
 
     bridge_response_reader = approval_response_reader or (lambda _timeout: read_message())
     if not isinstance(params, dict):

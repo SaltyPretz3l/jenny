@@ -227,8 +227,10 @@ test('every approval-gated manifest tool (plus fetch_url) declares optional purp
   ])].sort();
   assert.equal(expectedNames.length, 14, expectedNames.join(','));
   assert.equal(expectedNames.includes('exit_plan_mode'), false, 'the plan card is not an intent card');
+  // propose_command's purpose is the proposal card's display text, not an
+  // approval-card intent: the tool itself only records a proposal.
   const withPurpose = manifest.tools
-    .filter((tool) => tool.parameters?.properties?.purpose)
+    .filter((tool) => tool.parameters?.properties?.purpose && tool.name !== 'propose_command')
     .map((tool) => tool.name)
     .sort();
 
@@ -431,4 +433,16 @@ test('project_notes results label the header meta and failures stay quiet', () =
   assert.equal(toolCallUtils.formatToolResultMeta('project_notes', meta({ action: 'append', status: 'failed' })), '');
   assert.equal(toolCallUtils.formatToolResultMeta('project_notes', meta({ action: 'bogus' })), '');
   assert.equal(toolCallUtils.isToolRunFoldable({ toolName: 'project_notes', status: 'completed' }), false);
+});
+
+test('memory results name the write in the header meta and never fold into a tool run', () => {
+  const toolCallUtils = require('../renderer/chat/tool-call-utils');
+  const meta = (overrides) => ({ result_kind: 'memory', action: 'remember', status: 'saved', ...overrides });
+  assert.equal(toolCallUtils.formatToolResultMeta('memory', meta()), 'Remembered');
+  assert.equal(toolCallUtils.formatToolResultMeta('memory', meta({ action: 'update' })), 'Updated a memory');
+  assert.equal(toolCallUtils.formatToolResultMeta('memory', meta({ action: 'forget' })), 'Forgot a memory');
+  assert.equal(toolCallUtils.formatToolResultMeta('memory', meta({ status: 'pending_approval' })), 'Memory waiting for approval');
+  assert.equal(toolCallUtils.formatToolResultMeta('memory', meta({ status: 'refused', reason: 'capacity' })), '');
+  assert.equal(toolCallUtils.formatToolResultMeta('memory', meta({ action: 'recall', status: 'ok' })), '');
+  assert.equal(toolCallUtils.isToolRunFoldable({ toolName: 'memory', status: 'completed' }), false);
 });

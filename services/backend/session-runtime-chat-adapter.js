@@ -7,7 +7,8 @@ const { ensureSessionTurnActorRegistry } = require('./session-turn-actor');
 const { getTrustedExecutionBinding } = require('./session-execution-authority');
 const { inferEngineTypeFromModel, normalizeManagedToolPreferences } = require('./backend-service-utils');
 const { resolveSessionLockdownRequest } = require('./session-lockdown-gate');
-const { assertChatTurnAdmissible, assertRuntimeTranscriptAdmission } = require('./chat-turn-admission');
+const { preemptAuxiliaryInference, preemptibleAuxiliaryCount } = require('./auxiliary-preemption');
+const { assertChatTurnAdmissible, assertLinkedFirstTurnAdmissible, assertRuntimeTranscriptAdmission } = require('./chat-turn-admission');
 const {
   assertSessionRuntimeProviderRouteCurrent,
   captureSessionRuntimeProviderRoute,
@@ -19,6 +20,7 @@ const { createRuntimeChatOperations, executionOptionsFor } = require('./session-
 const { buildAdmittedContinuationContext } = require('../session-runtime/continuation-context');
 const { hydrateRuntimeContinuation, pausedOutcome } = require('./runtime-continuation-resume');
 const { getManagedRuntimeController } = require('./chat-lifecycle-contracts');
+const { managedServerKindForModel } = require('./ninfer-load-path');
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
@@ -40,6 +42,10 @@ function selectedEngine(service, request) {
   if (forced) return forced;
   const model = String(request.runtimePreferredModel || '').trim();
   const hinted = model ? String(service._modelEngineHints?.get?.(model) || '').trim().toLowerCase() : '';
+  // A managed llama-server / NInfer id the backend list does not carry must not
+  // fall through to the current engine (gate F27: `ollama pull <gguf>`).
+  const managedKind = hinted ? '' : managedServerKindForModel(service, model, { routing: true });
+  if (managedKind === 'llama-server' || managedKind === 'ninfer') return 'openai-compatible';
   const current = String(service.currentEngineType || '').trim().toLowerCase();
   const inferred = inferEngineTypeFromModel(model);
   // Cloud IDs identify their provider even while startup is on a fallback.
@@ -98,6 +104,16 @@ class SessionRuntimeChatAdapter {
   async prepareImmediate(request, options, { workId, turnId } = {}) {
     if (!request || typeof request !== 'object' || !workId || !turnId) {
       throw new TypeError('session_runtime_immediate_request_invalid');
+    }
+    // Background auxiliary work never delays a chat turn. Both the immediate
+    // path and durable submit (prepareSubmission) arrive here before any lane
+    // or turn lease is taken; the lane still decides if preemption fails.
+    if (preemptibleAuxiliaryCount(this.service) > 0) {
+      try {
+        await preemptAuxiliaryInference(this.service, { reason: 'chat_admission' });
+      } catch (error) {
+        this.service._emitServiceLog?.('WARN', 'runtime.auxiliary_preempt_failed', { message: error?.message || String(error) });
+      }
     }
     if (this.service.commandSandbox?.transition) {
       const error = new Error('Command sandbox configuration is changing; retry the message.');
@@ -188,6 +204,10 @@ class SessionRuntimeChatAdapter {
       throw new Error('session_runtime_project_authority_changed');
     }
     return prepared;
+  }
+
+  assertLinkedFirstTurn(sessionId, idempotencyKey) {
+    assertLinkedFirstTurnAdmissible(this.service, sessionId, idempotencyKey);
   }
 
   assertSubmissionSession(sessionId) {

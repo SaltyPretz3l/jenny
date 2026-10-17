@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+import math
+import uuid
+from typing import Any, cast
 
+from sidecar.ai.engines.engine_events import ENGINE_EVENT_PREFILL, EngineEvent, PrefillProgress
 from sidecar.ai.engines.ollama_stream_transport import (
     raise_if_cancelled as _raise_if_cancelled,
 )
@@ -30,6 +33,7 @@ _SSE_DATA_PREFIX = "data: "
 _SSE_DONE_SENTINEL = "[DONE]"
 _MAX_PROVIDER_STREAM_LINE_BYTES = 1024 * 1024
 _MAX_PROVIDER_STREAM_TOTAL_BYTES = 32 * 1024 * 1024
+_MAX_PREFILL_CONTEXT_TOKENS = 1_048_576
 
 
 def _iter_bounded_sse_lines(response: Any):
@@ -225,3 +229,95 @@ def _resolve_vllm_stream_finish_reason(
 def _normalize_vllm_finish_reason(value: Any) -> str:
     normalized = str(value or "").strip().lower()
     return "length" if normalized in {"length", "max_token", "max_tokens"} else "stop"
+
+
+def has_generated_delta(chunk: dict[str, Any]) -> bool:
+    """A role/id-only provider frame is not a generated token."""
+    choices = chunk.get("choices")
+    if not isinstance(choices, list):
+        return False
+    for choice in choices:
+        delta = choice.get("delta") if isinstance(choice, dict) else None
+        if not isinstance(delta, dict):
+            continue
+        if any(delta.get(key) for key in ("content", "reasoning_content", "reasoning", "thinking")):
+            return True
+        calls = delta.get("tool_calls")
+        for call in calls if isinstance(calls, list) else []:
+            function = call.get("function") if isinstance(call, dict) else None
+            if isinstance(function, dict) and (function.get("name") or function.get("arguments")):
+                return True
+    return False
+
+
+class LlamaPrefillStream:
+    """One physical request's fail-closed progress adapter for the qualified build."""
+
+    def __init__(self, engine: Any) -> None:
+        getter = getattr(engine, "get_configured_context_length", None)
+        limit = getter() if callable(getter) else None
+        self.limit = limit if type(limit) is int and 0 < limit <= _MAX_PREFILL_CONTEXT_TOKENS else 0
+        self.enabled = (
+            getattr(engine, "_prefill_progress_enabled", False) is True and bool(self.limit)
+        )
+        self.attempt_id = uuid.uuid4().hex
+        self.sequence = 0
+        self.previous: PrefillProgress | None = None
+        self.closed = False
+
+    def configure_request(self, payload: dict[str, Any]) -> None:
+        if self.enabled:
+            payload["return_progress"] = True
+
+    def _event(self, state: str, sample: PrefillProgress | None = None) -> EngineEvent:
+        self.sequence += 1
+        return EngineEvent(kind=ENGINE_EVENT_PREFILL, prefill=sample, prefill_state=state,
+                           attempt_id=self.attempt_id, sequence=self.sequence)
+
+    def start_events(self) -> list[EngineEvent]:
+        return [self._event("start")] if self.enabled else []
+
+    def _sample(self, raw: Any) -> PrefillProgress | None:
+        if not isinstance(raw, dict):
+            return None
+        total, cache, processed = (raw.get(key) for key in ("total", "cache", "processed"))
+        if not all(type(value) is int for value in (total, cache, processed)):
+            return None
+        total, cache, processed = cast(tuple[int, int, int], (total, cache, processed))
+        if not 0 <= cache <= processed <= total <= self.limit or total == 0:
+            return None
+        elapsed = raw.get("time_ms")
+        if elapsed is not None and (type(elapsed) not in (int, float)
+                                    or not math.isfinite(elapsed) or elapsed < 0):
+            return None
+        return PrefillProgress(total, cache, processed, elapsed)
+
+    def _consistent(self, sample: PrefillProgress) -> bool:
+        previous = self.previous
+        if previous is None:
+            return True
+        return (sample.total_tokens == previous.total_tokens
+                and sample.cached_tokens == previous.cached_tokens
+                and sample.processed_tokens >= previous.processed_tokens
+                and (sample.elapsed_ms is None or previous.elapsed_ms is None
+                     or sample.elapsed_ms >= previous.elapsed_ms))
+
+    def feed(self, chunk: dict[str, Any]) -> list[EngineEvent]:
+        if not self.enabled or self.closed:
+            return []
+        events = []
+        if "prompt_progress" in chunk:
+            sample = self._sample(chunk["prompt_progress"])
+            if sample is None or not self._consistent(sample):
+                self.closed = True
+                events.append(self._event("unavailable"))
+            else:
+                if (self.previous is None
+                        or sample.processed_tokens != self.previous.processed_tokens):
+                    events.append(self._event("sample", sample))
+                self.previous = sample
+        if has_generated_delta(chunk) and not self.closed:
+            # Generated tokens end prefill even when the engine hides them (reasoning).
+            self.closed = True
+            events.append(self._event("unavailable"))
+        return events

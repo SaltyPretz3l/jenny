@@ -20,7 +20,7 @@ function fixture() {
     calls.push({ method, params, options });
     const context = params.inference_context;
     const handler = client.runtimeOperationHandlers.get(context.request_id);
-    const base = { api_version: '2026-08-17', schema_version: 1, kind: 'inference',
+    const base = { api_version: '2026-10-15', schema_version: 1, kind: 'inference',
       request_id: context.request_id, session_id: context.session_id,
       authority_revision: context.authority_revision, operation_id: 'compact_inference_1' };
     assert.equal(handler({ ...base, phase: 'admit', engine_type: context.engine_type }).status, 'granted');

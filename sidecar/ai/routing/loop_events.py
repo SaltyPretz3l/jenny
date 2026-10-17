@@ -7,12 +7,40 @@ belong in this module.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import asdict, dataclass, field
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from sidecar.ai.engines.provider_metrics import InferencePerformance
 
 
 class LoopEvent:
     """Base class for typed loop events."""
+
+
+@dataclass
+class InferencePerformanceEvent(LoopEvent):
+    """Ephemeral meter reading; never a canonical turn event or model input."""
+
+    turn_id: str
+    observation: InferencePerformance
+    provider_call_id: str | None = None
+    method: ClassVar[str] = "inference.performance"
+
+    def notification_params(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """The W2 payload: notification context plus the observation fields."""
+        return {
+            **ctx, "schema_version": 1, "turn_id": self.turn_id,
+            "provider_call_id": self.provider_call_id, **asdict(self.observation),
+        }
+
+
+@dataclass
+class HeuristicFireEvent(LoopEvent):
+    """One prompt heuristic acted; ephemeral benchmark instrumentation."""
+
+    name: str
+    detail: dict[str, str | int | bool] = field(default_factory=dict)
 
 
 @dataclass
@@ -38,6 +66,7 @@ class ThinkingEvent(LoopEvent):
     # Rides reasoning chat.thinking notifications so Electron can scale its
     # persisted-reasoning cap; None/non-positive is omitted from the wire.
     thinking_budget_chars: int | None = None
+    progress: dict[str, Any] | None = None
 
 
 @dataclass
@@ -144,6 +173,14 @@ class TokenDeltaEvent(LoopEvent):
 
     delta: str
     token_index: int
+
+
+@dataclass
+class GenerationUsageEvent(LoopEvent):
+    """Cumulative accounted usage, consumed only by a child activity sink."""
+
+    usage: Any
+    output_reported: bool = True
 
 
 @dataclass

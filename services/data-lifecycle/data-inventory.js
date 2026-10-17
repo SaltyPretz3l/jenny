@@ -5,8 +5,13 @@ const fs = require('fs');
 const path = require('path');
 
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
+const { removeFileSync } = require('../fs-remove-no-follow');
 const { exportSession } = require('../backend/session-export-import');
+const { listDerivedIndexFiles } = require('./derived-indexes');
 const { collectRuntimeArchiveEntries } = require('./runtime-archive');
+const {
+  COORDINATION_CATEGORY, COORDINATION_LOGICAL_PATH, captureSessionCoordination,
+} = require('./session-coordination-archive');
 const { MAX_SQLITE_SNAPSHOT_BYTES, snapshotSqliteDatabase } = require('./sqlite-snapshot');
 
 const MAX_INVENTORY_FILES = 10_000;
@@ -89,7 +94,7 @@ function spoolEntry(stagingDir, data, limits) {
     fs.writeFileSync(sourcePath, data, { flag: 'wx' });
     return { sourcePath, size: data.length };
   } catch (error) {
-    fs.rmSync(sourcePath, { force: true });
+    removeFileSync(sourcePath);
     throw error;
   }
 }
@@ -160,6 +165,14 @@ function collectSessionEntries(sessionStore, attachmentStore, output, limits) {
   }
 }
 
+// Trusted archive only: the sessions' incarnations and coordination records, after the session entries.
+function collectCoordinationEntry(sessionStore, output, limits) {
+  const data = captureSessionCoordination(sessionStore);
+  if (!data) return;
+  assertInventoryCapacity(output, data.length, limits);
+  output.push({ logicalPath: COORDINATION_LOGICAL_PATH, category: COORDINATION_CATEGORY, data });
+}
+
 function countSessionAttachments(sessionStore) {
   if (!sessionStore || typeof sessionStore.listSessions !== 'function') return 0;
   let count = 0;
@@ -225,6 +238,7 @@ function collectDataInventory({
   const limits = { maxFiles, maxFileBytes };
   const entries = [];
   collectSessionEntries(sessionStore, attachmentStore, entries, limits);
+  collectCoordinationEntry(sessionStore, entries, limits);
   if (portablePreferences) {
     const data = Buffer.from(JSON.stringify(portablePreferences, null, 2), 'utf8');
     assertInventoryCapacity(entries, data.length, limits);
@@ -289,7 +303,8 @@ function collectDataInventory({
     if (entry.category === 'tool_permissions') counts.permissions += 1;
   }
   counts.attachments = countSessionAttachments(sessionStore);
-  return { entries, counts };
+  // Derived indexes are reported (size only) but never archived: they rebuild.
+  return { entries, counts, derived: listDerivedIndexFiles(userRoot) };
 }
 
 module.exports = {

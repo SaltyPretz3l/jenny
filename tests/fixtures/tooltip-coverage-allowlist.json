@@ -13,7 +13,6 @@
     "renderer/features/renderer-ide-chip-picker.js||1",
     "renderer/features/renderer-ide-map-findings.js|`${def.label|0",
     "renderer/inventory/action-button.js|\"' + escapeHtml(o.ariaLabel) + '\"|0",
-    "renderer/inventory/selection-action-bar.js|\"' + escapeHtml(jt('inventory.selectionActionBar.exportLabel', 'Export selected |0",
-    "renderer/shell/renderer-observability-markup-utils.js|\"' + escapeHtml('Trace ' + (stream || jt('diagnostics.observability.withoutIdent|0"
+    "renderer/inventory/selection-action-bar.js|\"' + escapeHtml(jt('inventory.selectionActionBar.exportLabel', 'Export selected |0"
   ]
 }

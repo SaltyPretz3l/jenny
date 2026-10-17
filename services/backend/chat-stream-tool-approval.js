@@ -7,6 +7,7 @@ const {
   buildPersistedToolInputSnapshot, sanitizeToolSummary, buildScopedApprovalId,
   makeNoteTurnEvent, buildToolCallPayload, buildApprovalCanonicalEvent, approvalStateFromAbortSignal,
   approvalTerminalOutput,
+  sessionMessageApprovalFields,
 } = require('./chat-stream-tool-payload-utils');
 const planDocuments = require('./plan-document-events');
 const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -25,7 +26,7 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
     ? 'Auto paused after keyboard or mouse inactivity. ' + sanitizeApprovalReason(params.reason)
     : sanitizeApprovalReason(params.reason);
   const { policyScope, policyConsequence } = sanitizeApprovalPolicyPresentation(params);
-  const oneOffOnly = params.one_off_only === true;
+  const oneOffOnly = toolName === 'session_message' || params.one_off_only === true;
   const input = params.tool_input && typeof params.tool_input === 'object' ? params.tool_input : {};
   const persistedInputSnapshot = buildPersistedToolInputSnapshot(input);
   const summary = sanitizeToolSummary(summarizeToolPayload(toolName, input));
@@ -33,6 +34,9 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
   const toolUseMessageId = buildToolUseMessageId(streamId, callId);
   const noteTurnEvent = makeNoteTurnEvent(turnEventCollector, streamId);
   const planApproval = planDocuments.preparePlanApproval({ toolName, service, sessionId, streamId, callId, input, approvalId, turnEventCollector });
+  const messageFields = sessionMessageApprovalFields(params);
+  // Missing exact-content presentation must fail closed; never ask over a clipped preview.
+  if (toolName === 'session_message' && !messageFields.session_message_approval) return false;
 
   if (planDocuments.denyUnrenderablePlan(planApproval, persistTerminalApprovalResult, {
     service, sessionId, streamId, callId, toolName, summary, model: service.currentModel,
@@ -95,8 +99,15 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
       input: persistedInputSnapshot.input,
       summary,
       parent_stream_id: streamId,
+      ...messageFields,
     },
   }));
+  // The canonical request stays the ordinary sequenced event (runtime continuation proofs need
+  // exactly one per call). The exact message body is not run through its 32 KiB cap/redactor:
+  // the full presentation rides the tool_use projection above and the live event below; the
+  // canonical event carries only its identity (operation, hash, destination).
+  const { body: _body, ...messageIdentity } = messageFields.session_message_approval || {};
+  const canonicalMessageFields = messageFields.session_message_approval ? { session_message_approval: messageIdentity } : {};
   noteTurnEvent(null, () => buildApprovalCanonicalEvent({
     streamId,
     sessionId,
@@ -112,6 +123,7 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
       ...(oneOffOnly ? { one_off_only: true } : {}),
       tool_name: toolName,
       summary,
+      ...canonicalMessageFields,
     },
   }));
   service.emit('chat-stream', {
@@ -132,6 +144,7 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
     summary,
     policy: 'ask',
     ...planApproval.messageFields,
+    ...messageFields,
   });
 
   // The settled flag + abort handler ordering is safe because JavaScript is
@@ -158,8 +171,11 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
       }
       const resolvedState = planDocuments.resolvePlanApprovalState(Boolean(approved), approvalState);
       // An approval whose decision resolved to 'denied' (unknown decision) fails closed.
-      const normalizedApproved = Boolean(approved) && resolvedState !== 'denied';
+      // A message send is consented only by an explicit `approved` (never a plan decision token).
+      let normalizedApproved = Boolean(approved) && resolvedState !== 'denied'
+        && (toolName !== 'session_message' || resolvedState === 'approved');
       const approvalScope = normalizedApproved && (scope === 'always' || scope === 'once') ? scope : '';
+      let consentEventId = '';
       // Everything above is unconditional teardown, so the waiter can never
       // be re-entered. Everything below is fallible bookkeeping; a throw here
       // is logged and swallowed, and resolve() always runs in `finally`
@@ -179,15 +195,17 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
           toolName, input: persistedInputSnapshot.input, summary, status: resolvedState,
           ...(approvalScope ? { approvalScope } : {}),
         });
-        noteTurnEvent(null, () => buildApprovalCanonicalEvent({
+        const resolutionEvent = buildApprovalCanonicalEvent({
           streamId, sessionId, callId, type: 'tool_approval_resolved',
           payload: {
             approval_id: approvalId, approval_state: resolvedState, approved: normalizedApproved,
             ...(approvalScope ? { approval_scope: approvalScope } : {}),
             ...(policyDecisionId ? { policy_decision_id: policyDecisionId } : {}), tool_name: toolName,
           },
-        }));
-        if (!normalizedApproved) {
+        });
+        noteTurnEvent(null, () => resolutionEvent);
+        consentEventId = resolutionEvent.event_id;
+        if (!normalizedApproved && toolName !== 'session_message') {
           planDocuments.abandonPlanApproval({ toolName, service, sessionId, streamId, callId, turnEventCollector });
           persistTerminalApprovalResult({
             service, sessionId, streamId, callId, toolName, summary,
@@ -197,13 +215,17 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
           });
         }
       } catch (settlementError) {
+        if (toolName === 'session_message') normalizedApproved = false;
         service?._emitServiceLog?.('ERROR', 'chat.tool_approval_settlement_failed', {
           approvalId, sessionId, streamId, callId, toolName,
           approved: normalizedApproved, approvalState: resolvedState,
           message: String(settlementError?.message || settlementError || ''),
         });
       } finally {
-        resolve(planDocuments.planApprovalWaiterResult({ toolName, approved: normalizedApproved, state: resolvedState, feedback, plan }));
+        resolve(toolName === 'session_message'
+          ? { approved: normalizedApproved, decision: resolvedState,
+            consent_event_id: consentEventId }
+          : planDocuments.planApprovalWaiterResult({ toolName, approved: normalizedApproved, state: resolvedState, feedback, plan }));
       }
     };
     service.pendingToolApprovals.set(approvalId, {

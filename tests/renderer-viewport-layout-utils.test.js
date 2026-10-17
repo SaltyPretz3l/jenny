@@ -10,6 +10,24 @@ function setRect(element, rect) {
   element.getBoundingClientRect = () => ({ ...rect });
 }
 
+test('narrow panel bounds preserve shortcuts and growing composers in both panes', () => {
+  const dom = new JSDOM('<main class="chat-view"><aside class="artifact-review-overlay"></aside><div class="chat-timeline-utility-cluster"></div><div class="composer-wrap"></div><div class="composer-wrap"></div></main>');
+  const host = dom.window.document.querySelector('main');
+  const composers = host.querySelectorAll('.composer-wrap');
+  setRect(host, { top: 50, bottom: 900, height: 850 });
+  setRect(host.querySelector('.chat-timeline-utility-cluster'), { bottom: 90, height: 28 });
+  setRect(composers[0], { top: 700, height: 200 });
+  setRect(composers[1], { top: 750, height: 150 });
+  const layout = createViewportLayoutUtils({ state: { ui: {} }, dom: { chatView: host } });
+  layout.updateComposerSafeOffset();
+  assert.equal(host.style.getPropertyValue('--artifact-overlay-top'), '48px');
+  assert.equal(host.style.getPropertyValue('--artifact-overlay-bottom'), '200px');
+  setRect(composers[1], { top: 600, height: 300 });
+  layout.updateComposerSafeOffset();
+  assert.equal(host.style.getPropertyValue('--artifact-overlay-bottom'), '300px');
+  dom.window.close();
+});
+
 test('viewport layout utils measure safe offset and gutter widths', () => {
   const dom = new JSDOM(`
     <main id="chatView">

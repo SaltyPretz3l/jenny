@@ -1,21 +1,12 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(
-      require('../shared/string-utils'),
-      require('../shared/log-contract-utils'),
-      require('../shared/renderer-motion-preference-utils')
-    );
+    module.exports = factory(require('../shared/log-contract-utils'));
     return;
   }
-  root.rendererObservabilityUtils = factory(root.stringUtils, root.logContractUtils, root.rendererMotionPreferenceUtils);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, logContractUtils, motionPreferenceUtils) {
+  root.rendererObservabilityUtils = factory(root.logContractUtils);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (logContractUtils) {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-
-  // UIUX-030: sole smooth-scroll gate — 'auto' (instant) under prefers-reduced-motion.
-  const resolveScrollBehavior = motionPreferenceUtils && typeof motionPreferenceUtils.resolveScrollBehavior === 'function'
-    ? motionPreferenceUtils.resolveScrollBehavior
-    : function fallbackResolveScrollBehavior() { return 'smooth'; };
 
   const LOG_RETENTION = logContractUtils && logContractUtils.LOG_RETENTION
     ? logContractUtils.LOG_RETENTION
@@ -27,10 +18,6 @@
     recentLogLimit: LOG_RETENTION.observabilityRecentLogLimit,
     includeHarness: false,
   });
-  const escapeHtml = stringUtils.escapeHtml;
-  const redactLogText = logContractUtils && typeof logContractUtils.redactLogText === 'function'
-    ? logContractUtils.redactLogText
-    : function fallbackRedactLogText(value) { return String(value || ''); };
 
   function resolveMarkup(deps) {
     if (deps.markup && typeof deps.markup === 'object') return deps.markup;
@@ -63,11 +50,7 @@
       refreshEpoch: 0,
       lastFetchAt: 0,
       refreshTimer: null,
-      expandedTraces: new Set(),
       lastRenderSig: '',
-      pendingTraceMissStreamId: '',
-      pendingTraceMissCount: 0,
-      pendingTraceMissMessage: '',
       disposed: false,
     };
 
@@ -83,11 +66,12 @@
       return !guard || typeof guard.isCurrent !== 'function' || guard.isCurrent() === true;
     }
 
-    const targets = {
-      latency: dom.toolLatencyTable || null,
-      slow: dom.slowOperationsList || null,
-      traces: dom.recentTracesList || null,
-    };
+    // Each pane: its host, what builds its markup, and the markup it last painted.
+    const panes = [
+      { host: dom.toolLatencyTable || null, build: (snapshot) => markup.buildToolLatencyMarkup(snapshot && snapshot.tool_observability), painted: null },
+      { host: dom.slowOperationsList || null, build: (snapshot) => markup.buildSlowOperationsMarkup(snapshot && snapshot.slow_operations), painted: null },
+      { host: dom.recentTracesList || null, build: (snapshot) => markup.buildTraceTimingMarkup(snapshot && snapshot.trace_timing), painted: null },
+    ].filter((pane) => pane.host);
 
     function getDiagnosticsApi() {
       if (!windowRef) return null;
@@ -95,42 +79,6 @@
       if (!shell || !shell.diagnostics) return null;
       const fn = shell.diagnostics.getJennyStatus;
       return typeof fn === 'function' ? fn.bind(shell.diagnostics) : null;
-    }
-
-    function traceExpansionKey(trace, index) {
-      const streamId = String(trace && trace.stream_id || '').trim();
-      if (streamId) return streamId;
-      const traceId = String(trace && trace.trace_id || '').trim();
-      if (traceId) return 'trace:' + traceId;
-      const requestId = String(trace && trace.request_id || '').trim();
-      if (requestId) return 'request:' + requestId;
-      return 'row:' + index;
-    }
-
-    function buildTraceExpansionFacet(facet) {
-      if (!facet || !Array.isArray(facet.recent)) return facet;
-      return {
-        ...facet,
-        recent: facet.recent.map((trace, index) => ({
-          ...trace,
-          stream_id: traceExpansionKey(trace, index),
-        })),
-      };
-    }
-
-    function pruneExpandedTraces() {
-      const snapshot = state.snapshot;
-      const traces = snapshot && snapshot.trace_timing && Array.isArray(snapshot.trace_timing.recent)
-        ? snapshot.trace_timing.recent
-        : [];
-      if (state.expandedTraces.size === 0) return;
-      const liveStreams = new Set();
-      for (let index = 0; index < traces.length; index += 1) {
-        liveStreams.add(traceExpansionKey(traces[index], index));
-      }
-      for (const stream of Array.from(state.expandedTraces)) {
-        if (!liveStreams.has(stream)) state.expandedTraces.delete(stream);
-      }
     }
 
     function valueSig(value) {
@@ -153,14 +101,14 @@
       const tool = snapshot && snapshot.tool_observability;
       const slow = snapshot && snapshot.slow_operations;
       const trace = snapshot && snapshot.trace_timing;
-      const expandedKey = Array.from(state.expandedTraces).sort().join(',');
       const toolSig = objectEntrySig(tool && tool.tools, (name, stats) => {
         const latency = stats.latency_ms || {};
         const errorCodes = objectEntrySig(stats.error_codes, (code, count) => code + ':' + valueSig(count));
+        const recentErrors = itemListSig(stats.recent_errors, (item) => item && item.error_code);
         return [
-          name, stats.count, stats.error_rate,
+          name, stats.count, stats.error_count, stats.error_rate,
           latency.p50, latency.p95, latency.p99,
-          errorCodes,
+          errorCodes, recentErrors,
         ].map(valueSig).join(',');
       });
       const slowSig = itemListSig(slow && slow.items, (item) => [
@@ -182,22 +130,56 @@
           item && item.terminal_status,
           item && item.duration_ms,
           item && item.model,
-          item && item.mode,
-          provider.time_to_first_chunk_ms,
           provider.time_to_first_visible_token_ms,
-          provider.request_duration_ms,
           tools.total,
         ].map(valueSig).join(',');
       });
       return [
         state.error,
-        state.pendingTraceMissMessage,
-        expandedKey,
         snapshot && snapshot.generated_at,
+        // Availability decides what the Performance section says, so a flip alone is a new snapshot.
+        [tool, slow, trace].map((facet) => valueSig(facet && facet.available)).join(','),
         tool && tool.generated_at, toolSig,
         slow && slow.generated_at, slow && slow.count, slowSig,
         trace && trace.generated_at, trace && trace.count, traceSig,
       ].join('|');
+    }
+
+    function cssEscape(value) {
+      const escaper = windowRef && windowRef.CSS && typeof windowRef.CSS.escape === 'function' ? windowRef.CSS.escape : null;
+      if (escaper) return escaper(String(value || ''));
+      return String(value || '').replace(/[^a-zA-Z0-9_-]/g, function (ch) { return '\\' + ch; });
+    }
+
+    // The chat whose Result button holds keyboard focus, so a repaint can hand focus back to it.
+    function focusedTrace(host) {
+      const active = host.ownerDocument && host.ownerDocument.activeElement;
+      if (!active || !host.contains(active) || typeof active.closest !== 'function') return '';
+      const control = active.closest('[data-observability-trace]');
+      return control ? control.getAttribute('data-observability-trace') || '' : '';
+    }
+
+    function traceControls(host) {
+      return Array.from(host.querySelectorAll('[data-observability-trace]'));
+    }
+
+    // A repaint keeps focus on the same chat; when that chat is gone, on the one now in its place (or the last),
+    // and when none remain, on the Performance heading rather than the page body.
+    function paintPane(pane, snapshot) {
+      const next = pane.build(snapshot);
+      if (pane.painted === next) return;
+      const focused = focusedTrace(pane.host);
+      const focusedIndex = focused ? traceControls(pane.host).findIndex((node) => node.getAttribute('data-observability-trace') === focused) : -1;
+      pane.host.innerHTML = next;
+      pane.painted = next;
+      if (!focused) return;
+      const remaining = traceControls(pane.host);
+      const control = pane.host.querySelector('[data-observability-trace="' + cssEscape(focused) + '"]')
+        || remaining[Math.min(Math.max(focusedIndex, 0), remaining.length - 1)];
+      const target = control || pane.host.ownerDocument.getElementById('diagnosticsPerformanceHeading');
+      if (!target || typeof target.focus !== 'function') return;
+      if (!control) target.tabIndex = -1;
+      target.focus();
     }
 
     function renderAll() {
@@ -205,34 +187,9 @@
       const sig = buildRenderSignature();
       if (sig === state.lastRenderSig) return;
       state.lastRenderSig = sig;
-      const snapshot = state.snapshot;
-      if (targets.latency) {
-        targets.latency.innerHTML = markup.buildToolLatencyMarkup(snapshot && snapshot.tool_observability);
-      }
-      if (targets.slow) {
-        targets.slow.innerHTML = markup.buildSlowOperationsMarkup(snapshot && snapshot.slow_operations);
-      }
-      if (targets.traces) {
-        const traceFacet = snapshot && snapshot.trace_timing;
-        targets.traces.innerHTML = markup.buildTraceTimingMarkup(
-          buildTraceExpansionFacet(traceFacet),
-          state.expandedTraces
-        );
-        const traces = traceFacet && Array.isArray(traceFacet.recent) ? traceFacet.recent.slice().reverse() : [];
-        Array.from(targets.traces.querySelectorAll('[data-trace-stream]')).forEach((row, index) => {
-          row.setAttribute('data-trace-stream', String(traces[index] && traces[index].stream_id || ''));
-        });
-        if (state.pendingTraceMissMessage) {
-          targets.traces.insertAdjacentHTML(
-            'afterbegin',
-            '<div class="observability-error" role="status">' + escapeHtml(state.pendingTraceMissMessage) + '</div>'
-          );
-        }
-      }
-      if (state.error) {
-        const errorBanner = '<div class="observability-error" role="alert">' + escapeHtml(state.error) + '</div>';
-        if (targets.latency) targets.latency.insertAdjacentHTML('afterbegin', errorBanner);
-      }
+      panes.forEach((pane) => paintPane(pane, state.snapshot));
+      // The Overview decides which groups show from its own state, so it hears about every new snapshot.
+      if (typeof callbacks.onSnapshot === 'function') callbacks.onSnapshot(state.snapshot);
     }
 
     async function refresh(options) {
@@ -278,9 +235,7 @@
           state.snapshot = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) ? snapshot : null;
           state.error = '';
           state.lastFetchAt = now();
-          pruneExpandedTraces();
           renderAll();
-          focusPendingTraceIfRequested();
           return state.snapshot;
         } catch (error) {
           if (state.disposed || requestEpoch !== state.refreshEpoch || !isRefreshCurrent(options)) return null;
@@ -297,121 +252,18 @@
       }
     }
 
-    function formatTraceIdForNotice(streamId) {
-      const label = redactLogText(String(streamId || '').trim());
-      if (label.length <= 80) {
-        return label;
-      }
-      return label.slice(0, 77) + '...';
-    }
-
-    function resetPendingTraceMiss(streamId) {
-      state.pendingTraceMissStreamId = streamId || '';
-      state.pendingTraceMissCount = 0;
-      state.pendingTraceMissMessage = '';
-    }
-
-    function focusPendingTraceIfRequested() {
-      let streamId = '';
-      if (typeof callbacks.peekPendingTraceFocus === 'function') {
-        streamId = callbacks.peekPendingTraceFocus();
-      } else if (typeof callbacks.consumePendingTraceFocus === 'function') {
-        streamId = callbacks.consumePendingTraceFocus();
-      }
-      streamId = String(streamId || '').trim();
-      if (!streamId || !targets.traces) return;
-      if (state.pendingTraceMissStreamId !== streamId) {
-        resetPendingTraceMiss(streamId);
-      }
-      const traces = state.snapshot && state.snapshot.trace_timing && Array.isArray(state.snapshot.trace_timing.recent)
-        ? state.snapshot.trace_timing.recent
-        : [];
-      const traceIndex = traces.findIndex((trace) => String(trace && trace.stream_id || '') === String(streamId));
-      if (traceIndex < 0) {
-        state.pendingTraceMissCount += 1;
-        if (state.pendingTraceMissCount >= 3) {
-          state.pendingTraceMissMessage = jt('diagnostics.traceNotYetVisible', 'Trace {traceId} has not appeared in recent Runtime Health rows yet.', { traceId: formatTraceIdForNotice(streamId) });
-          if (typeof callbacks.clearPendingTraceFocus === 'function') {
-            callbacks.clearPendingTraceFocus(streamId);
-          }
-          renderAll();
-        }
-        return;
-      }
-      resetPendingTraceMiss('');
-      state.expandedTraces.add(traceExpansionKey(traces[traceIndex], traceIndex));
-      renderAll();
-      if (typeof callbacks.clearPendingTraceFocus === 'function') {
-        callbacks.clearPendingTraceFocus(streamId);
-      }
-      const win = windowRef;
-      if (!win) return;
-      win.requestAnimationFrame(() => {
-        if (state.disposed) return;
-        const row = targets.traces.querySelector('[data-trace-stream="' + cssEscape(streamId) + '"]');
-        if (row && typeof row.scrollIntoView === 'function') {
-          row.scrollIntoView({ behavior: resolveScrollBehavior(null, win), block: 'center' });
-        }
-      });
-    }
-
-    function cssEscape(value) {
-      const win = typeof window !== 'undefined' ? window : null;
-      const escaper = win && win.CSS && typeof win.CSS.escape === 'function' ? win.CSS.escape : null;
-      if (escaper) return escaper(String(value || ''));
-      return String(value || '').replace(/[^a-zA-Z0-9_-]/g, function (ch) { return '\\' + ch; });
-    }
-
+    // Selecting a chat opens its records in Activity.
     function handleClick(event) {
       const target = event.target;
       if (!target || typeof target.closest !== 'function') return;
-
-      const traceToggle = target.closest('[data-observability-trace-toggle]');
-      if (traceToggle) {
-        event.preventDefault();
-        const stream = traceToggle.getAttribute('data-observability-trace-toggle') || '';
-        if (state.expandedTraces.has(stream)) {
-          state.expandedTraces.delete(stream);
-        } else {
-          state.expandedTraces.add(stream);
-        }
-        renderAll();
-        return;
-      }
-
       const traceLink = target.closest('[data-observability-trace]');
-      if (traceLink) {
-        event.preventDefault();
-        const stream = traceLink.getAttribute('data-observability-trace') || '';
-        if (typeof callbacks.onTraceLink === 'function') {
-          callbacks.onTraceLink(stream);
-        } else {
-          state.expandedTraces.add(stream);
-          renderAll();
-          if (targets.traces) {
-            const row = targets.traces.querySelector('[data-trace-stream="' + cssEscape(stream) + '"]');
-            if (row && typeof row.scrollIntoView === 'function') {
-              row.scrollIntoView({ behavior: resolveScrollBehavior(null, windowRef), block: 'center' });
-            }
-          }
-        }
-        return;
-      }
-
-      const sessionLink = target.closest('[data-observability-session]');
-      if (sessionLink) {
-        event.preventDefault();
-        const session = sessionLink.getAttribute('data-observability-session') || '';
-        if (typeof callbacks.onSessionLink === 'function') {
-          callbacks.onSessionLink(session);
-        }
-      }
+      if (!traceLink) return;
+      event.preventDefault();
+      const stream = traceLink.getAttribute('data-observability-trace') || '';
+      if (stream && typeof callbacks.onTraceLink === 'function') callbacks.onTraceLink(stream);
     }
 
-    const scopes = [targets.latency, targets.slow, targets.traces].filter(Boolean);
-    scopes.forEach((scope) => {
-      scope.addEventListener('click', handleClick);
-    });
+    panes.forEach((pane) => pane.host.addEventListener('click', handleClick));
 
     function notifyTurnSettled() {
       if (!isVisible()) {
@@ -433,7 +285,7 @@
       state.disposed = true;
       if (state.refreshTimer) clearTimer(state.refreshTimer);
       state.refreshTimer = null;
-      scopes.forEach((scope) => scope.removeEventListener('click', handleClick));
+      panes.forEach((pane) => pane.host.removeEventListener('click', handleClick));
     }
 
     return {

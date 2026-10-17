@@ -16,6 +16,7 @@ from sidecar.ai.routing.delegate_contracts import (
     DelegateRequest,
     DelegateTask,
     ToolExecutionFailure,
+    _safe_text,
     build_compact_delegate_settlement,
     delegate_task_label,
     extract_tool_observed_evidence,
@@ -33,6 +34,7 @@ from sidecar.ai.routing.subagent_batch_observability import (
     selected_route,
     task_percent,
 )
+from sidecar.ai.routing.subagent_live_activity import SubagentLiveActivity
 from sidecar.ai.routing.subagent_scheduler import (
     DelegateSchedule,
     ScheduledInvocation,
@@ -43,7 +45,6 @@ from sidecar.ai.routing.subagent_telemetry import (
     terminal_reason,
     usage_from_decision,
 )
-from sidecar.ai.tools.sanitization import sanitize_tool_output
 from sidecar.runtime.diagnostics import log_event
 from sidecar.runtime.tool_execution_support import CMP_LOOP_TOOL_INPUT_VALIDATION
 
@@ -156,9 +157,14 @@ def execute_delegate_tool(  # noqa: PLR0913 - synthetic boundary mirrors router 
     )
     settled_count = sum(1 for task in request.tasks if task.error is not None)
     progress_lock = threading.Lock()
+    live_children: dict[int, SubagentLiveActivity] = {}
+    child_routes: dict[int, dict[str, str]] = {}
 
-    def on_task_started(task: DelegateTask, task_identity: SubAgentIdentity) -> None:
+    def on_task_started(
+        task: DelegateTask, task_identity: SubAgentIdentity, route: dict[str, str] | None = None,
+    ) -> None:
         with progress_lock:
+            child_routes[task.ordinal] = route or selected_route(router)
             _emit_task_started(
                 runtime,
                 identity,
@@ -167,11 +173,33 @@ def execute_delegate_tool(  # noqa: PLR0913 - synthetic boundary mirrors router 
                 settled_count=settled_count,
                 task_count=len(request.tasks),
                 call_id=canonical_call_id,
-                route=selected_route(router),
+                route=child_routes[task.ordinal],
             )
+
+    def on_task_event(task: DelegateTask, task_identity: SubAgentIdentity, event: Any) -> None:
+        # Each child has one producer; the shared writer is serialized below.
+        activity = live_children.get(task.ordinal)
+        if activity is None:
+            def publish(snapshot: dict[str, Any]) -> None:
+                with progress_lock:
+                    route = child_routes.get(task.ordinal, {})
+                    emit_progress(
+                        runtime, identity, stage=f'task_{task.ordinal}_activity',
+                        status='running',
+                        percent=task_percent(settled_count, len(request.tasks), settled=True),
+                        summary=snapshot['summary'], tool_call_id=canonical_call_id,
+                        child_identity=task_identity, child_ordinal=task.ordinal,
+                        child_count=len(request.tasks), child_label=delegate_task_label(task),
+                        route=route, reasoning_effort=route.get('reasoning_effort'),
+                        usage=snapshot['usage'], activity=snapshot, source=DELEGATE_TOOL_NAME,
+                    )
+            activity = live_children[task.ordinal] = SubagentLiveActivity(publish)
+        activity(event)
 
     def on_task_settled(invocation: ScheduledInvocation) -> None:
         nonlocal settled_count
+        live = live_children.get(invocation.task.ordinal)
+        snapshot = live.finish() if live else None
         with progress_lock:
             settled_count += 1
             _emit_task_settled(
@@ -181,6 +209,7 @@ def execute_delegate_tool(  # noqa: PLR0913 - synthetic boundary mirrors router 
                 settled_count=settled_count,
                 task_count=len(request.tasks),
                 call_id=canonical_call_id,
+                activity=snapshot,
             )
 
     schedule = schedule_delegate_tasks(
@@ -193,8 +222,8 @@ def execute_delegate_tool(  # noqa: PLR0913 - synthetic boundary mirrors router 
         parent_agent_id=parent_agent_id,
         on_task_started=on_task_started,
         on_task_settled=on_task_settled,
+        on_task_event=on_task_event,
     )
-    _raise_runtime_interrupted(runtime)
     invocation_by_ordinal = {
         invocation.task.ordinal: invocation for invocation in schedule.invocations
     }
@@ -210,6 +239,9 @@ def execute_delegate_tool(  # noqa: PLR0913 - synthetic boundary mirrors router 
             ),
             default_steps=schedule.task_iteration_limit,
             default_runtime_ms=schedule.effective_max_total_runtime_ms,
+            activity=(
+                live_children[task.ordinal].snapshot() if task.ordinal in live_children else None
+            ),
         )
         for task in request.tasks
     ]
@@ -225,6 +257,7 @@ def execute_delegate_tool(  # noqa: PLR0913 - synthetic boundary mirrors router 
         status=compact.status,
         started_at=started_at,
     )
+    _raise_interrupted_keeping_report(runtime, canonical_call_id, rich_report)
     error_code = None if compact.success else _first_error_code(task_reports)
     if schedule.capacity_rejected:
         _log_delegate(
@@ -273,13 +306,14 @@ def execute_delegate_tool(  # noqa: PLR0913 - synthetic boundary mirrors router 
     )
 
 
-def _task_report(
+def _task_report(  # noqa: PLR0913 - terminal and live fallback report inputs.
     task: DelegateTask,
     invocation: ScheduledInvocation | None,
     *,
     identity: SubAgentIdentity,
     default_steps: int,
     default_runtime_ms: int,
+    activity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if invocation is None:
         rejected_error = dict(task.error or {}) or {
@@ -294,7 +328,7 @@ def _task_report(
             "agent_id": identity.agent_id,
             "parent_agent_id": identity.parent_agent_id,
             "status": "failed",
-            "summary": _safe_text(rejected_error.get("message"), 1_000),
+            "summary": _safe_text(rejected_error.get("message"), max_chars=1_000),
             "evidence": [],
             "evidence_trust": "none",
             "tools_used": [],
@@ -327,7 +361,7 @@ def _task_report(
                 "retryable": bool(result.error_retryable),
             }
         )
-    answer = _safe_text(result.response_text, 1_000)
+    answer = _safe_text(result.response_text, max_chars=1_000)
     if not answer and error:
         answer = str(error["message"])
     return {
@@ -340,16 +374,23 @@ def _task_report(
         "summary": answer,
         "evidence": evidence,
         "evidence_trust": "tool_observed" if evidence else "none",
-        "tools_used": [_safe_text(name, 64) for name in result.observed_tool_names if name],
+        "tools_used": [
+            _safe_text(name, max_chars=64) for name in result.observed_tool_names if name
+        ],
         "uncertainties": [],
         "budget": {
             "max_steps": invocation.max_steps,
             "iterations_used": min(max(0, result.iterations_used), invocation.max_steps),
-            "tool_results_used": max(0, result.tool_results_used),
+            "tool_results_used": max(
+                0, result.tool_results_used, (activity or {}).get('result_count', 0)
+            ),
             "max_runtime_ms": invocation.max_runtime_ms,
             "elapsed_ms": max(0, invocation.elapsed_ms),
         },
-        "usage": usage_from_decision(result.decision),
+        "usage": _task_usage(result.decision, activity),
+        "model": invocation.model,
+        "provider": invocation.provider,
+        "reasoning_effort": invocation.reasoning_effort,
         "terminal_reason": terminal_reason(
             completion_reason=result.completion_reason,
             status=status,
@@ -358,8 +399,10 @@ def _task_report(
         "error": error,
         # UI-only fields for the monitor: parent-facing output is built from
         # summary/evidence/status only (build_compact_delegate_settlement).
-        "steps": build_child_steps(result.decision),
-        "answer": strip_format_controls(_safe_text(result.response_text, MAX_CHILD_ANSWER_CHARS)),
+        "steps": build_child_steps(result.decision) or (activity or {}).get('steps', []),
+        "answer": strip_format_controls(
+            _safe_text(result.response_text, max_chars=MAX_CHILD_ANSWER_CHARS)
+        ),
     }
 
 
@@ -429,7 +472,6 @@ def _emit_delegate_start(  # noqa: PLR0913 - fixed progress-envelope fields.
         request,
         call_id,
         parent_request_id=parent_request_id,
-        route=route,
     )
     _log_delegate(
         runtime,
@@ -444,14 +486,13 @@ def _emit_delegate_start(  # noqa: PLR0913 - fixed progress-envelope fields.
     )
 
 
-def _emit_initial_task_states(  # noqa: PLR0913 - fixed progress-envelope fields.
+def _emit_initial_task_states(
     runtime: Any,
     identity: SubAgentIdentity,
     request: DelegateRequest,
     call_id: str,
     *,
     parent_request_id: str,
-    route: dict[str, str],
 ) -> None:
     task_count = len(request.tasks)
     initial_percent = task_percent(
@@ -485,7 +526,6 @@ def _emit_initial_task_states(  # noqa: PLR0913 - fixed progress-envelope fields
             child_label=delegate_task_label(task),
             child_terminal=rejected,
             terminal_reason="rejected" if rejected else None,
-            route=route,
             source=DELEGATE_TOOL_NAME,
         )
 
@@ -514,6 +554,7 @@ def _emit_task_started(  # noqa: PLR0913 - fixed progress-envelope fields.
         child_count=task_count,
         child_label=delegate_task_label(task),
         route=route,
+        reasoning_effort=route.get('reasoning_effort'),
         source=DELEGATE_TOOL_NAME,
     )
 
@@ -526,6 +567,7 @@ def _emit_task_settled(  # noqa: PLR0913 - fixed progress-envelope fields.
     settled_count: int,
     task_count: int,
     call_id: str,
+    activity: dict[str, Any] | None = None,
 ) -> None:
     status = str(invocation.result.status or "failed")
     emit_progress(
@@ -542,7 +584,10 @@ def _emit_task_settled(  # noqa: PLR0913 - fixed progress-envelope fields.
         child_label=delegate_task_label(invocation.task),
         child_terminal=True,
         child_success=status in {"completed", "partial"},
-        usage=usage_from_decision(invocation.result.decision),
+        usage=_task_usage(invocation.result.decision, activity),
+        activity=activity,
+        route={key: str(getattr(invocation, key, '') or '') for key in ('model', 'provider')},
+        reasoning_effort=invocation.reasoning_effort,
         terminal_reason=terminal_reason(
             completion_reason=invocation.result.completion_reason,
             status=status,
@@ -650,8 +695,8 @@ def _task_identity(
 
 def _safe_error(error: dict[str, Any]) -> dict[str, Any]:
     return {
-        "code": _safe_text(error.get("code"), 64) or CMP_TOOL_EXECUTION_FAILED,
-        "message": _safe_text(error.get("message"), 300) or "Sub-agent task failed.",
+        "code": _safe_text(error.get("code"), max_chars=64) or CMP_TOOL_EXECUTION_FAILED,
+        "message": _safe_text(error.get("message"), max_chars=300) or "Sub-agent task failed.",
         "retryable": bool(error.get("retryable")),
     }
 
@@ -664,12 +709,28 @@ def _first_error_code(task_reports: list[dict[str, Any]]) -> str:
     return CMP_TOOL_EXECUTION_FAILED
 
 
-def _safe_text(value: object, max_chars: int) -> str:
-    return sanitize_tool_output(
-        value,
-        max_chars=max_chars,
-        tool_name=DELEGATE_TOOL_NAME,
-    ).strip()
+def _task_usage(decision: Any, activity: dict[str, Any] | None) -> dict[str, Any] | None:
+    live_usage = (activity or {}).get('usage')
+    usage = usage_from_decision(decision) or live_usage
+    if usage and live_usage and live_usage.get('partial') is True:
+        return {**usage, 'partial': True}
+    return usage
+
+
+def _raise_interrupted_keeping_report(runtime: Any, call_id: str, report: dict[str, Any]) -> None:
+    try:
+        _raise_runtime_interrupted(runtime)
+    except Exception:
+        # Settled children (a completed A beside a cancelled B) stay durable on
+        # the interrupted tool result; the parent still stops without synthesis.
+        record = (getattr(runtime, "emitted_tool_calls", None) or {}).get(call_id)
+        if isinstance(record, dict):
+            record["result_metadata"] = {
+                "result_kind": "subagent_batch_report",
+                "subagent_batch_report": report,
+                "invocation_kind": INVOCATION_KIND_RESEARCH,
+            }
+        raise
 
 
 def _raise_runtime_interrupted(runtime: Any) -> None:

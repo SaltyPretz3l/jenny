@@ -285,23 +285,23 @@ class _ToolCallPhasesMixin:
                     tool_contract=tool_contract,
                 )
 
-    @staticmethod
     def _advance_cycle_history(
+        self,
         history: tuple[tuple[str, ...], ...],
         errors: tuple[str, ...],
         new_last_tool_calls: tuple[Any, ...],
         new_error_output: str | None,
+        new_outcomes: list[Any] | tuple[Any, ...] = (),
     ) -> tuple[tuple[tuple[str, ...], ...], tuple[str, ...]]:
         import sidecar.ai.routing.tool_loop as _tl_hub
 
-        if new_last_tool_calls:
-            signature_entry = tuple(
-                _tl_hub._tool_call_signature(call) for call in new_last_tool_calls
-            )
-            history = (*history, signature_entry)[-_tl_hub.CYCLE_HISTORY_DEPTH:]
-        if new_error_output is not None:
-            errors = (*errors, new_error_output)[-_tl_hub.CYCLE_HISTORY_DEPTH:]
-        return history, errors
+        result_aware = _tl_hub.is_default_on_flag_enabled(
+            getattr(self, "feature_flags", {}), _tl_hub.FEATURE_LOOP_RESULT_AWARE_SIGNATURE,
+        )
+        return _tl_hub.advance_cycle_history(
+            self, history, errors, new_last_tool_calls, new_error_output, new_outcomes,
+            result_aware=result_aware,
+        )
 
     def _apply_cycle_hint(
         self,
@@ -317,7 +317,7 @@ class _ToolCallPhasesMixin:
         self.cycle_recovery_baseline_undeferred = frozenset(
             getattr(self.tool_resolution_context, "un_deferred_names", set())
         )
-        self.working_messages.append({"role": "system", "content": stop_reason.user_hint})
+        _tl_hub.heuristic_fires.append_cycle_hint(self, stop_reason)
         _tl_hub.log_event(
             logger,
             logging.WARNING,
@@ -352,6 +352,7 @@ class _ToolCallPhasesMixin:
         self.previous_tool_calls = ()
         self.previous_error_output = None
         self.tool_call_history = ()
+        self.current_tool_signatures = None
         self.error_output_history = ()
 
     def _cycle_recovery_generation_payload(self) -> list[dict[str, Any]]:
@@ -834,11 +835,8 @@ class _ToolCallPhasesMixin:
             )
         tool_calls_to_execute = result.tool_calls
         iteration_calls: list[Any] = []
-        from sidecar.ai.routing.tool_call_execution import (
-            execute_tool_calls_sequentially,
-            pre_filter_tool_calls,
-        )
-        _remaining, self.outcome_index = pre_filter_tool_calls(
+        from sidecar.ai.routing import tool_call_execution as _tce
+        _remaining, self.outcome_index = _tce.pre_filter_tool_calls(
             tool_calls_to_execute,
             kernel=kernel,
             runtime=runtime,
@@ -862,9 +860,10 @@ class _ToolCallPhasesMixin:
                 remaining_calls=_remaining, ordered_calls=tool_calls_to_execute)
         # Auto-checkpoint immediately before the canonical in-order dispatcher.
         _tl_hub.maybe_create_auto_checkpoint(self, _remaining)
+        boundary = None
         if _remaining:
             try:
-                execute_tool_calls_sequentially(
+                boundary = _tce.execute_tool_calls_sequentially(
                     indexed_calls=_remaining,
                     runtime=runtime, kernel=kernel, result=result,
                     request_id=request_id, session_id=session_id,
@@ -894,6 +893,9 @@ class _ToolCallPhasesMixin:
             except Exception:  # pair any pre-dispatch event before re-raising
                 self._settle_unfinished_tool_results("sequential_execution_interrupted")
                 raise
+        if boundary is not None:  # a session proposal ended the turn: no further generation
+            return _tl_hub.finish_loop_at_boundary(
+                self, boundary, raw_content=str(result.content or ""))
         self._refund_failed_web_outcomes(
             outcomes_len_before_tool_phase, tool_contract=self.tool_contract)
 
@@ -941,6 +943,7 @@ class _ToolCallPhasesMixin:
             self.error_output_history,
             self.last_tool_calls,
             iteration_error_output,
+            new_outcomes,
         )
 
         retired_status_tools = self._retire_repeated_missing_status_tools()

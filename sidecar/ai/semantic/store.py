@@ -8,6 +8,7 @@ reported, nothing is evicted silently.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import threading
@@ -24,7 +25,9 @@ from sidecar.exceptions import CompanionError
 
 logger = logging.getLogger(__name__)
 
-SEMANTIC_CATALOG_SCHEMA_VERSION = 1
+SEMANTIC_CATALOG_SCHEMA_VERSION = 3
+# Schema 2 stored multi-chunk documents before overlap-aware locators and truncation receipts.
+_LEGACY_LOCATOR_SCHEMA_VERSION = 2
 MAX_CATALOG_ROOTS = 32
 MAX_CATALOG_DOCUMENTS = 20_000
 MAX_CATALOG_CHUNKS = 20_000
@@ -41,7 +44,7 @@ _SCHEMA = (
         root_key TEXT NOT NULL REFERENCES roots(root_key) ON DELETE CASCADE,
         rel_path TEXT NOT NULL, size INTEGER, mtime_ns INTEGER, sha256 TEXT,
         status TEXT NOT NULL CHECK(status IN ('pending','indexed','failed','skipped')),
-        reason TEXT, seen_scan INTEGER NOT NULL DEFAULT 0, updated_at TEXT,
+        extraction_json TEXT, reason TEXT, seen_scan INTEGER NOT NULL DEFAULT 0, updated_at TEXT,
         UNIQUE(root_key, rel_path))""",
     """CREATE TABLE IF NOT EXISTS chunks (
         chunk_id INTEGER PRIMARY KEY,
@@ -116,6 +119,8 @@ class VectorRow:
     locator: str
     rel_path: str
     root_path: str
+    source_hash: str | None = None
+    extraction_json: str | None = None
 
 
 def empty_root_counts() -> dict[str, Any]:
@@ -218,6 +223,24 @@ class CatalogStore:
             )
         connection.execute("BEGIN IMMEDIATE")
         try:
+            if version == 1:
+                # Derived cache only: keep admitted roots, invalidate text/vectors and
+                # restart extraction so legacy mixed PDFs cannot retain complete status.
+                connection.execute("ALTER TABLE documents ADD COLUMN extraction_json TEXT")
+                connection.execute("DELETE FROM chunks")
+                connection.execute(
+                    "UPDATE documents SET status='pending', reason=NULL, sha256=NULL, seen_scan=0")
+                connection.execute("UPDATE roots SET scan_complete_at=NULL")
+            elif version == _LEGACY_LOCATOR_SCHEMA_VERSION:
+                # Derived cache only: a multi-chunk document was chunked before overlap
+                # locators covered the previous chunk's tail and before chunk-cap
+                # truncation was recorded. Drop its chunks (vectors cascade) and receipt
+                # and re-extract it; a single chunk has no overlap and stays.
+                stale = "SELECT doc_id FROM chunks GROUP BY doc_id HAVING COUNT(*) > 1"
+                connection.execute(
+                    "UPDATE documents SET status='pending', reason=NULL, sha256=NULL,"
+                    f" extraction_json=NULL WHERE doc_id IN ({stale})")
+                connection.execute(f"DELETE FROM chunks WHERE doc_id IN ({stale})")
             for statement in _SCHEMA:
                 connection.execute(statement)
             connection.execute(
@@ -423,7 +446,8 @@ class CatalogStore:
         return [PendingDocument(*row) for row in rows]
 
     def mark_document(
-        self, doc_id: int, status: str, reason: str | None, *, sha256: str | None = None
+        self, doc_id: int, status: str, reason: str | None, *, sha256: str | None = None,
+        extraction: dict[str, Any] | None = None
     ) -> None:
         """Set a terminal status; non-indexed outcomes drop the document's chunks."""
         if status not in DOCUMENT_STATUSES:
@@ -433,11 +457,14 @@ class CatalogStore:
                 connection.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
             connection.execute(
                 "UPDATE documents SET status = ?, reason = ?, sha256 = COALESCE(?, sha256),"
+                " extraction_json = CASE WHEN ? = 'embed_failed' THEN extraction_json ELSE ? END,"
                 " updated_at = ? WHERE doc_id = ?",
-                (status, reason, sha256, _utc_now(), doc_id),
+                (status, reason, sha256, reason, json.dumps(extraction) if extraction else None,
+                 _utc_now(), doc_id),
             )
 
-    def replace_chunks(self, doc_id: int, chunks: Sequence[ChunkInput], sha256: str) -> bool:
+    def replace_chunks(self, doc_id: int, chunks: Sequence[ChunkInput], sha256: str,
+                       *, extraction: dict[str, Any] | None = None) -> bool:
         """Swap a document's chunks (vectors cascade); False when the chunk cap is hit."""
         with self._write() as connection:
             connection.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
@@ -451,11 +478,37 @@ class CatalogStore:
                 )
                 status, reason = "indexed", None
             connection.execute(
-                "UPDATE documents SET status = ?, reason = ?, sha256 = ?, updated_at = ?"
+                "UPDATE documents SET status = ?, reason = ?, sha256 = ?,"
+                " extraction_json = ?, updated_at = ?"
                 " WHERE doc_id = ?",
-                (status, reason, sha256, _utc_now(), doc_id),
+                (status, reason, sha256, json.dumps(extraction) if extraction else None,
+                 _utc_now(), doc_id),
             )
         return status == "indexed"
+
+    def incomplete_sources(self, root_keys: Sequence[str]) -> list[tuple[str, str, str]]:
+        """Bounded catalog rows; the caller applies scope before its output cap.
+
+        Besides incomplete extraction, a source whose searchable coverage is
+        incomplete is listed even when its native text extracted completely:
+        chunk-cap truncation (``index_truncation`` in the receipt) and an
+        embedding failure (reported as ``index_failure`` beside the receipt).
+        """
+        if not root_keys:
+            return []
+        with self._lock:
+            return self._connection.execute(
+                "SELECT r.path,d.rel_path,CASE WHEN d.status='failed' AND d.reason='embed_failed' "
+                "THEN json_set(d.extraction_json,'$.index_failure',d.reason) "
+                "ELSE d.extraction_json END FROM documents d "
+                "JOIN roots r ON r.root_key=d.root_key "
+                f"WHERE d.root_key IN ({_placeholders(len(root_keys))}) "
+                "AND d.status != 'pending' AND d.extraction_json IS NOT NULL "
+                "AND (json_extract(d.extraction_json,'$.status') != 'complete' "
+                "OR json_extract(d.extraction_json,'$.index_truncation') IS NOT NULL "
+                "OR (d.status='failed' AND d.reason='embed_failed')) "
+                "ORDER BY d.rel_path LIMIT ?", (*root_keys, MAX_CATALOG_DOCUMENTS),
+            ).fetchall()
 
     # -- vectors -------------------------------------------------------------
 
@@ -518,7 +571,8 @@ class CatalogStore:
         """
         if not root_keys:
             return [], False
-        sql = f"""SELECT v.chunk_id, v.blob, v.norm, c.text, c.locator, d.rel_path, r.path
+        sql = f"""SELECT v.chunk_id, v.blob, v.norm, c.text, c.locator,
+                         d.rel_path, r.path, d.sha256, d.extraction_json
                   FROM vectors v JOIN chunks c ON c.chunk_id = v.chunk_id
                   JOIN documents d ON d.doc_id = c.doc_id
                   JOIN roots r ON r.root_key = d.root_key

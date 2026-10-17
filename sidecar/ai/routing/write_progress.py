@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sidecar.ai.config import read_environment_value
+from sidecar.ai.routing import heuristic_fires
 from sidecar.ai.routing.tool_execution_results import side_effecting_by_tool
 from sidecar.runtime.diagnostics import log_event
 
@@ -376,6 +377,9 @@ def write_progress_nudge_row(
             "tool_gate_armed": tracker.gate_next_step,
             "nudges_sent": tracker.nudges_sent,
         },
+    )
+    heuristic_fires.emit_heuristic_fire(
+        getattr(loop, "runtime", None), "write_progress_nudge", rung=tracker.rung,
     )
     return {"role": "system", "content": text}
 

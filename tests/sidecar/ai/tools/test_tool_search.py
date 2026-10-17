@@ -269,6 +269,20 @@ class TestComputeDeferralSet:
         )
         assert result == frozenset()
 
+    def test_tst_keeps_a_preset_servers_starter_tools_undeferred(self) -> None:
+        # Row 53 S5: the exact server name "rea" selects the preset; its other
+        # tools, and a same-named tool of another server, still defer.
+        rea_starter = _descriptor("mcp__rea__binary_session")
+        rea_starter.server_name = "rea"
+        rea_other = _descriptor("mcp__rea__list_procedures")
+        rea_other.server_name = "rea"
+        lookalike = _descriptor("mcp__rea2__binary_session")
+        lookalike.server_name = "rea2"
+        result = compute_deferral_set(
+            DeferralMode.TST, [rea_starter, rea_other, lookalike], BUILTIN_NAMES
+        )
+        assert result == frozenset({"mcp__rea__list_procedures", "mcp__rea2__binary_session"})
+
 
 def test_normalize_deferral_mode_defaults_to_tst() -> None:
     assert normalize_deferral_mode("tst-auto") is DeferralMode.TST_AUTO

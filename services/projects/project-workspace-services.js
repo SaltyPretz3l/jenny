@@ -68,6 +68,7 @@ function createProjectWorkspaceServiceResolver(service, { gitFactory = options =
     const workspaceTestRunnerService = service.hostMode !== 'server'
       && service.workspaceTestRunnerService?.forProjectAuthority
       ? service.workspaceTestRunnerService.forProjectAuthority(captured, owner, {
+        sessionId,
         isAllowed: () => service.hostMode !== 'server' && service.commandSandbox?.enabled !== true
           && service.configService?.getState?.()?.commandSandbox?.enabled !== true,
       }) : null;

@@ -1,0 +1,19 @@
+{
+  "purpose": "Raw ninfer-serve responses to Jenny's Qwen3.8 request shapes (roadmap row 54, slice N0).",
+  "captured": "2026-10-13",
+  "runtime": "natpate/ninfer-windows v0.9.1, ninfer-windows-0.9.1-win64-cuda131.zip, sha256 d05f9df73feb43b47de23cb09ee9b9e79b040afb8d73ae30a0f4c93dea379060",
+  "artifact": "neroued/Qwen3.8-27B-nvfp4-NInfer qwen3_8_27b_nvfp4.ninfer, sha256 74d2c57145e6ff11d1d2faa79594477f9bc903a611af1fb20218189fbbb77d82",
+  "gpu": "RTX 5090 32 GB, driver 610.88",
+  "launch": "ninfer-serve <artifact> --host 127.0.0.1 --port 8080 --model-id qwen3.8-27b-nvfp4 --max-context 32768 --spec mtp --draft-tokens 3 --max-concurrency 1",
+  "request_sampler": {"temperature": 0.6, "top_k": 20, "top_p": 0.95, "min_p": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
+  "cases": {
+    "think_on_medium.sse": "user '17*23, just the number'; reasoning_effort medium; chat_template_kwargs {enable_thinking: true, reasoning_effort: medium}",
+    "think_off.sse": "user 'Say hello in five words.'; reasoning_effort none; chat_template_kwargs {enable_thinking: false}",
+    "tool_call.sse": "user 'weather in Paris, use the tool'; get_weather(city) tool; thinking off",
+    "tool_call_thinking.sse": "user 'weather in Oslo, use the tool'; get_weather(city) tool; thinking medium",
+    "errors.json": "wrong model id (404), top_k 40 (400), five stop strings (400)",
+    "v1_models.json": "GET /v1/models",
+    "props.json": "GET /props (the Windows fork's llama-server-compatible shim); model_path redacted"
+  },
+  "also_accepted": "thinking_budget_tokens, repeat_penalty, presence_penalty, reasoning_effort xhigh and max_tokens above the window all returned 200."
+}

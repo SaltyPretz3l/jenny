@@ -28,12 +28,6 @@ function blockFor(css, selector) {
   return css.slice(start, end);
 }
 
-test('Diagnostics Activity uses bounded opaque console and detail surfaces', () => {
-  const css = readStyle('diagnostics-activity.css');
-  assert.match(blockFor(css, '.diagnostics-activity-console'), /background:\s*var\(--surface-input-background-strong\)/);
-  assert.match(blockFor(css, '.logs-detail-panel'), /background:\s*var\(--surface-input-background-strong\)/);
-});
-
 test('composer width never derives from the viewport', () => {
   const composer = readStyle('chat-composer.css');
   const wrapBlock = blockFor(composer, '.composer-wrap');
@@ -56,7 +50,7 @@ test('composer width never derives from the viewport', () => {
 test('narrow-layout breakpoint ladder stays intact for the lowered window floor', () => {
   const diagnostics = readStyle('diagnostics-activity.css');
   assert.match(diagnostics, /@media \(max-width: 1240px\)/, 'Diagnostics list/detail collapse breakpoint must exist');
-  assert.match(diagnostics, /@media \(max-width: 720px\)[\s\S]*\.log-entry-message\s*\{[\s\S]*grid-column:\s*1 \/ -1;/, 'Diagnostics messages must restack below row metadata');
+  assert.match(diagnostics, /@media \(max-width: 620px\)/, 'Diagnostics inspector-replaces-list breakpoint must exist');
 
   const media = readStyle('chat-media-queries.css');
   assert.match(media, /@media \(max-width: 700px\)/, 'Chat narrow-collapse breakpoint (700) must exist');

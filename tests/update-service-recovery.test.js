@@ -172,6 +172,40 @@ test('a rejected installer launch requires restart and never calls the updater a
   assert.equal(launches, 1);
 });
 
+test('install authorizes the quit before launching and revokes it when the launch is rejected', async (t) => {
+  const { service, updater } = fixture(t);
+  const calls = [];
+  service.authorizeQuit = () => calls.push('authorize');
+  service.revokeQuitAuthorization = () => calls.push('revoke');
+  updater.quitAndInstall = async () => {
+    calls.push('launch');
+    throw new Error('spawn rejected');
+  };
+  await service.check();
+  await service.download();
+
+  const failed = await service.install();
+
+  assert.equal(failed.errorStage, 'install');
+  assert.deepEqual(calls, ['authorize', 'launch', 'revoke']);
+});
+
+test('a late installer error event revokes the quit authorization too', async (t) => {
+  const { service, updater } = fixture(t);
+  const calls = [];
+  service.authorizeQuit = () => calls.push('authorize');
+  service.revokeQuitAuthorization = () => calls.push('revoke');
+  updater.quitAndInstall = () => { calls.push('launch'); };
+  await service.check();
+  await service.download();
+  await service.install();
+  assert.deepEqual(calls, ['authorize', 'launch'], 'a launch that did not fail keeps the authorization');
+
+  updater.emit('error', new Error('late spawn failure'));
+
+  assert.deepEqual(calls, ['authorize', 'launch', 'revoke']);
+});
+
 test('an installer error event after launch also latches until restart', async (t) => {
   const { service, updater } = fixture(t);
   let launches = 0;

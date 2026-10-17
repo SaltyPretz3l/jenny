@@ -825,7 +825,9 @@ def test_memory_policy_defaults_only_when_present() -> None:
     policy = memory_policy_from_params({"memory_policy": {}})
     assert policy is not None
     assert policy.enabled is True
-    assert policy.include_response_style is True
+    assert policy.capture == "auto"
+    assert policy.recall is True
+    assert policy.policy_epoch == 0
     assert policy.project_id == "project_general"
 
 
@@ -850,18 +852,45 @@ def test_memory_policy_accepts_authoritative_opt_out() -> None:
         {
             "memory_policy": {
                 "enabled": False,
-                "include_response_style": False,
+                "capture": "off",
+                "recall": False,
             }
         }
     )
     assert policy is not None
     assert policy.enabled is False
-    assert policy.include_response_style is False
+    assert policy.capture == "off"
+    assert policy.recall is False
+
+
+@pytest.mark.parametrize("capture", ["auto", "ask", "off"])
+def test_memory_policy_parses_capture_recall_and_epoch(capture: str) -> None:
+    policy = memory_policy_from_params(
+        {"memory_policy": {"capture": capture, "recall": False, "policy_epoch": 7}}
+    )
+    assert policy is not None
+    assert (policy.capture, policy.recall, policy.policy_epoch) == (capture, False, 7)
 
 
 @pytest.mark.parametrize(
     "value",
-    [None, True, [], {"enabled": 1}, {"include_response_style": "yes"}, {"extra": True}],
+    [
+        None,
+        True,
+        [],
+        {"enabled": 1},
+        {"extra": True},
+        # Retired by memory v2: the wire key now fails like any unknown field.
+        {"include_response_style": True},
+        {"capture": "always"},
+        {"capture": 1},
+        {"recall": "yes"},
+        {"recall": 1},
+        {"policy_epoch": -1},
+        {"policy_epoch": True},
+        {"policy_epoch": 1.5},
+        {"policy_epoch": "3"},
+    ],
 )
 def test_memory_policy_rejects_malformed_values(value: object) -> None:
     with pytest.raises(ValueError, match="memory_policy"):
@@ -876,3 +905,25 @@ def test_normalize_context_blocks_truncation_never_splits_a_codepoint() -> None:
     kept = result[0]["content"]
     assert len(kept.encode("utf-8")) <= MAX_CONTEXT_BLOCK_BYTES
     assert "�" not in kept
+
+
+def test_recent_chats_are_bounded_and_keep_first_duplicate() -> None:
+    from sidecar.runtime.chat_normalization import memory_policy_from_params
+    policy = memory_policy_from_params({"memory_policy": {"recent_chats": [
+        {"session_id": "a", "title": "First"}, {"session_id": "a", "title": "Second"},
+        {"session_id": "b", "title": ""},
+    ]}})
+    assert [(chat.session_id, chat.title) for chat in policy.recent_chats] == [("a", "First"), ("b", "")]
+
+
+@pytest.mark.parametrize("recent", [
+    [{"session_id": str(i), "title": ""} for i in range(7)],
+    [{"session_id": "a", "title": "", "extra": True}],
+    [{"session_id": "a", "title": "x" * 201}],
+    {}, [None], [{"session_id": "", "title": ""}],
+    [{"session_id": "x" * 257, "title": ""}], [{"session_id": "a", "title": 3}],
+])
+def test_recent_chats_reject_malformed_candidates(recent) -> None:
+    from sidecar.runtime.chat_normalization import memory_policy_from_params
+    with pytest.raises(ValueError, match=r"chat.send params.memory_policy.recent_chats"):
+        memory_policy_from_params({"memory_policy": {"recent_chats": recent}})

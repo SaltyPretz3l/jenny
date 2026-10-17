@@ -917,3 +917,17 @@ test('flattenReasoningEntriesFromPhases: falls back to fallback entries when no 
   assert.equal(result[0].id, 'r-fallback');
   assert.equal(result[0].text, 'Fallback entry');
 });
+
+test('normalizeMessageFields keeps a memory note receipt as at most five bounded memory chips', () => {
+  const chip = index => ({ result_kind: 'memory', action: 'remember', status: 'saved', memory_id: index,
+    operation_id: `reflect:s:abc:${index}`, scope: 'project', kind: 'fact', undoable: true,
+    text_preview: 'x'.repeat(300), origin: 'reflection', text: 'the full memory text', nested: { a: 1 } });
+  const notes = normalizeMessageFields({ role: 'assistant', kind: 'memory_note',
+    memory_notes: [chip(1), { result_kind: 'tool' }, null, chip(2), chip(3), chip(4), chip(5), chip(6)] }).memory_notes;
+  assert.deepEqual(notes.map(note => note.memory_id), [1, 2, 3], 'the first five entries, less the non-memory ones');
+  assert.deepEqual(Object.keys(notes[0]).sort(), ['action', 'kind', 'memory_id', 'operation_id', 'origin', 'result_kind',
+    'scope', 'status', 'text_preview', 'undoable']);
+  assert.equal(notes[0].text_preview.length, 256);
+  assert.equal('memory_notes' in normalizeMessageFields({ role: 'assistant', memory_notes: [{ result_kind: 'tool' }] }), false);
+  assert.equal('memory_notes' in normalizeMessageFields({ role: 'assistant', memory_notes: { result_kind: 'memory' } }), false);
+});

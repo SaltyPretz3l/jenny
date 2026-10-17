@@ -3,6 +3,55 @@ const assert = require('node:assert/strict');
 
 const { normalizeLogEntry, toPersistedMainLog } = require('../services/log-entry-normalizer');
 
+test('sidecar levels normalize aliases for every event', () => {
+  for (const [level, expected] of [
+    ['WARNING', 'WARN'], ['critical', 'ERROR'], ['FaTaL', 'ERROR'],
+    ['PANIC', 'ERROR'], ['err', 'ERROR'], ['ERROR', 'ERROR'],
+    ['WARN', 'WARN'], ['INFO', 'INFO'], ['DEBUG', 'DEBUG'], ['TRACE', 'INFO'],
+    ['unknown', 'INFO'],
+  ]) {
+    assert.equal(normalizeLogEntry({ layer: 'sidecar', event: 'sidecar.event', level }).level, expected, level);
+  }
+});
+
+test('timestamps canonicalize parseable offsets', () => {
+  assert.equal(normalizeLogEntry({ ts: '2026-10-14T08:30:00-05:00' }).ts, '2026-10-14T13:30:00.000Z');
+});
+
+test('invalid timestamps become current time', () => {
+  const before = Date.now();
+  const ts = normalizeLogEntry({ ts: 'zzz' }).ts;
+  assert.ok(Date.parse(ts) >= before && Date.parse(ts) <= Date.now(), ts);
+});
+
+for (const sharedData of [false, true]) {
+  test(`details-derived data is redacted once (shared data: ${sharedData})`, () => {
+    let reads = 0;
+    const details = { nested: { get message() { reads += 1; return 'private /workspace/file.txt'; } } };
+    const entry = normalizeLogEntry({ details, ...(sharedData ? { data: details } : {}) }, {
+      redaction_prefixes: ['/workspace'],
+    });
+    assert.equal(reads, 1);
+    assert.deepEqual(entry.data.nested, entry.details.nested);
+    assert.match(entry.data.nested.message, /^private \[redacted:path\]/);
+  });
+}
+
+test('raw canonical ingress stores byte-identical output to the previous two-pass path', () => {
+  const { DiagnosticLogService } = require('../services/diagnostic-log-service');
+  const details = { message: 'opened /workspace/file.txt', session_id: 'session-1', nested: { token: 'secret' } };
+  const raw = {
+    ts: '2026-10-14T13:30:00.000Z', level: 'WARN', layer: 'electron',
+    component: 'electron.main', event: 'workspace.opened', message: details.message,
+    details, data: details, status: 'ok', redaction_mode: 'redacted',
+  };
+  const defaults = { redaction_prefixes: ['/workspace'] };
+  const oldService = new DiagnosticLogService({ runId: 'fixed-run' });
+  const newService = new DiagnosticLogService({ runId: 'fixed-run' });
+  const previous = oldService.append(toPersistedMainLog(raw.level, normalizeLogEntry(raw, defaults)));
+  assert.equal(JSON.stringify(newService.append(raw, { defaults })), JSON.stringify(previous));
+});
+
 test('normalizer defaults invalid envelope names and preserves dotted names and identifiers', () => {
   const invalid = normalizeLogEntry({ event: 'bad event "quoted"', component: 'bad component', status: 'token=sk-test-SYNTHETIC123', level: 'LOUD' });
   assert.equal(invalid.event, 'electron.event');

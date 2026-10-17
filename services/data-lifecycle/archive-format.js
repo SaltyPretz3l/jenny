@@ -6,6 +6,7 @@ const path = require('path');
 const { pipeline } = require('stream/promises');
 const { Transform, Writable } = require('stream');
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
+const { removeFile } = require('../fs-remove-no-follow');
 
 const ARCHIVE_FORMAT = 'jenny-data-archive';
 const ARCHIVE_FORMAT_VERSION = 1;
@@ -254,7 +255,7 @@ async function decryptFileToPath({ sourcePath, destinationPath, masterKey, salt,
       fs.createWriteStream(destinationPath, { flags: 'wx' })
     );
   } catch (error) {
-    await fs.promises.rm(destinationPath, { force: true }).catch(() => {});
+    await removeFile(destinationPath).catch(() => {});
     throw decryptFailure(error);
   }
   return hash.digest('hex');

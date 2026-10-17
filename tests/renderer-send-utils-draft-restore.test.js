@@ -471,3 +471,23 @@ test('dispatchQueuedSendForSession re-stashes a rejected queued send without rep
   assert.deepEqual(restoredQueue.attachments, [imageAttachment]);
   assert.equal(harness.state.currentSessionId, 'session-2');
 });
+
+
+test('queued image edit restores source context on Stop and preserves a newer selection', async (t) => {
+  const harness = createHarness({ cancelStream: async () => ({ ok: true }), trackQueuedRestore: true });
+  t.after(() => harness.restore());
+  let restored = null; let current = null;
+  global.window.rendererImageEditDraftController = {
+    snapshot: () => current, restore: (record) => { restored = record; },
+  };
+  const imageEditSnapshot = { sessionId: 'session-1', artifactId: 'original' };
+  harness.controller.stashQueuedSendForSession('session-1', { prompt: 'edit image', meta: { imageEditSnapshot } });
+  harness.controller.restoreQueuedSendDraft('session-1');
+  assert.deepEqual(restored, imageEditSnapshot);
+  assert.equal(harness.chatInput.value, 'edit image');
+  harness.chatInput.value = ''; restored = null; current = { artifactId: 'newer' };
+  harness.controller.stashQueuedSendForSession('session-1', { prompt: 'old edit', meta: { imageEditSnapshot } });
+  assert.equal(harness.controller.restoreQueuedSendDraft('session-1'), null);
+  assert.equal(restored, null);
+  assert.ok(harness.controller.getQueuedSend('session-1'));
+});

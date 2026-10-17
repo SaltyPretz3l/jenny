@@ -133,15 +133,20 @@ def build_invoked_skill_message(
     return str(invoked_builder(skill_invocation, **skill_kwargs) or "")
 
 
-def build_prompt_memory_recall_system_message(
+def build_prompt_memory_recall_system_message(  # noqa: PLR0913 - one overlay, six inputs.
     *,
     context_builder: ContextBuilder,
     memory_store: Any,
     latest_user_content: str,
     memory_policy: Any = None,
     log_context: RuntimeOverlayLogContext,
+    session_id: str | None = None,
 ) -> str:
-    """Recall and render approved memories as a runtime-only system overlay."""
+    """Recall and render approved memories as a runtime-only system overlay.
+
+    ``session_id`` admits the chat's own chat-scope rows beside project and
+    General rows; without it only shared rows are candidates.
+    """
     if memory_policy is not None and not bool(getattr(memory_policy, "enabled", True)):
         return ""
     normalized_query = str(
@@ -158,10 +163,11 @@ def build_prompt_memory_recall_system_message(
             if isinstance(memory_store, MemoryService)
             else MemoryService(memory_store)
         )
-        memories = service.recall_for_prompt(
+        memories, recaps = service.recall_for_prompt_with_recaps(
             normalized_query,
             policy=memory_policy,
             limit=PROMPT_MEMORY_RECALL_LIMIT,
+            scope_session_id=str(session_id or "") or None,
         )
     except Exception as error:  # noqa: BLE001
         log_event(
@@ -177,6 +183,8 @@ def build_prompt_memory_recall_system_message(
         )
         return ""
 
+    if recaps:
+        return context_builder.build_memory_recall_system_message(memories, recaps=recaps)
     return context_builder.build_memory_recall_system_message(memories)
 
 
@@ -359,6 +367,24 @@ def _python_runtime_environment_status(config: Any) -> str:
     return "not built (first use may take minutes)"
 
 
+def _tool_path_policy(config: Any) -> str:
+    if host_policy_is_enforced(config):
+        return (
+            "tool_path_policy: hosted tools are policy-gated; desktop executable "
+            "discovery is disabled."
+        )
+    from sidecar.ai.mcp.builtin_command_discovery import COMMANDS
+
+    return (
+        "tool_path_policy: desktop built-in tools use a constructed PATH: verified "
+        f"executable directories for {', '.join(COMMANDS)} in parent PATH order, "
+        "then standard Windows install candidates when applicable, then system directories. "
+        "The built-in server's private virtual environment and unrelated parent PATH entries "
+        "are excluded. Discovery does not guarantee installation; use an absolute executable "
+        "path for tools outside this PATH. Third-party MCP keeps its restricted environment."
+    )
+
+
 def _render_session_environment_block(
     *,
     config: Any,
@@ -400,6 +426,7 @@ def _render_session_environment_block(
             f"case_sensitive_paths: {'no' if is_windows else 'yes'}"
         ),
         f"platform: {sys.platform}   shell: {shell._shell_name()}",
+        _tool_path_policy(config),
     ]
     if root is not None:
         git_root = git_ops._find_git_root(root, root)
@@ -437,6 +464,30 @@ def _render_session_environment_block(
     return "\n".join(lines)
 
 
+def _connected_tool_guidance(config: Any, tool_schemas: Any) -> str:
+    """Static preset guidance for each preset MCP server whose tools ride this request.
+
+    A configured row owns the tools in its namespace (the attribution
+    ``iteration_limits`` uses) and its catalog ``connection_id`` is
+    ``mcp:<row name>``, so this is the contract's connection test on the final
+    prompt payload. The text is code-owned (``sidecar/ai/mcp/presets.py``), never
+    server output.
+    """
+    from sidecar.ai.mcp.presets import preset_guidance
+    from sidecar.ai.mcp.tool_namespace import is_external_mcp_tool_of_server
+
+    names = [
+        str(schema.get("name") or "") for schema in tool_schemas or () if isinstance(schema, dict)
+    ]
+    sections: list[str] = []
+    for row in getattr(config, "mcp_servers", None) or ():
+        server_name = str(getattr(row, "name", "") or "")
+        guidance = preset_guidance(server_name)
+        if guidance and any(is_external_mcp_tool_of_server(server_name, name) for name in names):
+            sections.append(f"# Connected tool guidance: {server_name}\n{guidance}")
+    return "\n\n".join(sections)
+
+
 def runtime_clock_line() -> str:
     """The current local time sentence for 24-hour-time users."""
     from datetime import datetime
@@ -461,7 +512,11 @@ def append_session_environment_runtime_system_message(  # noqa: PLR0913
     and fail-closed: any source or render failure degrades to a no-op so this
     orientation signal can never break a turn. Built for every request so the
     workspace and post-budget tool surface cannot go stale between turns.
+
+    Connected-tool guidance (row 53) rides this message after its facts, even
+    with the flag off, so it inherits the registered self-replacing heading.
     """
+    guidance = _connected_tool_guidance(config, tool_schemas)
     time_preference = ""
     if getattr(config, "use_24_hour_time", False) is True:
         time_preference = "Time display preference: use 24-hour time (00:00–23:59) in replies."
@@ -470,9 +525,10 @@ def append_session_environment_runtime_system_message(  # noqa: PLR0913
         if not trailing_turn_context_enabled(config):
             time_preference += f" {runtime_clock_line()}"
     if not getattr(config, "session_environment_overlay_enabled", True):
-        if time_preference:
+        tail = "\n\n".join(part for part in (time_preference, guidance) if part)
+        if tail:
             runtime_system_messages.append(
-                f"{runtime_message_markers.SESSION_ENVIRONMENT_HEADING}\n{time_preference}"
+                f"{runtime_message_markers.SESSION_ENVIRONMENT_HEADING}\n{tail}"
             )
         return
     try:
@@ -498,6 +554,8 @@ def append_session_environment_runtime_system_message(  # noqa: PLR0913
         return
     if time_preference:
         block += f"\n{time_preference}"
+    if guidance:
+        block += f"\n\n{guidance}"
     runtime_system_messages.append(block)
 
 

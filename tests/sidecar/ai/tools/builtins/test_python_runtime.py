@@ -1411,7 +1411,9 @@ def test_windows_sandbox_starts_process_suspended_before_job_assignment(
     processes: list[object] = []
 
     class _FakeProcess:
+        pid = 4321  # Popen contract; owned-process recording is disabled on Windows.
         returncode = 0
+        pid = 123
         _handle = 123
         _thread = 456
 
@@ -1559,7 +1561,9 @@ def test_windows_sandbox_working_directory_and_scratch_environment(
     processes: list[object] = []
 
     class _FakeProcess:
+        pid = 4321  # Popen contract; owned-process recording is disabled on Windows.
         returncode = 0
+        pid = 123
 
         def __init__(self, argv: list[str], **kwargs: object) -> None:
             self.args = argv

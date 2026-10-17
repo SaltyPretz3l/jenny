@@ -176,3 +176,16 @@ def test_sidecar_entrypoint_rejects_conflicting_permission_flags() -> None:
             ]
         )
     assert error.value.code == 2
+
+
+
+def test_owned_ledger_helper_dispatches_before_server_or_multiprocessing(monkeypatch):
+    import multiprocessing
+
+    from sidecar.runtime import owned_process_ledger_helper
+    calls = []
+    monkeypatch.setattr(owned_process_ledger_helper, "main", lambda: calls.append("ledger") or 0)
+    monkeypatch.setattr(multiprocessing, "freeze_support", lambda: calls.append("freeze"))
+    monkeypatch.setattr(sidecar_main, "run", lambda argv: calls.append("server"))
+    assert sidecar_main.main(["--owned-process-ledger-helper"]) == 0
+    assert calls == ["ledger"]

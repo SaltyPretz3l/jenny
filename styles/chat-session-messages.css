@@ -1,0 +1,259 @@
+/* Addressed session messages in the timeline (row 59 checkpoint 4): the "Included in the turn"
+   card and the discard receipt. Markup: renderer/chat/renderer-session-message-rows.js.
+   The text is another chat's, attributed and plain; it is never styled as an instruction. */
+
+.session-message-card {
+  display: grid;
+  gap: var(--space-5);
+  min-width: 0;
+  max-width: min(100%, var(--chat-card-max-width));
+  padding-block: var(--space-6);
+  padding-inline: var(--space-7);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+}
+
+.session-message-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-width: 0;
+  font-size: var(--font-size-footnote);
+}
+
+/* The From chip: "From" muted, the source chat's title strong. A button when the chat exists. */
+.session-message-from {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding-block: var(--space-1);
+  padding-inline: var(--space-5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: start;
+}
+
+button.session-message-from {
+  cursor: pointer;
+}
+
+button.session-message-from:hover {
+  border-color: var(--border-strong);
+  background: var(--widget-action-hover-bg);
+}
+
+button.session-message-from:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.session-message-from-label {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.session-message-from-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-message-from--static .session-message-from-title {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.session-message-meta {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* The exact text, with its line breaks and nothing re-interpreted. */
+.session-message-body {
+  margin: 0;
+  color: var(--text-primary);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Status line: dot + state word (the receipt grammar of the other cards). */
+.session-message-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-block-size: 24px;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.session-message-state {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.session-message-card[data-session-message-state="discarded"] .session-message-body {
+  color: var(--text-secondary);
+}
+
+/* A linked child's report to its parent (row 59 cp5b-1): the same card, with the child's outcome
+   word beside the chip (danger tone for a failed turn), a clipped marker under the answer and an
+   Open chat link in the status line. The Review dialog (.chat-review__*) shares the outcome and
+   clipped looks. Markup: renderer/chat/renderer-session-message-rows.js and
+   renderer/chat/renderer-chat-messages-review.js. */
+.session-message-outcome,
+.chat-review__outcome {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.session-message-outcome[data-tone="ok"],
+.chat-review__outcome[data-tone="ok"] { color: var(--text-secondary); }
+.session-message-outcome[data-tone="warn"],
+.chat-review__outcome[data-tone="warn"] { color: var(--state-warning); }
+.session-message-outcome[data-tone="muted"],
+.chat-review__outcome[data-tone="muted"] { color: var(--text-muted); }
+.session-message-outcome[data-tone="error"],
+.chat-review__outcome[data-tone="error"] { color: var(--text-danger-emphasis); }
+
+.session-message-clipped,
+.chat-review__clipped {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  overflow-wrap: anywhere;
+}
+
+.session-message-link.session-message-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--text-secondary) 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+.session-message-link.session-message-link:hover { color: var(--text-primary); }
+
+.session-message-link.session-message-link:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Agent message approval (row 59 cp5b-2): the approval card for a `session_message` send shows the
+   recipient, the whole body in a scrollable, selectable region (text only) and the short hash.
+   Markup: renderer/chat/renderer-approval-block.js. */
+.tool-approval-message {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.tool-approval-message-recipient {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  font-size: var(--tl-font-detail);
+}
+
+.tool-approval-message-label,
+.tool-approval-message-project {
+  color: var(--text-muted);
+}
+
+.tool-approval-message-title {
+  min-width: 0;
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.tool-approval-message-body {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  max-height: 16em;
+  overflow: auto;
+  font: inherit;
+  font-size: var(--tl-font-detail);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-surface-2) 70%, transparent);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--tl-radius-control);
+}
+
+.tool-approval-message-body:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.tool-approval-message-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--tl-font-detail);
+  overflow-wrap: anywhere;
+}
+
+.tool-approval-message-hash {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Directional grant section of the Send dialog: the seven-day opt-in with its purpose, or the
+   live grant with Revoke. Markup: renderer/chat/renderer-chat-send-modal.js. */
+.chat-send__grant {
+  display: grid;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.chat-send__grant:empty { display: none; }
+
+.chat-send__grant-title,
+.chat-send__grant-detail,
+.chat-send__grant-purpose,
+.chat-send__grant-hint {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.chat-send__grant-title {
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+  font-weight: 600;
+}
+
+.chat-send__grant-detail,
+.chat-send__grant-purpose,
+.chat-send__grant-hint {
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+.chat-send__grant-hint[data-invalid="true"] { color: var(--text-danger-emphasis); }

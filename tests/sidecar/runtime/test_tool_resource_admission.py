@@ -79,10 +79,10 @@ def test_resource_lease_uses_exact_admit_and_settle_wire() -> None:
     assert len(sent) == 2
     assert set(sent[0]) == {"jsonrpc", "api_version", "id", "method", "params"}
     assert sent[0]["jsonrpc"] == "2.0"
-    assert sent[0]["api_version"] == "2026-08-17"
+    assert sent[0]["api_version"] == "2026-10-15"
     assert sent[0]["method"] == "runtime.operation"
     assert sent[0]["params"] == {
-        "api_version": "2026-08-17",
+        "api_version": "2026-10-15",
         "schema_version": 1,
         "kind": "tool",
         "request_id": "request_1",
@@ -94,7 +94,7 @@ def test_resource_lease_uses_exact_admit_and_settle_wire() -> None:
         "arguments": {"path": "a.txt"},
     }
     assert sent[1]["params"] == {
-        "api_version": "2026-08-17",
+        "api_version": "2026-10-15",
         "schema_version": 1,
         "kind": "tool",
         "request_id": "request_1",

@@ -21,6 +21,7 @@ from sidecar.ai.routing.retry import (
     execute_with_provider_retry,
 )
 from sidecar.runtime.diagnostics import log_event
+from sidecar.runtime.inference_admission import bound_auxiliary_cancel_handle
 
 _MAX_TOKENS = 300
 _TEMPERATURE = 0.85
@@ -106,19 +107,25 @@ def _parse_and_validate(raw: str) -> List[str]:
     return valid[:_MAX_VALID_PROMPTS] if len(valid) >= _MIN_VALID_PROMPTS else []
 
 
-def generate_suggestions(
+def generate_suggestions(  # noqa: PLR0913 -- keyword-only request ports
     brain_container: BrainContainer,
     context: Dict[str, Any],
     logger: logging.Logger,
     *,
     request_id: str | None = None,
     inference_admission: Any | None = None,
+    cancel_handle: Any | None = None,
 ) -> List[str]:
     """Generate contextual prompt suggestions using the configured engine.
 
     Returns a list of 2-4 short prompt strings, or an empty list on provider
-    failure. Typed application admission failures propagate to the RPC boundary.
+    failure. Typed application admission failures and a cancellation of
+    ``cancel_handle`` (default: the auxiliary worker's bound handle) propagate
+    to the RPC boundary.
     """
+    if cancel_handle is None:
+        cancel_handle = bound_auxiliary_cancel_handle()
+    cancel_kwargs = {} if cancel_handle is None else {"cancel_handle": cancel_handle}
     stack = brain_container.stack
     if stack is None:
         log_event(
@@ -152,6 +159,7 @@ def generate_suggestions(
                 prompt_cache_enabled=prompt_cache_enabled,
                 system=_SYSTEM_PROMPT,
                 response_format=ResponseFormat(type="json_object"),
+                **cancel_kwargs,
             ),
             logger=logger,
             component="runtime.suggestions",
@@ -163,10 +171,13 @@ def generate_suggestions(
             feature_flags=stack.config.feature_flags,
             request_id=request_id,
             inference_admission=inference_admission,
+            cancel_handle=cancel_handle,
         )
     except InferenceAdmissionError:
         raise
     except Exception:  # noqa: BLE001  # boundary
+        if cancel_handle is not None and cancel_handle.cancelled:
+            raise
         log_event(
             logger,
             logging.WARNING,

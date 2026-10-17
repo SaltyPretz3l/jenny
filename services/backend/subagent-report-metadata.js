@@ -17,6 +17,9 @@ const MAX_ANSWER_CHARS = 4000;
 const MAX_STEPS = 40;
 const MAX_STEP_NAME_CHARS = 64;
 const MAX_STEP_TEXT_CHARS = 160;
+// Child deadlines derive from the parent turn's wall clock, whose longest
+// supported setting is cloud_max_loop_wall_seconds' 86,400 s ceiling (sidecar/ai/config.py).
+const MAX_RUNTIME_MS = 86400000;
 const REPORT_STATUSES = new Set([
   'completed', 'partial', 'failed', 'cancelled', 'rejected', 'skipped_budget',
 ]);
@@ -70,7 +73,26 @@ function normalizeSubagentReport(value) {
   if (answer) report.answer = answer;
   const steps = normalizeSteps(value.steps);
   if (steps.length) report.steps = steps;
+  for (const key of ['model', 'provider', 'reasoning_effort']) {
+    const text = safeRoute(value[key]);
+    if (text) report[key] = text;
+  }
   return report;
+}
+
+// Ephemeral cumulative snapshot; never attach it to persisted report metadata.
+function normalizeChildActivity(value) {
+  if (!isRecord(value)) return null;
+  const sequence = optionalInteger(value.sequence, 1, MAX_TOKEN_COUNT);
+  if (sequence == null) return null;
+  return {
+    sequence,
+    steps: normalizeSteps(value.steps),
+    step_count: optionalInteger(value.step_count, 0, MAX_TOKEN_COUNT) || 0,
+    text: safeMultilineText(value.text, MAX_ANSWER_CHARS),
+    text_truncated: value.text_truncated === true,
+    visible_output_tokens_estimate: optionalInteger(value.visible_output_tokens_estimate, 0, MAX_TOKEN_COUNT),
+  };
 }
 
 function normalizeSubagentBatchReport(value) {
@@ -130,6 +152,7 @@ function normalizeUsage(value) {
   if (model) result.model = model;
   if (!Object.keys(result).length) return null;
   result.estimated = value.estimated === true;
+  if (value.partial === true) result.partial = true;
   return result;
 }
 
@@ -183,6 +206,7 @@ function normalizeSteps(value) {
       display: safeText(entry.display, MAX_STEP_NAME_CHARS) || tool,
       ok: entry.ok === true,
     };
+    if (['running', 'completed', 'failed', 'interrupted'].includes(entry.status)) step.status = entry.status;
     // Only an admitted (ok) call keeps a target: a refused one may name a path
     // outside the workspace, so its row carries the scrubbed error alone. Only
     // a refused call keeps an error line: a successful one has no output here.
@@ -244,16 +268,16 @@ function normalizeBudget(value) {
     max_steps: 32,
     iterations_used: 32,
     tool_results_used: 10000,
-    max_runtime_ms: 600000,
-    elapsed_ms: 600000,
+    max_runtime_ms: MAX_RUNTIME_MS,
+    elapsed_ms: MAX_RUNTIME_MS,
     max_tasks: 3,
     tasks_requested: 3,
     tasks_started: 3,
     tasks_completed: 3,
     tasks_partial: 3,
     max_total_steps: 32,
-    effective_max_total_runtime_ms: 600000,
-    max_total_runtime_ms: 600000,
+    effective_max_total_runtime_ms: MAX_RUNTIME_MS,
+    max_total_runtime_ms: MAX_RUNTIME_MS,
     parent_synthesis_reserve_ms: 600000,
   })) {
     const count = optionalInteger(value[key], 0, maximum);
@@ -276,7 +300,7 @@ function normalizeStringList(value, limit, chars) {
 }
 
 function normalizeRoutes(value) {
-  return normalizeStringList(value, MAX_ROUTES, 96).map(safeRoute).filter(Boolean);
+  return normalizeStringList(value, MAX_ROUTES, 138).map(safeRoute).filter(Boolean);
 }
 
 function normalizeRelativePath(value) {
@@ -288,9 +312,8 @@ function normalizeRelativePath(value) {
 }
 
 function safeRoute(value) {
-  if (typeof value !== 'string' || /[\\/]/.test(value)) return '';
-  const text = safeText(value, 96);
-  return text && !/[\\/]/.test(text) ? text : '';
+  if (typeof value !== 'string' || !/^(?:codex-cli\/)?[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value)) return '';
+  return safeText(value, 138, KEEP_PATHS);
 }
 
 // Bidi overrides, zero-width and C1 controls: never wire-meaningful, only spoof what a row says.
@@ -348,4 +371,5 @@ module.exports = {
   normalizeSubagentMetadata,
   normalizeSubagentReport,
   normalizeUsage,
+  normalizeChildActivity,
 };

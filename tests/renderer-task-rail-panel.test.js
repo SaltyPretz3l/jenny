@@ -18,7 +18,11 @@ test('toggle opens tasks mode with rail layout and narrow overlay behavior', asy
   assert.equal(toggle.getAttribute('aria-pressed'), 'true');
   assert.match(app.window.document.getElementById('workspace').style.getPropertyValue('--artifact-review-width'), /^\d+px$/);
 
-  const narrow = await boot({ active: [row('narrow', 'Narrow')] }, { workspaceWidth: 900 });
+  const medium = await boot({ active: [row('medium', 'Medium')] }, { workspaceWidth: 900 });
+  t.after(() => medium.dispose());
+  assert.equal((await openTasks(medium)).classList.contains('artifact-review-overlay'), false);
+
+  const narrow = await boot({ active: [row('narrow', 'Narrow')] }, { workspaceWidth: 760 });
   t.after(() => narrow.dispose());
   const narrowPanel = await openTasks(narrow);
   assert.equal(narrowPanel.classList.contains('artifact-review-overlay'), true);

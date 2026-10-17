@@ -34,6 +34,9 @@ const AFTER_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/i;
 const REASON_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
 const IN_CHECKPOINT = new Set(['tracked', 'untracked', 'absent']);
 const DISK_KINDS = new Set(['missing', 'file', 'directory', 'symlink', 'other']);
+// Sidecar reasons for an undo that stopped partway and stays resumable.
+const RESUMABLE_UNDO_REASONS = new Set(['restore_io_failed', 'restore_path_unsafe']);
+const MAX_PENDING_DRAFTS = 8;
 const ROOT_LEVEL_FS_CODES = new Set([
   WORKSPACE_FS_ERROR_CODES.ROOT_TRANSITIONING,
   WORKSPACE_FS_ERROR_CODES.STALE_GENERATION,
@@ -160,6 +163,9 @@ function createWorkspaceRecoveryFileHandlers({
   const store = safetyCopies || new WorkspaceRecoverySafetyCopyStore();
   // A token restores once at a time: a second request waits for no one, it fails.
   const restoringTokens = new Set();
+  // changeSetId -> { binding, draft }: the pre-undo capture of an undo that
+  // stopped partway, kept for its resume so Redo covers every file it changed.
+  const pendingDrafts = new Map();
   const maxBytes = store.limits.maxFileBytes;
   const unavailable = (what) => failure('recovery_unavailable', `${what} is unavailable right now.`);
 
@@ -343,7 +349,8 @@ function createWorkspaceRecoveryFileHandlers({
 
   // Journal undo with a safety copy: capture the plan's paths, run the same
   // undo, then record each path's post-undo state. A failed undo discards the
-  // copy; a needs_review outcome keeps it.
+  // copy; a needs_review outcome keeps it. An undo that stopped partway keeps
+  // its capture for the resume, which adds only the paths it does not hold yet.
   async function undoWithSafetyCopy(changeSetId, undoParams) {
     if (!ideService) return unavailable('Undo with a safety copy');
     const preflight = await callRpc(methods.preflight, { change_set_id: changeSetId });
@@ -352,8 +359,15 @@ function createWorkspaceRecoveryFileHandlers({
     if (targets.length > MAX_PATHS) return failure('too_many_paths', 'This change touches too many files to keep a safety copy.');
     const captured = await withRootOperation('read', async (operation) => {
       const binding = ideService.recoveryBinding(operation);
-      const draft = store.startCopy(binding);
+      const pending = pendingDrafts.get(changeSetId);
+      pendingDrafts.delete(changeSetId);
+      const resumed = Boolean(pending && pending.binding.rootId === binding.rootId && pending.binding.workspaceId === binding.workspaceId);
+      const draft = resumed ? pending.draft : store.startCopy(binding);
+      // A resume extends the stopped attempt's copy: a path it already holds
+      // keeps the bytes from before the first attempt (Redo restores those).
+      const kept = new Set(Array.from(draft.entries(), ([relPath]) => relPath));
       for (const { raw, relPath } of targets) {
+        if (kept.has(relPath || raw)) continue;
         if (!relPath) {
           draft.markUnavailable(raw, 'path_invalid');
           continue;
@@ -362,12 +376,20 @@ function createWorkspaceRecoveryFileHandlers({
         if (current.capture) draft.record(relPath, current.capture);
         else draft.markUnavailable(relPath, current.reason);
       }
-      return { binding, draft };
+      return { binding, draft, resumed };
     });
     if (captured.error) return failure(captured.error, 'The workspace changed before the undo could start.');
     const undo = await callRpc(methods.undo, undoParams);
+    const { binding, draft, resumed } = captured.value;
+    // A resume refused as busy wrote nothing: its copy still holds the bytes
+    // from before the first attempt, which a recapture would lose (w2f5-R2).
+    const keepDraft = RESUMABLE_UNDO_REASONS.has(undo.reason) || (resumed && undo.reason === 'restore_workspace_busy');
+    if (!undo.ok && keepDraft) {
+      pendingDrafts.set(changeSetId, { binding, draft });
+      if (pendingDrafts.size > MAX_PENDING_DRAFTS) pendingDrafts.delete(pendingDrafts.keys().next().value);
+      return undo;
+    }
     if (!undo.ok && undo.status !== 'needs_review') return undo;
-    const { binding, draft } = captured.value;
     const post = await withRootOperation('read', async (operation) => {
       const current = ideService.recoveryBinding(operation);
       if (current.rootId !== binding.rootId || current.workspaceId !== binding.workspaceId) return null;

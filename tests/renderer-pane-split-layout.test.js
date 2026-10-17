@@ -58,8 +58,9 @@ const PRE_W1_CHAT_VIEW_IDS = Object.freeze([
   'composerRunModeHint', 'composerRunModeSlot',
   'composerSendDisabledReason', 'composerSettingsButton', 'composerSettingsDisabledReason',
   'composerStatusNotice', 'composerTerminalShortcut', 'composerToolToggleSlot', 'composerTurnTimer',
-  'composerV2FailedSendNotice', 'composerWayfinderHost', 'composerWrap', 'contextArtifactCount',
-  'contextArtifactExpand', 'contextArtifactList', 'contextArtifactSection', 'contextLogCount',
+  'composerV2FailedSendNotice', 'composerWayfinderHost', 'composerWrap',
+  // Row 59 checkpoint 2: the context panel's Artifacts list (count, expand, list) is gone; its section keeps the toggle.
+  'contextArtifactSection', 'contextLogCount',
   'contextLogDisclosure', 'contextLogSection', 'contextPanelToggle',
   // 2026-09-27: contextPulse + contextPulseSection dropped (Session Pulse removed from the context rail).
   'contextSessionLogs', 'heroAvatar', 'heroRuntimeHint', 'heroStack',
@@ -90,7 +91,8 @@ const REMOVED_LEGACY_ARTIFACT_PANEL_IDS = Object.freeze([
 const W1_ADDED_IDS = Object.freeze(['chatPane0', 'chatPaneKicker', 'chatPaneResizer', 'chatPaneTemplate']);
 // W3-3 (2026-09-26) adds one wrapper on purpose: pane 0's composer settings
 // group (display: contents until the toolbar collapses into the summary pill).
-const W3_ADDED_IDS = Object.freeze(['composerSettingsGroup']);
+// Row 59 checkpoint 4 (2026-10-15) adds pane 0's addressed-message strip host.
+const W3_ADDED_IDS = Object.freeze(['composerSettingsGroup', 'composerMessageStrip']);
 const CHAT_PANEL_IDS = ['composerChatChipHost', 'composerChatPanel', 'composerChatPanelTitle',
   'composerChatPanelChips', 'composerChatPanelList', 'composerChatPosture', 'composerChatPostureDot', 'composerChatPostureText'];
 const REMOVED_GEAR_IDS = ['composerSettingsButton', 'composerSettingsDisabledReason', 'composerGearPostureDot', 'composerRunModeHint'];
@@ -120,8 +122,10 @@ const RUNTIME_BUILT_CONTROL_NAMES = Object.freeze([
 // by id and gains no data-chat-node (one pane stays byte-identical), so
 // CHAT_PANE_NODE_NAMES and the 19 + 9 + 3 split are unchanged and the pane
 // composition resolves these three inside the pane root.
+// Row 59 checkpoint 4 adds composerMessageStrip (the addressed-message strip above the status
+// notice) on the same terms: pane 0 by id, the template by data-chat-node.
 const PANE_TEMPLATE_NOTICE_NAMES = Object.freeze([
-  'composerAttachmentPreviewPill', 'composerStatusNotice', 'composerV2FailedSendNotice',
+  'composerAttachmentPreviewPill', 'composerMessageStrip', 'composerStatusNotice', 'composerV2FailedSendNotice',
 ]);
 // View-level grid columns that stay pane 0's until Wave 2 gives the artifact
 // panel to a pane.
@@ -167,7 +171,7 @@ test('one-pane identity: #chatView ids are the pre-W1 set plus exactly the four 
   const chatView = documentRef.getElementById('chatView');
   const ids = [...chatView.querySelectorAll('[id]')].map((node) => node.id).sort();
 
-  assert.equal(PRE_W1_CHAT_VIEW_IDS.length, 98); // 107 less the two Session Pulse ids (2026-09-27), less timelineCollapseExpandToggle (transcript views, 2026-09-29), less the four remote banner ids (Remote Control removed, 2026-10-02), less chatSpriteHolo (sprite holo retired, 2026-10-02), less pluginSessionFallbackAction (plugin platform retired, 2026-10-05)
+  assert.equal(PRE_W1_CHAT_VIEW_IDS.length, 95); // 107 less the two Session Pulse ids (2026-09-27), less timelineCollapseExpandToggle (transcript views, 2026-09-29), less the four remote banner ids (Remote Control removed, 2026-10-02), less chatSpriteHolo (sprite holo retired, 2026-10-02), less pluginSessionFallbackAction (plugin platform retired, 2026-10-05), less contextArtifactCount/Expand/List (the context panel's Artifacts list retired, row 59 checkpoint 2, 2026-10-15)
   assert.deepEqual(
     ids,
     [...PRE_W1_CHAT_VIEW_IDS.filter((id) => !REMOVED_LEGACY_ARTIFACT_PANEL_IDS.includes(id) && !REMOVED_GEAR_IDS.includes(id)), ...W1_ADDED_IDS, ...W3_ADDED_IDS, ...CHAT_PANEL_IDS].sort(),
@@ -327,8 +331,8 @@ test('resolver: a cloned template resolves exactly the 20 hosts and null for the
   assert.equal(trays[0].parentElement, wrap);
   assert.deepEqual(
     [...wrap.children].map((child) => child.getAttribute('data-chat-node') || child.className),
-    ['composerAttachmentPreviewPill', 'attachmentTray', 'composerStatusNotice', 'composerV2FailedSendNotice', 'composer'],
-    'the template wrap keeps pane 0\'s order: pill, tray, status notice, failed-send notice, composer'
+    ['composerAttachmentPreviewPill', 'attachmentTray', 'composerMessageStrip', 'composerStatusNotice', 'composerV2FailedSendNotice', 'composer'],
+    'the template wrap keeps pane 0\'s order: pill, tray, message strip, status notice, failed-send notice, composer'
   );
   const paneZeroWrap = documentRef.getElementById('composerWrap');
   for (const name of PANE_TEMPLATE_NOTICE_NAMES) {

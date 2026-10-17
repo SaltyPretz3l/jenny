@@ -387,7 +387,10 @@ test('pullModel resolves not-ok on a non-zero exit', async () => {
   assert.equal(result.code, 1);
 });
 
-test('pullModel stops an inactive owned process instead of hanging forever', async () => {
+test('pullModel stops an inactive owned process instead of hanging forever', async (t) => {
+  // The fake child has no OS handle to keep the unref'd inactivity timer alive.
+  const keepAlive = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(keepAlive));
   let kills = 0;
   const result = await pullModel('ornith:9b', {
     spawnImpl: () => {

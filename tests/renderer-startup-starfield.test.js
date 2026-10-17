@@ -9,13 +9,13 @@ const starfieldUtils = require('../renderer/shell/renderer-startup-starfield.js'
 const WORDMARK_RECT = { left: 540, top: 330, width: 200, height: 40 };
 
 function createStubContext() {
-  const calls = { arc: 0, fill: 0, clearRect: 0, fillStyleWrites: 0 };
+  const calls = { arc: 0, fill: 0, clearRect: 0, fillStyleWrites: 0, lastArc: null };
   return {
     calls,
     setTransform() {},
     clearRect() { calls.clearRect += 1; },
     beginPath() {},
-    arc() { calls.arc += 1; },
+    arc(...args) { calls.arc += 1; calls.lastArc = args; },
     fill() { calls.fill += 1; },
     set fillStyle(_value) { calls.fillStyleWrites += 1; },
     get fillStyle() { return ''; },
@@ -28,8 +28,8 @@ function createSky(t, options = {}) {
     + '<canvas id="startupOverlaySky"></canvas><div class="startup-overlay-wordmark">Jenny</div></div></body></html>', { pretendToBeVisual: true });
   t.after(() => dom.window.close());
   const win = dom.window;
-  Object.defineProperty(win, 'innerWidth', { configurable: true, value: options.innerWidth || 1280 });
-  Object.defineProperty(win, 'innerHeight', { configurable: true, value: 720 });
+  Object.defineProperty(win, 'innerWidth', { configurable: true, value: options.innerWidth || 1600 });
+  Object.defineProperty(win, 'innerHeight', { configurable: true, value: options.innerHeight || 930 });
   const frames = new Map();
   let nextFrame = 1;
   win.requestAnimationFrame = (callback) => { const id = nextFrame++; frames.set(id, callback); return id; };
@@ -47,6 +47,7 @@ function createSky(t, options = {}) {
     window: win,
     reducedMotion: options.reducedMotion === true,
     density: options.density,
+    random: options.random,
   });
   t.after(() => sky && sky.dispose());
   let clock = 0;
@@ -59,11 +60,32 @@ function createSky(t, options = {}) {
   return { dom, win, sky, frames, flush, context, curtain, wordmark };
 }
 
-test('star count follows the density rule, measured once at mount', (t) => {
-  assert.equal(createSky(t, { innerWidth: 1280 }).sky.getStarCount(), 220);
-  assert.equal(createSky(t, { innerWidth: 1099 }).sky.getStarCount(), 120);
-  assert.equal(createSky(t, { innerWidth: 1280, density: 'light' }).sky.getStarCount(), 120);
-  assert.equal(starfieldUtils.resolveStarCount(undefined, 1100), starfieldUtils.STAR_COUNT_FULL);
+test('star count keeps stars per area constant, within the light and max bounds', (t) => {
+  assert.equal(createSky(t, { innerWidth: 1600, innerHeight: 930 }).sky.getStarCount(), 220, 'the reference window gets the full sky');
+  assert.equal(createSky(t, { innerWidth: 1280, innerHeight: 720 }).sky.getStarCount(), 136);
+  assert.equal(createSky(t, { innerWidth: 800, innerHeight: 600 }).sky.getStarCount(), 120, 'a small window keeps the light floor');
+  assert.equal(createSky(t, { innerWidth: 3840, innerHeight: 2160 }).sky.getStarCount(), 440, 'a 4K window is capped');
+  assert.equal(createSky(t, { innerWidth: 3840, innerHeight: 2160, density: 'light' }).sky.getStarCount(), 120);
+  assert.equal(starfieldUtils.resolveStarCount(undefined, 1600, 930), starfieldUtils.STAR_COUNT_FULL);
+});
+
+test('the disc and the stars scale with the window, live on resize', (t) => {
+  // Every star identical: reach ~1 at theta ~0, so x - centre is the disc's outer
+  // edge: the 70px inner edge plus the 640px span times the window scale.
+  const { sky, win, context } = createSky(t, {
+    innerWidth: 1600, innerHeight: 930, density: 4, reducedMotion: true, random: () => 0.999,
+  });
+  const centreX = WORDMARK_RECT.left + WORDMARK_RECT.width / 2;
+  sky.start();
+  const [referenceX, , referenceSize] = context.calls.lastArc;
+  assert.ok(Math.abs(referenceX - centreX - 710) < 5, `reference outer edge ${referenceX - centreX} ~ 710px`);
+  Object.defineProperty(win, 'innerWidth', { configurable: true, value: 3200 });
+  Object.defineProperty(win, 'innerHeight', { configurable: true, value: 1860 });
+  win.dispatchEvent(new win.Event('resize'));
+  const [wideX, , wideSize] = context.calls.lastArc;
+  assert.ok(Math.abs(wideX - centreX - 1350) < 5, `doubled window outer edge ${wideX - centreX} ~ 1350px`);
+  assert.ok(Math.abs(wideSize / referenceSize - 1.5) < 1e-9, 'star size scales, capped at 1.5x');
+  assert.equal(sky.getStarCount(), 4, 'a resize rescales the disc, not the count');
 });
 
 test('collapse gives every star a destination inside the wordmark rect and lands on onDone', (t) => {

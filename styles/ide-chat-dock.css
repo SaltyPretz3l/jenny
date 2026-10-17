@@ -426,8 +426,8 @@
     max-width: 100%;
   }
 
-  .ide-chat-dock-body .message-attachment-image-preview {
-    width: min(220px, 100%);
+  .ide-chat-dock-body .inv-artifact-figure--attachment {
+    --inv-image-attachment-size: min(220px, 100%);
   }
 }
 

@@ -12,6 +12,7 @@ from sidecar.ai.routing.loop_events import (
     ContextCompactionStartedEvent,
     ContextUsageEvent,
     HeartbeatEvent,
+    HeuristicFireEvent,
     PhaseCompletedEvent,
     PhaseStartedEvent,
     StopEvent,
@@ -30,6 +31,48 @@ from sidecar.runtime.chat_serialization import (
     _serialize_turn_event,
 )
 from sidecar.runtime.ipc_payloads import IpcPayloadExternalizer
+
+
+def test_inference_performance_exact_ephemeral_wire_payload() -> None:
+    from dataclasses import asdict
+
+    from sidecar.ai.engines.provider_metrics import ProviderMetrics
+    from sidecar.ai.routing.loop_events import InferencePerformanceEvent
+
+    sample = ProviderMetrics(provider_kind="ninfer", live=True).finish().performance
+    event = InferencePerformanceEvent(turn_id="logical-turn", observation=sample)
+    message = _serialize_loop_event(event, "request", trace_id="trace", session_id="session")
+    assert message["method"] == "inference.performance"
+    assert message["params"] == {
+        "api_version": API_VERSION, "schema_version": 1,
+        "request_id": "request", "trace_id": "trace", "session_id": "session",
+        "turn_id": "logical-turn", "provider_call_id": None, **asdict(sample),
+    }
+    assert _serialize_turn_event(event, "request", trace_id="trace", session_id="session", seq=1) is None
+
+
+@pytest.mark.parametrize("detail", [{"trigger": "fake_tool_use", "action": "retry"}, {}])
+def test_serialize_heuristic_fire_with_context_and_detail(
+    detail: dict[str, str | int | bool],
+) -> None:
+    payload = _serialize_loop_event(
+        HeuristicFireEvent("tool_use_nudge", detail),
+        "req-fire", trace_id="trace-fire", session_id="session-fire",
+    )
+    assert payload == {
+        "jsonrpc": "2.0", "api_version": API_VERSION, "method": "heuristic.fire",
+        "params": {
+            "api_version": API_VERSION,
+            "request_id": "req-fire", "trace_id": "trace-fire", "session_id": "session-fire",
+            "name": "tool_use_nudge", **({"detail": detail} if detail else {}),
+        },
+    }
+
+
+def test_heuristic_fire_default_detail_is_not_shared() -> None:
+    first = HeuristicFireEvent("first")
+    first.detail["rung"] = 1
+    assert HeuristicFireEvent("second").detail == {}
 
 
 def test_serialize_loop_event_emits_reasoning_phase_notifications() -> None:

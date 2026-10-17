@@ -25,6 +25,7 @@ TOOL_FAILURE_ERROR_DETAIL_KEYS = (
     "error_type",
     "provider_code",
     "terminal_subcode",
+    "journal_state",
     "error_message",
     "operation_id",
     "generation_id",

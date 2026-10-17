@@ -13,6 +13,7 @@ from itertools import islice
 from typing import Any
 
 from sidecar.ai.config_models import (
+    ConversationIndexConfig,
     FallbackModelConfig,
     MCPServerAuth,
     MCPServerConfig,
@@ -91,6 +92,24 @@ LOCAL_FIRST_FALLBACK_ENGINES = frozenset(
 )
 SESSION_START_DATE_LENGTH = 10
 SHA256_HEX_LENGTH = 64
+_MCP_ENV_KEY_PATTERN = re.compile(r"[A-Z][A-Z0-9_]{1,63}")
+_MCP_ENV_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_MCP_ENV_MAX_ENTRIES = 16
+_MCP_ENV_MAX_VALUE_CHARS = 1024
+_MCP_ENV_SECRET_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "PRIVATE")
+# Runtime option/loader families: npm maps NPM_CONFIG_NODE_OPTIONS to NODE_OPTIONS
+# for the processes it starts, so the whole family is reserved, not one name.
+_MCP_ENV_RESERVED_PREFIXES = (
+    "JENNY_", "XDG_", "PYTHON", "LD_", "DYLD_", "NODE_", "NPM_", "YARN_", "PNPM_", "COREPACK_",
+    "JAVA_", "_JAVA_", "JDK_", "ELECTRON_", "PERL", "RUBY", "DOTNET_",
+)
+_MCP_ENV_RESERVED_MARKERS = ("PATH", "OPTIONS", "OPTS")
+_MCP_ENV_RESERVED_KEYS = frozenset({
+    "PATHEXT", "PYTHONIOENCODING", "PYTHONUNBUFFERED", "OPENBLAS_NUM_THREADS", "TESSDATA_PREFIX",
+    "SYSTEMROOT", "COMSPEC", "TEMP", "TMP", "TMPDIR", "APPDATA", "LOCALAPPDATA", "USERPROFILE",
+    "HOMEDRIVE", "HOMEPATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL",
+    "NODE_OPTIONS", "NODE_PATH", "WINDIR", "AUTHORIZATION",
+})
 MAX_GENERATION_PROFILE_MODEL_ID_CHARS = 240
 SESSION_START_DATE_MONTH_SEPARATOR_INDEX = 4
 SESSION_START_DATE_DAY_SEPARATOR_INDEX = 7
@@ -350,6 +369,62 @@ def _parse_mcp_server_auth(value: Any, *, server_name: str) -> "MCPServerAuth | 
     )
 
 
+def mcp_env_key_rejection(key: str) -> str | None:
+    """Return why a per-row MCP env key is refused, or ``None`` when allowed.
+
+    Mirrors ``services/mcp-config-store.js``: keys the stdio containment sets or
+    passes through and loader/interpreter controls are reserved; secret-like
+    names are refused because secrets never travel in plaintext config.
+    """
+    if any(marker in key.upper() for marker in _MCP_ENV_SECRET_MARKERS):
+        return "plaintext_secret"
+    if _MCP_ENV_KEY_PATTERN.fullmatch(key) is None:
+        return "env_invalid"
+    if (
+        any(marker in key for marker in _MCP_ENV_RESERVED_MARKERS)
+        or key in _MCP_ENV_RESERVED_KEYS
+        or key.startswith(_MCP_ENV_RESERVED_PREFIXES)
+    ):
+        return "reserved_env_key"
+    return None
+
+
+def _parse_mcp_server_env(value: Any, *, server_name: str) -> tuple[tuple[str, str], ...] | None:
+    """Parse a row's ``env``; ``None`` means the row must be skipped (logged by key only)."""
+    if value is None:
+        return ()
+    key = ""
+    reason: str | None = "env_invalid"
+    if isinstance(value, dict) and len(value) <= _MCP_ENV_MAX_ENTRIES:
+        pairs: list[tuple[str, str]] = []
+        for raw_key, item in sorted(value.items(), key=lambda pair: str(pair[0])):
+            key = str(raw_key)
+            reason = mcp_env_key_rejection(key)
+            if reason is None and (
+                not isinstance(item, str)
+                or len(item) > _MCP_ENV_MAX_VALUE_CHARS
+                or _MCP_ENV_CONTROL_CHARS.search(item) is not None
+            ):
+                reason = "env_invalid"
+            if reason is not None:
+                break
+            pairs.append((key, item))
+        else:
+            return tuple(pairs)
+    from sidecar.runtime.diagnostics import log_event
+
+    log_event(
+        logger,
+        logging.WARNING,
+        component="ai.config",
+        event="ai.mcp.config_env_rejected",
+        message=f"mcp server '{server_name}' skipped: env key {key!r} rejected ({reason})",
+        status="rejected",
+        data={"server": server_name, "key": key, "reason": reason},
+    )
+    return None
+
+
 def _parse_mcp_servers(
     raw_servers: Any,
     *,
@@ -373,19 +448,19 @@ def _parse_mcp_servers(
             candidate.get("request_timeout_seconds"),
             default=30.0,
             min_value=1.0,
-            max_value=600.0,
+            max_value=1800.0,
         )
         memory_limit_mb = _as_bounded_int(
             candidate.get("memory_limit_mb"),
             default=512,
-            min_value=64,
-            max_value=4096,
+            min_value=256,
+            max_value=8192,
         )
         max_processes = _as_bounded_int(
             candidate.get("max_processes"),
             default=5,
             min_value=1,
-            max_value=64,
+            max_value=32,
         )
         max_open_files = _as_bounded_int(
             candidate.get("max_open_files"),
@@ -405,6 +480,16 @@ def _parse_mcp_servers(
             min_value=1.0,
             max_value=600.0,
         )
+        inspect_timeout_seconds = _as_bounded_float(
+            candidate.get("inspect_timeout_seconds"),
+            default=15.0,
+            min_value=1.0,
+            max_value=180.0,
+        )
+        read_only_auto_allow = candidate.get("read_only_auto_allow") is True
+        env = _parse_mcp_server_env(candidate.get("env"), server_name=name)
+        if env is None:
+            continue
         auth = _parse_mcp_server_auth(candidate.get("auth"), server_name=name)
         approved_tools_digest = _as_non_empty_string(candidate.get("approved_tools_digest"))
         if approved_tools_digest is not None and (
@@ -439,6 +524,9 @@ def _parse_mcp_servers(
                     init_timeout_seconds=init_timeout_seconds,
                     auth=auth,
                     approved_tools_digest=approved_tools_digest,
+                    env=env,
+                    inspect_timeout_seconds=inspect_timeout_seconds,
+                    read_only_auto_allow=read_only_auto_allow,
                 )
             )
             continue
@@ -470,6 +558,8 @@ def _parse_mcp_servers(
                 init_timeout_seconds=init_timeout_seconds,
                 auth=auth,
                 approved_tools_digest=approved_tools_digest,
+                inspect_timeout_seconds=inspect_timeout_seconds,
+                read_only_auto_allow=read_only_auto_allow,
             )
         )
     return tuple(normalized_servers)
@@ -742,3 +832,20 @@ def parse_semantic_catalog_config(
             "semantic_catalog config rejected: invalid %s", error.args[0] if error.args else "?"
         )
         return None
+
+
+# ---- conversation index (row 58 W4) ------------------------------------------
+
+
+def parse_conversation_index_config(value: Any) -> ConversationIndexConfig | None:
+    """Validate the raw ``conversation_index`` dict; absent/disabled/invalid -> None.
+
+    An invalid block logs one WARN naming the offending field only (never the path).
+    """
+    if not isinstance(value, dict) or value.get("enabled") is not True:
+        return None
+    db_path = value.get("db_path")
+    if not isinstance(db_path, str) or not db_path.strip() or not os.path.isabs(db_path.strip()):
+        logger.warning("conversation_index config rejected: invalid db_path")
+        return None
+    return ConversationIndexConfig(enabled=True, db_path=db_path.strip())

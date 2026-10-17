@@ -14,7 +14,7 @@ test.afterEach(cleanupTrackedResources);
 
 const methods = ['getState', 'install', 'cancelInstall', 'remove', 'chooseRuntime',
   'clearRuntime', 'chooseModelFolder', 'scanModels', 'saveModelSet', 'listModelSets',
-  'removeModelSet', 'setDefaultModelSet', 'reconcile'];
+  'removeModelSet', 'setDefaultModelSet', 'reconcile', 'forceClear'];
 const payloadless = ['getState', 'cancelInstall', 'chooseRuntime', 'clearRuntime',
   'chooseModelFolder', 'listModelSets', 'reconcile'];
 const validSet = { root: 'Z:\\models', diffusion: 'diffusion.bin', text_encoder: 'encoder.bin',
@@ -303,4 +303,37 @@ test('actual model store roundtrip preserves user model files', async () => {
   assert.equal((await f.invoke('removeModelSet', { id })).ok, true);
   assert.deepEqual((await f.invoke('listModelSets')).sets, []);
   for (const name of Object.values(files)) assert.equal(fs.readFileSync(path.join(root, name), 'utf8'), 'user model');
+});
+
+
+test('optional projector reaches model-set service only through the picked-folder save contract', async () => {
+  const f = fixture();
+  await f.choose(validSet.root);
+  assert.equal((await f.invoke('saveModelSet', { ...validSet, vision_projector: 'text_encoders/mmproj.gguf' })).ok, true);
+  assert.equal(f.calls.find(([name]) => name === 'saveModelSet')[1].vision_projector, 'text_encoders/mmproj.gguf');
+  f.calls.length = 0;
+  assert.equal((await f.invoke('saveModelSet', { ...validSet, vision_projector: { path: 'untrusted' } })).ok, false);
+  assert.equal(f.calls.length, 0);
+});
+
+test('force clear needs an explicit confirmation, reaches the handoff and announces the changed state', async () => {
+  assert.equal(getBridgeChannel('imageEngine.forceClear'), 'image-engine:force-clear');
+  const f = fixture();
+  const events = [];
+  f.engine.emit = (...args) => { events.push(args); return true; };
+  let answer = { ok: true, released: true, unresolved: 2 };
+  f.backendService.chatGpuHandoff.forceClear = (options) => { f.calls.push(['forceClear', options]); return answer; };
+  for (const payload of [undefined, null, {}, { confirmed: false }, { confirmed: 'true' }, { confirmed: 1 }]) {
+    assert.deepEqual(await f.invoke('forceClear', payload), { ok: false, reason: 'confirmation_required' });
+  }
+  assert.deepEqual(f.calls, []);
+  assert.deepEqual(await f.invoke('forceClear', { confirmed: true, extra: 'ignored' }),
+    { ok: true, released: true, unresolved: 2 });
+  assert.deepEqual(f.calls, [['forceClear', { confirmed: true }]]);
+  assert.deepEqual(events, [['changed', { status: 'installed' }]]);
+  answer = { ok: false, reason: 'image_engine_record_locked' };
+  assert.deepEqual(await f.invoke('forceClear', { confirmed: true }), { ok: false, reason: 'image_engine_record_locked' });
+  answer = { ok: false, reason: 'C:\\private\\pidfile' };
+  assert.deepEqual(await f.invoke('forceClear', { confirmed: true }), { ok: false, reason: 'image_engine_operation_failed' });
+  assert.equal(events.length, 1, 'a refused clear changes nothing to announce');
 });

@@ -248,7 +248,9 @@ def test_closed_edit_set_rejects_late_dispatch_without_changing_recovery(
         assert result.error_code == "CMP-TOOL-0006"
         assert result.metadata["effects"] == "none"
         assert result.metadata["failure_class"] == "conflict"
-        assert "already terminal" in result.output
+        assert result.metadata["journal_state"] == "mutation_change_set_terminal"
+        assert result.metadata["retryable"] is False
+        assert "start a new turn" in result.output
         assert target.read_bytes() == b"beta"
         assert journal_path.read_bytes() == journal_bytes
         assert all((root / path).read_bytes() == data for path, data in recovery.items())

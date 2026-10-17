@@ -34,6 +34,7 @@ from sidecar.ai.tools.workspace_mutation_journal_contract import (
     validate_relative_path,
     workspace_identity,
 )
+from sidecar.ai.tools.workspace_mutation_live_owner import reconcile_abandoned_journal
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,12 @@ class WorkspaceMutationJournalStore:
         self._validate_ids(workspace_id, change_set_id)
         self._assert_safe_store_path(workspace_id, change_set_id)
         return self.version_root / workspace_id / change_set_id / "journal.json"
+
+    def live_owner_path(self, workspace_id: str, change_set_id: str) -> Path:
+        """Return the distinct logical-turn lock, never a short transition lock."""
+        self._validate_ids(workspace_id, change_set_id)
+        self._assert_safe_store_path(workspace_id, change_set_id)
+        return self.version_root / workspace_id / ".locks" / f"{change_set_id}.live.lock"
 
     def load(self, workspace_id: str, change_set_id: str) -> StoreResult:
         try:
@@ -319,20 +326,12 @@ class WorkspaceMutationJournalStore:
             with self._lock(identity.workspace_id):
                 for stored in self._scan_workspace(identity.workspace_id):
                     with self._lock(identity.workspace_id, stored.change_set_id):
-                        loaded = self.load(identity.workspace_id, stored.change_set_id)
-                        if not loaded.ok or loaded.record is None:
-                            results.append(loaded)
-                            continue
-                        if loaded.record["state"] not in {"prepared", "in_progress"}:
-                            continue
-                        if not _record_matches_identity(loaded.record, identity.fingerprint):
-                            results.append(_identity_failure())
-                            continue
-                        if checkpoints.has_runtime_checkpoint(loaded.record, allow_preparing=True):
-                            results.append(loaded)
-                            continue
-                        reconciled = self._reconcile_record(loaded.record, Path(workspace_root))
-                        results.append(self._write_mapping_locked(reconciled, Path(workspace_root)))
+                        result = reconcile_abandoned_journal(
+                            self, Path(workspace_root), identity.workspace_id,
+                            stored.change_set_id, identity.fingerprint,
+                        )
+                        if result is not None:
+                            results.append(result)
         except Timeout:
             results.append(
                 _store_failure("journal_lock_timeout", "Workspace journal lock timed out.")
@@ -481,13 +480,15 @@ class WorkspaceMutationJournalStore:
         if not workspace_path.is_dir() or workspace_path.is_symlink():
             return []
         records: list[_StoredSet] = []
-        for index, child in enumerate(sorted(workspace_path.iterdir(), key=lambda item: item.name)):
-            if index >= MAX_SCAN_CHANGE_SETS:
-                logger.warning("workspace_mutation_journal_scan_bounded")
-                break
+        scanned = 0
+        for child in sorted(workspace_path.iterdir(), key=lambda item: item.name):
             valid_directory = child.is_dir() and not child.is_symlink()
             if not valid_directory or not _CHANGE_SET_ID_RE.fullmatch(child.name):
                 continue
+            if scanned >= MAX_SCAN_CHANGE_SETS:
+                logger.warning("workspace_mutation_journal_scan_bounded")
+                break
+            scanned += 1
             journal_path = child / "journal.json"
             try:
                 journal_bytes = journal_path.stat().st_size

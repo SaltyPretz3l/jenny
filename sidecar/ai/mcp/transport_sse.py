@@ -121,6 +121,20 @@ class SSEMCPTransport(MCPTransport):
 
     # -- ABC methods -------------------------------------------------------
 
+    def list_prompts(self, *, cancel_handle: Any = None) -> list[dict[str, Any]]:
+        return []
+
+    def get_prompt(
+        self,
+        name: str,
+        arguments: dict[str, str],
+        *,
+        timeout_seconds: float | None = None,
+        cancel_handle: Any = None,
+    ) -> dict[str, Any]:
+        raise MCPError(code=CMP_MCP_PROTOCOL_FAILED, retryable=False,
+                       message="MCP prompts are not supported over SSE")
+
     def list_tools(self, *, cancel_handle: Any = None) -> list[dict[str, Any]]:
         return self._list_tool_pages(self._request, cancel_handle=cancel_handle,
                                      timeout_seconds=self._request_timeout(None))

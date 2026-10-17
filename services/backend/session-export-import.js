@@ -9,6 +9,8 @@
 const fs = require('fs');
 const path = require('path');
 const { redactExportSecretsInValue } = require('./transcript-export-redaction');
+const { requestMemoryRpc } = require('./backend-memory');
+const { isPlainObject } = require('../value-utils');
 const {
   normalizeSession,
   normalizeMessage,
@@ -29,8 +31,14 @@ const {
   MAX_AUDIO_SIZE_BYTES,
   MAX_IMAGE_SIZE_BYTES,
 } = require('../attachment-asset-store');
+const {
+  stripUnknownImportedMessageKeys,
+  findOversizedImportedMessageString,
+} = require('./session-import-message-bounds');
 
-const EXPORT_FORMAT_VERSION = 1;
+// 2: transcripts may carry role:'context' addressed-message rows. A format-1 reader would coerce them
+// to assistant text, so it must refuse the file (the import below accepts 1 and 2).
+const EXPORT_FORMAT_VERSION = 2;
 const BASE64_ATTACHMENT_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 const SESSION_IMPORT_ERROR_CODES = Object.freeze({
   PARSE_ERROR: PERSIST_ERROR_CODES.IMPORT_PARSE_ERROR,
@@ -157,12 +165,67 @@ function decodeExportedAttachmentData(attachment, attachmentKind) {
   return buffer;
 }
 
+const boundedString = (value, limit) => typeof value === 'string' && value.length <= limit;
+
+function portableMemoryNote(note) {
+  if (!isPlainObject(note) || !boundedString(note.text, 2000) || !boundedString(note.kind, 40)
+    || !boundedString(note.origin, 40)) return null;
+  return { text: note.text, kind: note.kind, origin: note.origin,
+    ...(boundedString(note.created_at, 40) ? { created_at: note.created_at } : {}) };
+}
+
+function portableRecap(recap) {
+  if (!isPlainObject(recap) || !boundedString(recap.text, 2000)) return null;
+  return { text: recap.text,
+    ...(boundedString(recap.updated_at, 40) ? { updated_at: recap.updated_at } : {}) };
+}
+
+function logMemoryReason(service, event, reason) {
+  // Use only bounded protocol reason tokens, never error messages or memory text.
+  try {
+    service?._emitServiceLog?.('WARN', event, { reason: /^[a-z_]{1,64}$/u.test(reason) ? reason : 'sidecar_request_failed' });
+  } catch (_error) { /* Memory never blocks chat transfer. */ }
+}
+
+async function exportMemoryAppendix(service, sessionId, payload, serialize) {
+  try {
+    const result = await requestMemoryRpc(service, 'memory.export_session', { session_id: sessionId });
+    const notes = (Array.isArray(result?.notes) ? result.notes : []).map(portableMemoryNote).filter(Boolean).slice(0, 200);
+    const recap = portableRecap(result?.recap);
+    if (notes.length || recap) payload.session.memory = { notes, recap };
+  } catch (_error) {
+    logMemoryReason(service, 'memory.export_session_failed', 'sidecar_request_failed');
+  }
+  return serialize();
+}
+
+async function importMemoryAppendix(service, session, memory, summary) {
+  let result;
+  try {
+    const answer = await requestMemoryRpc(service, 'memory.import_session', {
+      session_id: session.id, project_id: session.project_id || GENERAL_PROJECT_ID,
+      notes: memory.notes.map(({ text, kind, origin }) => ({ text, kind, origin })),
+      recap: memory.recap?.text ?? null,
+    });
+    if (!['imported', 'refused'].includes(answer?.status)) throw new Error('invalid_response');
+    const count = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+    result = { status: answer.status, imported: count(answer.imported), skipped: count(answer.skipped) };
+    if (answer.status === 'refused') logMemoryReason(service, 'memory.import_session_refused', String(answer.reason || 'import_refused'));
+  } catch (_error) {
+    logMemoryReason(service, 'memory.import_session_failed', 'sidecar_request_failed');
+    result = { status: 'failed', imported: 0, skipped: 0 };
+  }
+  return { ...summary, memory: result };
+}
+
 /**
  * Export a session to a portable JSON string.
  *
  * @param {Object} sessionStore  - ElectronSessionStore instance
  * @param {string} sessionId
- * @returns {string|null} JSON string or null if session not found
+ * @param {Object} [options.service] - BackendService providing the sidecar and reason-only logging
+ * @param {boolean} [options.includeMemory] - Include portable chat memory (async when available)
+ * @returns {string|null|Promise<string>} JSON string or null if session not found
  */
 function exportSession(sessionStore, sessionId, attachmentStore = null, options = {}) {
   const session = sessionStore.getSession(sessionId);
@@ -206,7 +269,9 @@ function exportSession(sessionStore, sessionId, attachmentStore = null, options 
 
   const payload = {
     format: 'jenny-session-export',
-    format_version: EXPORT_FORMAT_VERSION,
+    // Format 2 only when it matters: a transcript with addressed-message rows (role context),
+    // which a format-1 reader would coerce to assistant text. Others stay importable by 1.4.x.
+    format_version: messagesWithAssets.some((message) => message?.role === 'context') ? EXPORT_FORMAT_VERSION : 1,
     exported_at: new Date().toISOString(),
     session: {
       title: session.title,
@@ -227,8 +292,14 @@ function exportSession(sessionStore, sessionId, attachmentStore = null, options 
     },
   };
 
-  payload.session = redactExportSecretsInValue(payload.session);
-  return JSON.stringify(payload, null, 2);
+  const serialize = () => {
+    payload.session = redactExportSecretsInValue(payload.session);
+    return JSON.stringify(payload, null, 2);
+  };
+  if (options.includeMemory === true && options.service?.sidecarClient) {
+    return exportMemoryAppendix(options.service, sessionId, payload, serialize);
+  }
+  return serialize();
 }
 
 // Canonical turn events come back only from Jenny's own archive, together with
@@ -251,7 +322,9 @@ function trustedTurnEventLog(source, options) {
  * @param {Object}   [attachmentStore]  - AttachmentAssetStore for re-persisting managed media
  * @param {Object}   [options]
  * @param {Object}   [options.shadowStore] - SessionShadowStore mirror for legacy listings
- * @returns {Object} Session summary
+ * @param {string}   [options.restoredIncarnation] - trusted archive restore only: the chat's incarnation
+ * @param {Object}   [options.service] - BackendService for a new chat's memory appendix
+ * @returns {Object|Promise<Object>} Session summary; awaited when importing memory
  * @throws {SessionImportError} on invalid input or attachment restore failure
  */
 function validateSessionImportPayload(jsonPayload) {
@@ -298,11 +371,30 @@ function validateSessionImportPayload(jsonPayload) {
     || parsed.session.turn_events.some((event) => !event || typeof event !== 'object' || Array.isArray(event)))) {
     throw createImportError('format_mismatch', 'Session turn events are malformed.');
   }
+  if (Object.hasOwn(parsed.session, 'memory')) {
+    const memory = parsed.session.memory;
+    if (!isPlainObject(memory) || !Array.isArray(memory.notes) || memory.notes.length > 200
+      || memory.notes.some(note => !portableMemoryNote(note))
+      || (memory.recap != null && !portableRecap(memory.recap))) {
+      delete parsed.session.memory;
+      parsed.memory_drop_reason = 'invalid_memory_appendix';
+    } else {
+      parsed.session.memory = { notes: memory.notes.map(portableMemoryNote), recap: portableRecap(memory.recap) };
+    }
+  }
   const messageIds = new Set();
-  for (const message of parsed.session.messages || []) {
+  for (const [index, message] of (parsed.session.messages || []).entries()) {
     if (!message || typeof message !== 'object' || Array.isArray(message)
       || (message.attachments !== undefined && !Array.isArray(message.attachments))) {
       throw createImportError('format_mismatch', 'Session message is malformed.');
+    }
+    // Unknown keys are stripped at import, so only admitted fields are bounded.
+    const oversized = findOversizedImportedMessageString(stripUnknownImportedMessageKeys(message).message);
+    if (oversized) {
+      throw createImportError(
+        'format_mismatch',
+        `Session message field messages[${index}].${oversized.path} exceeds the ${oversized.limit}-character import limit.`
+      );
     }
     const messageId = String(message.id || '');
     if (messageId && messageIds.has(messageId)) {
@@ -337,13 +429,38 @@ function importSession(sessionStore, jsonPayload, attachmentStore, options = {})
     throw createImportError('format_mismatch', 'Session restore identity conflicts with existing data.');
   }
   const newSessionId = preserveIdentity ? requestedSessionId : createSessionId();
+  // Only the trusted archive keeps a chat's incarnation (its coordination records bind to it); ordinary
+  // import mints a fresh identity on the first turn like any new chat.
+  const restoredIncarnation = preserveIdentity && typeof options.restoredIncarnation === 'string'
+    && options.restoredIncarnation.length <= 512 ? options.restoredIncarnation.trim() : '';
   const savedAssetPaths = [];
+  const strippedMessageKeys = new Set();
+  let droppedContextRows = 0;
+  // Normalization can join or coerce admitted strings (visible segments into
+  // content, an array content into one string), so the bounds hold on the
+  // persisted shape too, not only on the incoming one.
+  const boundedNormalized = (normalized, index, imported) => {
+    // An addressed-message row that fails strict validation is dropped, never coerced to another role.
+    if (!normalized && imported?.role === 'context') droppedContextRows += 1;
+    const oversized = findOversizedImportedMessageString(normalized);
+    if (oversized) {
+      throw createImportError(
+        'format_mismatch',
+        `Session message field messages[${index}].${oversized.path} exceeds the ${oversized.limit}-character import limit after normalization.`
+      );
+    }
+    return normalized;
+  };
 
   try {
     const restoredMessages = (Array.isArray(source.messages) ? source.messages : []).map(
-      (message) => {
+      (sourceMessage, index) => {
+        // Applies before both normalizeMessage calls below: normalization
+        // spreads unknown message keys through to the persisted record.
+        const { message, strippedKeys } = stripUnknownImportedMessageKeys(sourceMessage);
+        for (const key of strippedKeys) strippedMessageKeys.add(key);
         if (!Array.isArray(message.attachments) || message.attachments.length === 0) {
-          return normalizeMessage(message);
+          return boundedNormalized(normalizeMessage(message), index, message);
         }
         const restoredAttachments = message.attachments.map((attachment) => {
           const attachmentKind = normalizeAttachmentKind(attachment);
@@ -393,7 +510,7 @@ function importSession(sessionStore, jsonPayload, attachmentStore, options = {})
               ? { mimeType: savedMeta.mimeType } : {}),
           };
         });
-        return normalizeMessage({ ...message, attachments: restoredAttachments });
+        return boundedNormalized(normalizeMessage({ ...message, attachments: restoredAttachments }), index, message);
       }
     )
       .filter(Boolean)
@@ -417,15 +534,30 @@ function importSession(sessionStore, jsonPayload, attachmentStore, options = {})
       conversation_mode: source.conversation_mode || 'chat',
       context_preferences: source.context_preferences || {},
       branch_origin: preserveIdentity ? normalizeBranchOrigin(source.branch_origin) : null,
+      session_incarnation: restoredIncarnation,
       created_at: preserveIdentity ? source.created_at : new Date().toISOString(),
       updated_at: preserveIdentity ? source.updated_at : new Date().toISOString(),
       messages: restoredMessages,
       ...trustedTurnEventLog(source, options),
     });
 
-    return persistSessionWithShadow(sessionStore, session, {
+    const summary = persistSessionWithShadow(sessionStore, session, {
       shadowStore: options.shadowStore,
     });
+    const result = (strippedMessageKeys.size || droppedContextRows) && summary && typeof summary === 'object'
+      ? {
+        ...summary,
+        ...(strippedMessageKeys.size ? { stripped_message_keys: [...strippedMessageKeys].sort() } : {}),
+        ...(droppedContextRows ? { dropped_context_row_count: droppedContextRows } : {}),
+      }
+      : summary;
+    if (options.trustedArchive !== true && !preserveIdentity) {
+      if (parsed.memory_drop_reason) logMemoryReason(options.service, 'memory.import_appendix_dropped', parsed.memory_drop_reason);
+      if (source.memory && options.service?.sidecarClient) {
+        return importMemoryAppendix(options.service, session, source.memory, result);
+      }
+    }
+    return result;
   } catch (error) {
     cleanupImportedAssets(attachmentStore, savedAssetPaths);
     throw error;

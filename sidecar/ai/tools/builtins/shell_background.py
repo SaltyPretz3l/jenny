@@ -26,12 +26,14 @@ from sidecar.ai.error_codes import (
 )
 from sidecar.ai.tools.builtins import owned_process as _owned_process
 from sidecar.ai.tools.builtins import owned_process_settlement as _owned_process_settlement
+from sidecar.ai.tools.builtins import shell_harness
 from sidecar.ai.tools.builtins.shell_background_status import (
     BACKGROUND_JOB_CANCELLED_ERROR,
     MAX_INLINE_OUTPUT_CHARS,
     MAX_STATUS_ERROR_CHARS,
     MAX_STATUS_FILE_BYTES,
     is_valid_job_id,
+    read_background_status_bytes,
     validate_job_status_for_write,
 )
 from sidecar.ai.tools.builtins.shell_background_status import (
@@ -285,11 +287,18 @@ def _reconcile_orphaned_running_status(
     if age_seconds < RUNNING_RECONCILIATION_GRACE_SECONDS:
         return status
     pid = status.get("pid")
+    ledger_entry = status.get("ledger_entry")
+    # A job handed off across a normal restart is still supervised by its original host;
+    # only a record bound to its own ledger entry can claim that (legacy records cannot).
+    from sidecar.runtime.owned_process_handoff import transferred_job_live
+
     if (
         isinstance(pid, int)
         and not isinstance(pid, bool)
-        and age_seconds < RUNNING_PID_REUSE_MAX_SECONDS
-        and _process_is_alive(pid)
+        and (
+            (age_seconds < RUNNING_PID_REUSE_MAX_SECONDS and _process_is_alive(pid))
+            or (isinstance(ledger_entry, str) and transferred_job_live(pid, ledger_entry))
+        )
     ):
         return status
 
@@ -357,10 +366,12 @@ def _sweep_stale_job_dirs(
             logger.debug("failed to sweep stale background shell job output", exc_info=True)
 
 
-def _truncate_output(value: str) -> tuple[str, bool]:
-    if len(value) <= MAX_INLINE_OUTPUT_CHARS:
-        return value, False
-    return f"{value[:MAX_INLINE_OUTPUT_CHARS]}\n...[truncated]", True
+def _truncate_output(
+    value: str, failure: bool = False, path: str | None = None,
+) -> tuple[str, bool]:
+    return shell_harness.background_output(
+        value, cap=MAX_INLINE_OUTPUT_CHARS, failure=failure, display_path=path
+    )
 
 
 def _limit_output_bytes(value: str) -> tuple[str, bool]:
@@ -417,8 +428,18 @@ def _build_terminal_status(
     safe_stderr = sanitize_tool_output_no_truncate(
         stderr or "", tool_name="run_command_background"
     )
-    truncated_stdout, stdout_truncated = _truncate_output(safe_stdout)
-    truncated_stderr, stderr_truncated = _truncate_output(safe_stderr)
+    full_output_path, output_file_truncated = _persist_full_output(
+        store,
+        job_ref,
+        safe_stdout,
+        safe_stderr,
+    )
+    truncated_stdout, stdout_truncated = _truncate_output(
+        safe_stdout, state == "failed", full_output_path
+    )
+    truncated_stderr, stderr_truncated = _truncate_output(
+        safe_stderr, state == "failed", full_output_path
+    )
     payload: dict[str, object] = {
         "job_id": job_id,
         "state": state,
@@ -430,12 +451,6 @@ def _build_terminal_status(
         payload["error"] = sanitize_tool_output_no_truncate(
             error, tool_name="run_command_background"
         )[:MAX_STATUS_ERROR_CHARS]
-    full_output_path, output_file_truncated = _persist_full_output(
-        store,
-        job_ref,
-        safe_stdout,
-        safe_stderr,
-    )
     if full_output_path is not None:
         payload["full_output_path"] = full_output_path
         payload["full_output_complete"] = not (
@@ -470,6 +485,8 @@ def _spawn_background_process(
         argv,
         cwd=cwd,
         allow_queue=False,
+        process_kind="background_job",
+        env=shell_harness.background_spawn_environment(),
         on_cleanup=_observe_cleanup,
     )
     job = _ManagedBackgroundProcess(
@@ -669,11 +686,14 @@ def _publish_initial_status_or_refuse(
     job_id: str,
     job: _ManagedBackgroundProcess,
 ) -> None:
+    # The ledger receipt binds this record to the job's own process across a restart handoff.
+    ticket = job.owned_process._ledger_ticket if job.owned_process is not None else None
+    binding = {"ledger_entry": ticket[1]} if ticket else {}
     try:
         published = _write_status(
             store,
             job_ref,
-            {"job_id": job_id, "state": "running", "pid": job.process.pid},
+            {"job_id": job_id, "state": "running", "pid": job.process.pid, **binding},
         )
     except Exception:  # noqa: BLE001 - cleanup must win over persistence.
         logger.warning("background initial status publication failed", exc_info=True)
@@ -933,31 +953,6 @@ def stop_background_job(workspace_root: Path, job_id: str) -> dict[str, object]:
     return {**read_background_job(workspace_root, job_id), "stop_requested": True}
 
 
-def _read_background_status_bytes(
-    store: GuardedWorkspaceStore,
-    status_ref: StoreRef,
-    *,
-    job_id: str,
-) -> bytes | dict[str, object]:
-    try:
-        raw_bytes = store.read_bytes(
-            status_ref,
-            max_bytes=MAX_STATUS_FILE_BYTES,
-            missing_ok=True,
-        )
-    except ToolExecutionFailure as error:
-        if error.code == CMP_TOOL_CAP_EXCEEDED:
-            return _job_status_error(
-                job_id,
-                f"job status file exceeds {MAX_STATUS_FILE_BYTES} byte limit",
-                "status_too_large",
-            )
-        return _job_status_error(job_id, "failed to read status", "read_failed")
-    if raw_bytes is None:
-        return {"job_id": job_id, "state": "not_found"}
-    return raw_bytes
-
-
 def read_background_job(workspace_root: Path, job_id: str) -> dict[str, object]:
     """Read status of a background job.  Returns a dict suitable for JSON.
 
@@ -984,7 +979,7 @@ def read_background_job(workspace_root: Path, job_id: str) -> dict[str, object]:
     if fallback is not None:
         return dict(fallback)
     job_ref = _job_ref(store, job_id)
-    status_result = _read_background_status_bytes(
+    status_result = read_background_status_bytes(
         store,
         store.child(job_ref, "status.json"),
         job_id=job_id,
@@ -1005,4 +1000,12 @@ def read_background_job(workspace_root: Path, job_id: str) -> dict[str, object]:
         status_result,
         expected_output_path=expected_output_path,
     )
-    return _reconcile_orphaned_running_status(store, job_ref, parsed)
+    status = _reconcile_orphaned_running_status(store, job_ref, parsed)
+    status.pop("ledger_entry", None)  # internal binding, never model-facing
+    return status
+
+
+
+def has_active_background_jobs() -> bool:
+    with _lock:
+        return bool(_active_jobs)

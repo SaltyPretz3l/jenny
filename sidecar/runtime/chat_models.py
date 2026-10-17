@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from sidecar.runtime.chat_continuation_resume import HydratedBeforeToolDispatchResume
     from sidecar.runtime.execution_context import ExecutionContext
 
-DISABLED_MEMORY_POLICY = MemoryPolicy(enabled=False, include_response_style=False)
+DISABLED_MEMORY_POLICY = MemoryPolicy(enabled=False, capture="off", recall=False)
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,8 @@ class ChatRequestContext:
     runtime_children_enabled: bool = False
     memory_policy: MemoryPolicy | None = None
     reasoning_effort: str | None = None
+    # Host-owned preferences captured per turn; never mutate live engine config.
+    subagent_routing: dict[str, Any] | None = None
     session_start_date: str | None = None
     current_date: str | None = None
     plan_mode: bool = False
@@ -71,6 +73,10 @@ class ChatRequestContext:
     approval_mode: str = "prompt"
     session_offline_lockdown: bool = False
     sub_agent_tool_preferences_fail_closed: bool = False
+    # Trusted handoff-only preparation turn (HandoffPreparation) or None.
+    handoff_preparation: Any | None = None
+    # The initialize-latched ``session_messages`` grant: gates offering ``session_message``.
+    session_messages_enabled: bool = False
     workspace_root_present: bool = False
     workspace_instruction_present: bool = False
     debug_options: dict[str, Any] | None = None
@@ -100,9 +106,56 @@ class ChatRequestContext:
     # Internal child completion contract. Legacy hidden executors retain the
     # four-field JSON report; the public delegate facade requests plain text.
     sub_agent_report_mode: str = "structured"
+    inference_performance: dict[str, Any] | None = None
+    # Capability gate (desktop only), independent of the live-counter opt-in.
+    # False suppresses both provider options and all performance notifications.
+    # Fail closed: only the desktop chat path turns it on (hosted strips the capability).
+    inference_performance_enabled: bool = False
+
+    def performance_request_fields(self) -> dict[str, Any]:
+        return {
+            "inference_performance": self.inference_performance,
+            "inference_performance_enabled": self.inference_performance_enabled,
+        }
+
+    def restrict_tool_contract(self, contract: Any) -> Any:
+        """Apply the request's handoff posture to an assembled tool contract."""
+        from sidecar.ai.tools.handoff_preparation import apply_handoff_preparation
+
+        return apply_handoff_preparation(contract, self)
+
+    def preparation_refusal(self, tool_name: str) -> str | None:
+        """The blocked reason for ``tool_name`` in a handoff preparation turn, else None."""
+        from sidecar.ai.tools.handoff_preparation import (
+            PREPARATION_ONLY_REASON,
+            refuses_in_preparation,
+        )
+
+        return PREPARATION_ONLY_REASON if refuses_in_preparation(self, tool_name) else None
 
 
 _LOGICAL_TURN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+
+
+def inference_performance_enabled_for_config(config: Any) -> bool:
+    """Match the desktop-only initialize capability without an eager import edge."""
+    from sidecar.ai.host_policy import host_policy_is_enforced
+
+    return not host_policy_is_enforced(config)
+
+
+def inference_performance_from_params(params: Any) -> dict[str, Any] | None:
+    """W1 is closed and optional: malformed telemetry never invalidates a turn."""
+    if not isinstance(params, dict):
+        return None
+    value = params.get("inference_performance")
+    if not isinstance(value, dict) or set(value) != {"live", "provider_kind"}:
+        return None
+    if type(value["live"]) is not bool or value["provider_kind"] not in (
+        "ninfer", "llama-server", "ollama", "other",
+    ):
+        return None
+    return {"live": value["live"], "provider_kind": value["provider_kind"]}
 
 
 def logical_turn_id_from_params(params: dict[str, Any], request_id: str) -> str:

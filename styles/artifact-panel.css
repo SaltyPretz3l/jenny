@@ -97,11 +97,43 @@
 
 /* Mermaid / SVG / image / chart previews center on the panel surface with no
    backdrop card inside the V2 panel. */
-.artifact-panel-v2-content-host .artifact-preview-mermaid-shell,
-.artifact-panel-v2-content-host .artifact-preview-image {
+.artifact-panel-v2-content-host .artifact-preview-mermaid-shell {
   background: none;
   border: none;
   box-shadow: none;
+}
+
+/* Image artifacts: the image itself opens the full-screen viewer (no extra button), framed
+   like a chat image, with its generation details under it. */
+.artifact-preview-image-shell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.artifact-preview-image-open {
+  display: block;
+  align-self: center;
+  max-inline-size: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  cursor: zoom-in;
+}
+
+.artifact-preview-image-open:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 3px;
+}
+
+.artifact-panel-v2-content-host .artifact-preview-image {
+  inline-size: auto;
+  max-inline-size: 100%;
+  border-radius: 10px;
+  outline: 1px solid var(--border-default);
+  outline-offset: -1px;
+  background: none;
 }
 
 /* Executable HTML preview inside this panel only: the frame host drops its
@@ -453,8 +485,6 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
 .artifact-review-panel .artifact-preview-pre,
 .artifact-review-panel .artifact-preview-web-shell,
 .artifact-review-panel .artifact-preview-chart-host,
-.artifact-review-panel .artifact-preview-image-shell,
-.artifact-review-panel .artifact-image-shell,
 .artifact-review-panel .artifact-preview-mermaid-shell {
   border-radius: 0;
   border: 0;

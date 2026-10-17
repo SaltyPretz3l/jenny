@@ -22,7 +22,7 @@ const {
   startManagedSidecarChatStream: _startManagedSidecarChatStream,
 } = require('./managed-sidecar-chat');
 const { discardUnsavedReply: _discardUnsavedReply, retryUnsavedReply: _retryUnsavedReply } = require('./backend-terminal-repair-actions');
-const { assertChatTurnAdmissible } = require('./chat-turn-admission');
+const { assertChatTurnAdmissible, assertLinkedFirstTurnAdmissible } = require('./chat-turn-admission');
 const {
   buildManagedSidecarConfig: _buildManagedSidecarConfig,
   disposeSidecarClient: _disposeSidecarClient,
@@ -57,10 +57,16 @@ const {
   startLocalEngineChatStream: _startLocalEngineChatStream,
 } = require('./local-engine-requests');
 const {
+  acceptPendingMemory: _acceptPendingMemory,
+  bumpMemoryPolicyEpoch: _bumpMemoryPolicyEpoch,
+  clearMemorySuppressions: _clearMemorySuppressions,
+  memoryPolicyEpoch: _memoryPolicyEpoch,
+  purgeSessionMemories: _purgeSessionMemories,
+  trackMemoryOptOutChange: _trackMemoryOptOutChange,
+  undoApprovedMemoryChange: _undoApprovedMemoryChange,
+  undoMemoryOperation: _undoMemoryOperation,
+  archiveProjectMemories: _archiveProjectMemories,
   getMemoryStatus: _getMemoryStatus,
-  dismissMemorySuggestion: _dismissMemorySuggestion,
-  isMemorySuggestionDismissed: _isMemorySuggestionDismissed,
-  suggestMemoriesForSession: _suggestMemoriesForSession,
   saveMemoryForSession: _saveMemoryForSession,
   listApprovedMemories: _listApprovedMemories,
   listPendingMemories: _listPendingMemories,
@@ -68,8 +74,8 @@ const {
   deleteApprovedMemory: _deleteApprovedMemory,
   deletePendingMemory: _deletePendingMemory,
   recallApprovedMemories: _recallApprovedMemories,
-  recallRecentApprovedMemories: _recallRecentApprovedMemories,
 } = require('./backend-memory');
+const memorySettings = require('./backend-memory-settings');
 const {
   runBackgroundTask: _runBackgroundTask,
 } = require('./backend-background-tasks');
@@ -82,6 +88,7 @@ const {
 const {
   checkCodexDiagnosticSetup,
   openCodexLoginTerminal,
+  resolveCodexCommandPath,
 } = require('./codex-cli-setup-adapter');
 const {
   createCodexCliAuthService,
@@ -118,6 +125,7 @@ const {
 const {
   listSessions: _listSessions,
   createSession: _createSession,
+  createLinkedChildSession: _createLinkedChildSession,
   renameSession: _renameSession,
   getSessionMessages: _getSessionMessages,
   setSessionPreferences: _setSessionPreferences,
@@ -152,7 +160,6 @@ const {
   initializeConversationStorage,
 } = require('./backend-conversation-storage');
 const { backfillTaskBoardProjects } = require('./task-board-project-backfill');
-const MAX_DISMISSED_MEMORY_FINGERPRINTS = 1000;
 class BackendService extends EventEmitter {
   constructor(options) {
     super();
@@ -318,9 +325,6 @@ class BackendService extends EventEmitter {
     require('../projects/application-execution-composition').initializeSessionExecutionAuthority(this);
     require('../session-runtime/composition').initializeSessionRuntimeComposition(this);
     this._electronToolGeneratedArtifactsByCall = new Map();
-    // Dismissed memory suggestion fingerprints persist across renderer reloads
-    // but not across app restarts.  Keyed by normalized fingerprint string.
-    this._dismissedMemoryFingerprints = new Set();
     this._disposed = false;
     this._sidecarClientErrorListener = null;
     this._sidecarClientLateNotificationListener = null;
@@ -589,7 +593,7 @@ class BackendService extends EventEmitter {
   }
 
   async setSessionPreferences(sessionId, preferences = {}) {
-    return _setSessionPreferences(this, sessionId, preferences);
+    return _trackMemoryOptOutChange(this, sessionId, () => _setSessionPreferences(this, sessionId, preferences));
   }
 
   pauseSessionAutoRun(sessionId, options = {}) {
@@ -598,6 +602,11 @@ class BackendService extends EventEmitter {
 
   async setSessionMeta(sessionId, meta = {}) {
     return _setSessionMeta(this, sessionId, meta);
+  }
+
+  // Row 59 cp5a: the linked child of an accepted New session proposal (never reachable from sessions.create IPC).
+  createLinkedChildSession(spec = {}) {
+    return _createLinkedChildSession(this, spec);
   }
 
   async sweepEmptySessions(options = {}) {
@@ -621,30 +630,8 @@ class BackendService extends EventEmitter {
     );
   }
 
-  dismissMemorySuggestion(sessionIdOrFingerprint, fingerprint) {
-    return _dismissMemorySuggestion(this, sessionIdOrFingerprint, fingerprint);
-  }
-
-  isMemorySuggestionDismissed(sessionIdOrFingerprint, fingerprint) {
-    return _isMemorySuggestionDismissed(this, sessionIdOrFingerprint, fingerprint);
-  }
-
   async runBackgroundTask(task, params = {}) {
     return _runBackgroundTask(this, task, params);
-  }
-
-  trimDismissedMemoryFingerprints() {
-    while (this._dismissedMemoryFingerprints.size > MAX_DISMISSED_MEMORY_FINGERPRINTS) {
-      const oldest = this._dismissedMemoryFingerprints.values().next().value;
-      if (!oldest) {
-        break;
-      }
-      this._dismissedMemoryFingerprints.delete(oldest);
-    }
-  }
-
-  async suggestMemoriesForSession(sessionId) {
-    return _suggestMemoriesForSession(this, sessionId);
   }
 
   async getMemoryStatus() {
@@ -663,24 +650,82 @@ class BackendService extends EventEmitter {
     return _listPendingMemories(this);
   }
 
-  async updateApprovedMemory(memoryId, patch, projectId) {
-    return _updateApprovedMemory(this, memoryId, patch, projectId);
+  async updateApprovedMemory(memoryId, patch, projectId, options) {
+    return _updateApprovedMemory(this, memoryId, patch, projectId, options);
   }
 
-  async deleteApprovedMemory(memoryId, projectId) {
-    return _deleteApprovedMemory(this, memoryId, projectId);
+  async deleteApprovedMemory(memoryId, projectId, options) {
+    return _deleteApprovedMemory(this, memoryId, projectId, options);
   }
 
-  async deletePendingMemory(sessionId, contentFingerprint) {
-    return _deletePendingMemory(this, sessionId, contentFingerprint);
+  async deletePendingMemory(sessionId, contentFingerprint, projectId) {
+    return _deletePendingMemory(this, sessionId, contentFingerprint, projectId);
+  }
+
+  async acceptPendingMemory(sessionId, contentFingerprint, projectId) {
+    return _acceptPendingMemory(this, sessionId, contentFingerprint, projectId);
+  }
+
+  // Settings > Memory page (row 58 W4); each takes one `{ projectId, ... }` request.
+  async listArchivedMemories(request) {
+    return memorySettings.listArchivedMemories(this, request);
+  }
+
+  async restoreArchivedMemory(request) {
+    return memorySettings.restoreArchivedMemory(this, request);
+  }
+
+  async eraseMemory(request) {
+    return memorySettings.eraseMemory(this, request);
+  }
+
+  async clearForgottenMemories(request) {
+    return memorySettings.clearForgottenMemories(this, request);
+  }
+
+  async listMemoryOperations(request) {
+    return memorySettings.listMemoryOperations(this, request);
+  }
+
+  async setMemoryAlwaysOn(request) {
+    return memorySettings.setMemoryAlwaysOn(this, request);
+  }
+
+  async exportMemoriesMarkdown(request) {
+    return memorySettings.exportMemoriesMarkdown(this, request);
+  }
+
+  async undoApprovedMemoryChange(operationId, projectId) {
+    return _undoApprovedMemoryChange(this, operationId, projectId);
+  }
+
+  async undoMemoryOperation(sessionId, operationId) {
+    return _undoMemoryOperation(this, sessionId, operationId);
+  }
+
+  async archiveProjectMemories(projectId) {
+    return _archiveProjectMemories(this, projectId);
+  }
+
+  async purgeSessionMemories(sessionId) {
+    return _purgeSessionMemories(this, sessionId);
+  }
+
+  async clearMemorySuppressions(projectId = null) {
+    return _clearMemorySuppressions(this, projectId);
+  }
+
+  // Memory policy epoch (row 58 W1): in-process, monotonic, starts at 0.
+  memoryPolicyEpoch() {
+    return _memoryPolicyEpoch(this);
+  }
+
+  bumpMemoryPolicyEpoch(reason) {
+    return _bumpMemoryPolicyEpoch(this, reason);
   }
 
   async recallApprovedMemories(query, limit = 3, options = {}) {
     return _recallApprovedMemories(this, query, limit, options);
-  }
-
-  async recallRecentApprovedMemories(lessonKind, limit = 2, options = {}) {
-    return _recallRecentApprovedMemories(this, lessonKind, limit, options);
   }
 
   async inspectHarness(options = {}) {
@@ -743,6 +788,7 @@ class BackendService extends EventEmitter {
     // Runtime admission owns routed GPU/provider checks when composed. Minimal
     // embedded hosts retain the legacy entry check.
     if (!this.sessionRuntime) assertChatTurnAdmissible(this, sessionId);
+    assertLinkedFirstTurnAdmissible(this, sessionId);
     return _startLocalEngineChatStream(this, {
       sessionId,
       prompt,
@@ -858,6 +904,6 @@ class BackendService extends EventEmitter {
 }
 
 module.exports = {
-  MAX_DISMISSED_MEMORY_FINGERPRINTS,
   BackendService,
+  resolveCodexCommandPath,
 };

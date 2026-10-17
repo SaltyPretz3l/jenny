@@ -98,10 +98,11 @@ async function generateSuggestions(service, companionState) {
   };
 
   try {
+    // Background work: a chat turn admission preempts it (auxiliary-preemption.js).
     const payload = await requestRuntimeInference(service, 'suggestions.generate', {
       accept_version: API_VERSION,
       ...context,
-    });
+    }, { preemptible: true });
 
     const suggestions = Array.isArray(payload?.suggestions)
       ? payload.suggestions.filter((s) => typeof s === 'string' && s.trim().length > 0)
@@ -109,6 +110,10 @@ async function generateSuggestions(service, companionState) {
 
     return { suggestions };
   } catch (error) {
+    if (error?.reason === 'auxiliary_preempted') {
+      service._emitServiceLog('INFO', 'suggestions.generate_skipped', { reason: 'auxiliary_preempted' });
+      return { suggestions: [] };
+    }
     service._emitServiceLog(isTimeoutError(error) ? 'INFO' : 'WARN', 'suggestions.generate_failed', {
       message: error?.message || String(error),
       timeout: isTimeoutError(error),

@@ -14,6 +14,49 @@ const { ensureSessionTurnActorRegistry } = require('../../services/backend/sessi
 const { RuntimeLaneAdmission } = require('../../services/session-runtime/lanes');
 const { PhysicalPathResolver } = require('../../services/session-runtime/physical-paths');
 const { ResourceBroker, capacityResource } = require('../../services/session-runtime/resource-broker');
+const { managedModelKey } = require('../../services/shell-config-engines');
+const { createAdapterHarness, request } = require('../helpers/session-runtime-chat-adapter-harness');
+
+// A managed id routes to openai-compatible only when it is loadable: an
+// enabled managed entry, an artifact with a NInfer manager, or an alias the
+// llama-server is serving right now (gate F27, Astra pass).
+for (const [kind, forced, hinted, expected] of [
+  ['llama-server', '', '', 'openai-compatible'],
+  ['llama-server', 'ollama', '', 'ollama'],
+  ['llama-server', '', 'ollama', 'ollama'],
+  ['ninfer', '', '', 'openai-compatible'],
+  ['ninfer-no-manager', '', '', 'ollama'],
+  ['live-alias', '', '', 'openai-compatible'],
+  ['stale-alias', '', '', 'ollama'],
+  ['', '', 'ollama', 'ollama'],
+]) {
+  test(`runtime engine selection: ${kind || 'unmanaged'}, forced=${forced}, hint=${hinted}`, async t => {
+    const { adapter, service, sessionId } = createAdapterHarness(t);
+    const model = 'qwen3.8-27b-ud-q6_k';
+    service.currentEngineType = 'ollama';
+    service._modelEngineHints = new Map(hinted ? [[model, hinted]] : []);
+    service.configService.getLocalEngines = () => ({ openaiCompatible: { managed: {
+      enabled: kind === 'llama-server',
+      perModel: kind === 'llama-server' ? { [managedModelKey(model)]: { engine: kind } } : {},
+    } } });
+    if (kind.startsWith('ninfer')) service.ninferRuntime = { artifacts: { artifacts: [{ id: model, model_id: model }] } };
+    if (kind === 'ninfer') service.options = { getNinferManager: () => ({}) };
+    if (kind.endsWith('-alias')) {
+      const state = kind === 'live-alias' ? 'ready' : 'stopped';
+      service.options = { getLlamaServerManager: () => ({ getStatus: () => ({ state, alias: model }) }) };
+    }
+    const prepared = await adapter.prepareImmediate(request(sessionId, {
+      runtimePreferredModel: model, runtimePreferredEngineType: forced,
+    }), {}, { workId: 'work_engine', turnId: 'turn_engine' });
+    try {
+      assert.equal(prepared.route.engine_type, expected);
+      assert.equal(prepared.request.runtimePreferredEngineType, expected);
+      assert.equal(prepared.input.request.runtimePreferredEngineType, expected);
+    } finally {
+      adapter.discard(prepared);
+    }
+  });
+}
 
 test('immediate runtime preflight reads session metadata without hydrating canonical history', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-runtime-preflight-'));

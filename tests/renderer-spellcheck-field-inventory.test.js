@@ -62,12 +62,8 @@ const EXPECTED_TRUE_SPELLCHECK_IDENTITIES = Object.freeze({
   'renderer/features/renderer-interactive-panel-utils.js': [
     'markup:data-interactive-other-input',
   ],
-  'renderer/features/renderer-memory-notes-utils.js': [
-    'textField:id:MEMORY_NOTES_ID',
-  ],
-  'renderer/features/renderer-memory-settings-utils.js': [
-    'textField:id:`memoryTitle${memory.id}`',
-    'textField:id:`memoryLesson${memory.id}`',
+  'renderer/features/renderer-memory-page-view-utils.js': [
+    'textField:id:`memoryText${memory.id}`',
   ],
   'renderer/features/renderer-scratchpad-pin.js': [
     'textField:id:EDITOR_ID',

@@ -15,7 +15,6 @@ import subprocess  # noqa: F401 - compatibility seam for injected unit fakes.
 import uuid
 from pathlib import Path
 
-from sidecar.ai.config import read_environment_value
 from sidecar.ai.error_codes import (
     CMP_TOOL_BACKGROUND_NOT_FOUND,
     CMP_TOOL_CAP_EXCEEDED,
@@ -25,7 +24,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_IO_FAILED,
 )
-from sidecar.ai.tools.builtins import cancellation, output_chunk_slot
+from sidecar.ai.tools.builtins import cancellation, output_chunk_slot, shell_harness
 from sidecar.ai.tools.builtins.git_tracking import detect_git_operations
 from sidecar.ai.tools.builtins.owned_process import (
     OwnedProcessCapacityError,
@@ -47,12 +46,13 @@ from sidecar.ai.tools.builtins.shell_command_split import (
     cmd_exe_multiline_refusal,
     split_compound_command,
 )
+from sidecar.ai.tools.builtins.shell_harness import powershell_directory as _powershell_directory
 from sidecar.ai.tools.builtins.shell_security import (
     CommandVerdict,
     classify_command,
     find_blocked_pattern,
 )
-from sidecar.ai.tools.builtins.shell_settings import _FEATURE_FLAGS
+from sidecar.ai.tools.builtins.shell_settings import _FEATURE_FLAGS, default_on_feature_enabled
 from sidecar.ai.tools.builtins.shell_settings import (
     configure_shell_security as _configure_shell_security,
 )
@@ -111,13 +111,17 @@ def _git_tracking_enabled() -> bool:
 # ── Helpers ───────────────────────────────────────────────────────────
 
 
-def _truncate(value: str) -> str:
+def _truncate(value: str, display_path: str | None = None) -> str:
+    if default_on_feature_enabled("shell_head_tail_output"):
+        return shell_harness.truncate_stream(value, display_path=display_path)
     if len(value) <= MAX_OUTPUT_CHARS:
         return value
     return f"{value[:MAX_OUTPUT_CHARS]}\n...[truncated]"
 
 
-def _truncate_failure_stream(value: str) -> str:
+def _truncate_failure_stream(value: str, display_path: str | None = None) -> str:
+    if default_on_feature_enabled("shell_head_tail_output"):
+        return shell_harness.truncate_stream(value, failure=True, display_path=display_path)
     if len(value) <= MAX_FAILURE_STREAM_CHARS:
         return value
     return f"{value[-MAX_FAILURE_STREAM_CHARS:]}\n...[earlier output omitted]"
@@ -260,15 +264,6 @@ def _shell_name() -> str:
     return "cmd.exe" if os.name == "nt" else "/bin/sh"
 
 
-def _powershell_directory() -> Path | None:
-    """Canonical Windows PowerShell directory, when it exists on this host."""
-    system_root = read_environment_value("SystemRoot") or read_environment_value("windir")
-    if not system_root:
-        return None
-    candidate = Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0"
-    return candidate if (candidate / "powershell.exe").is_file() else None
-
-
 def _shell_environment() -> dict[str, str] | None:
     r"""Inherit the parent env, but guarantee PowerShell is resolvable.
 
@@ -278,27 +273,30 @@ def _shell_environment() -> dict[str, str] | None:
     command dies with "'powershell' is not recognized" on a Windows-first app
     where both the user and the model reach for PowerShell by reflex.
     """
-    if os.name != "nt":
-        return None
-    directory = _powershell_directory()
-    if directory is None:
-        return None
-    env = dict(os.environ)
-    path_value = env.get("PATH") or ""
-    entries = [entry for entry in path_value.split(os.pathsep) if entry]
-    if any(os.path.normcase(os.path.normpath(entry)) ==
-           os.path.normcase(os.path.normpath(str(directory))) for entry in entries):
-        return None
-    entries.append(str(directory))
-    env["PATH"] = os.pathsep.join(entries)
-    return env
+    return shell_harness.shell_environment(_powershell_directory() if os.name == "nt" else None)
+
+
+def _which_on_explicit_path(name: str, *, path: str) -> str | None:
+    """Ignore cwd fallback and relative/empty PATH entries on every Python version."""
+    if Path(name).is_absolute():
+        return shutil.which(name, path=path)
+    for raw in path.split(os.pathsep):
+        directory = Path(raw.strip('"'))
+        if not raw or not directory.is_absolute():
+            continue
+        resolved = shutil.which(name, path=str(directory))
+        if resolved is not None and os.path.normcase(str(Path(resolved).absolute().parent)) == (
+                os.path.normcase(str(directory.absolute()))):
+            return resolved
+    return None
 
 
 def _shell_argv(command: str) -> list[str]:
     """Resolve the advertised platform shell before starting the owned process."""
     if os.name == "nt":
         interpreter_name = _shell_name()
-        interpreter = shutil.which(interpreter_name)
+        interpreter = _which_on_explicit_path(
+            interpreter_name, path=(_shell_environment() or os.environ).get("PATH", ""))
         if interpreter is None:
             raise ToolExecutionFailure(
                 code=CMP_TOOL_IO_FAILED,
@@ -319,7 +317,8 @@ def _shell_argv(command: str) -> list[str]:
 
 _UNRESOLVED_COMMAND_RE = re.compile(
     r"'([^']+)' is not recognized as an internal or external command"
-    r"|([^\s:]+): (?:command not found|not found)",
+    r"|([^\s:]+): (?:command not found|not found)"
+    r"|The term ['\"]([^'\"]+)['\"] is not recognized as (?:the |a )?name of a cmdlet",
     re.IGNORECASE,
 )
 
@@ -331,13 +330,16 @@ def _unresolved_command_hint(stderr: str) -> str | None:
     should retry with a full path, announces that, and burns another turn.
     """
     match = _UNRESOLVED_COMMAND_RE.search(stderr or "")
-    if match is None:
+    if match is None or not (
+        name := (match.group(1) or match.group(2) or match.group(3) or "").strip()
+    ):
         return None
-    name = (match.group(1) or match.group(2) or "").strip()
-    if not name:
-        return None
+    powershell_error = match.group(3) is not None
     resolved = shutil.which(name)
     if resolved:
+        if powershell_error:
+            escaped = resolved.replace("'", "''")
+            return f"{name!r} was not found by PowerShell; invoke the executable as & '{escaped}'."
         return f"{name!r} is not on this shell's PATH; invoke it as {resolved!r}."
     if name.lower() in {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}:
         directory = _powershell_directory()
@@ -346,6 +348,12 @@ def _unresolved_command_hint(stderr: str) -> str | None:
                 f"{name!r} is not on this shell's PATH; invoke it as "
                 f"{str(directory / 'powershell.exe')!r}."
             )
+    if powershell_error:
+        return (
+            f"{name!r} was not found by PowerShell. Check Get-Command, the command spelling, "
+            "and installation; use & 'absolute executable path' for commands outside the "
+            "constructed tool PATH."
+        )
     return (
         f"{name!r} could not be resolved by {_shell_name()}. Use an absolute "
         "path, or a different tool for this step."
@@ -678,12 +686,17 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
         payload_stderr = payload_stderr.replace(FULL_OUTPUT_PATH_PLACEHOLDER, display_path)
 
     # ── Build response payload ────────────────────────────────────
+    output_display_path = full_path.display_path if full_path is not None else None
+    truncate = (
+        _truncate_failure_stream
+        if not is_ok and default_on_feature_enabled("shell_head_tail_output") else _truncate
+    )
     payload: dict[str, object] = {
         "command": command,
         "cwd": display_cwd,
         "exit_code": exit_code,
-        "stdout": _truncate(payload_stdout),
-        "stderr": _truncate(payload_stderr),
+        "stdout": truncate(payload_stdout, output_display_path),
+        "stderr": truncate(payload_stderr, output_display_path),
         "ok": is_ok,
         "shell": _shell_name(),
     }

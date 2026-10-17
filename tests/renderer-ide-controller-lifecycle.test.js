@@ -128,3 +128,17 @@ test('a debounced window resize re-renders the Workspace only while it is the ac
     harness.dispose();
   }
 });
+
+test('Activity subscribes when flags arrive after IDE binding, and stays inert while disabled',async()=>{
+ let subscriptions=0,reads=0,disposed=0;
+ const harness=createHarness({featureFlags:{activity_monitor:false},beforeController:(_win,bridge)=>{
+  bridge.jennyShell.activity={onChanged:()=>{subscriptions++;return()=>disposed++;},subscribe:async()=>{reads++;return{available:true,epoch:'test',revision:1,items:[]};}};
+ }});
+ try{
+  await harness.controller.activateIde();harness.controller.renderIde();await Promise.resolve();
+  assert.equal(subscriptions,0);assert.equal(reads,0);
+  harness.state.features.featureFlags.activity_monitor=true;harness.controller.renderIde();await Promise.resolve();
+  assert.equal(subscriptions,1);assert.ok(reads>0);harness.controller.renderIde();assert.equal(subscriptions,1);
+ }finally{harness.dispose();}
+ assert.equal(disposed,1);
+});

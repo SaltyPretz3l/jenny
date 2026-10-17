@@ -100,7 +100,11 @@ test('swallowed detection and cleanup failures still reach the service logger', 
       };
       return stream;
     },
-    rmSync() { throw Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' }); },
+    // The temp directory removal (removeTreeSync) meets a lock that outlasts its retries.
+    lstatSync: () => ({ isDirectory: () => true, isSymbolicLink: () => false }),
+    readdirSync: () => [],
+    rmdirSync() { throw Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' }); },
+    unlinkSync() {},
     existsSync: () => false,
   };
   const service = new OllamaInstallService({

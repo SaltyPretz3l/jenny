@@ -261,6 +261,9 @@ def test_build_message_history_hash_changes_only_for_tracked_fields() -> None:
     ignored_only["timestamp"] = "2026-04-13T00:00:00Z"
     assert build_message_history_hash([ignored_only]) == original_hash
     assert "content" in SIDECAR_HISTORY_HASH_FIELDS
+    # Attributed session messages hash their identity (kind + envelope projection).
+    assert "kind" in SIDECAR_HISTORY_HASH_FIELDS
+    assert "session_message" in SIDECAR_HISTORY_HASH_FIELDS
 
 
 def test_freeze_effective_execution_inputs_keeps_visible_args_and_freezes_snapshot() -> None:

@@ -215,7 +215,9 @@ mid-turn. It takes:
 
 - `name`: the relative skill directory slug shown in the `Available Skills`
   index, including nested segments when present;
-- `scope`: optional `bundled`, `user`, or `project`.
+- `scope`: optional `bundled`, `user`, or `project`;
+- `reference`: optional `references/<file>.md` path named in the skill body (see
+  [References](#references)).
 
 The tool reads only from configured skill roots, not from an arbitrary path or
 the tools workspace. It is gated by `tools_load_skill_enabled`, which defaults to
@@ -224,6 +226,20 @@ true. See [Built-in Tools Reference](TOOLS.md#skills) for the tool-facing summar
 If `scope` is omitted, resolution tries bundled, user, then project. An invalid
 name or scope is rejected with `CMP-TOOL-0004`. A valid request that does not
 resolve returns `CMP-TOOL-0040` and a bounded list of available scope/name pairs.
+
+### References
+
+A skill folder may hold a `references/` directory of extra Markdown files that its
+`SKILL.md` body points to, for example `references/native-and-artifacts.md`. Only
+`load_skill(name=..., scope=..., reference="references/<file>.md")` reads them.
+They are not indexed, not listed under `Available Skills`, and never inlined into the
+prompt (an `always: true` skill inlines only its `SKILL.md`); the files still count
+toward the discovery entry bound.
+
+A reference is one `.md` file directly under `references/`. It is read with the
+`SKILL.md` byte cap, a link that leaves the skill directory is refused, and a
+disabled scope or skill refuses its references too. See
+[Built-in Tools Reference](TOOLS.md#load_skill) for the exact pattern and error codes.
 
 ### Automatic indexing
 

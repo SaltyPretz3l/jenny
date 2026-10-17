@@ -1,3 +1,5 @@
+const { acceptPrefillProgress } = require('./prefill-progress');
+
 // Notification handlers receive explicit ctx so extracted functions mutate shared runtime state.
 
 const {
@@ -25,6 +27,7 @@ const {
 const { normalizePendingQuestionBatch } = require('./message-normalization');
 const { noteDiscardedDraft } = require('./chat-stream-discarded-drafts');
 const { mergeLocalGeneratedArtifactPaths } = require('./chat-stream-tool-payload-utils');
+const { withIngestedAttachmentRefs } = require('./tool-result-attachments');
 const {
   buildStreamToolResultMessageId,
   buildStreamToolUseMessageId,
@@ -54,7 +57,7 @@ const {
 } = require('./compaction-midturn-snapshot');
 const { buildContextUsageStreamEvent, rebuildChatDoneUsage } = require('./chat-stream-usage');
 const { persistTerminalContextUsage } = require('./session-context-usage');
-const { normalizeResumableStop } = require('./chat-stream-stop-detail');
+const { normalizeCompletion, normalizeResumableStop } = require('./chat-stream-stop-detail');
 const { createCompactionDiagnostics } = require('./turn-diagnostic-compactions');
 
 // Every notification.method this router (or the tool-handling claim at the
@@ -75,6 +78,8 @@ const KNOWN_NOTIFICATION_METHODS = new Set([
   'context.compaction_started',
   'context.compacted',
   'context.usage',
+  'inference.performance',
+  'heuristic.fire',
   'chat.plan_usage',
   'chat.done',
   'chat.error',
@@ -406,6 +411,7 @@ function handleNotification(ctx, notification, {
   toolContext,
   handleToolNotification,
 }) {
+  if (notification.method === 'heuristic.fire') return;
   const {
     service, adapter, streamId, resolvedSessionId, transcriptCollector,
     turnMetrics, turnEventCollector, assistantBaseMessageId, canonicalBridgeEnabled,
@@ -449,11 +455,12 @@ function handleNotification(ctx, notification, {
       turnMetrics?.recordDroppedCanonicalEvent?.();
       return;
     }
-    const identityStampedParams = withLocalGeneratedArtifactPaths(ctx, attachWorkspaceIdentityToCanonicalEvent(
-      ctx.turnId && params.turn_id === streamId ? { ...params, turn_id: ctx.turnId } : params,
-      service,
-      toolContext?.workspaceRoot
-    ));
+    const identityStampedParams = withIngestedAttachmentRefs(ctx, withLocalGeneratedArtifactPaths(ctx,
+      attachWorkspaceIdentityToCanonicalEvent(
+        ctx.turnId && params.turn_id === streamId ? { ...params, turn_id: ctx.turnId } : params,
+        service,
+        toolContext?.workspaceRoot
+      )));
     const validation = validateTurnEvent(identityStampedParams);
     if (
       validation.status !== 'accepted'
@@ -490,6 +497,14 @@ function handleNotification(ctx, notification, {
     return;
   }
   if (notification.method === 'chat.thinking') {
+    if (params.progress !== undefined) {
+      const accepted = acceptPrefillProgress(ctx, params);
+      if (accepted) {
+        if (accepted.moved) touchProgress();
+        emitThinkingStatus('', String(params.thinking_id || ''), accepted.progress);
+      }
+      return;
+    }
     touchProgress();
     const thinkingBudgetChars = Number(params.thinking_budget_chars);
     if (Number.isFinite(thinkingBudgetChars) && thinkingBudgetChars > 0) {
@@ -719,6 +734,7 @@ function handleNotification(ctx, notification, {
     // terminal-shaped field the discarded attempt produced, and a future change
     // that defers finalization would otherwise reintroduce the stale carry.
     ctx.resumableStop = null;
+    ctx.completion = null;
     // Keep hasPersistedSegments on the preserve path: the preserved segments are
     // still real, so finalize must route the final answer through the proven
     // multi-segment path (persist it as its own segment) rather than rewriting
@@ -909,6 +925,8 @@ function handleNotification(ctx, notification, {
     ingestPlanUsage(ctx, params.plan_usage, 'chat_progress');
     return;
   }
+  // Ephemeral live metrics (row 59 cp6): the intake validates ownership; the stream never waits on it.
+  if (notification.method === 'inference.performance') return void service.inferenceIntake?.accept(ctx, params);
   if (notification.method === 'context.usage') {
     // Ephemeral mid-turn meter snapshot.
     emitChatStream({
@@ -944,6 +962,7 @@ function handleNotification(ctx, notification, {
       return;
     }
     ctx.resumableStop = normalizeResumableStop(params.resumable_stop);
+    ctx.completion = normalizeCompletion(params);
     if (typeof ctx.applyAuthoritativeTerminalText === 'function') {
       ctx.applyAuthoritativeTerminalText(
         params.response_text,

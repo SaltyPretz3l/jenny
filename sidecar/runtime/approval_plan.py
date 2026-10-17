@@ -8,6 +8,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from sidecar.ai.context.always_on_memories import rendered_always_on_section
+from sidecar.ai.context.context_rows import ENVELOPE_FIELD_BY_KIND, context_hash_projection
 from sidecar.ai.context.messages import resolve_personality_rendered
 from sidecar.runtime import approval_plan_cache as _approval_plan_cache
 
@@ -29,7 +31,10 @@ SIDECAR_INJECTED_ARG_KEYS: tuple[str, ...] = (
 
 SIDECAR_HISTORY_HASH_FIELDS: tuple[str, ...] = (
     "role",
+    "kind",
     "content",
+    "session_message",
+    "session_handoff",
     "tool_calls",
     "tool_call_id",
     "name",
@@ -267,6 +272,13 @@ class ApprovalPlan:
     # both already covered by ``system_prompt_hash`` / ``sampling_params_hash``
     # / ``message_history_hash``.
     personality_rendered: bool | None = None
+    # The FREEZE-TIME `## Always-on memories` section ("" when the turn carried
+    # none). Resume replays the frozen leading rows rather than re-reading the
+    # store, so an edit or forget between freeze and approval cannot change the
+    # replayed prefix; the live prefix scan never treats this row as
+    # regenerable. Excluded from ``approval_plan_hash`` for the same reason as
+    # ``personality_rendered``: ``message_history_hash`` already covers it.
+    always_on_rendered: str | None = None
     change_set_id: str = ""
     quota_state_json: bytes | None = None
 
@@ -288,6 +300,15 @@ def build_message_history_hash(messages: list[dict[str, Any]] | tuple[dict[str, 
             if field not in message:
                 continue
             value = message.get(field)
+            if field in ENVELOPE_FIELD_BY_KIND.values():
+                # Hash the identity of a context row, never the whole envelope.
+                projection = context_hash_projection(message)
+                if (
+                    projection is not None
+                    and ENVELOPE_FIELD_BY_KIND.get(str(message.get("kind") or "")) == field
+                ):
+                    canonical[field] = projection
+                continue
             if field == "tool_calls" and isinstance(value, list):
                 canonical["tool_calls"] = [
                     {
@@ -356,11 +377,12 @@ def build_sampling_params_hash(
             "top_p": getattr(config, "top_p", None),
             "stop_sequences": copy.deepcopy(getattr(config, "stop_sequences", None)),
             "prompt_cache_enabled": bool(prompt_cache_enabled),
+            # Approval-relevant memory switches only: the per-turn recall query
+            # and the policy epoch never invalidate an approval plan.
             "memory_policy": {
                 "enabled": bool(getattr(memory_policy, "enabled", True)),
-                "include_response_style": bool(
-                    getattr(memory_policy, "include_response_style", True)
-                ),
+                "capture": str(getattr(memory_policy, "capture", "auto")),
+                "recall": bool(getattr(memory_policy, "recall", True)),
             },
         }
     )
@@ -495,6 +517,7 @@ def build_approval_plan(
             config,
             getattr(request_context, "context_blocks", ()),
         ),
+        always_on_rendered=rendered_always_on_section(working_messages),
         approved_call_id=call_id,
         request_id=str(getattr(request_context, "request_id", "") or ""),
         trace_id=getattr(request_context, "trace_id", None),

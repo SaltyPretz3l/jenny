@@ -86,7 +86,7 @@ test('read-only boundary admits the declared read action of a mixed tool (HB-002
 
 test('Plan Mode keeps task_board list, project_notes read and home calendar_list but refuses their writes', () => {
   const executor = new ToolExecutor({
-    registry: createDefaultRegistry({ toolsHomeEnabled: true, toolsTaskBoardEnabled: true, toolsProjectNotesEnabled: true }),
+    registry: createDefaultRegistry({ toolsHomeEnabled: true, toolsTaskBoardEnabled: true, toolsProjectNotesEnabled: true, toolsConversationsEnabled: true }),
     permissionStore: { getSnapshot: () => ({ version: 1, legacy_policies: {}, rules: [] }) },
     pathPolicy: {}, logger: () => {},
   });
@@ -101,10 +101,31 @@ test('Plan Mode keeps task_board list, project_notes read and home calendar_list
   assert.equal(verdict('task_board', { action: 'list' }), 'allowed');
   assert.equal(verdict('task_board', { action: 'add', label: 'x' }), 'refused');
   assert.equal(verdict('project_notes', { action: 'read' }), 'allowed');
+  assert.equal(verdict('conversations_recent', {}), 'allowed');
+  assert.equal(verdict('conversation_open', { session_id: 'earlier' }), 'allowed');
+  assert.equal(verdict('conversations_search', { query: 'tabs' }), 'allowed');
   assert.equal(verdict('project_notes', { action: 'append', text: 'x' }), 'refused');
   assert.equal(verdict('project_notes', { action: 'replace', old_text: 'a', new_text: 'b' }), 'refused');
   assert.equal(verdict('home', { action: 'calendar_list' }), 'allowed');
   assert.equal(verdict('home', { action: 'scratchpad_read' }), 'allowed');
   assert.equal(verdict('home', { action: 'event_upsert' }), 'refused');
   assert.equal(verdict('home', { action: 'reminder_delete' }), 'refused');
+});
+
+test('the proposal producer tools stay offered in Plan Mode and read-only sessions (record-only, row 59 cp3)', () => {
+  const executor = new ToolExecutor({
+    registry: createDefaultRegistry({}),
+    permissionStore: { getSnapshot: () => ({ version: 1, legacy_policies: {}, rules: [] }) },
+    pathPolicy: {}, logger: () => {},
+  });
+  const context = { sessionId: 's', streamId: 't', readOnly: true, planMode: true, workingDirectory: '/ws' };
+  for (const toolName of ['propose_git_action', 'propose_command', 'propose_session', 'complete_session_handoff']) {
+    const tool = executor.registry.getTool(toolName);
+    assert.equal(tool.readOnly, true);
+    assert.equal(tool.sideEffecting, false);
+    assert.equal(tool.toolFamily, 'runtime');
+    const preflight = executor._preflightTool({ callId: `c_${toolName}`, toolName, input: {} }, context,
+      { preApproved: true });
+    assert.ok(preflight.tool, `${toolName} must pass the read-only/plan preflight`);
+  }
 });

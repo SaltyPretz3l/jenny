@@ -52,10 +52,17 @@ function createScene(options = {}) {
       },
     },
   };
+  // options.answerRow: the turn holds rows, the last an answer row
+  // scene.answerOffset below the turn's top.
+  scene.answerOffset = options.answerOffset ?? 400;
+  const answerRow = {
+    getBoundingClientRect: () => ({ top: 50 + scene.tailOffset + scene.answerOffset, height: 120 }),
+  };
   const tail = {
     classList: { contains: () => false },
     previousElementSibling: null,
     getBoundingClientRect: () => ({ top: 50 + scene.tailOffset }),
+    querySelectorAll: (selector) => (options.answerRow && selector === '.turn-row-list > .chat-row' ? [answerRow] : []),
   };
   scene.tail = tail;
   const chatTimeline = {
@@ -131,6 +138,35 @@ test('a tail shrink in a followed live reply keeps the view and becomes blank ro
   assert.ok(scene.writes.includes('tail_cushion'), 'the restore is attributed for the scroll coordinator');
 });
 
+// Gate 2026-10-14: the Thinking panel collapsing above the answer became room
+// that dropped the whole view at reply end.
+test('a reasoning collapse above the answer row adds no room and the answer stays put', () => {
+  const scene = createScene({ answerRow: true });
+  const answerBottomGap = () => scene.maxScrollTop() - scene.chatThreadScroll.scrollTop;
+  const before = scene.chatThreadScroll.scrollTop;
+
+  scene.answerOffset -= 400;
+  scene.resizeTimeline(-400);
+
+  assert.equal(scene.cushion, 0);
+  assert.equal(scene.chatThreadScroll.scrollTop, before - 400, 'the clamp keeps the bottom-anchored answer still');
+  assert.equal(answerBottomGap(), 0);
+  scene.streaming = false;
+  scene.cushionController.noteViewportSync();
+  scene.runFrames(30);
+  assert.equal(scene.chatThreadScroll.scrollTop, before - 400, 'nothing is left to drop at reply end');
+});
+
+test('the last answer row shrinking itself still keeps the view as room', () => {
+  const scene = createScene({ answerRow: true });
+  const before = scene.chatThreadScroll.scrollTop;
+
+  scene.resizeTimeline(-150);
+
+  assert.equal(scene.chatThreadScroll.scrollTop, before);
+  assert.equal(scene.cushion, 150);
+});
+
 test('new output fills the room in place before the follow target moves', () => {
   const scene = createScene();
   scene.resizeTimeline(-200);
@@ -160,7 +196,8 @@ test('the room is only added for a followed, streaming reply with no reader inpu
     ['not following', (scene) => { scene.following = false; }],
     ['reader release held', (scene) => { scene.released = true; }],
     ['reader just scrolled', (scene) => { scene.cushionController.noteReaderIntent(); }],
-    ['not streaming', (scene) => { scene.streaming = false; }],
+    // Streaming ended long enough ago that the settle window (F29) has closed.
+    ['not streaming', (scene) => { scene.streaming = false; scene.clock += 1000; }],
   ]) {
     const scene = createScene();
     setup(scene);
@@ -243,6 +280,35 @@ test('leftover room glides away when the reply ends', () => {
   // Ease-out: the last sub-pixel stretch rounds to zero a little early.
   assert.ok(scene.clock - 1000 >= TAIL_CUSHION_GLIDE_MS * 0.75, `glide lasted ${scene.clock - 1000}ms`);
   assert.equal(scene.frames.length, 0, 'the glide stops its frame loop');
+});
+
+test('a shrink in the frame after streaming ends still becomes room, then glides away', () => {
+  // Gate F29: the Answers view hides the settled turn's reasoning lines in the
+  // terminal render, after the stream handler has flipped streaming off.
+  const scene = createScene({ answerRow: true });
+  scene.resizeTimeline(0);
+  scene.streaming = false;
+  scene.cushionController.noteViewportSync();
+  scene.clock += 16;
+  const topBefore = scene.chatThreadScroll.scrollTop;
+
+  scene.resizeTimeline(-96);
+
+  assert.equal(scene.cushion, 96, 'the hidden lines became room');
+  assert.equal(scene.chatThreadScroll.scrollTop, topBefore, 'nothing above the tail moved');
+  assert.equal(scene.frames.length, 1, 'the room is retired on the next frame');
+  scene.runFrames(1, 16);
+  assert.ok(scene.frames.length === 1, 'the glide took over');
+  scene.runFrames(30, 16);
+  assert.equal(scene.cushion, 0);
+
+  // Well after the reply ended the cushion is disarmed as before.
+  const late = createScene({ answerRow: true });
+  late.resizeTimeline(0);
+  late.streaming = false;
+  late.clock += 1000;
+  late.resizeTimeline(-96);
+  assert.equal(late.cushion, 0);
 });
 
 test('leftover room closes instantly under reduced motion', () => {

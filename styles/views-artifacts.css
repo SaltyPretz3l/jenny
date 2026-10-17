@@ -170,9 +170,7 @@
   overflow-wrap: anywhere;
 }
 
-.artifact-editor-shell,
-.artifact-preview-image-shell,
-.artifact-image-shell {
+.artifact-editor-shell {
   border-radius: 24px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border-default) 74%, transparent);

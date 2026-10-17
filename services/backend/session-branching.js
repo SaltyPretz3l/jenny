@@ -115,6 +115,11 @@ function rewriteInheritedArtifactReferences(toolResult, rewriteEntry) {
 }
 
 function branchMessage(message, artifactRewrite) {
+  // Addressed session messages keep their canonical id (`ctx_<message_id>` / `ctxr_<message_id>`) and a
+  // first-turn handoff keeps `ctxh_<proposal>`: a re-minted id would fail validation and silently drop
+  // the row. They are inert history in the fork; mail state (inbox/outbox/snapshots) lives in
+  // session_mail, which a fork never copies, and a fork gets no spawned_from or proposal link.
+  if (message?.role === 'context') return structuredClone(message);
   const branched = {
     ...message,
     id: `msg_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`,
@@ -241,6 +246,7 @@ function forkSession(sessionStore, sourceSessionId, atMessageId, options = {}) {
   const branchCreatedAt = new Date().toISOString();
   const branchedMessages = sourceMessages
     .slice(0, forkIndex + 1)
+    .filter((message) => message.kind !== 'memory_note')
     .map((message) => branchMessage(message, options.artifactRewrite));
 
   if (branchedMessages.length === 0) {

@@ -652,12 +652,16 @@ class HarnessSnapshotBuilder:
             if provenance not in provenance_counts:
                 provenance = "unknown_legacy"
             provenance_counts[provenance] += 1
+        # The lists stay General-scoped, but the totals Diagnostics shows span
+        # every project, so project notes count (recap rows stay excluded).
+        totals = self._memory_store.status_snapshot(all_projects=True)["counts"]
         return {
             "approved": approved,
             "pending": pending,
             "counts": {
-                "approved": len(approved),
-                "pending": len(pending),
+                "approved": int(totals["active"]),
+                "pending": int(totals["pending"]),
+                "scope": "all",
                 "provenance": provenance_counts,
             },
             "status": memory_store_status_payload(self._memory_store),

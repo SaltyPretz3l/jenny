@@ -18,6 +18,8 @@ const { normalizeString } = require('./backend/path-utils');
 const { ollamaBinaryPath } = require('./ollama-runtime-paths');
 const installManifest = require('../config/ollama-install-manifest.json');
 const { evaluateOllamaVersion } = require('./ollama-version-policy');
+const { identifyOllamaDaemon } = require('./backend/ollama-daemon-identity');
+const { probeOllamaPort } = require('./backend/ollama-daemon-port');
 
 function lookupOllamaPath(deps) {
   if (typeof deps.commandLookupImpl === 'function') {
@@ -128,6 +130,18 @@ async function detectOllama(deps, { baseUrl, timeout }) {
     }
   }
 
+  let linuxFacts = {};
+  const endpoint = new URL(baseUrl);
+  if (deps.platform === 'linux' && ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname)
+    && endpoint.port === '11434') {
+    const [port, daemon] = await Promise.all([
+      (deps.probePortImpl || probeOllamaPort)({ platform: 'linux' }),
+      running ? (deps.identifyDaemonImpl || identifyOllamaDaemon)({
+        platform: 'linux', getOwnedPid: deps.getOwnedOllamaPid || (() => 0),
+      }) : null,
+    ]);
+    linuxFacts = { port, ...(daemon ? { daemon: Object.freeze({ ...daemon, version }) } : {}) };
+  }
   const versionPolicy = evaluateOllamaVersion(
     version,
     normalizeString(installManifest.minimumSupportedVersion),
@@ -140,6 +154,7 @@ async function detectOllama(deps, { baseUrl, timeout }) {
     installPath,
     source,
     ...versionPolicy,
+    ...linuxFacts,
   });
 }
 

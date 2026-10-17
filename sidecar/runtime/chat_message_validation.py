@@ -5,6 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sidecar.ai.context.context_rows import (
+    CONTEXT_ROLE,
+    SESSION_HANDOFF_KIND,
+    context_row_error,
+)
+
 _ALLOWED_MESSAGE_ROLES = frozenset({"system", "user", "assistant", "tool"})
 MAX_CHAT_MESSAGES_PER_REQUEST = 1024
 MAX_MESSAGE_CONTENT_BYTES = 256 * 1024
@@ -108,7 +114,28 @@ def _validate_tool_message(message: dict[str, Any], index: int) -> None:
     _validate_string_when_present(message, key="name", path=_message_path(index, "name"))
 
 
-def validate_chat_messages(messages: Any) -> None:
+def _validate_context_message(
+    message: dict[str, Any], index: int, *, messages_enabled: bool, handoff_enabled: bool
+) -> None:
+    handoff = message.get("kind") == SESSION_HANDOFF_KIND
+    if not (handoff_enabled if handoff else messages_enabled):
+        capability = SESSION_HANDOFF_KIND if handoff else "session_messages"
+        raise ValueError(
+            f"{_message_path(index, 'role')} context rows require the negotiated "
+            f"{capability} capability."
+        )
+    reason = context_row_error(message)
+    if reason is not None:
+        label = "session handoff" if handoff else "session message"
+        raise ValueError(f"{_message_path(index)} is not a valid {label}: {reason}.")
+
+
+def validate_chat_messages(
+    messages: Any,
+    *,
+    session_messages_enabled: bool = False,
+    session_handoff_enabled: bool = False,
+) -> None:
     if not isinstance(messages, list):
         raise ValueError("chat.send params.messages must be a list.")
     if len(messages) > MAX_CHAT_MESSAGES_PER_REQUEST:
@@ -129,6 +156,14 @@ def validate_chat_messages(messages: Any) -> None:
         if role is None:
             raise ValueError(f"{_message_path(index, 'role')} is required.")
         normalized_role = role.lower()
+        if normalized_role == CONTEXT_ROLE:
+            _validate_context_message(
+                raw_message,
+                index,
+                messages_enabled=session_messages_enabled,
+                handoff_enabled=session_handoff_enabled,
+            )
+            continue
         if normalized_role not in _ALLOWED_MESSAGE_ROLES:
             allowed = ", ".join(sorted(_ALLOWED_MESSAGE_ROLES))
             raise ValueError(f"{_message_path(index, 'role')} must be one of: {allowed}.")

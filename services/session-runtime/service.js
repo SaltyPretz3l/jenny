@@ -9,6 +9,8 @@ const { validStart, captureRootStart, ensureRootStart, assertRootStart } = requi
 const { normalizeReason, normalizeTimeout, waitForCleanup } = require('./lifecycle');
 
 const { TERMINAL } = require('./terminal-retention-contract');
+const { submitApplicationTurn, submitCommandProposal, getApplicationWork,
+  findApplicationSubmission } = require('./application-submissions');
 
 function runtimeId(prefix, createId) {
   return `${prefix}_${createId()}`;
@@ -42,7 +44,7 @@ function pausedWorkForStream(runtime, streamId) {
 }
 
 class SessionRuntimeService {
-  constructor({ store, scheduler, chatAdapter, resourceBroker = null, pathResolver = null,
+  constructor({ store, scheduler, chatAdapter, commandAdapter = null, resourceBroker = null, pathResolver = null,
     checkpointStore = null, budgetStore = null, lineageStore = null, conversationStore = null,
     eligibilityCoordinator = null, createId = randomUUID } = {}) {
     if (!store || !scheduler || !chatAdapter || typeof chatAdapter.prepareImmediate !== 'function') {
@@ -52,6 +54,7 @@ class SessionRuntimeService {
     this.scheduler = scheduler;
     this.lanes = scheduler.lanes;
     this.chatAdapter = chatAdapter;
+    this.commandAdapter = commandAdapter;
     this.resourceBroker = resourceBroker;
     this.pathResolver = pathResolver;
     this.checkpointStore = checkpointStore;
@@ -156,7 +159,15 @@ class SessionRuntimeService {
     }
   }
 
+  // Application-authored entries (row 59 checkpoint 3): see application-submissions.js.
+  submitApplicationTurn(request, options) { return submitApplicationTurn(this, request, options); }
+  submitCommandProposal(args) { return submitCommandProposal(this, args); }
+  getApplicationWork(workId) { return getApplicationWork(this, workId); }
+  findApplicationSubmission(idempotencyKey) { return findApplicationSubmission(this, idempotencyKey); }
+
   async _submit(request, { idempotencyKey, rootStart = null, beforeCommit, ...options }, submission) {
+    // A linked child waits for its handoff first turn; that turn's own key passes (row 59).
+    this.chatAdapter.assertLinkedFirstTurn?.(request?.sessionId, idempotencyKey);
     const workId = runtimeId('work', this.createId);
     const turnId = runtimeId('turn', this.createId);
     const prepared = await this.chatAdapter.prepareSubmission(request, {
@@ -270,6 +281,10 @@ class SessionRuntimeService {
     const source = id ? this.store.get(id) : null;
     if (!source || source.status !== 'paused') {
       return Object.freeze({ status: 'rejected', reason: 'work_not_paused' });
+    }
+    // A Run is never resumed or re-run: its outcome after an interruption is unknown.
+    if (source.input?.kind === 'command_proposal') {
+      return Object.freeze({ status: 'rejected', reason: 'command_proposal_not_resumable' });
     }
     if (this.scheduler.enabled !== true) {
       return this.scheduler.resume(id, expectedRevision);

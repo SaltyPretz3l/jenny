@@ -1,0 +1,478 @@
+{
+  "Q01": [
+    {
+      "path": "AGENTS.md",
+      "locator": "L21-21",
+      "text": "| Runtime ownership, engine posture, JSON-RPC, vocabulary, identifiers, persisted event shapes | [Project contract details](docs/architecture/PROJECT_CONTRACT_DETAILS.md) and the owning domain manifest |",
+      "sha256": "4262f03c7ebb047e6d073ffcb1feb8f2370abcf8ef163d8da76799b298cdf296"
+    },
+    {
+      "path": "AGENTS.md",
+      "locator": "L34-34",
+      "text": "- Electron and Python communicate through JSON-RPC over stdio. `sidecar/protocol.py` owns wire constants and allowed methods; `scripts/checks/check_protocol_contract.py` enforces the vocabulary. Read the detailed contract before changing a protocol, identifier, tool ID, persisted event kind, or boundary casing.",
+      "sha256": "4262f03c7ebb047e6d073ffcb1feb8f2370abcf8ef163d8da76799b298cdf296"
+    }
+  ],
+  "Q02": [
+    {
+      "path": "AGENTS.md",
+      "locator": "L34-34",
+      "text": "- Electron and Python communicate through JSON-RPC over stdio. `sidecar/protocol.py` owns wire constants and allowed methods; `scripts/checks/check_protocol_contract.py` enforces the vocabulary. Read the detailed contract before changing a protocol, identifier, tool ID, persisted event kind, or boundary casing.",
+      "sha256": "4262f03c7ebb047e6d073ffcb1feb8f2370abcf8ef163d8da76799b298cdf296"
+    }
+  ],
+  "Q03": [
+    {
+      "path": "AGENTS.md",
+      "locator": "L36-36",
+      "text": "- Desktop secrets use Electron `safeStorage`; never put API keys in environment variables or plaintext config. The hosted exception below is explicit. Optional cloud integrations require a current plan, service boundary, redaction, focused tests, and applicable manifest changes, and must fail closed or degrade without breaking local chat. Never read, copy, or expose another tool's credentials (for example the Codex CLI's `~/.codex/auth.json`); the `codex-cli` engine lets the CLI use its own login. The ChatGPT sign-in runs Jenny's own OAuth flow, keeps its tokens only in the safeStorage-backed secure store, sends the access token only to the sidecar and the ChatGPT backend, and never shows tokens in the renderer or logs. Do not integrate Anthropic subscription auth.",
+      "sha256": "4262f03c7ebb047e6d073ffcb1feb8f2370abcf8ef163d8da76799b298cdf296"
+    }
+  ],
+  "Q04": [
+    {
+      "path": "AGENTS.md",
+      "locator": "L36-36",
+      "text": "- Desktop secrets use Electron `safeStorage`; never put API keys in environment variables or plaintext config. The hosted exception below is explicit. Optional cloud integrations require a current plan, service boundary, redaction, focused tests, and applicable manifest changes, and must fail closed or degrade without breaking local chat. Never read, copy, or expose another tool's credentials (for example the Codex CLI's `~/.codex/auth.json`); the `codex-cli` engine lets the CLI use its own login. The ChatGPT sign-in runs Jenny's own OAuth flow, keeps its tokens only in the safeStorage-backed secure store, sends the access token only to the sidecar and the ChatGPT backend, and never shows tokens in the renderer or logs. Do not integrate Anthropic subscription auth.",
+      "sha256": "4262f03c7ebb047e6d073ffcb1feb8f2370abcf8ef163d8da76799b298cdf296"
+    }
+  ],
+  "Q05": [
+    {
+      "path": "AGENTS.md",
+      "locator": "L37-37",
+      "text": "- `tool.request_approval` blocks until an explicit approve/deny response. Other documented reverse requests are `tool.execute_electron` and versioned internal `runtime.operation` admission. The latter is not a model tool; `workspace_test.*` methods are the private contained-helper protocol. Filesystem tools require explicitly bound session/project authority; a null root permits conversation only.",
+      "sha256": "4262f03c7ebb047e6d073ffcb1feb8f2370abcf8ef163d8da76799b298cdf296"
+    }
+  ],
+  "Q06": [
+    {
+      "path": "AGENTS.md",
+      "locator": "L37-37",
+      "text": "- `tool.request_approval` blocks until an explicit approve/deny response. Other documented reverse requests are `tool.execute_electron` and versioned internal `runtime.operation` admission. The latter is not a model tool; `workspace_test.*` methods are the private contained-helper protocol. Filesystem tools require explicitly bound session/project authority; a null root permits conversation only.",
+      "sha256": "4262f03c7ebb047e6d073ffcb1feb8f2370abcf8ef163d8da76799b298cdf296"
+    }
+  ],
+  "Q07": [
+    {
+      "path": "AGENTS.md",
+      "locator": "L40-40",
+      "text": "- The supported build uses `start.js`, `electron-builder`, and `esbuild`; there is no `electron-vite` pipeline. The sidecar must remain runnable as `python -m sidecar`.",
+      "sha256": "4262f03c7ebb047e6d073ffcb1feb8f2370abcf8ef163d8da76799b298cdf296"
+    }
+  ],
+  "Q08": [
+    {
+      "path": "AGENTS.md",
+      "locator": "L40-40",
+      "text": "- The supported build uses `start.js`, `electron-builder`, and `esbuild`; there is no `electron-vite` pipeline. The sidecar must remain runnable as `python -m sidecar`.",
+      "sha256": "4262f03c7ebb047e6d073ffcb1feb8f2370abcf8ef163d8da76799b298cdf296"
+    }
+  ],
+  "Q09": [
+    {
+      "path": "WORKFLOW.md",
+      "locator": "L15-15",
+      "text": "- **Integrated:** the behavior is connected through its real application entry points and verified there. State separately whether it has landed on main.",
+      "sha256": "e0988dfbfc530ebc2db4a5b73c91c3bb7e540ca1138a81865d1016447d8bcfd4"
+    }
+  ],
+  "Q10": [
+    {
+      "path": "WORKFLOW.md",
+      "locator": "L16-16",
+      "text": "- **Qualified:** the checkpoint's required recovery, scale, compatibility, and authorized manual gates have passed; name outstanding gates explicitly.",
+      "sha256": "e0988dfbfc530ebc2db4a5b73c91c3bb7e540ca1138a81865d1016447d8bcfd4"
+    }
+  ],
+  "Q11": [
+    {
+      "path": "AGENTS.md",
+      "locator": "L15-15",
+      "text": "- [NEXT_STEPS.md](NEXT_STEPS.md) is the sole authority for current priorities, status, release scope, and ship gates. Anything larger than a fix gets a roadmap row before planning; owner-directed bug fixes and 1.0.x patches do not need one. Historical plans and market comparisons do not create a second roadmap.",
+      "sha256": "4262f03c7ebb047e6d073ffcb1feb8f2370abcf8ef163d8da76799b298cdf296"
+    }
+  ],
+  "Q12": [],
+  "Q13": [
+    {
+      "path": "tests/fixtures/documents/paragraphs.docx",
+      "locator": "para1",
+      "text": "Quarterly summary",
+      "sha256": "5895924b1d7ab00f5e6056dbfa18e72f4f2a100e2cc46cd1c1081c887b3e12a2"
+    }
+  ],
+  "Q14": [
+    {
+      "path": "tests/fixtures/documents/paragraphs.docx",
+      "locator": "para2",
+      "text": "Plain bold and italic and underlined text.",
+      "sha256": "5895924b1d7ab00f5e6056dbfa18e72f4f2a100e2cc46cd1c1081c887b3e12a2"
+    }
+  ],
+  "Q15": [
+    {
+      "path": "tests/fixtures/documents/lists-tables.docx",
+      "locator": "para9",
+      "text": "Cash",
+      "sha256": "8d7e301a5aa77e0fb51ff524b17e02e35e0391bd3609b335932a76260d8cc422"
+    },
+    {
+      "path": "tests/fixtures/documents/lists-tables.docx",
+      "locator": "para8",
+      "text": "Balance",
+      "sha256": "8d7e301a5aa77e0fb51ff524b17e02e35e0391bd3609b335932a76260d8cc422"
+    },
+    {
+      "path": "tests/fixtures/documents/lists-tables.docx",
+      "locator": "para10",
+      "text": "1,250.00",
+      "sha256": "8d7e301a5aa77e0fb51ff524b17e02e35e0391bd3609b335932a76260d8cc422"
+    }
+  ],
+  "Q16": [
+    {
+      "path": "tests/fixtures/documents/lists-tables.docx",
+      "locator": "para11",
+      "text": "After the table.",
+      "sha256": "8d7e301a5aa77e0fb51ff524b17e02e35e0391bd3609b335932a76260d8cc422"
+    }
+  ],
+  "Q17": [
+    {
+      "path": "sidecar/ai/semantic/extract.py",
+      "locator": "L26-26",
+      "text": "MAX_TEXT_FILE_BYTES = 4 * 1024 * 1024  # the knowledge registry's per-file cap",
+      "sha256": "30ad3bba7c4c621a1b5ae7c634a5ad183aadc25c5e467ae71caa2c9f1db0681b"
+    }
+  ],
+  "Q18": [
+    {
+      "path": "sidecar/ai/semantic/extract.py",
+      "locator": "L30-30",
+      "text": "MAX_PDF_PAGES = 500",
+      "sha256": "30ad3bba7c4c621a1b5ae7c634a5ad183aadc25c5e467ae71caa2c9f1db0681b"
+    },
+    {
+      "path": "sidecar/ai/semantic/extract.py",
+      "locator": "L33-33",
+      "text": "MAX_PDF_EXTRACT_SECONDS = 5.0",
+      "sha256": "30ad3bba7c4c621a1b5ae7c634a5ad183aadc25c5e467ae71caa2c9f1db0681b"
+    },
+    {
+      "path": "sidecar/ai/semantic/extract.py",
+      "locator": "L34-34",
+      "text": "MAX_PDF_TEXT_CHARS = 800_000",
+      "sha256": "30ad3bba7c4c621a1b5ae7c634a5ad183aadc25c5e467ae71caa2c9f1db0681b"
+    }
+  ],
+  "Q19": [
+    {
+      "path": "sidecar/ai/semantic/chunker.py",
+      "locator": "L174-174",
+      "text": "    max_chars: int = 1500,",
+      "sha256": "d54c3c749fee2caeca85d33d672986c8bf38c39db557b08f924ffd349c0e4c4d"
+    },
+    {
+      "path": "sidecar/ai/semantic/chunker.py",
+      "locator": "L175-175",
+      "text": "    overlap_chars: int = 200,",
+      "sha256": "d54c3c749fee2caeca85d33d672986c8bf38c39db557b08f924ffd349c0e4c4d"
+    }
+  ],
+  "Q20": [
+    {
+      "path": "sidecar/ai/semantic/store.py",
+      "locator": "L31-31",
+      "text": "MAX_CHUNKS_PER_DOCUMENT = 400",
+      "sha256": "e882c7f3a2b19f50623052ed0a0b599e74233d536be839d40561f05361b7e27e"
+    }
+  ],
+  "Q21": [
+    {
+      "path": "sidecar/ai/tools/builtins/knowledge/semantic_fusion.py",
+      "locator": "L27-27",
+      "text": "RRF_K = 60",
+      "sha256": "ab75dce0876db70851dc557a7c2074023420138b54ec91d2195e322652cf12ca"
+    }
+  ],
+  "Q22": [
+    {
+      "path": "sidecar/ai/tools/builtins/knowledge/semantic_fusion.py",
+      "locator": "L24-24",
+      "text": "MAX_QUERY_TERMS = 8",
+      "sha256": "ab75dce0876db70851dc557a7c2074023420138b54ec91d2195e322652cf12ca"
+    },
+    {
+      "path": "sidecar/ai/tools/builtins/knowledge/semantic_fusion.py",
+      "locator": "L28-28",
+      "text": "_TERM_RE = re.compile(r\"\\w{3,}\")",
+      "sha256": "ab75dce0876db70851dc557a7c2074023420138b54ec91d2195e322652cf12ca"
+    }
+  ],
+  "Q23": [
+    {
+      "path": "sidecar/ai/semantic/provider.py",
+      "locator": "L26-26",
+      "text": "LOOPBACK_HOSTS = frozenset({\"127.0.0.1\", \"localhost\", \"::1\"})",
+      "sha256": "1fe26f1ec5f8f9c191378348a130d0054bab0c97b4f6425455f5bf880f53b1b9"
+    }
+  ],
+  "Q24": [
+    {
+      "path": "sidecar/ai/semantic/provider.py",
+      "locator": "L14-14",
+      "text": "import httpx",
+      "sha256": "1fe26f1ec5f8f9c191378348a130d0054bab0c97b4f6425455f5bf880f53b1b9"
+    },
+    {
+      "path": "sidecar/ai/semantic/provider.py",
+      "locator": "L48-48",
+      "text": "    if url.scheme != \"http\" or url.host not in LOOPBACK_HOSTS or url.userinfo:",
+      "sha256": "1fe26f1ec5f8f9c191378348a130d0054bab0c97b4f6425455f5bf880f53b1b9"
+    }
+  ],
+  "Q25": [
+    {
+      "path": "services/semantic-catalog-service.js",
+      "locator": "L31-31",
+      "text": "const DEFAULT_QUIET_MS = 30_000;",
+      "sha256": "f67e9277cba4215a5ec6f87862ae4f1e082cae2db9b4dc274a8f443d4e2581d0"
+    }
+  ],
+  "Q26": [
+    {
+      "path": "services/semantic-catalog-service.js",
+      "locator": "L41-41",
+      "text": "const STEP_MAX_CHUNKS = 16;",
+      "sha256": "f67e9277cba4215a5ec6f87862ae4f1e082cae2db9b4dc274a8f443d4e2581d0"
+    },
+    {
+      "path": "services/semantic-catalog-service.js",
+      "locator": "L42-42",
+      "text": "const STEP_MAX_SECONDS = 1.5;",
+      "sha256": "f67e9277cba4215a5ec6f87862ae4f1e082cae2db9b4dc274a8f443d4e2581d0"
+    }
+  ],
+  "Q27": [
+    {
+      "path": "sidecar/ai/semantic/reader.py",
+      "locator": "L85-85",
+      "text": "        store = CatalogStore(Path(settings.db_path), read_only=True)",
+      "sha256": "758563b5145cbe0a1861ad96b0b6c89b102527f39f19a76a0e29a061fa9a4b04"
+    }
+  ],
+  "Q28": [
+    {
+      "path": "sidecar/ai/semantic/reader.py",
+      "locator": "L53-53",
+      "text": "    ``allowed`` is false in hosted mode, which never reaches the catalog.",
+      "sha256": "758563b5145cbe0a1861ad96b0b6c89b102527f39f19a76a0e29a061fa9a4b04"
+    }
+  ],
+  "Q29": [
+    {
+      "path": "fixtures/code/broken.py",
+      "locator": "L2-2",
+      "text": "    return 17",
+      "sha256": "284f143959a7f2339f36d8348c30ce752fcb8f27bb42b51043a8d6481d5b7602"
+    }
+  ],
+  "Q30": [
+    {
+      "path": "fixtures/code/broken.py",
+      "locator": "L1-1",
+      "text": "def retry_limit()",
+      "sha256": "284f143959a7f2339f36d8348c30ce752fcb8f27bb42b51043a8d6481d5b7602"
+    }
+  ],
+  "Q31": [
+    {
+      "path": "fixtures/code/limits.zig",
+      "locator": "L1-1",
+      "text": "pub const retry_limit: u32 = 23;",
+      "sha256": "216f2bb5b75a4eb1c2bd02bad51b11492def99d1c865eaca4d9361f963c4f17a"
+    }
+  ],
+  "Q32": [
+    {
+      "path": "sidecar/ai/semantic/extract.py",
+      "locator": "L39-39",
+      "text": "TEXT_EXTENSIONS = frozenset(",
+      "sha256": "30ad3bba7c4c621a1b5ae7c634a5ad183aadc25c5e467ae71caa2c9f1db0681b"
+    }
+  ],
+  "Q33": [
+    {
+      "path": "tests/fixtures/documents/text.pdf",
+      "locator": "p1",
+      "text": "Page 1 of the text fixture.\nSearchable words: revenue balance ledger\n",
+      "sha256": "d226bfa481ce432bdb6c1dbaae66fb2f8812f461f6fe85fc74c9225f771c5125"
+    }
+  ],
+  "Q34": [],
+  "Q35": [
+    {
+      "path": "tests/fixtures/documents/long-statement.pdf",
+      "locator": "p1",
+      "text": "Annual Statement 2026 - page 1 of 4\nSchedule A item 01 ........................................ 1,037.00\nSchedule A item 02 ........................................ 1,074.00\nSchedule A item 03 ........................................ 1,111.00\nSchedule A item 04 ........................................ 1,148.00\nSchedule A item 05 ........................................ 1,185.00\nSchedule A item 06 ........................................ 1,222.00\nSchedule A item 07 ........................................ 1,259.00\nSchedule A item 08 ........................................ 1,296.00\nSchedule A item 09 ........................................ 1,333.00\nSchedule A item 10 ........................................ 1,370.00\nSchedule A item 11 ........................................ 1,407.00\nSchedule A item 12 ........................................ 1,444.00\n",
+      "sha256": "35db080cfd834b7eb1b5a9f989bf80577325a43dbc91755f736323d2623a278e"
+    },
+    {
+      "path": "tests/fixtures/documents/long-statement.pdf",
+      "locator": "p4",
+      "text": "Annual Statement 2026 - page 4 of 4\nSchedule A item 37 ........................................ 2,369.00\nSchedule A item 38 ........................................ 2,406.00\nSchedule A item 39 ........................................ 2,443.00\nSchedule A item 40 ........................................ 2,480.00\nSchedule A item 41 ........................................ 2,517.00\nSchedule A item 42 ........................................ 2,554.00\nSchedule A item 43 ........................................ 2,591.00\nSchedule A item 44 ........................................ 2,628.00\nSchedule A item 45 ........................................ 2,665.00\nSchedule A item 46 ........................................ 2,702.00\nSchedule A item 47 ........................................ 2,739.00\nSchedule A item 48 ........................................ 2,776.00\nTotal Schedule A ........................................ 91,512.00\n",
+      "sha256": "35db080cfd834b7eb1b5a9f989bf80577325a43dbc91755f736323d2623a278e"
+    }
+  ],
+  "Q36": [
+    {
+      "path": "tests/fixtures/documents/long-statement.pdf",
+      "locator": "p4",
+      "text": "Annual Statement 2026 - page 4 of 4\nSchedule A item 37 ........................................ 2,369.00\nSchedule A item 38 ........................................ 2,406.00\nSchedule A item 39 ........................................ 2,443.00\nSchedule A item 40 ........................................ 2,480.00\nSchedule A item 41 ........................................ 2,517.00\nSchedule A item 42 ........................................ 2,554.00\nSchedule A item 43 ........................................ 2,591.00\nSchedule A item 44 ........................................ 2,628.00\nSchedule A item 45 ........................................ 2,665.00\nSchedule A item 46 ........................................ 2,702.00\nSchedule A item 47 ........................................ 2,739.00\nSchedule A item 48 ........................................ 2,776.00\nTotal Schedule A ........................................ 91,512.00\n",
+      "sha256": "35db080cfd834b7eb1b5a9f989bf80577325a43dbc91755f736323d2623a278e"
+    }
+  ],
+  "Q37": [
+    {
+      "path": "fixtures/tables.pdf",
+      "locator": "p1",
+      "text": "Quarterly adjustments\nPeriod\nNet adjustment (USD)\nGross energy (kWh)\nQ1\n-12.50\n7.50\nQ2\n4.00\n8.25\n",
+      "sha256": "cebd6cda732d5ff1af1f0933c683371b22d572eebb2e1f888b3edf8c1970ab38"
+    }
+  ],
+  "Q38": [
+    {
+      "path": "fixtures/tables.pdf",
+      "locator": "p1",
+      "text": "Quarterly adjustments\nPeriod\nNet adjustment (USD)\nGross energy (kWh)\nQ1\n-12.50\n7.50\nQ2\n4.00\n8.25\n",
+      "sha256": "cebd6cda732d5ff1af1f0933c683371b22d572eebb2e1f888b3edf8c1970ab38"
+    }
+  ],
+  "Q39": [
+    {
+      "path": "fixtures/two-columns.pdf",
+      "locator": "p1",
+      "text": "East plant\nWest plant\nLead time: 3 days\nOwner: Mina\nLead time: 8 days\nOwner: Sol\n",
+      "sha256": "90ac3a01f299c04336fd4e1700abdd9ff194b8e4baccf8881efc4f730a568e84"
+    }
+  ],
+  "Q40": [
+    {
+      "path": "fixtures/two-columns.pdf",
+      "locator": "p1",
+      "text": "East plant\nWest plant\nLead time: 3 days\nOwner: Mina\nLead time: 8 days\nOwner: Sol\n",
+      "sha256": "90ac3a01f299c04336fd4e1700abdd9ff194b8e4baccf8881efc4f730a568e84"
+    }
+  ],
+  "Q41": [
+    {
+      "path": "fixtures/footnote.pdf",
+      "locator": "p1",
+      "text": "Storage limit: -4.5°C [1]\n[1] Applies to unopened units only.\n",
+      "sha256": "7f8beb19fa863b445a8fa5148af95e52061a2785e40319f8df94946ade896f5f"
+    }
+  ],
+  "Q42": [
+    {
+      "path": "fixtures/footnote.pdf",
+      "locator": "p1",
+      "text": "Storage limit: -4.5°C [1]\n[1] Applies to unopened units only.\n",
+      "sha256": "7f8beb19fa863b445a8fa5148af95e52061a2785e40319f8df94946ade896f5f"
+    }
+  ],
+  "Q43": [],
+  "Q44": [],
+  "Q45": [
+    {
+      "path": "fixtures/mixed.pdf",
+      "locator": "p1",
+      "text": "Shipment code KESTREL-204\n",
+      "sha256": "89cd9dad6e1f690ab92850f8493700c99046f5cfe942b2949e95a2283e5f8d8f"
+    }
+  ],
+  "Q46": [],
+  "Q47": [],
+  "Q48": [],
+  "Q49": [
+    {
+      "path": "fixtures/versions/current.md",
+      "locator": "L2-2",
+      "text": "Effective 2026-07-01 through 2026-12-31. Timeout: 20 ms.",
+      "sha256": "2d803e497cde17655b5a0cda62e4f833f982d581087863f8c3e80e659f272fbf"
+    }
+  ],
+  "Q50": [
+    {
+      "path": "fixtures/versions/old.md",
+      "locator": "L2-2",
+      "text": "Effective 2026-01-01 through 2026-06-30. Timeout: 10 ms.",
+      "sha256": "6fc67ca52947e95961bd4eef05159a9128500c04a653ed46e936a794f70a734e"
+    }
+  ],
+  "Q51": [
+    {
+      "path": "fixtures/versions/future.md",
+      "locator": "L2-2",
+      "text": "Effective 2027-01-01 onward. Timeout: 30 ms.",
+      "sha256": "158a942fd3d58945e9362ab6b96269b4c7437a1cad7d1e25c5179ed1597e5bb7"
+    }
+  ],
+  "Q52": [
+    {
+      "path": "fixtures/versions/current.md",
+      "locator": "L2-2",
+      "text": "Effective 2026-07-01 through 2026-12-31. Timeout: 20 ms.",
+      "sha256": "2d803e497cde17655b5a0cda62e4f833f982d581087863f8c3e80e659f272fbf"
+    }
+  ],
+  "Q53": [
+    {
+      "path": "fixtures/versions/overlap-a.md",
+      "locator": "L2-2",
+      "text": "Effective 2026-09-01 through 2026-11-30. Timeout: 40 ms.",
+      "sha256": "ff0a139d022ef5ac036325a6aa1d6dc9aed4b11a4f7f76d12aecabe97d3ba3d9"
+    },
+    {
+      "path": "fixtures/versions/overlap-b.md",
+      "locator": "L2-2",
+      "text": "Effective 2026-10-01 through 2026-12-31. Timeout: 50 ms.",
+      "sha256": "687778dcd6b53c57d8415ddd14a0292e7c2cd0e9fceaa80bfc0d873295ad240a"
+    }
+  ],
+  "Q54": [
+    {
+      "path": "fixtures/versions/unknown.md",
+      "locator": "L2-2",
+      "text": "Timeout: 99 ms. No applicability dates recorded.",
+      "sha256": "742e08bde2e494002b561f4da8008fa49a3a8cc86f1ab38d31ccf83251ee219d"
+    }
+  ],
+  "Q55": [
+    {
+      "path": "fixtures/integrity/freshness.md",
+      "locator": "L1-1",
+      "text": "Current inventory tag: NEW-TAG.",
+      "sha256": "f792c8d2a0a458e01ca56fb3f9b51a59233db3035946b4a346bda5c536b5f2e3"
+    }
+  ],
+  "Q56": [],
+  "Q57": [],
+  "Q58": [
+    {
+      "path": "fixtures/integrity/fallback.md",
+      "locator": "L1-1",
+      "text": "Launch code: LARK-618.",
+      "sha256": "43c6607f517c0256c1a9f6a0bd4074581188c04f825be809762c8f5174a1bf2b"
+    }
+  ],
+  "Q59": [],
+  "Q60": [
+    {
+      "path": "fixtures/integrity/hostile.md",
+      "locator": "L1-1",
+      "text": "Dispatch tag: HERON-312.",
+      "sha256": "1f1e42afe0a7f97f642bea6eb97a62806d629d44feef82b54a77cc77bd2a800b"
+    }
+  ]
+}

@@ -127,7 +127,6 @@ function createHarness(options = {}) {
       refreshSnapshots: async () => {},
       showToastMessage() {},
       dismissStreamErrors() {},
-      maybeSuggestMemoryCapture: async () => {},
       appendClientLog() {},
       getInteractiveComposerStatusNotice() { return ''; },
       persistInteractiveFallbackRequest: async () => {},

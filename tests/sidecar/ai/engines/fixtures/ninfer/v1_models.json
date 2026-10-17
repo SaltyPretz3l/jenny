@@ -1,0 +1,18 @@
+{
+  "data": [
+    {
+      "created": 1791918909,
+      "id": "qwen3.8-27b-nvfp4",
+      "max_model_len": 32768,
+      "meta": {
+        "n_ctx": 32768
+      },
+      "object": "model",
+      "owned_by": "ninfer",
+      "status": {
+        "value": "loaded"
+      }
+    }
+  ],
+  "object": "list"
+}

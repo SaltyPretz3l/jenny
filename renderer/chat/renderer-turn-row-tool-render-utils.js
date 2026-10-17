@@ -76,13 +76,13 @@
 
   const toolDetailBody = (typeof globalThis !== 'undefined' && globalThis.rendererToolDetailBody)
     || (typeof require === 'function' ? require('./renderer-tool-detail-body') : null);
-  const taskSpawnChip = (typeof globalThis !== 'undefined' && globalThis.rendererTaskSpawnChip)
-    || (typeof require === 'function' ? require('./renderer-task-spawn-chip') : null);
   const calendarChatBlock = (typeof globalThis !== 'undefined' && globalThis.rendererCalendarChatBlock)
     || (typeof require === 'function' ? require('./renderer-calendar-chat-block') : null);
   // Resolved per render: index.html loads the notes entry after this module.
   const projectNotesEntry = () => (typeof globalThis !== 'undefined' && globalThis.rendererProjectNotesEntry)
     || (typeof require === 'function' ? require('../features/renderer-project-notes-entry') : null);
+  const memoryChatEntry = () => (typeof globalThis !== 'undefined' && globalThis.rendererMemoryChatEntry)
+    || (typeof require === 'function' ? require('../features/renderer-memory-chat-entry') : null);
 
   function getToolStatusSeverity(status, normalizeId) {
     const toolCallUtils = (typeof globalThis !== 'undefined' && globalThis.toolCallUtils)
@@ -292,6 +292,15 @@
     // path, so without it an image never shows in the timeline (GIP-1).
     // Other artifacts keep their teaser card. Resolved per call: the card
     // utils may load after this module.
+    // The row's "Review changes" target through the change ledger; null when
+    // the ledger is not loaded or the call changed nothing reviewable.
+    function resolveReviewableChange(toolCall, turnId) {
+      const ledger = (typeof globalThis !== 'undefined' && globalThis.rendererJennyChangeLedger)
+        || (typeof require === 'function' ? require('./renderer-jenny-change-ledger') : null);
+      return ledger && typeof ledger.resolveReviewableChange === 'function'
+        ? ledger.resolveReviewableChange(toolCall, { turnId }) : null;
+    }
+
     function resolveArtifactCardUtils() {
       if (settings.artifactCardUtils && typeof settings.artifactCardUtils.renderArtifactCards === 'function') {
         return settings.artifactCardUtils;
@@ -465,9 +474,9 @@
         artifacts: resultPayload && Array.isArray(resultPayload.generated_artifacts)
           ? resultPayload.generated_artifacts
           : [],
-        trustedAttachmentImageUrls: toolCallUtils
-          && typeof toolCallUtils.getTrustedToolResultImageUrls === 'function'
-          ? toolCallUtils.getTrustedToolResultImageUrls(resultPayload)
+        trustedAttachmentImages: toolCallUtils
+          && typeof toolCallUtils.getTrustedToolResultImages === 'function'
+          ? toolCallUtils.getTrustedToolResultImages(resultPayload)
           : [],
         retryMessageId: renderOptions.retryMessageId,
         sessionId: String(renderOptions.sessionId || ''),
@@ -489,10 +498,6 @@
           sessionId: detailModel.sessionId,
         })
         : '';
-      const taskSpawnChipMarkup = taskSpawnChip?.renderTaskSpawnChipStrip?.(detailModel, {
-        escapeHtml,
-        getLinkedSessionId: taskSpawnChip.getLinkedSessionId,
-      }) || '';
       const calendarBlockMarkup = resultPayload && calendarChatBlock
         && typeof calendarChatBlock.buildHomeResultBlockMarkup === 'function'
         ? calendarChatBlock.buildHomeResultBlockMarkup(resultPayload.metadata, {
@@ -501,7 +506,9 @@
           hasLiveJournalEntry: globalThis.rendererCalendarChatBindings?.hasLiveJournalEntry,
         }) : '';
       const notesBlockMarkup = resultPayload?.metadata?.result_kind === 'project_notes'
-        ? projectNotesEntry()?.buildProjectNotesResultBlockMarkup?.(resultPayload.metadata, { escapeHtml }) || '' : '';
+        ? projectNotesEntry()?.buildProjectNotesResultBlockMarkup?.(resultPayload.metadata, { escapeHtml }) || ''
+        : resultPayload?.metadata?.result_kind === 'memory' // the memory chip shares the notes row slot
+          ? memoryChatEntry()?.buildMemoryResultBlockMarkup?.(resultPayload.metadata, { escapeHtml, sessionId: detailModel.sessionId }) || '' : '';
       const displayToolName = toolCallUtils && typeof toolCallUtils.getToolDisplayName === 'function'
         ? toolCallUtils.getToolDisplayName(toolName, payload.tool_display_name)
         : toolName;
@@ -519,9 +526,18 @@
       const fileOperationClass = isFileOperation
         ? ` tool-call-file-operation${isRunning ? ' tool-call-file-composing' : (toolCallUtils.isFileOperationSettledStatus(status) ? ' tool-call-file-settled' : '')}`
         : '';
+      // A settled non-specialized row (a suggestion, a script, a move) renders
+      // here, not in the tool shell, so it carries its own review affordance.
+      const reviewTurnId = normalizeId(row && row.turn_id);
+      const reviewableChange = normalizeId(toolName) === 'propose_change'
+        ? (resultPayload && !resultBodyIsError && detailModel.metadata.suggested_change && reviewTurnId && toolCallId
+          ? { scope: 'suggested', turnId: reviewTurnId, toolCallId } : null)
+        : resolveReviewableChange({ toolCallId, toolName, state: status, resultIsError: resultBodyIsError,
+          resultMetadata: detailModel.metadata, input: summaryInput }, reviewTurnId);
       const headerInner = toolCallUtils && typeof toolCallUtils.buildToolHeaderInner === 'function'
         ? toolCallUtils.buildToolHeaderInner({
             displayToolName,
+            reviewableChange,
             lineCounts: toolCallUtils.getToolLineCounts(toolName, detailModel.metadata, status, resultBodyIsError),
             summary: rowSummary === displayToolName ? '' : rowSummary,
             status: headerStatus,
@@ -550,6 +566,11 @@
               : '',
           }, {
             escapeHtml,
+            renderReviewChangesAffordance(change) {
+              const affordance = globalThis.rendererCodeReviewAffordance
+                || (typeof require === 'function' ? require('./renderer-code-review-affordance') : null);
+              return change && affordance?.renderReviewChangesAffordance?.(change, { escapeHtml }) || '';
+            },
             renderIcon(icon, model) {
               return model.isFileOperation && icon
                 ? `<span class="tool-call-file-icon" aria-hidden="true">${icon}</span>` : '';
@@ -580,7 +601,7 @@
         : '';
       // A row that shows content beside its header (banner, action link, chip,
       // calendar block, diagram, artifact) never folds into an Answers tool run.
-      const runFoldableAttr = renderOptions.transcriptView === 'answers' && [markerBannerMarkup, pdfAddonLinkMarkup, sessionBudgetLinkMarkup, taskSpawnChipMarkup,
+      const runFoldableAttr = renderOptions.transcriptView === 'answers' && [markerBannerMarkup, pdfAddonLinkMarkup, sessionBudgetLinkMarkup,
         calendarBlockMarkup, notesBlockMarkup, mermaidFallbackMarkup, artifactTeasersMarkup, pendingImageFigureMarkup].some((part) => String(part || '').trim())
         ? ' data-run-foldable="false"' : '';
       return `
@@ -601,7 +622,7 @@
           </div>
           ${summaryParts.pathMarkup}
           </div>
-          ${pdfAddonLinkMarkup}${sessionBudgetLinkMarkup}${taskSpawnChipMarkup}${calendarBlockMarkup}${notesBlockMarkup}
+          ${pdfAddonLinkMarkup}${sessionBudgetLinkMarkup}${calendarBlockMarkup}${notesBlockMarkup}
           ${mermaidFallbackMarkup}
           ${artifactTeasersMarkup}${pendingImageFigureMarkup}
           <div class="tool-call-row-body" id="${escapeHtml(bodyId)}"${expanded ? '' : ' inert'}>
@@ -835,9 +856,9 @@
         resultSummary: String(payload.result_summary || payload.summary || ''),
         domToken,
         artifacts: Array.isArray(payload.generated_artifacts) ? payload.generated_artifacts : [],
-        trustedAttachmentImageUrls: toolCallUtils
-          && typeof toolCallUtils.getTrustedToolResultImageUrls === 'function'
-          ? toolCallUtils.getTrustedToolResultImageUrls(payload)
+        trustedAttachmentImages: toolCallUtils
+          && typeof toolCallUtils.getTrustedToolResultImages === 'function'
+          ? toolCallUtils.getTrustedToolResultImages(payload)
           : [],
         retryMessageId: options && options.retryMessageId,
       };
@@ -903,7 +924,10 @@
       if (approvalInput && approvalInput.truncated === true && typeof approvalInput.preview === 'string') {
         approvalInput = null;
       }
-      if (approvalInput && toolCallUtils && typeof toolCallUtils.getApprovalCommandPreview === 'function') {
+      // A message to another chat is approved against its own full-body field (the block renders
+      // it); the clipped input preview and fact derivation never stand in for it.
+      const sendsMessage = toolName === 'session_message';
+      if (!sendsMessage && approvalInput && toolCallUtils && typeof toolCallUtils.getApprovalCommandPreview === 'function') {
         commandText = toolCallUtils.getApprovalCommandPreview(toolName, approvalInput);
       }
       return renderApprovalBlock({
@@ -918,9 +942,10 @@
         oneOffOnly: payload.one_off_only === true || payload.oneOffOnly === true,
         purpose: approvalInput && toolCallUtils && typeof toolCallUtils.getApprovalPurpose === 'function'
           ? toolCallUtils.getApprovalPurpose(approvalInput) : '',
-        facts: approvalInput && toolCallUtils && typeof toolCallUtils.getApprovalFacts === 'function'
+        facts: !sendsMessage && approvalInput && toolCallUtils && typeof toolCallUtils.getApprovalFacts === 'function'
           ? toolCallUtils.getApprovalFacts(toolName, approvalInput) : [],
         commandText,
+        sessionMessageApproval: sendsMessage ? payload.session_message_approval : undefined,
         mode: 'inline',
         cardState: cardState.state,
         resumeKey: cardState.resumeKey,

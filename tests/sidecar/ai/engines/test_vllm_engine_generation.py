@@ -3,6 +3,9 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
 
@@ -15,13 +18,19 @@ from sidecar.ai.engines.engine_events import (
 )
 from sidecar.ai.engines.openai_compatible import OpenAICompatibleEngine
 from sidecar.ai.engines.vllm_engine import VLLMEngine
+from sidecar.ai.routing.engine_messages import engine_messages
+from sidecar.ai.routing.loop_runtime import LoopRuntime
+from sidecar.ai.routing.preview_vision import prepare_preview_messages
 from sidecar.ai.routing.provider_stream_normalizer import (
     FINISH_REASON_INCOMPLETE,
     FINISH_REASON_PROVIDER_ERROR,
 )
+from sidecar.ai.routing.router import ToolExecutionOutcome
+from sidecar.ai.routing.tool_execution_results import tool_result_message
 from sidecar.ai.tools.models import (
     STREAMING_EVENT_KIND_TOOL_ARGUMENTS_PROGRESS,
     StreamingEvent,
+    ToolCallRequest,
 )
 from tests.sidecar.ai.engines import test_vllm_engine as vllm_test
 
@@ -341,6 +350,87 @@ def test_repetition_penalty_uses_provider_specific_payload_key(
     assert "repeat_penalty" not in vllm_payload
     assert openai_compatible_payload["repeat_penalty"] == 1.15
     assert "repetition_penalty" not in openai_compatible_payload
+
+
+@pytest.fixture(scope="module")
+def invalid_image_dimensions_result() -> dict[str, Any]:
+    script = """
+const {fixture} = require('./tests/helpers/image-generate-fixture');
+const cleanup = [];
+(async () => {
+  try {
+    const f = fixture({after: fn => cleanup.push(fn)});
+    const result = await f.tool.execute({prompt:'a fox',width:1024,height:1472},f.context);
+    if (f.calls.some(([name]) => name === 'suspend')) throw new Error('Unexpected GPU admission');
+    process.stdout.write(JSON.stringify(result));
+  } finally { for (const fn of cleanup.reverse()) await fn(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        ["node", "-e", script], cwd=Path(__file__).resolve().parents[4],
+        check=True, capture_output=True, text=True, encoding="utf-8", timeout=15,
+    )
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_native_llama_server_payload_keeps_invalid_image_dimensions_as_matching_tool_result(
+    monkeypatch: pytest.MonkeyPatch, streaming: bool, invalid_image_dimensions_result: dict[str, Any],
+) -> None:
+    model = "local-chat-model"
+    vllm_test._patch_models_probe(
+        monkeypatch, lambda *_args, **_kwargs: vllm_test._make_models_response(model),
+    )
+    engine = OpenAICompatibleEngine(host="http://127.0.0.1:8033")
+    engine.load_model(model)
+    call = ToolCallRequest(
+        tool_id="image_generate", call_id="image_bad_size",
+        arguments={"prompt": "a fox", "width": 1024, "height": 1472},
+    )
+    actual = invalid_image_dimensions_result
+    repair = actual["metadata"]["remediation"]
+    result = tool_result_message(
+        call,
+        ToolExecutionOutcome(
+            tool_name="image_generate", call_id=call.call_id, success=False,
+            output=actual["content"],
+            error_code=actual["errorCode"],
+            metadata=actual["metadata"],
+        ),
+        config=SimpleNamespace(tool_result_envelope_enabled=True),
+    )
+    history = [
+        {"role": "user", "content": "Draw a fox."},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": call.call_id, "name": call.tool_id, "arguments": call.arguments}]},
+        result,
+    ]
+    messages, _ = prepare_preview_messages(
+        SimpleNamespace(_engine=engine), LoopRuntime(),
+        engine_messages(history, primary_system_text="sys"),
+        system="sys", tools=[], max_tokens=128, anchor_text="Draw a fox.",
+    )
+    if streaming:
+        captured = Mock(return_value=vllm_test._FakeSSEStream([
+            vllm_test._sse_chunk({"content": "I will use the supported portrait size."}),
+            "data: [DONE]",
+        ]))
+        vllm_test._patch_stream_response(monkeypatch, captured)
+        vllm_test._drain_stream(engine.stream_with_tools(prompt="Draw a fox.", system="sys", messages=messages, tools=[]))
+        payload = captured.call_args.kwargs["json"]
+    else:
+        captured = Mock(return_value={"choices": [{"finish_reason": "stop", "message": {"content": "I will use the supported portrait size."}}]})
+        monkeypatch.setattr(engine._service, "post_json", captured)
+        engine.generate_with_tools(prompt="Draw a fox.", system="sys", messages=messages, tools=[])
+        payload = captured.call_args.args[1]
+    assert [row["role"] for row in payload["messages"]] == ["system", "user", "assistant", "tool"]
+    assert payload["messages"][-2]["tool_calls"][0]["id"] == call.call_id
+    tool_row = payload["messages"][-1]
+    assert tool_row["tool_call_id"] == call.call_id
+    assert tool_row["content"] == result["content"]
+    assert "outcome: error" in tool_row["content"]
+    assert "error_class: bad_arguments" in tool_row["content"]
+    assert "fix: " + repair in tool_row["content"]
+    assert "primary image is already shown" not in tool_row["content"]
 
 
 def _terminal_gap_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:

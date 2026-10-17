@@ -19,6 +19,7 @@ const { normalizeLinkedTaskId } = require('./session-store-migrations');
 const { normalizeRunMode } = require('./session-preferences-patch');
 const { resolveSessionToolDenyList } = require('./backend-service-utils');
 const { resolveDefaultSessionProjectId } = require('../projects/workspace-project-provisioner');
+const { createWorkspaceViewStore, normalizeSpawnedFrom } = require('./session-coordination-records');
 const {
   MAX_FOLLOW_UP_BODY_CHARS,
   MAX_FOLLOW_UP_LABEL_CHARS,
@@ -118,6 +119,69 @@ async function createSession(service, {
       object: 'session',
       data: session,
     };
+}
+
+// A new child expands its parent in the sidebar (spec: new children expand their parent); best effort,
+// a failed view write only leaves the parent collapsed.
+function expandParentOf(store, parentId) {
+  try {
+    const view = createWorkspaceViewStore(store);
+    const read = view.read(parentId);
+    if (read.ok && read.workspace_view.children_expanded === false) {
+      view.write(parentId, { expected_revision: read.coordination_revision, patch: { children_expanded: true } });
+    }
+  } catch {
+    // The child exists either way.
+  }
+}
+
+function createLinkedChildSession(service, spec = {}) {
+  const { childSessionId, childIncarnation, title, projectId, preferences, lockdown } = spec;
+  const spawnedFrom = normalizeSpawnedFrom(spec.spawnedFrom);
+  if (typeof childSessionId !== 'string' || !/^sess_[0-9]+_[0-9a-f]{12}$/.test(childSessionId)
+    || typeof childIncarnation !== 'string' || !/^inc_[0-9a-f]{32}$/.test(childIncarnation)
+    || spawnedFrom?.schema_version !== 1) return { ok: false, code: 'invalid_request' };
+  const store = service.sessionStore;
+  const existing = store.getSession(childSessionId);
+  if (existing) {
+    return existing.spawned_from?.child_creation_hash === spawnedFrom.child_creation_hash
+      ? { ok: true, session_id: childSessionId, existed: true }
+      : { ok: false, code: 'proof_mismatch' };
+  }
+  // A projectless source (D9) has no destination: the child takes the default project, as a new chat does.
+  let authority;
+  try {
+    authority = service.projectAuthority.captureProject(projectId == null ? resolveDefaultSessionProjectId(service) : projectId);
+  } catch {
+    return { ok: false, code: 'project_unavailable' };
+  }
+  let created;
+  try {
+    created = store.createSessionWithId(childSessionId, {
+      title, projectId: authority.project_id, sessionType: 'chat',
+      sessionIncarnation: childIncarnation, spawnedFrom,
+      preferences: {
+        preferred_model: preferences?.preferred_model,
+        reasoning_effort: preferences?.reasoning_effort,
+        run_mode: preferences?.run_mode,
+        lockdown: lockdown === true,
+      },
+    });
+    if (created && store.flushSession(childSessionId) === true) {
+      expandParentOf(store, spawnedFrom.parent_session_id);
+      return { ok: true, session_id: childSessionId };
+    }
+  } catch {
+    // A failed flush may leave only the just-created in-memory record.
+  }
+  const current = store.getSession(childSessionId);
+  if (current && current.session_incarnation === childIncarnation
+    && current.spawned_from?.child_creation_hash === spawnedFrom.child_creation_hash && !current.messages.length) {
+    if (store.deleteSession(childSessionId, { scrubLinks: false }) !== true) {
+      service._emitServiceLog?.('WARN', 'session.linked_child_rollback_failed', { sessionId: childSessionId });
+    }
+  }
+  return { ok: false, code: 'flush_failed' };
 }
 
 async function renameSession(service, sessionId, title) {
@@ -556,6 +620,7 @@ async function setSessionPreferences(service, sessionId, preferences = {}) {
     normalizeLockdownPreferencePatch(preferences)
   );
   const stored = service.sessionStore.getSession?.(sessionId) || updated;
+  if (updated) service.chatWorkspace?.notifyCoordinationChanged?.(sessionId);
   const changedKeys = stored
     ? ['run_mode', 'plan_mode'].filter((key) => stored[key] !== previous?.[key])
     : [];
@@ -728,6 +793,7 @@ async function updateSessionMessage(service, sessionId, messageId, patch = {}) {
 module.exports = {
   listSessions,
   createSession,
+  createLinkedChildSession,
   renameSession,
   deleteSession,
   getSessionMessages,

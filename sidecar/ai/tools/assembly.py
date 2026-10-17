@@ -19,14 +19,11 @@ from sidecar.ai.error_codes import (
     CMP_TSRCH_DEFERRED_TOOL,
 )
 from sidecar.ai.execution_policy import desktop_policy_is_enforced, desktop_tool_decision
+from sidecar.ai.feature_flags import recall_tool_enabled
 from sidecar.ai.host_policy import host_policy_is_enforced, host_tool_decision
 from sidecar.ai.mode_policy import policy_for_mode
-from sidecar.ai.tools import (
-    config_utils as _config_utils,
-)
-from sidecar.ai.tools import (
-    plan_artifact_policy as _plan_artifact_policy,
-)
+from sidecar.ai.tools import catalog as _catalog
+from sidecar.ai.tools import plan_artifact_policy as _plan_artifact_policy
 from sidecar.ai.tools.catalog import (
     CanonicalToolDescriptor,
     ProbeContext,
@@ -297,7 +294,7 @@ def blocked_tool_metadata(reason: str | None) -> dict[str, Any]:
 
 
 def _bool_config_gate(config: Any | None, key: str, *, default: bool) -> bool:
-    value = _config_utils.config_value(config, key, default)
+    value = _catalog.config_value(config, key, default)
     if isinstance(value, bool):
         return value
     log_event(
@@ -330,12 +327,12 @@ def _config_flag_enabled(config: Any | None, key: str | None) -> bool:
 def _workspace_root_present(context: ToolAssemblyContext) -> bool:
     if isinstance(context.workspace_root_present, bool):
         return context.workspace_root_present
-    raw_workspace_root = _config_utils.config_value(
+    raw_workspace_root = _catalog.config_value(
         context.config, "tools_workspace_root", None
     )
     if isinstance(raw_workspace_root, str) and raw_workspace_root.strip():
         return True
-    raw_agent_workspace_root = _config_utils.config_value(
+    raw_agent_workspace_root = _catalog.config_value(
         context.config, "agent_workspace_root", None
     )
     return isinstance(raw_agent_workspace_root, str) and raw_agent_workspace_root.strip() != ""
@@ -343,7 +340,7 @@ def _workspace_root_present(context: ToolAssemblyContext) -> bool:
 
 def _precondition_workspace_root(context: ToolAssemblyContext) -> Path | None:
     for key in ("tools_workspace_root", "agent_workspace_root"):
-        raw_workspace_root = _config_utils.config_value(context.config, key, None)
+        raw_workspace_root = _catalog.config_value(context.config, key, None)
         if isinstance(raw_workspace_root, Path):
             return raw_workspace_root
         if isinstance(raw_workspace_root, str) and raw_workspace_root.strip():
@@ -373,7 +370,7 @@ def _evaluate_applicability(
 
 
 def _safety_mode(config: Any | None) -> str:
-    value = config if isinstance(config, str) else _config_utils.config_value(config, "safety_mode", "normal")
+    value = config if isinstance(config, str) else _catalog.config_value(config, "safety_mode", "normal")
     if isinstance(value, str) and value.strip().lower() in {"normal", "strict", "paranoid"}:
         return value.strip().lower()
     return "normal"
@@ -401,6 +398,8 @@ def _base_unavailable_reason(
     host_allowed, host_reason = host_tool_decision(descriptor, context.config)
     if not host_allowed:
         return host_reason
+    if descriptor.name == "recall_tool_output" and not recall_tool_enabled(context.config):
+        return CONFIG_DISABLED_REASON
     if descriptor.availability.plan_mode_only and not context.plan_mode:
         return PLAN_MODE_ONLY_REASON
     if descriptor.availability.propose_mode_only and not context.propose_mode:
@@ -525,6 +524,7 @@ def assemble_tool_contract(
         )
         deferred = (
             reason is None
+            and descriptor.name != "recall_tool_output"  # a compaction stub names it
             and context.include_deferred_tools
             and descriptor.name in remaining_deferred
             and (

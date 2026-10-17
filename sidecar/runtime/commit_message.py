@@ -20,6 +20,7 @@ from sidecar.ai.routing.retry import (
     execute_with_provider_retry,
 )
 from sidecar.runtime.diagnostics import log_event
+from sidecar.runtime.inference_admission import bound_auxiliary_cancel_handle
 
 _MAX_TOKENS = 220
 _TEMPERATURE = 0.2
@@ -135,20 +136,25 @@ def _build_user_message(diff: str) -> str:
     return "\n\n".join(parts)
 
 
-def generate_commit_message(
+def generate_commit_message(  # noqa: PLR0913 -- keyword-only request ports
     brain_container: BrainContainer,
     diff: str,
     logger: logging.Logger,
     *,
     request_id: str | None = None,
     inference_admission: Callable[[InferenceAttemptContext], Any] | None = None,
+    cancel_handle: Any | None = None,
 ) -> str:
     """Generate a single Conventional Commit message from the staged diff.
 
     Returns the trimmed message string, or an empty string on provider failure
     (no diff, no brain stack, engine error). Typed application admission
-    failures propagate to the RPC boundary.
+    failures and a cancellation of ``cancel_handle`` (default: the auxiliary
+    worker's bound handle) propagate to the RPC boundary.
     """
+    if cancel_handle is None:
+        cancel_handle = bound_auxiliary_cancel_handle()
+    cancel_kwargs = {} if cancel_handle is None else {"cancel_handle": cancel_handle}
     normalized_diff = str(diff or "").strip()
     if not normalized_diff:
         return ""
@@ -183,6 +189,7 @@ def generate_commit_message(
                 prompt_cache_enabled=prompt_cache_enabled,
                 system=_SYSTEM_PROMPT,
                 response_format=None,
+                **cancel_kwargs,
             ),
             logger=logger,
             component="runtime.commit_message",
@@ -194,10 +201,13 @@ def generate_commit_message(
             feature_flags=stack.config.feature_flags,
             request_id=request_id,
             inference_admission=inference_admission,
+            cancel_handle=cancel_handle,
         )
     except InferenceAdmissionError:
         raise
     except Exception:  # noqa: BLE001  # boundary
+        if cancel_handle is not None and cancel_handle.cancelled:
+            raise
         log_event(
             logger,
             logging.WARNING,

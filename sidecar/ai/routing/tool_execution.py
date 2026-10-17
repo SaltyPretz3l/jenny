@@ -16,6 +16,8 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_POLICY_DENIED,
 )
 from sidecar.ai.execution_policy import desktop_policy_is_enforced
+from sidecar.ai.feature_flags import FEATURE_SHELL_HEAD_TAIL_OUTPUT as _HEAD_TAIL
+from sidecar.ai.feature_flags import is_default_on_flag_enabled as _default_on
 from sidecar.ai.routing import delegate as _delegate
 from sidecar.ai.routing import harness_helpers as _harness_helpers
 from sidecar.ai.routing import loop_events as _loop_events
@@ -115,9 +117,6 @@ rebuild_read_snapshot_cache = _snap.rebuild_read_snapshot_cache
 effective_mutation_path_arg = _snap.effective_mutation_path_arg
 inject_expected_read_snapshot = _snap.inject_expected_read_snapshot
 freeze_effective_execution_inputs = _snap.freeze_effective_execution_inputs
-_execute_monitor_tool = _handlers._execute_monitor_tool
-_format_monitor_digest = _handlers._format_monitor_digest
-_execute_check_monitor_tool = _handlers._execute_check_monitor_tool
 _execute_delegate_synthetic_tool = _handlers._execute_delegate_synthetic_tool
 tool_outcome_from_handler_result = _handlers.tool_outcome_from_handler_result
 execute_tool_search = _handlers.execute_tool_search
@@ -256,7 +255,8 @@ def _descriptor_validation_outcome(
         validate_descriptor_arguments(call.tool_id, visible_tool_arguments, descriptor)
     except ToolExecutionFailure as error:
         repair_hints = tool_schema_repair_hints(descriptor.input_schema)
-        hint_text = tool_schema_hint_text(repair_hints)
+        message = error.message.strip()
+        sentence = message if not message or message.endswith((".", "!", "?")) else f"{message}."
         log_event(
             logger,
             logging.WARNING,
@@ -276,7 +276,7 @@ def _descriptor_validation_outcome(
             tool_name=call.tool_id,
             output=(
                 f"Tool '{call.tool_id}' rejected malformed arguments: "
-                f"{error.message}.{hint_text}"
+                f"{sentence}{tool_schema_hint_text(repair_hints)}"
             ),
             success=False,
             tool_input=visible_tool_arguments,
@@ -686,6 +686,20 @@ def execute_tool(
     mod = _router()
     ToolExecutionOutcome_ = mod.ToolExecutionOutcome
     request_context = getattr(runtime, "request_context", None)
+    refusal = getattr(request_context, "preparation_refusal", None)
+    preparation_reason = refusal(call.tool_id) if callable(refusal) else None
+    if preparation_reason is not None:
+        # Before any descriptor lookup: a preparation turn resolves no other tool, MCP included.
+        _mark_dispatch_ready()
+        return ToolExecutionOutcome_(
+            tool_name=call.tool_id,
+            output=blocked_tool_message(call.tool_id, preparation_reason),
+            success=False,
+            tool_input=dict(call.arguments or {}),
+            error_code=blocked_tool_error_code(preparation_reason),
+            metadata=blocked_tool_metadata(preparation_reason),
+            call_id=call.call_id,
+        )
     execution_context = getattr(request_context, "execution_context", None)
     logical_turn_id = str(getattr(runtime, "logical_turn_id", "") or request_id)
     if restored_inputs is not None:
@@ -781,52 +795,23 @@ def execute_tool(
     if call.tool_id == "mermaid_generate" and plan_artifact_write:
         tool_arguments["_jenny_read_only"] = False
     timeout_seconds = _tool_timeout_for_runtime(kernel, runtime, call)
-    synthetic_tool = call.tool_id in {"monitor", "check_monitor", "delegate"}
-    if synthetic_tool:
+    # Sidecar-owned synthetic tools run in-process through one name -> handler table.
+    synthetic_handler = _handlers.SYNTHETIC_TOOL_HANDLERS.get(call.tool_id)
+    if synthetic_handler is not None:
         _tool_authority.admit_scoped_tool_call(
-            runtime=runtime,
-            call=call,
-            descriptor=descriptor,
-            tool_arguments=tool_arguments,
+            runtime=runtime, call=call, descriptor=descriptor, tool_arguments=tool_arguments,
             visible_arguments=visible_tool_arguments,
-            builtin_server_name=BUILTIN_MCP_SERVER_NAME,
-            timeout_seconds=timeout_seconds,
+            builtin_server_name=BUILTIN_MCP_SERVER_NAME, timeout_seconds=timeout_seconds,
             inject_trusted_envelope=False,
         )
-    if call.tool_id == "monitor":
         _mark_dispatch_ready()
-        return _execute_monitor_tool(
-            kernel=kernel,
-            call=call,
-            tool_arguments=tool_arguments,
-            visible_tool_arguments=visible_tool_arguments,
-            request_id=request_id,
-            session_id=session_id,
-            audit_metadata=audit_metadata,
-            runtime=runtime,
+        return synthetic_handler(
+            kernel=kernel, call=call, tool_arguments=tool_arguments,
+            visible_tool_arguments=visible_tool_arguments, request_id=request_id,
+            session_id=session_id, audit_metadata=audit_metadata, runtime=runtime,
             outcome_type=ToolExecutionOutcome_,
-        )
-    if call.tool_id == "check_monitor":
-        _mark_dispatch_ready()
-        return _execute_check_monitor_tool(
-            kernel=kernel,
-            call=call,
-            tool_arguments=tool_arguments,
-            visible_tool_arguments=visible_tool_arguments,
-            audit_metadata=audit_metadata,
-            runtime=runtime,
-            outcome_type=ToolExecutionOutcome_,
-        )
-    if call.tool_id == "delegate":
-        _mark_dispatch_ready()
-        return _execute_delegate_synthetic_tool(
-            kernel=kernel,
-            call=call,
-            tool_arguments=tool_arguments,
-            visible_tool_arguments=visible_tool_arguments,
-            audit_metadata=audit_metadata,
-            runtime=runtime,
-            outcome_type=ToolExecutionOutcome_,
+            **({"request_outcomes": request_outcomes}
+               if call.tool_id == "recall_tool_output" else {}),
         )
     try:
         # Electron-bridge tools already carry trace_id as a first-class request
@@ -845,9 +830,9 @@ def execute_tool(
                 call=call,
             )
         # See tool_execution_ask_user_wait for the approval-parity rationale:
-        # a human-answer wait must not burn the turn's working-time budget.
+        # a human answer or exact-content consent must not burn working time.
         decision_snapshot = on_frozen_input(frozen_inputs) if callable(on_frozen_input) else None
-        wait_started_at = _ask_user_wait.ask_user_wait_started_at(runtime, call)
+        wait_started_at = _ask_user_wait.ask_user_wait_started_at(runtime, call, descriptor)
         try:
             if call.tool_id == "connections_list":
                 tool_arguments["_jenny_session_offline_lockdown"] = (
@@ -956,6 +941,7 @@ def execute_tool(
         result.output,
         tool_name=result_tool_name,
         max_chars=MAX_RESPONSE_CHARS,
+        keep_edges=_default_on(getattr(kernel._config, "feature_flags", None), _HEAD_TAIL),
     )
     metadata = _results.merge_result_metadata(result.metadata, audit_metadata)
     from sidecar.ai.routing import preview_vision as _preview_vision

@@ -4,16 +4,16 @@ const { createArtifactRetentionService } = require('../artifact-retention-servic
 const { payloadPathsFromMessages } = require('../backend/ipc-payload-retention');
 const { pruneLegacySessionFiles } = require('../backend/session-legacy-file-prune');
 
-// Attachments only change through message mutations, and every message
-// mutation bumps updated_at (append/update/replace/truncate) — the
-// non-bumping writes (active-turn touches, turn events, pin/archive/meta)
-// never touch attachments. So `updated_at|message_count` is a sound
-// change stamp for message attachments. Tool-result event refs are read with
-// the same body and cached with it; an event appended without a stamp bump is
-// seen at the next full read (next start or stamp change), which is sound
-// because a freshly produced tool asset is far younger than the 30-day age.
-function sessionAttachmentStamp(summary) {
-  return `${summary?.updated_at || ''}|${Number(summary?.message_count || 0)}`;
+// Message attachments only change through message mutations, and every message
+// mutation bumps updated_at (append/update/replace/truncate). Tool-result event
+// refs (read and cached with the same body) change through turn-event appends,
+// which leave updated_at alone but move the store's non-persisted
+// getTurnEventStamp. So `updated_at|message_count|eventStamp` is a sound change
+// stamp for both; an event-only append re-reads that session at the next sweep.
+// A store without the accessor (test fakes) keeps the two-part behaviour.
+function sessionAttachmentStamp(summary, sessionStore) {
+  const eventStamp = sessionStore?.getTurnEventStamp?.(summary?.id) ?? '';
+  return `${summary?.updated_at || ''}|${Number(summary?.message_count || 0)}|${eventStamp}`;
 }
 
 function toolResultAssetPaths(refs) {
@@ -39,7 +39,7 @@ function collectSessionReferences(sessionStore, { cache = null, collectPayloadKe
   const payloadKeys = collectPayloadKeys ? new Set() : null;
   const liveSessionIds = cache ? new Set() : null;
   for (const session of sessionStore.listSessions()) {
-    const stamp = sessionAttachmentStamp(session);
+    const stamp = sessionAttachmentStamp(session, sessionStore);
     if (cache) {
       liveSessionIds.add(session.id);
       const cached = cache.get(session.id);

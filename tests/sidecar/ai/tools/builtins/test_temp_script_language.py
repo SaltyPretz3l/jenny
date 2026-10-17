@@ -129,7 +129,7 @@ def test_raw_mode_without_heredoc_is_unchanged(tmp_path: Path) -> None:
 def test_missing_interpreter_reports_unavailable_class(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(temp_script_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(temp_script_module.shutil, "which", lambda _name, **_kwargs: None)
     result = run_temp_script_tool(
         {"script": "console.log(1)", "language": "javascript"},
         _guard(tmp_path),

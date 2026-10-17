@@ -85,7 +85,6 @@ function createHarness() {
       refreshSnapshots: async () => {},
       showToastMessage() {},
       dismissStreamErrors() {},
-      maybeSuggestMemoryCapture: async () => {},
       appendClientLog() {},
       handlePresenceStreamEvent() {},
       getInteractiveComposerStatusNotice() { return ''; },

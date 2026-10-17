@@ -7,6 +7,7 @@
   root.rendererStreamActivityRow = factory(root.rendererStreamWaitingLine, root.rendererStreamActivityTyped);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (waitingLine, activityTyped) {
   'use strict';
+  const { createChecklistScanner, scanChecklistArguments, checklistValue, checklistCount } = activityTyped;
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   /* This module fills silent stream phases with an EPHEMERAL activity row at
@@ -34,21 +35,26 @@
     jt('chat.streamActivity.workingSomethingUp', 'Working something up…'),
   ];
   const ACTIVITY_COPY_LONG = jt('chat.streamActivity.stillAtIt', 'Still at it…');
+  // Silence right after reasoning: the model is writing something the engine
+  // has not sent yet. NInfer parses tool markup server-side and sends a whole
+  // call in one final chunk, so a long call (a plan) is silent until it lands.
+  const NEXT_STEP_COPY = jt('chat.streamActivity.preparingNextStep', 'Preparing the next step…');
+  const NEXT_STEP_COPY_LONG = jt('chat.streamActivity.stillPreparingNextStep', 'Still preparing the next step…');
 
-  // Tools whose composing phase wears the checklist glyph and names the list
-  // work in plain words instead of "Composing…" plus a byte count.
-  const CHECKLIST_TOOL_NAMES = new Set(['todo_write', 'task_board']);
-  // Which string values each checklist tool's row reads from its arguments.
-  const CHECKLIST_WATCHED_KEYS = { todo_write: ['content'], task_board: ['action', 'title'] };
-  const CHECKLIST_VALUE_MAX_CHARS = 300;
-  const CHECKLIST_KEY_MAX_CHARS = 32;
+  // Tools whose row reads string values (keys) from their streaming arguments.
+  // Checklist tools also wear the checklist glyph and count items instead of
+  // "Composing…" plus a byte count; the plan row keeps the byte count.
+  const SCANNED_TOOLS = new Map([
+    ['todo_write', { keys: ['content'], checklist: true }],
+    ['task_board', { keys: ['action', 'title'], checklist: true }],
+    ['exit_plan_mode', { keys: ['title'], checklist: false }],
+  ]);
   const TASK_BOARD_NAMES = {
     add: jt('chat.streamActivity.addingTask', 'Adding a task'),
     update: jt('chat.streamActivity.updatingTask', 'Updating a task'),
     complete: jt('chat.streamActivity.completingTask', 'Completing a task'),
     list: jt('chat.streamActivity.readingTaskBoard', 'Reading the task board'),
   };
-  const JSON_ESCAPES = { n: ' ', r: ' ', t: ' ', b: '', f: '' };
 
   // Events that prove first visible progress this turn; silence only counts
   // after one of these (the initial thinking indicator owns turn start).
@@ -78,100 +84,6 @@
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
   }
 
-  // Incremental reader for a checklist call's streaming JSON arguments. It
-  // carries string/escape state across deltas, so keys and escapes split at
-  // any byte, any JSON whitespace, and "content" text inside an item's own
-  // value are all read correctly. Each watched key keeps a bounded decoded
-  // value (the newest occurrence) and a count of how many values began.
-  function createChecklistScanner(watchedKeys) {
-    return {
-      watched: new Set(watchedKeys),
-      inString: false,
-      escape: null,
-      valueKey: '',
-      text: '',
-      candidateKey: '',
-      pendingValueKey: '',
-      counts: Object.create(null),
-      values: Object.create(null),
-    };
-  }
-
-  function appendScannedText(scanner, decoded) {
-    if (scanner.valueKey) {
-      const current = scanner.values[scanner.valueKey];
-      if (current.length < CHECKLIST_VALUE_MAX_CHARS) {
-        scanner.values[scanner.valueKey] = (current + decoded).slice(0, CHECKLIST_VALUE_MAX_CHARS);
-      }
-    } else if (scanner.text.length < CHECKLIST_KEY_MAX_CHARS) {
-      scanner.text += decoded;
-    }
-  }
-
-  function scanEscapeChar(scanner, ch) {
-    if (scanner.escape === '') {
-      if (ch === 'u') {
-        scanner.escape = 'u';
-        return;
-      }
-      scanner.escape = null;
-      appendScannedText(scanner, Object.prototype.hasOwnProperty.call(JSON_ESCAPES, ch) ? JSON_ESCAPES[ch] : ch);
-      return;
-    }
-    scanner.escape += ch;
-    if (scanner.escape.length < 5) return;
-    const code = parseInt(scanner.escape.slice(1), 16);
-    scanner.escape = null;
-    if (Number.isFinite(code)) appendScannedText(scanner, String.fromCharCode(code));
-  }
-
-  function scanStringChar(scanner, ch) {
-    if (scanner.escape !== null) {
-      scanEscapeChar(scanner, ch);
-    } else if (ch === '\\') {
-      scanner.escape = '';
-    } else if (ch === '"') {
-      scanner.inString = false;
-      // A finished non-value string is a key only if a colon follows it.
-      scanner.candidateKey = scanner.valueKey ? '' : scanner.text;
-      scanner.valueKey = '';
-    } else {
-      appendScannedText(scanner, ch);
-    }
-  }
-
-  function scanStructuralChar(scanner, ch) {
-    if (ch === '"') {
-      scanner.inString = true;
-      scanner.text = '';
-      scanner.valueKey = scanner.pendingValueKey;
-      scanner.pendingValueKey = '';
-      if (scanner.valueKey) {
-        scanner.counts[scanner.valueKey] = (scanner.counts[scanner.valueKey] || 0) + 1;
-        scanner.values[scanner.valueKey] = '';
-      }
-      return;
-    }
-    if (/\s/.test(ch)) return;
-    scanner.pendingValueKey = ch === ':' && scanner.watched.has(scanner.candidateKey) ? scanner.candidateKey : '';
-    scanner.candidateKey = '';
-  }
-
-  function scanChecklistArguments(scanner, argumentsDelta) {
-    for (const ch of String(argumentsDelta || '')) {
-      if (scanner.inString) scanStringChar(scanner, ch);
-      else scanStructuralChar(scanner, ch);
-    }
-  }
-
-  function checklistValue(scanner, key) {
-    return scanner ? String(scanner.values[key] || '').replace(/\s+/g, ' ').trim() : '';
-  }
-
-  function checklistCount(scanner, key) {
-    return scanner ? scanner.counts[key] || 0 : 0;
-  }
-
   function defaultToolDisplayName(toolName) {
     const utils = globalThis.toolCallUtils;
     return utils && typeof utils.getToolDisplayName === 'function'
@@ -198,6 +110,13 @@
         isPath: false,
       };
     }
+    if (typed.toolName === 'exit_plan_mode') {
+      return {
+        name: jt('chat.streamActivity.preparingPlan', 'Preparing the plan'),
+        copy: checklistValue(typed.scanner, 'title') || composing,
+        isPath: false,
+      };
+    }
     let name = typed.toolName;
     try {
       name = String(resolveDisplayName(typed.toolName) || typed.toolName);
@@ -210,7 +129,7 @@
   function typedElapsedText(typed, timestamp) {
     const elapsed = formatElapsedLabel(timestamp - typed.startedAt);
     if (typed.kind !== 'tool_input') return elapsed;
-    if (typed.scanner) {
+    if (typed.checklist) {
       const itemCount = checklistCount(typed.scanner, 'content');
       return itemCount > 0
         ? jt('chat.streamActivity.itemAndElapsed', 'item {count} · {elapsed}', { count: itemCount, elapsed })
@@ -275,7 +194,7 @@
       onRowMounted = () => {},
     } = options;
 
-    // streamId -> { sessionId, lastEventAt, armed, node, episodeStartedAt, copyIndex, typed }
+    // streamId -> { sessionId, lastEventAt, armed, node, episodeStartedAt, copyIndex, typed, afterReasoning }
     const tracked = new Map();
     const typedActivity = activityTyped.createTypedActivityTracker(tracked);
     let intervalHandle = null;
@@ -317,16 +236,15 @@
       if (!tracked.size) stopInterval();
     }
 
-    function findMountPoint() {
+    function findMountPoint(entry) {
       const chatTimeline = getChatTimeline();
       if (!chatTimeline || typeof chatTimeline.querySelectorAll !== 'function') return null;
       // Prefer the live streaming article's content column (geometry for
       // free); a settled tail (post-tool boundary) falls back to the last
       // assistant article, then to the timeline itself.
-      const selectors = [
-        '.chat-entry.assistant.pending .chat-message-content',
-        '.chat-entry.assistant .chat-message-content',
-      ];
+      const selectors = ['.chat-entry.assistant.pending .chat-message-content'];
+      // Prefill precedes this turn's assistant shell: mount after the new user message.
+      if (entry.typed?.kind !== 'prefill') selectors.push('.chat-entry.assistant .chat-message-content');
       for (const selector of selectors) {
         let nodes;
         try {
@@ -340,13 +258,15 @@
     }
 
     function currentCopy(entry, timestamp) {
-      if (timestamp - entry.episodeStartedAt >= escalateMs) return ACTIVITY_COPY_LONG;
+      const escalated = timestamp - entry.episodeStartedAt >= escalateMs;
+      if (entry.afterReasoning) return escalated ? NEXT_STEP_COPY_LONG : NEXT_STEP_COPY;
+      if (escalated) return ACTIVITY_COPY_LONG;
       const index = entry.copyIndex >= 0 && entry.copyIndex < ACTIVITY_COPY.length ? entry.copyIndex : 0;
       return ACTIVITY_COPY[index];
     }
 
     function ensureNode(streamId, entry, timestamp) {
-      const mount = findMountPoint();
+      const mount = findMountPoint(entry);
       if (!mount) return;
       const documentRef = mount.ownerDocument || null;
       if (!documentRef) return;
@@ -369,6 +289,13 @@
       }
       const kind = !entry.typed ? 'generic' : (entry.typed.checklist ? 'checklist' : entry.typed.kind);
       node.setAttribute('data-turn-activity-kind', kind);
+      if (kind === 'prefill') {
+        activityTyped.renderPrefill(node, entry.typed, timestamp, formatElapsedLabel);
+        return;
+      }
+      node.querySelector('.turn-activity-reused')?.remove();
+      node.removeAttribute('aria-label');
+      node.removeAttribute('aria-live');
       const nameNode = node.querySelector('.turn-activity-name');
       const label = node.querySelector('.turn-activity-label');
       waitingLine?.releaseLabel(label);
@@ -490,6 +417,7 @@
           episodeStartedAt: 0,
           copyIndex: -1,
           typed: null,
+          afterReasoning: false,
         };
         tracked.set(streamId, entry);
         // Main reports a wait once, so the cap evicts around waiting replies
@@ -502,6 +430,17 @@
       const sessionId = normalizeId(payload && payload.sessionId);
       if (sessionId) entry.sessionId = sessionId;
       entry.lastEventAt = Number(now());
+      // Only the silence that directly follows reasoning reads as the next step.
+      entry.afterReasoning = type === 'delta' && Boolean(payload.reasoning) && !payload.content;
+      if (type === 'thinking_status' && payload.progress) {
+        if (activityTyped.applyPrefill(entry, payload, entry.lastEventAt)) {
+          if (!entry.typed) removeNode(entry);
+          startInterval();
+          tick();
+        }
+        return;
+      }
+      if (entry.prefill) entry.prefill.closed = true;
       if (type === 'runtime_waiting' && waitingLine) {
         if (!waitingLine.applyNotice(entry, payload)) {
           removeNode(entry);
@@ -530,11 +469,12 @@
         const toolCallId = normalizeId(payload && payload.toolCallId);
         if (entry.typed?.kind !== 'tool_input' || entry.typed.toolCallId !== toolCallId) {
           const toolName = String(payload?.toolName ?? '');
+          const scanned = SCANNED_TOOLS.get(toolName);
           entry.typed = {
             kind: 'tool_input', toolCallId, toolName,
             args: '', bytes: 0, path: '', startedAt: entry.lastEventAt,
-            checklist: CHECKLIST_TOOL_NAMES.has(toolName),
-            scanner: CHECKLIST_TOOL_NAMES.has(toolName) ? createChecklistScanner(CHECKLIST_WATCHED_KEYS[toolName]) : null,
+            checklist: scanned?.checklist === true,
+            scanner: scanned ? createChecklistScanner(scanned.keys) : null,
           };
         }
         const argumentsDelta = String(payload?.argumentsDelta ?? '');
@@ -546,7 +486,7 @@
           : entry.typed.bytes + argumentsDelta.length;
         entry.typed.args = (entry.typed.args + argumentsDelta).slice(0, 4096);
         if (entry.typed.scanner) scanChecklistArguments(entry.typed.scanner, argumentsDelta);
-        if (!entry.typed.checklist && !entry.typed.path) {
+        if (!entry.typed.scanner && !entry.typed.path) {
           const match = entry.typed.args.match(/"(?:path|file_path|filePath|target_path|targetPath|destination|filename|file)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
           if (match) entry.typed.path = match[1].replace(/\\([\\/])/g, '$1');
         }

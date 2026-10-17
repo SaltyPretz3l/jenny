@@ -8,6 +8,7 @@ import secrets
 import threading
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Callable, Iterator, Mapping
 
@@ -36,6 +37,25 @@ _SETTLE_TIMEOUT_SECONDS = 5.0
 _INFERENCE_CONTEXT_FIELDS = frozenset(
     {"schema_version", "request_id", "session_id", "authority_revision", "engine_type"}
 )
+# The auxiliary worker's chat.cancel target. The request-dispatch hooks between
+# the worker and the generators keep their uniform signature, so the handle
+# rides the worker thread's context instead of every intermediate signature.
+_AUXILIARY_CANCEL_HANDLE: ContextVar[Any] = ContextVar("auxiliary_cancel_handle", default=None)
+
+
+@contextmanager
+def bind_auxiliary_cancel_handle(cancel_handle: Any) -> Iterator[None]:
+    """Expose one auxiliary request's cancel handle to the generator it runs."""
+    token = _AUXILIARY_CANCEL_HANDLE.set(cancel_handle)
+    try:
+        yield
+    finally:
+        _AUXILIARY_CANCEL_HANDLE.reset(token)
+
+
+def bound_auxiliary_cancel_handle() -> Any:
+    """Return the cancel handle bound by the auxiliary worker, if any."""
+    return _AUXILIARY_CANCEL_HANDLE.get()
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +169,10 @@ def _exchange(  # noqa: C901, PLR0912, PLR0913
             ):
                 raise InferenceAdmissionRefused("inference_authority_response_malformed")
             return result
+
+
+def _cancelled(cancel_handle: Any) -> bool:
+    return cancel_handle is not None and bool(getattr(cancel_handle, "cancelled", False))
 
 
 class RuntimeInferenceLease:
@@ -271,6 +295,8 @@ def _build_callback(  # noqa: PLR0913
             "authority_revision": trusted_authority_revision,
             "operation_id": operation_id,
         }
+        if _cancelled(cancel_handle):
+            raise InferenceAdmissionRefused("inference_admission_cancelled")
         result = _exchange(
             params={
                 **base_params,
@@ -282,7 +308,9 @@ def _build_callback(  # noqa: PLR0913
             expected_statuses=frozenset({"granted", "waiting", "rejected"}),
             write_message=write_message,
             response_reader_factory=response_reader_factory,
-            cancel_handle=cancel_handle,
+            # Electron answers an admit at once. Reading its answer through a
+            # cancel means a grant is never left unsettled (stranded capacity).
+            cancel_handle=None,
             timeout_seconds=_ADMIT_TIMEOUT_SECONDS,
         )
         if result["status"] == "waiting":
@@ -293,12 +321,17 @@ def _build_callback(  # noqa: PLR0913
             raise InferenceAdmissionRefused(
                 _reason(result.get("reason"), "inference_capacity_rejected")
             )
-        return RuntimeInferenceLease(
+        lease = RuntimeInferenceLease(
             base_params=base_params,
             operation_id=operation_id,
             write_message=write_message,
             response_reader_factory=response_reader_factory,
         )
+        if _cancelled(cancel_handle):
+            # Cancelled while the grant was in flight: no provider started.
+            lease.settle(InferenceAttemptOutcome(status="cancelled", cleanup="confirmed"))
+            raise InferenceAdmissionRefused("inference_admission_cancelled")
+        return lease
 
     def _bind_request(
         *, request_id: str, session_id: str | None,
@@ -415,8 +448,13 @@ def build_auxiliary_inference_admission_callback(
     context: AuxiliaryInferenceContext | None,
     write_message: Callable[[dict[str, Any]], None] | None,
     response_reader_factory: Callable[..., Callable[[float], dict[str, Any]]] | None,
+    cancel_handle: Any = None,
 ) -> Callable[[InferenceAttemptContext], RuntimeInferenceLease] | None:
-    """Build admission for an application-authorized off-transcript request."""
+    """Build admission for an application-authorized off-transcript request.
+
+    A cancel (explicit, or bound by the auxiliary worker) ends a pending admit
+    exchange; settlement deliberately ignores it (see ``RuntimeInferenceLease``).
+    """
 
     if context is None:
         return None
@@ -427,13 +465,17 @@ def build_auxiliary_inference_admission_callback(
         engine_type=context.engine_type,
         write_message=write_message,
         response_reader_factory=response_reader_factory,
-        cancel_handle=None,
+        cancel_handle=(
+            cancel_handle if cancel_handle is not None else bound_auxiliary_cancel_handle()
+        ),
     )
 
 
 __all__ = [
     "AuxiliaryInferenceContext",
     "RuntimeInferenceLease",
+    "bind_auxiliary_cancel_handle",
+    "bound_auxiliary_cancel_handle",
     "build_auxiliary_inference_admission_callback",
     "build_inference_admission_callback",
     "inference_context_from_params",

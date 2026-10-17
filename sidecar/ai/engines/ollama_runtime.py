@@ -9,7 +9,9 @@ import urllib.request
 from http import HTTPStatus
 from typing import Any
 
+from sidecar.ai.engines import provider_metrics
 from sidecar.ai.engines.base import clamp_timeout_to_deadline
+from sidecar.ai.engines.ollama_abortable_post import cancellable_post_scope
 from sidecar.ai.engines.ollama_stream_thinking import (
     _emit_thinking,
     _note_malformed_stream_line,
@@ -149,9 +151,7 @@ def _native_tool_call_request(
 ) -> ToolCallRequest:
     function = _as_dict(tc.get("function"))
     tool_name = str(function.get("name", ""))
-    arguments, argument_repairs = _tool_call_arguments_with_repairs(
-        function.get("arguments")
-    )
+    arguments, argument_repairs = _tool_call_arguments_with_repairs(function.get("arguments"))
     return ToolCallRequest(
         tool_id=tool_name,
         arguments=arguments,
@@ -326,6 +326,7 @@ def _extract_content_and_thinking(
     return content, thinking
 
 
+@provider_metrics.observe_nonstream
 def generate(
     engine: Any,
     *,
@@ -338,8 +339,10 @@ def generate(
     messages: list[Any] | None = None,
     response_format: ResponseFormat | None = None,
     request_timeout_seconds: float | None = None,
+    cancel_handle: Any = None,
 ) -> str:
     _ = prompt_cache_enabled
+    raise_if_cancelled(cancel_handle)
     engine._assert_ready()
     msgs = engine._build_messages(prompt, system, messages)
     data = _build_chat_request(
@@ -352,18 +355,15 @@ def generate(
         response_format=response_format,
     )
     _record_chat_request(engine, data, msgs, max_tokens)
-
     finalizer = ProviderCallFinalizer(engine)
     try:
-        response = (
-            engine._post("/api/chat", data)
-            if request_timeout_seconds is None
-            else engine._post(
-                "/api/chat",
-                data,
-                timeout=request_timeout_seconds,
+        with cancellable_post_scope(cancel_handle):
+            response = (
+                engine._post("/api/chat", data)
+                if request_timeout_seconds is None
+                else engine._post("/api/chat", data, timeout=request_timeout_seconds)
             )
-        )
+        provider_metrics.observe_nonstream_body(response, ollama=True)
         message = _as_dict(response.get("message"))
         content, _ = _extract_content_and_thinking(engine, message)
         engine._record_first_chunk()
@@ -380,6 +380,7 @@ def generate(
     except (EngineConnectionError, ModelNotLoadedError):
         raise
     except Exception as error:
+        raise_if_cancelled(cancel_handle)
         if engine._is_timeout_error(error):
             raise GenerationError(engine._timeout_message("Generation")) from error
         raise GenerationError(f"Generation failed: {error}") from error
@@ -415,9 +416,10 @@ def stream(
     )
     _record_chat_request(engine, data, msgs, max_tokens)
     think_value = data.get("think")
-
     finalizer = ProviderCallFinalizer(engine)
+    metrics = provider_metrics.ProviderMetrics.for_engine(engine)
     try:
+        yield from metrics.start_events()
         reasoning_parser = engine._create_request_reasoning_parser()
         thinking_guard = (
             ThinkingRepetitionGuard(
@@ -463,6 +465,7 @@ def stream(
                         engine, malformed_line_count, line
                     )
                     continue
+                yield from metrics.feed_ollama(chunk)
                 inband_error = ollama_stream_inband_error(chunk)
                 if inband_error:
                     # An in-band error frame IS terminal evidence -- just not
@@ -531,6 +534,7 @@ def stream(
                     engine._record_provider_usage(chunk)
                     chunk["_jenny_ttft_ms"] = current_time_to_first_token_ms(engine)
                     done_usage = build_usage_from_done_chunk(chunk, model_name=engine.model_name)
+                    yield from metrics.ollama_done(chunk)
                     saw_terminal = True
                     terminal_done_reason = str(chunk.get("done_reason") or "stop")
                     break
@@ -612,11 +616,12 @@ def stream_with_tools(
     tools_payload = _as_list(data.get("tools"))
     _record_chat_request(engine, data, msgs, max_tokens, tools_payload)
     think_value = data.get("think")
-
     finalizer = ProviderCallFinalizer(engine)
+    metrics = provider_metrics.ProviderMetrics.for_engine(engine)
     normalizer = ProviderStreamNormalizer(provider="ollama")
     finalizer.normalizer = normalizer
     try:
+        yield from metrics.start_events()
         reasoning_parser = engine._create_request_reasoning_parser()
         thinking_guard = (
             ThinkingRepetitionGuard(
@@ -677,6 +682,7 @@ def stream_with_tools(
                     )
                     continue
                 normalizer.feed(chunk)  # diagnostic-only; logs and never raises
+                yield from metrics.feed_ollama(chunk)
                 inband_error = ollama_stream_inband_error(chunk)
                 if inband_error:
                     saw_terminal = True
@@ -829,6 +835,7 @@ def stream_with_tools(
                     engine._record_provider_usage(chunk)
                     chunk["_jenny_ttft_ms"] = current_time_to_first_token_ms(engine)
                     done_usage = build_usage_from_done_chunk(chunk, model_name=engine.model_name)
+                    yield from metrics.ollama_done(chunk)
                     saw_terminal = True
                     terminal_done_reason = str(chunk.get("done_reason") or "stop")
                     break
@@ -888,6 +895,7 @@ def stream_with_tools(
         finalizer.finalize(cancel_handle=cancel_handle)
 
 
+@provider_metrics.observe_nonstream
 def generate_with_tools_impl(
     engine: Any,
     *,
@@ -916,10 +924,10 @@ def generate_with_tools_impl(
     )
     tools_payload = _as_list(data.get("tools"))
     _record_chat_request(engine, data, msgs, max_tokens, tools_payload)
-
     finalizer = ProviderCallFinalizer(engine)
     try:
         response = engine._post("/api/chat", data)
+        provider_metrics.observe_nonstream_body(response, ollama=True)
         message = _as_dict(response.get("message"))
         content, thinking_text = _extract_content_and_thinking(engine, message)
         raw_calls = _as_list(message.get("tool_calls"))

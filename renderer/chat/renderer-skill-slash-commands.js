@@ -9,7 +9,7 @@
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  const BUILT_INS = new Set(['help', 'context', 'compact', 'note']);
+  const BUILT_INS = new Set(['help', 'context', 'compact', 'note', 'remember', 'forget', 'memory']);
   const CHIP_TOKEN = 'skill_pending';
   const SPARKLE_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.6 4.2L14 7.5l-4.4 1.8L8 13.5 6.4 9.3 2 7.5l4.4-1.8z"/></svg>';
 

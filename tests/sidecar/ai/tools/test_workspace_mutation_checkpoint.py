@@ -189,10 +189,19 @@ def test_application_reconciliation_targets_only_abandoned_preparation(pinned, c
         assert checkpoint_transition(owner, workspace, action=action, scope=scope,
             reference=reference, binding=binding,
             completed_effects=[{"call_id": "call_1", "tool_id": "write_file"}]).ok
-    params = {"schema_version": 1, "accept_version": "2026-08-17", **scope,
+    params = {"schema_version": 1, "accept_version": "2026-10-15", **scope,
               "source_attempt": binding["source_attempt"], "workspace_root": str(workspace),
               "device_id": record["workspace"]["device_id"], "inode": record["workspace"]["file_id"]}
     config = SimpleNamespace(electron_state_root=str(profile), tools_workspace_root=None)
+    from sidecar.ai.tools import workspace_mutation_live_owner as live
+    path = owner.live_owner_path(reference["workspace_id"], reference["change_set_id"])
+    before = owner.journal_path(reference["workspace_id"], reference["change_set_id"]).read_bytes()
+    live.acquire_live_owner(path, session_id=record["session_id"], turn_id=record["turn_id"])
+    try:
+        assert reconcile_mutation_preparations(params, config)["interrupted"] == 0
+        assert owner.journal_path(reference["workspace_id"], reference["change_set_id"]).read_bytes() == before
+    finally:
+        live.release_live_owner(path, session_id=record["session_id"], turn_id=record["turn_id"])
     foreign = {**params, "source_attempt": {**binding["source_attempt"], "attempt_id": "other"}}
     assert reconcile_mutation_preparations(foreign, config)["interrupted"] == 0
     assert reconcile_mutation_preparations(params, config)["interrupted"] == int(not confirmed)
@@ -200,3 +209,90 @@ def test_application_reconciliation_targets_only_abandoned_preparation(pinned, c
     assert saved["state"] == ("in_progress" if confirmed else "interrupted")
     assert saved["extensions"]["runtime_checkpoint"] == binding
     assert saved["retention"]["protected"] is True
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_discard_never_writes_a_runtime_checkpoint(pinned, confirmed, monkeypatch):
+    from types import SimpleNamespace
+
+    from sidecar.ai.routing.mutation_run_settlement import discard_approval_mutations
+    from sidecar.ai.tools import workspace_mutation_live_owner as live
+    store, workspace, record, ref, _binding, transition = pinned
+    assert transition("bind").ok
+    if confirmed:
+        assert transition("confirm").ok
+    path = store.live_owner_path(ref["workspace_id"], ref["change_set_id"])
+    live.acquire_live_owner(path, session_id=record["session_id"], turn_id=record["turn_id"])
+    monkeypatch.setattr("sidecar.ai.routing.mutation_run_settlement.run_journal_owner",
+                        lambda _run: (store, str(workspace)))
+    plan = SimpleNamespace(change_set_id=ref["change_set_id"], session_id=record["session_id"],
+        request_id=record["turn_id"], request_context=None, outcomes=[])
+    before = store.journal_path(ref["workspace_id"], ref["change_set_id"]).read_bytes()
+    try:
+        discard_approval_mutations(plan, config=None)
+        assert store.journal_path(ref["workspace_id"], ref["change_set_id"]).read_bytes() == before
+        with live.recovery_ownership(path) as abandoned:
+            assert not abandoned
+    finally:
+        live.release_live_owner(path, session_id=record["session_id"], turn_id=record["turn_id"])
+
+
+def test_runtime_prepare_confirm_claim_uses_same_owner(pinned, monkeypatch):
+    from types import SimpleNamespace
+
+    from sidecar.ai.tools import workspace_mutation_live_owner as live
+    from sidecar.runtime import mutation_continuation as continuation
+    store, workspace, record, ref, binding, _transition = pinned
+    monkeypatch.setattr(continuation, "_owner", lambda *_: (store, str(workspace)))
+    context = SimpleNamespace(continuation_context=SimpleNamespace(work_id=binding["work_id"],
+        turn_id=record["turn_id"], enclosing_session_id=record["session_id"]))
+    plan = SimpleNamespace(change_set_id=ref["change_set_id"], request_context=context, outcomes=[])
+    effects = [{"call_id": "call_1", "tool_id": "write_file"}]
+    path = store.live_owner_path(ref["workspace_id"], ref["change_set_id"])
+    live.acquire_live_owner(path, session_id=record["session_id"], turn_id=record["turn_id"])
+    frozen = continuation.prepare_mutation_checkpoint(plan, effects, config=None)
+    attempt = SimpleNamespace(to_wire=lambda: binding["source_attempt"])
+    owner = SimpleNamespace(work_id=binding["work_id"], source_attempt=attempt)
+    decision = {"decision_id": binding["decision_id"]}
+    frozen.transition("bind", owner, decision)
+    frozen.transition("confirm", owner, decision)
+    with live.recovery_ownership(path) as abandoned:
+        assert abandoned
+    checkpoint = {"identity": {"work_id": binding["work_id"], "session_id": record["session_id"],
+        "turn_id": record["turn_id"]}, "decision": decision, "source_attempt": binding["source_attempt"],
+        "mutation_ref": frozen.reference(), "completed_effect_refs": effects}
+    assert continuation.claim_mutation_checkpoint(checkpoint, config=None, request_context=context) == ref["change_set_id"]
+    with live.recovery_ownership(path) as abandoned:
+        assert not abandoned
+    live.release_live_owner(path, session_id=record["session_id"], turn_id=record["turn_id"])
+
+
+def test_claim_contention_is_bounded_typed_and_path_free(pinned, monkeypatch):
+    import time
+    from types import SimpleNamespace
+
+    from filelock import FileLock, Timeout
+
+    from sidecar.ai.tools import workspace_mutation_live_owner as live
+    from sidecar.ai.tools.contracts import ToolExecutionFailure
+    from sidecar.runtime import mutation_continuation as continuation
+    store, workspace, record, ref, binding, transition = pinned
+    assert transition("bind").ok and transition("confirm").ok
+    monkeypatch.setattr(continuation, "_owner", lambda *_: (store, str(workspace)))
+    path = store.live_owner_path(ref["workspace_id"], ref["change_set_id"])
+    checkpoint = {"identity": {"work_id": binding["work_id"], "session_id": record["session_id"],
+        "turn_id": record["turn_id"]}, "decision": {"decision_id": binding["decision_id"]},
+        "source_attempt": binding["source_attempt"], "mutation_ref": ref,
+        "completed_effect_refs": [{"call_id": "call_1", "tool_id": "write_file"}]}
+    before = store.journal_path(ref["workspace_id"], ref["change_set_id"]).read_bytes()
+    with FileLock(str(path)):
+        with pytest.raises(Timeout):
+            live.acquire_live_owner(path, session_id=record["session_id"], turn_id=record["turn_id"])
+        started = time.monotonic()
+        with pytest.raises(ToolExecutionFailure) as caught:
+            continuation.claim_mutation_checkpoint(checkpoint, config=None, request_context=SimpleNamespace())
+        assert time.monotonic() - started >= 0.9
+        assert str(path) not in str(caught.value)
+        assert caught.value.message == "mutation_checkpoint_claim_failed"
+        assert caught.value.to_error_data()["effects"] == "none"
+        assert store.journal_path(ref["workspace_id"], ref["change_set_id"]).read_bytes() == before

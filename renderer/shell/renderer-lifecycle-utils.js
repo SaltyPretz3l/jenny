@@ -503,7 +503,6 @@
       jennyShell: window.jennyShell || {},
       callbacks: {
         invalidateSessionArtifacts: (...a) => call.invalidateSessionArtifacts?.(...a),
-        clearDismissedMemorySession: (...a) => call.clearDismissedMemorySession?.(...a),
         clearInteractiveDraft: (...a) => fwd.clearInteractiveDraft?.(...a),
         appendClientLog: (...a) => appendClientLog(...a),
       },
@@ -535,9 +534,7 @@
         setSessionTurnEventState: (...a) => fwd.setSessionTurnEventState?.(...a),
         clearComposerStatusNotice: (...a) => fwd.clearComposerStatusNotice(...a),
         resetArtifactsState: (...a) => fwd.resetArtifactsState?.(...a),
-        resetMemorySuggestionState: (...a) => call.resetMemorySuggestionState?.(...a),
         getActiveSession,
-        clearDismissedMemorySession: (...a) => call.clearDismissedMemorySession?.(...a),
         pruneSessionArtifacts: (...a) => call.pruneSessionArtifacts?.(...a),
         evictPretextArticlePredictions: () => {
           const _pretextUtils = typeof rendererPretextUtils !== 'undefined' ? rendererPretextUtils : null;
@@ -762,6 +759,7 @@
             history_scope: runtimePreferences.contextPreferences.historyScope,
             include_personality: runtimePreferences.contextPreferences.includePersonality !== false,
             include_memory: runtimePreferences.contextPreferences.includeMemory !== false,
+            memory_opt_out: runtimePreferences.contextPreferences.memoryOptOut === true,
           },
           optimistic_local: true,
           local_draft: true,
@@ -793,6 +791,7 @@
             history_scope: runtimePreferences.contextPreferences.historyScope,
             include_personality: runtimePreferences.contextPreferences.includePersonality,
             include_memory: runtimePreferences.contextPreferences.includeMemory,
+            memory_opt_out: runtimePreferences.contextPreferences.memoryOptOut === true,
           },
         },
       });
@@ -879,7 +878,6 @@
       if (typeof call.invalidateSessionArtifacts === 'function') {
         call.invalidateSessionArtifacts(sessionId);
       }
-      call.clearDismissedMemorySession?.(sessionId);
       await loadSessions();
       fwd.renderAll();
       appendClientLog('INFO', 'sessions.deleted', { sessionId });

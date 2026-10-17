@@ -338,3 +338,36 @@ test('HB-021: label, summary and answer keep real paths (HB-012) while secrets s
   assert.equal(/redacted:path/.test(normalized.label + normalized.summary + normalized.answer), false);
   assert.equal(/Users|vault/.test(normalized.steps[0].detail), false, 'a failed step still scrubs an outside path');
 });
+
+test('runtime budgets and elapsed time above ten minutes survive normalization and reload', () => {
+  const twelveMinutes = 720000;
+  const eightHourBudget = 28740000;
+  const metadata = {
+    result_kind: 'subagent_batch_report',
+    subagent_batch_report: {
+      batch_id: 'batch-long',
+      status: 'completed',
+      execution: 'single',
+      tasks: [report({ budget: { elapsed_ms: twelveMinutes, max_runtime_ms: eightHourBudget } })],
+      budget: {
+        elapsed_ms: twelveMinutes,
+        max_total_runtime_ms: eightHourBudget,
+        effective_max_total_runtime_ms: eightHourBudget,
+      },
+    },
+  };
+  const persisted = normalizePersistedToolResultMetadata(metadata);
+  const reloaded = normalizeToolResultMetadata({
+    call_id: 'call-long', tool_name: 'delegate', metadata: normalizeToolResultMetadataForStorage(metadata),
+  }).metadata;
+  for (const result of [persisted, reloaded]) {
+    const batch = result.subagent_batch_report;
+    assert.equal(batch.tasks[0].budget.elapsed_ms, twelveMinutes);
+    assert.equal(batch.tasks[0].budget.max_runtime_ms, eightHourBudget);
+    assert.equal(batch.budget.elapsed_ms, twelveMinutes);
+    assert.equal(batch.budget.max_total_runtime_ms, eightHourBudget);
+    assert.equal(batch.budget.effective_max_total_runtime_ms, eightHourBudget);
+  }
+  const capped = normalizeSubagentReport(report({ budget: { elapsed_ms: Number.MAX_SAFE_INTEGER } }));
+  assert.equal(capped.budget.elapsed_ms, 86400000, 'still bounded by the longest supported parent turn');
+});

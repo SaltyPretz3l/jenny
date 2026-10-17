@@ -195,3 +195,25 @@ test('the app-shutdown copy also applies when the subcode arrives as an option',
   assert.equal(metadata.recovery_class, 'cancelled');
   assert.equal(metadata.recovery_title, 'Stopped when Jenny closed');
 });
+
+// 2026-10-14 gate: an image sent to a model without vision was titled "Model stopped
+// responding / Usually clears on a retry" with a Retry button, though the sidecar marks
+// the refusal not retryable and a retry fails the same way.
+test('a non-retryable chat refusal names the cause and offers no retry', () => {
+  const metadata = buildAssistantErrorRecoveryMetadata({
+    code: 'CMP-CHAT-0001',
+    category: 'rpc',
+    message: 'The active model does not support image attachments.',
+    retryable: false,
+  });
+
+  assert.equal(metadata.recovery_class, 'refused');
+  assert.equal(metadata.recovery_title, "This model can't read images");
+  assert.match(metadata.recovery_hint, /pick a model that can read images/i);
+  assert.deepEqual(metadata.recovery_actions.map((action) => action.id), ['open_diagnostics']);
+
+  const other = buildAssistantErrorRecoveryMetadata({ code: 'CMP-CHAT-0001', message: 'interactive_response payload is invalid.', retryable: false });
+  assert.equal(other.recovery_class, 'refused');
+  assert.equal(other.recovery_title, 'Jenny could not run this turn');
+  assert.equal(classifyAssistantError({ code: 'CMP-CHAT-0001', retryable: true }), 'runtime');
+});

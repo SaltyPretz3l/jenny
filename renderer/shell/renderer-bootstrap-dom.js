@@ -325,10 +325,8 @@
       chatOriginChip: $('chatOriginChip'),
       chatOriginLabel: $('chatOriginLabel'),
       chatContextPanel: $('chatContextPanel'),
-      contextArtifactList: $('contextArtifactList'),
       contextSessionLogs: $('contextSessionLogs'),
       contextPanelToggle: $('contextPanelToggle'),
-      contextArtifactExpand: $('contextArtifactExpand'),
     };
   }
 

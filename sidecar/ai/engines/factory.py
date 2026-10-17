@@ -246,6 +246,10 @@ def _create_openai_compatible_selection(
             profile_max_output_tokens=config.resolved_app_profile_max_output_tokens,
             profile_thinking_headroom=config.resolved_app_profile_thinking_token_headroom,
         )
+        if config.managed_prefill_progress:
+            engine.set_prefill_progress_enabled(True)
+        if config.json_schema_response_format:
+            engine.set_json_schema_response_format(True)
 
         def initialize() -> None:
             if resolved_model:

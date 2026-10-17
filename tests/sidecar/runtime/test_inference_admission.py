@@ -131,12 +131,12 @@ def test_granted_attempt_uses_exact_admit_and_settle_contract(tmp_path: Path) ->
     admit = sent[0]
     assert set(admit) == {"jsonrpc", "api_version", "id", "method", "params"}
     assert admit["jsonrpc"] == "2.0"
-    assert admit["api_version"] == "2026-08-17"
+    assert admit["api_version"] == "2026-10-15"
     assert admit["method"] == "runtime.operation"
     operation_id = admit["params"]["operation_id"]
     assert operation_id.startswith("inference_")
     assert admit["params"] == {
-        "api_version": "2026-08-17",
+        "api_version": "2026-10-15",
         "schema_version": 1,
         "kind": "inference",
         "request_id": "request_1",
@@ -147,7 +147,7 @@ def test_granted_attempt_uses_exact_admit_and_settle_contract(tmp_path: Path) ->
         "engine_type": "ollama",
     }
     assert sent[1]["params"] == {
-        "api_version": "2026-08-17",
+        "api_version": "2026-10-15",
         "schema_version": 1,
         "kind": "inference",
         "request_id": "request_1",
@@ -160,8 +160,10 @@ def test_granted_attempt_uses_exact_admit_and_settle_contract(tmp_path: Path) ->
         "consumption": "unknown",
         "charge_consumption": True,
     }
+    # Neither read is cancel-bound: a cancel must not abandon a grant in flight
+    # (it would strand capacity); a cancelled grant is settled instead.
     assert factory_kwargs == [
-        {"cancel_handle": cancel_handle},
+        {"cancel_handle": None},
         {"cancel_handle": None},
     ]
     assert all(reader.closed for reader in readers)

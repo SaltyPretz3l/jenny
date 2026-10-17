@@ -128,6 +128,19 @@ test('the focused row is pinned and never unmounts', () => {
   assert.equal(v._internals.isVirtualized(rows[1]), false, 'focused row stays mounted');
 });
 
+test('the roving tab stop never virtualizes away in Follow mode (A1-6)', () => {
+  const rows = Array.from({ length: 100 }, (_, index) => makeRow(`r${index}`, 100));
+  rows[0].setAttribute('tabindex', '0');
+  const { v, env } = build(rows, 80);
+  v.rebuild();
+  // Follow mode scrolls to the bottom: every row but the newest leaves the viewport.
+  env.observers[0]._fire(rows.slice(0, 99).map((target) => ({ target, isIntersecting: false })));
+  assert.equal(v._internals.isVirtualized(rows[0]), false, 'the tab stop stays mounted');
+  assert.equal(rows[0].getAttribute('tabindex'), '0');
+  assert.equal(rows.filter((row) => row.getAttribute('tabindex') === '0').length, 1, 'still the only tab stop');
+  assert.equal(v._internals.isVirtualized(rows[1]), true, 'other off-screen rows still collapse');
+});
+
 test('the selected row is pinned even when focus has moved elsewhere', () => {
   const rows = [makeRow('a', 100), makeRow('b', 100), makeRow('c', 100)];
   const { v, env } = build(rows, 2);

@@ -386,7 +386,7 @@ test('artifact jumps for hydrated tool results highlight the turn containing the
 // a smooth scrollIntoView lands two frames later unless scrollTop is written
 // first (tests/helpers/smooth-scroll-model.js), so the test fails exactly
 // when the real app failed to move.
-test('F5: the context rail\'s Jump to message scrolls the transcript to the highlighted source row', async (t) => {
+test('F5: the artifact panel\'s Jump to chat scrolls the transcript to the highlighted source row', async (t) => {
   const app = await loadRendererApp({
     shell: {
       chat: {
@@ -435,8 +435,13 @@ test('F5: the context rail\'s Jump to message scrolls the transcript to the high
   await waitForUi(window, 40);
 
   const sourceId = 'tool_use_stream-rail-jump_call-1';
-  const jump = doc.querySelector(`#contextArtifactList .orbit-card-jump[data-artifact-jump="${sourceId}"]`);
-  assert.ok(jump, 'precondition: the context rail lists the artifact with a jump control');
+  // The context panel no longer lists artifacts (row 59 checkpoint 2): the same jump now runs from the artifact panel.
+  const timeline = doc.getElementById('chatTimeline');
+  timeline.insertAdjacentHTML('beforeend', `<button type="button" data-inv-artifact-action="panel" data-artifact-id="artifact_tool_session-rail-jump_${sourceId}_call-1">Open</button>`);
+  timeline.lastElementChild.click();
+  await waitForUi(window, 40);
+  const jump = doc.getElementById('artifactReviewJumpButton');
+  assert.equal(jump.dataset.artifactJump, sourceId, 'precondition: the artifact panel shows the artifact with a jump control');
   jump.click();
   await model.waitForIdle();
   await waitForUi(window, 40);

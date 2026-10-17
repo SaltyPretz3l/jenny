@@ -15,14 +15,16 @@ Tools are grouped by family below. Jump to the relevant section when you need to
 | [Shell](#shell) | `run_command`, `run_temp_script`, `monitor`, `check_monitor`, `check_background_job`, `stop_background_job` | Approval required for execution/stop; status readback is read-only | Off by default; fail-closed shell classifier and owned process-tree lifecycle |
 | [Artifacts](#artifacts) | `create_artifact`, `mermaid_generate` | Inert `create_artifact` documents need no approval; scripts and executable types do; `mermaid_generate` is read-only | Artifacts live under `.jenny/artifacts` for the session; Mermaid renders as an inline chat chart plus a reusable `.mmd` artifact |
 | [Todo](#todo) | `todo_write`, `todo_read` | Read-only / in-session state | Off by default; gated by the `todo` config toggle |
+| [Earlier chats](#earlier-chats) | `conversations_recent`, `conversation_open`, `conversations_search` | Auto, read-only | Same-project Electron chat browsing and search; gated by `memory_v2_enabled`; unavailable in hosted mode and lockdown chats |
+| [Memory](#memory) | `memory` | Auto; consent rides the per-request memory policy | On by default; gated by `tools_memory_enabled` (from `memory_v2_enabled`); sidecar-owned durable memory across chats: `remember`, `update`, `forget`, `recall`, `list` |
 | [Diagnostics](#diagnostics) | `jenny_status`, `tool_search` | Read-only | Runtime status and deferred-tool discovery; not for source-code questions |
 | [Connections](#connections) | `connections_list` | Read-only | On by default; reports configured remote surfaces without probing the network or exposing secrets |
 | [Distillation](#distill) | `run_command` output mode | Existing command approval | Off by default; errors-first compression with `read_file` recovery from a persisted complete capture |
 | [Knowledge](#knowledge) | `knowledge_search`, `knowledge_view`, `knowledge_exec` | Read-only | Gated by `tools_knowledge_enabled` (registered folders); grep/read over user-registered folders, plus optional search by meaning over the semantic catalog |
 | [Home](#home) | `home`, `task_board` | Writes are auto; `home` deletes need a `confirm` round-trip | On by default; gated by `tools_home_enabled` / `tools_task_board_enabled`; `home` covers the Home calendar, reminders, and a read-only scratchpad view; `task_board` adds durable, identity-addressed `add`/`update`/`complete`/`list` tasks into the same persisted Open Loops store, badged `agent_task`, and requires the model to complete a task when its tracked work is finished |
-| [Skills](#skills) | `load_skill` | Read-only | On by default; gated by `tools_load_skill_enabled`; reads a bundled/user/project skill's `SKILL.md` body by name+scope — the only tool that can reach skill scope roots outside the tools workspace root |
+| [Skills](#skills) | `load_skill` | Read-only | On by default; gated by `tools_load_skill_enabled`; reads a bundled/user/project skill's `SKILL.md` body, or one bounded `references/<file>.md` beside it, by name+scope — the only tool that can reach skill scope roots outside the tools workspace root |
 | [Workspace](#workspace) | `workspace_present`, `preview_test`, `verify`, `image_generate` | Mixed | `workspace_present` and `preview_test` are read-only and on by default; `workspace_present` asks the IDE to show a preview/File Map/change diff (request, not outcome); `preview_test` loads one workspace HTML file in a hidden network-isolated one-shot sandbox and reports render state and console/page errors; `verify` runs one of the user's own saved Test Runner configurations (side-effecting, default off) |
-| [Runtime interaction](#runtime) | `ask_user`, `exit_plan_mode`, `operation_status`, `session_spawn`, `session_wait`, `session_result`, `delegate`, `automation_list`, `automation_read` | Mixed read-only interaction and runtime authority | Application-owned durable work and interaction; `delegate` is bounded synchronous research. See the runtime references below. |
+| [Runtime interaction](#runtime) | `ask_user`, `exit_plan_mode`, `propose_git_action`, `propose_command`, `propose_session`, `complete_session_handoff`, `session_message`, `operation_status`, `session_spawn`, `session_wait`, `session_result`, `delegate`, `automation_list`, `automation_read`, `recall_tool_output` | Mixed read-only interaction and runtime authority | Application-owned durable work and interaction; `delegate` is bounded synchronous research. See the runtime references below. |
 | [Code intelligence and worktrees](#code-intelligence-and-worktrees) | `lsp`, `workspace_change_baseline`, `workspace_change_delta`, `worktree_list`, `worktree_create`, `worktree_select`, `worktree_delete` | Reads are read-only; worktree mutations require policy admission | Workspace-bound, with separate configuration gates for LSP and worktrees |
 
 ## How tool availability works
@@ -103,6 +105,7 @@ Two consequences matter if you are editing these tools:
 - [Home](#home)
 - [Skills](#skills)
 - [Todo](#todo)
+- [Memory](#memory)
 
 ## Filesystem
 
@@ -118,11 +121,17 @@ Successful changed `write_file` and `edit_file` results include additive `metada
 
 **Model-facing effect wording (dogfood TR-019, 2026-10-01):** a settled `write_file`, `edit_file`, `delete_file` or `move_file` stores `metadata.effects: committed` (the operation-ledger contract word), but the result envelope the model reads prints `effects: saved`, and a replayed receipt reads "Operation already completed", so a small model does not report a written file as a git commit. Other tools keep `effects: committed`. Source: `_FILE_WRITE_TOOLS` in [`result_envelope.py`](../sidecar/ai/tools/result_envelope.py) (kept equal to routing's `TYPED_MUTATION_TOOLS` by a test) and `recorded_operation_outcome` in [`operation_ledger_calls.py`](../sidecar/runtime/operation_ledger_calls.py).
 
+**Live mutation journals:** an active logical turn holds OS ownership of its change set across tool-process replacement and approval pauses. Startup recovery skips live or uncertain ownership. Terminal settlement, denial, cancellation and expired/discarded approval plans release live ownership even when finalization fails; Undo preflight retries abandoned-journal recovery. An actual owner-process exit also releases the lock. Durable confirmed or preparing continuation checkpoints retain their recovery protection and are not changed by cache discard. Terminal change sets are never reopened. A failure carrying `journal_state: mutation_change_set_terminal` has no effects and is not retried automatically: inspect prior results and continue in a new turn. Reading the file again does not reset a terminal transaction. See the session reliability plan.
+
 **Encoding contract (strict BOM-free UTF-8, 2026-07-11):** `read_file` and every existing-file text mutation (`write_file`, `edit_file`, and `apply_patch` update) require valid UTF-8 without a byte-order mark. cp1252/Latin-1, UTF-16/32, UTF-8 BOM, mixed encodings, malformed/truncated multibyte sequences, and binary content fail closed with zero bytes changed. Paginated reads validate the complete byte stream incrementally, including bytes outside the selected window, while preserving valid codepoints split across I/O chunks. `apply_patch` delete remains byte-oriented and may delete a non-UTF-8 file because it never re-encodes the preimage. Rollback uses a conditional atomic replacement: if the current postimage or parent/leaf identity changed, Jenny preserves the external state and reports that path as uncertain.
 
 ### `read_file` (alias `Read`)
 
 Read the contents of a file.
+
+The optional PDF add-on routes MuPDF diagnostics to stderr from the first read,
+including before catalog initialization. Stdout stays reserved for framed RPC;
+extraction results and continuation limits are unchanged.
 
 - **Approval:** none (read-only).
 - **Side-effecting:** no.
@@ -238,6 +247,32 @@ On Linux the packaged sidecar is a PyInstaller onefile binary that prepends its 
 
 Four tools for running scripts/commands and inspecting or stopping background commands. Off by default and tightly bounded behind a fail-closed classifier.
 
+### Desktop execution environment
+
+Desktop shell tools use a constructed, bounded PATH rather than the complete terminal environment. Verified installations of Git, Python, Node/npm/npx, PowerShell, Rust (`rustc`/`cargo`), .NET (`dotnet`) and CMake contribute command directories, preserving discovered PATH precedence. Private Jenny runtime directories do not become the project's toolchain. Missing installations remain unavailable. Hosted execution and third-party MCP retain their own restricted environments.
+
+For Windows PowerShell, avoid interpreting redirected native stderr as an exception under `$ErrorActionPreference = 'Stop'`. Capture streams separately and inspect the native exit code. For example, in an approved workspace script:
+
+```powershell
+$cargo = (Get-Command cargo -CommandType Application -ErrorAction Stop).Source
+$logDir = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
+New-Item -ItemType Directory -Path $logDir | Out-Null
+try {
+    $stdoutLog = Join-Path $logDir 'stdout.log'
+    $stderrLog = Join-Path $logDir 'stderr.log'
+    $process = Start-Process -FilePath $cargo -ArgumentList 'test' `
+        -WorkingDirectory (Get-Location).Path -WindowStyle Hidden -Wait -PassThru `
+        -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
+    Get-Content -LiteralPath $stdoutLog -Encoding UTF8
+    Get-Content -LiteralPath $stderrLog -Encoding UTF8
+    if ($process.ExitCode -ne 0) { throw "cargo test exited $($process.ExitCode)" }
+} finally {
+    Remove-Item -LiteralPath $logDir -Recurse -Force
+}
+```
+
+A zero exit with stderr is still successful. A nonzero exit remains a failure unless explicitly accepted by `expected_exit_codes`. Shell results already expose separate stdout, stderr and exit status; script-level logging must preserve that distinction.
+
 ### `run_command` (alias `Bash`)
 
 The ordinary desktop behavior below changes when an offline Docker worker is
@@ -261,6 +296,7 @@ Run a shell command from within the workspace root.
 - **Failure contract:** a failing command carries `CMP_TOOL_EXECUTION_FAILED` (`CMP-TOOL-0008`) like every other tool failure, so the model and the error surfaces never see a failure without a code. When the shell's own stderr says the executable was not recognized (`'x' is not recognized...` on `cmd.exe`, `x: command not found` on POSIX), the payload gains a `hint` naming the resolved absolute path when one exists — and the canonical `powershell.exe` location as a special case — instead of leaving the model to guess a path and burn a turn announcing the retry.
 - **Source:** [`sidecar/ai/tools/builtins/shell.py`](../sidecar/ai/tools/builtins/shell.py); shared owner at [`owned_process.py`](../sidecar/ai/tools/builtins/owned_process.py) with Win32 containment in [`sidecar/runtime/process_job.py`](../sidecar/runtime/process_job.py) — re-exported through [`owned_process_windows.py`](../sidecar/ai/tools/builtins/owned_process_windows.py), which stays this transport's single import site — and the child-side bootstrap in [`_owned_process_bootstrap.py`](../sidecar/_owned_process_bootstrap.py); classifier at [`shell_security.py`](../sidecar/ai/tools/builtins/shell_security.py), its tokenization helpers (quote stripping, argv and PowerShell splitting, redirect and interpreter-payload detection) in [`shell_security_tokens.py`](../sidecar/ai/tools/builtins/shell_security_tokens.py), with platform separator grammar in [`shell_command_split.py`](../sidecar/ai/tools/builtins/shell_command_split.py).
 - **Windows spawn path:** each owned process is launched by first spawning a small bootstrap child into the Job Object and only then releasing the real target argv to it over stdin, so a target can never start outside its containment. That bootstrap child is re-entered as a fresh interpreter on every spawn, so it is deliberately kept stdlib-only in [`sidecar/_owned_process_bootstrap.py`](../sidecar/_owned_process_bootstrap.py) rather than living under `builtins/` — importing the tool package there charged every git subprocess a full tool-runtime import and silently starved the sub-second git budgets in `repo_delta` and `workspace_manifest`. Gated by `tests/sidecar/test_owned_process_bootstrap_import_cost.py`. The Job Object wrapper itself was moved to the dependency-free `sidecar/runtime/process_job.py` leaf when image-gen provisioning needed the same containment for its `pip`/`venv`/download trees — a second ctypes copy would have been a third implementation in this repo, and handle widths and assignment-failure handling are exactly where duplicates drift into correctness bugs. That leaf is now the repo's ONLY Job Object (2026-07-31): `sidecar/runtime/subprocess_manager.py` had kept a private `_WindowsJobObject` with UNPINNED `restype`s - the exact defect `process_job.py` exists to prevent, since an unpinned `restype` defaults to C `int` and truncates a 64-bit `HANDLE` into a job that reports success and contains nothing. That copy is deleted; the manager and its two other importers (the codex-CLI engine transport, the LSP transport in [`lsp/protocol.py`](../sidecar/ai/tools/builtins/lsp/protocol.py)) all take `WindowsJobObject` from `process_job.py` now.
+- **Held output pipe (2026-10-12, gate finding F1):** when a process outside the owned tree keeps the write end of the command's stdout or stderr open (an escaped detached child, or any process the command handed its handle to), the drain still ends within its grace (about one second per held stream) after the tree exits or is stopped: on Windows the blocked pipe reads are cancelled before the pipes close (`owned_process_drain.py`), so timeout, abort and Stop return promptly. The result keeps the output captured so far and reports `drain_incomplete`; output the holder writes later is not captured.
 
 ### `run_temp_script`
 
@@ -270,6 +306,8 @@ Run multi-line platform shell content through the same approval, classifier, can
 - **Runtime:** writes an exclusive `.cmd` (Windows) or `.sh` (POSIX) in an OS temporary directory outside the repository, invokes it with `cmd.exe` or `/bin/sh`, and removes the directory in `finally`.
 - **Privacy:** the temporary path is never returned. Cleanup failure emits bounded warning metadata without changing the completed process result.
 - **Parameters:** `script` (required), workspace-contained `cwd`, `timeout_seconds`, `expected_exit_codes`, optional `language` (`python`, `powershell`, `cmd`, `sh`, …). Background mode is intentionally unsupported.
+- **Interpreter evidence:** JSON output and metadata report effective `language`, resolved `interpreter`, nullable `interpreter_version`, and `interpreter_version_probe`. The existing `shell` remains the outer wrapper. Successful version evidence is cached in a bounded 128-entry cache by interpreter invocation path, language and file identity/mtime. A cache miss runs a fixed version probe through the owned-process service after execution, with a two-second limit and at most 256 reported characters. It never runs the user script or a PowerShell profile. An unavailable or safely timed-out probe does not change the script exit result. `cmd`/`sh` report version unavailable with reason `unsupported`; an OS version is not presented as an interpreter version. Probe cleanup evidence is reported separately, and call-level cleanup remains authoritative.
+- **Unicode:** PowerShell scripts use UTF-8 with a BOM so Windows PowerShell 5.1 preserves non-ASCII literals.
 - **Language sniff:** when `language` is omitted the script would run as `cmd`/`sh`, so a body that obviously is Python (`import`/`from`/`def`/`print(` lines), JavaScript (`const|let|var … =`, `console.log(`, `require(`), or PowerShell (`$var =`, `Write-Host`/`Write-Output`) is refused with `CMP_TOOL_COERCED_ARGS_REJECTED` and told which `language` to pass (a real shell script that trips the sniff passes `language: cmd` or `sh` explicitly). An explicit `language` always wins; nothing is written or executed on refusal.
 - **Gated by:** `tools_shell_enabled` and the Bash composer preference.
 - **Source:** [`sidecar/ai/tools/builtins/temp_script.py`](../sidecar/ai/tools/builtins/temp_script.py).
@@ -292,6 +330,7 @@ Check status and output of a background shell job.
 - **Parameters:** `job_id` (returned by `run_command` with `run_in_background: true`).
 - **Job-ID contract (2026-07-10, WIDE-011):** `job_id` must be exactly 12 lowercase hex characters (the format `run_command` mints); anything else is refused before any path is assembled, closing traversal/absolute/UNC/separator escapes. The job directory is revalidated against symlink/reparse redirection (a redirected directory reads as `not_found`), `status.json` reads are capped at 256 KiB, and a non-object or malformed status body is a typed "corrupt" result rather than a crash.
 - **Lifecycle contract (2026-07-11, WIDE-015/WIDE-041):** initial status-publication failure synchronously terminates and removes the spawned process before returning a typed refusal. Terminal status-publication failure preserves the validated result in a bounded 64-entry in-memory fallback, while an old unowned `running` record is reconciled to `failed` after restart rather than remaining permanently live.
+- **Restart handoff (2026-10-11, A20-F2):** a job handed off across a trusted Linux restart keeps reading `running` past the 15-minute pid-reuse window while the owned-process ledger records its exact live process identity and a live owner; the original host still publishes its genuine terminal status. A reused PID or dead owner still reconciles to `failed`; since 2026-10-12 (A20 review) the running `status.json` carries the job's own owned-process ledger receipt (`ledger_entry`, internal and stripped from tool output), only that exact entry can vouch for the job, and its original host (the terminal-status writer) must also be alive, so a later job on a recycled PID never keeps an earlier job's record `running` and a crashed host reconciles to `failed`; a legacy record without the binding reconciles conservatively.
 - **Schema liveness (2026-09-15, B3S-4):** when a turn decides whether the background-job status tools stay in its schema, the registry is read per workspace store (`active_job_ids(store_key=...)`, keyed like the ownership contract below), so a job running in another workspace never counts as live here.
 - **Stopped jobs (2026-10-05):** a job that ended because `stop_background_job` was called reads back as `state: failed` with `error: background job was cancelled`, and the poll itself reports success. A job that failed on its own still reports a tool error.
 - **Source:** [`sidecar/ai/tools/builtins/shell.py`](../sidecar/ai/tools/builtins/shell.py) and [`shell_background.py`](../sidecar/ai/tools/builtins/shell_background.py).
@@ -369,7 +408,7 @@ Execute Python code in a subprocess with resource and process-tree limits.
 - **Workspace required:** no.
 - **Gated by:** `tools_python_runtime_enabled` (off by default).
 - **Platforms:** `win32` only at present.
-- **Notes:** Returns text output plus optional inline charts and tables. The runtime ships with a curated package set (NumPy, Pandas, Matplotlib, etc.); arbitrary `pip install` is not exposed.
+- **Notes:** Returns text output plus optional inline charts and tables. Open Matplotlib figures are captured at `plt.show()` and at the end of the run, and a figure closed first (`plt.close()`, `plt.close(fig)`, `plt.close("all")`, for example right after `savefig`) is captured as it closes; captures share the per-run image and pixel caps, and a figure shown and then closed is captured once. The runtime ships with a curated package set (NumPy, Pandas, Matplotlib, etc.); arbitrary `pip install` is not exposed.
 - **Parameters:** `code` (required).
 - **Source:** [`sidecar/ai/tools/builtins/python_runtime/`](../sidecar/ai/tools/builtins/python_runtime/) — the typed failures live in `errors.py` and the embeddable-interpreter pip bootstrap in `pip_bootstrap.py`, split out of `interpreter.py` to keep it under the file-size ceiling and to let the bootstrap raise those errors without importing `interpreter` back. `interpreter` re-exports every name from `errors`, so existing `interpreter.PythonRuntime*Error` references still resolve to the same classes.
 
@@ -676,6 +715,78 @@ bundled or downloaded model.
 | `knowledge_search` | `pattern`: regex search across the registered folders, reusing `grep_search`'s pure-Python worker (per-file timeout subprocess) scoped per root. `query`: what to find in plain words; one query embed (1.5 s deadline) ranks catalog passages, fused with the exact-word matches by reciprocal rank over files. Pass either or both | Read-only |
 | `knowledge_view` | Paginated document read; text streams line windows, pdf/docx/xlsx/pptx/ipynb dispatch to the rich-file inspect adapters | Read-only |
 | `knowledge_exec` | Bounded pure-Python `ls` / `tree` / `find` over the corpus | Read-only |
+
+### PDF completeness and source identity
+
+Semantic PDF evidence includes an `extraction` receipt: `parser_id`, parser version,
+source SHA-256, content kind, complete/partial/unavailable status, reason, total and
+examined page counts, pages without text, and any extraction budget truncation.
+This describes extracted text, not OCR or exhaustive answer/index coverage. Mixed
+text/image PDFs remain partial. Scan-only PDFs report `needs_ocr`; unreadable PDFs
+retain unavailable status. Schema 2 invalidates legacy derived chunks/vectors and
+re-extracts admitted roots; schema 3 re-extracts every multi-chunk document once, so
+older overlap locators and undisclosed chunk-cap truncation are rebuilt. A
+schema-mismatched reader falls back to lexical search.
+
+Natural-language and regex-only search return at most eight scoped `source_statuses` for incomplete
+PDFs, including documents with no searchable chunks. These are coverage notices,
+not ranked matches or evidence that a document answers the question. Existing
+root/path/glob restrictions apply. Regex-only coverage lookup uses the read-only
+catalog without invoking embeddings. Binary-skip receipts distinguish no regex match
+from native PDF coverage and OCR availability, and direct expansion to `knowledge_view`.
+A deleted or changed source is omitted after
+current-file hash validation. Search passages/sources carry `source_hash` and,
+for PDFs, the extraction receipt. A missing stored hash is not treated as current,
+except that a hashless `too_large` receipt stays listed only while the file still
+exceeds the 64 MiB container cap. Current-source admission runs before the passage
+and notice caps (once per document, at most 32 distinct checks per list), so stale
+entries cannot fill them; when that budget runs out the search reports
+`semantic_partial`. Notices also cover complete native PDFs whose searchable coverage
+is incomplete: `index_truncation` (`max_chunks`, `indexed_through` locator) when the
+400-chunk document cap cut the indexed tail, and `index_failure: "embed_failed"` when
+embedding failed; the extraction fields stay truthful. Catalog extraction reads each
+file once through a root-verified handle and hashes/extracts that same snapshot.
+Passage locators include the units of the overlap carried from the previous chunk.
+When the catalog cannot be read, a regex-only search still answers but its note says
+coverage notices are unavailable, and metadata `semantic_reason` carries the code.
+Regex-only (lexical) sources also carry a fresh `source_hash` and their
+`locator_kind` (`lines`, `pages` or `paragraphs`); at most 16 per call are hashed
+(`MAX_LEXICAL_SOURCE_HASHES`), later ones stay unpinned and the payload sets
+`identity_truncated: true`.
+
+Pass `expected_source_hash` from search to `knowledge_view` when expanding a citation.
+A mismatch before or during the read returns `source_changed`, no cited sources,
+and asks the caller to search again. Every successful view (text, docx, PDF and
+other rich formats) includes its current `source_hash`, re-checked after the read.
+PDF views also include page-window completeness; a partial window does not establish whole-document
+coverage. When the existing inspector recovers OCR text, the view reports
+`pdf_text_with_ocr` and `supplemental_ocr` page/engine provenance while retaining
+the missing native-text pages and partial status. This adds no OCR engine.
+Existing pagination, extraction and evaluation caps remain in force.
+
+`knowledge_view` also takes an optional `locator`: the passage locator search
+returned for that path (`L10-12`, `p2`/`p2-3`, `para3`). It is validated before
+any read; a kind that does not fit the file (a page locator for a markdown file)
+or an impossible range fails without content as `success: false`, error
+`CMP-TOOL-0004` (invalid path), with `reason` `invalid_locator`, `invalid_locator_kind`
+or `locator_out_of_range`, the echoed `locator`, `expected_locator_kind`,
+`status: unavailable`, no `sources`, and a one-line instruction to use the
+locator knowledge_search returned. Without explicit `offset`/`limit` a line
+locator reads exactly its lines (at most 500); without `pages`/`cursor` a page
+locator reads those pages. Explicit arguments win, and the locator is then
+range-checked against the extent the read reports (text: total lines, counted to
+the end of file when a locator is given; PDF: `page_count`; docx: the
+inspector's `paragraph_count`, an upper bound since catalog `para<N>` counts only
+non-empty paragraphs; other rich formats: shape check only).
+
+For file/subfolder searches, pass the label-prefixed `path` and omit `root`.
+`root` selects a whole registered folder; supplying both remains an error. Scope
+validation failures before reading report `effects: none` and a bounded correction
+hint. They do not silently reinterpret the requested scope. When knowledge tools
+are available, the model receives the path-only correction and a reminder to use
+the retrieved source hash when expanding that source. Answer correctness still
+requires verification; the general answer-guidance candidate was not promoted.
+
 
 ### Availability
 
@@ -1018,6 +1129,23 @@ authorize re-execution. See [Session runtime operations](operations/session-runt
 and bounded run history under `tools_automations_enabled`. They do not create or
 schedule sub-agent work; see Sub-Agent Scheduling.
 
+### `recall_tool_output`
+
+Read an earlier tool call's original output when microcompaction has replaced it
+with a context-saving placeholder. Pass the placeholder's `call_id`; the current
+turn's result wins over a canonical history row with the same id. Results use the
+standard 16,000-character tool-output bound, including JSON result shaping.
+Metadata records `recalled_call_id`, `source` (`current_turn` or `history`), and
+`original_tool`; recalling an error succeeds with `original_is_error: true`.
+
+This sidecar-owned synthetic tool is read-only, requires no workspace, filesystem
+or network access, and defaults to automatic policy admission. It is offered
+without deferred discovery while `compaction_recall_tool` is enabled (absent means
+on); disabling the flag also refuses direct calls. The request runtime indexes
+the newest 4,096 canonical tool outputs and drops the index with the request.
+Missing ids fail with a conversation-only recall message. The handler lives in
+[`tool_recall.py`](../sidecar/ai/routing/tool_recall.py).
+
 ### `ask_user`
 
 `ask_user` presents one to four structured questions and blocks the current tool result until the
@@ -1043,6 +1171,67 @@ rejection leaves Plan Mode active so the model can revise the proposal.
 Both tools execute through `tool.execute_electron`. `ask_user` inherits the normal read-only
 `auto` policy default because its own question card is the interaction boundary; it does not need
 or receive the special policy override used by `exit_plan_mode`.
+
+### `propose_git_action` and `propose_command`
+
+Two flag-less Electron-owned tools let the model hand a decision to the user instead of acting on it.
+`propose_git_action` (`summary`, `question`, `paths`) is called once after finished changes in a Git
+workspace to offer Commit / Test first / Dismiss; `propose_command` (`command`, `cwd`, `purpose`,
+optional `timeout_seconds`, `expected_exit_codes`, `preconditions`) offers a concrete command the user
+can Copy or Run. Both are `tool_family: runtime`, read-only, not side-effecting and require a workspace
+root; they are offered in Agent, Plan and Propose turns because they only write the app's own proposal
+record. Nothing is committed, tested or run by the tool: the user's choice on the card does that, and
+Plan Mode or a read-only session gates the actions at decision time. Arguments are closed schemas
+(`schema_version` is optional and must be `1`).
+
+The tool validates the arguments, captures the Git or command binding, checks that the call is the
+live one for the active turn (execution binding current, stream, logical turn and session incarnation
+match), then publishes through `backendService.chatProposals`. The result carries only
+`metadata {schema_version, result_kind: "git_proposal" | "command_proposal", proposal_id, revision,
+decision_state, action_state}`; the model-facing text never echoes the command, summary or paths.
+Failures use `CMP-PROPOSAL-0001..0012` and leave no record. `propose_command` is also allowed in the
+Docker command sandbox (the Docker backend is captured in the binding); `propose_git_action` is not
+(workspace Git is off there), and neither is available in the hosted policy.
+
+### `propose_session` and `complete_session_handoff`
+
+Two more flag-less, workspace-independent Electron tools (row 59 checkpoint 5a) link a chat to a new
+one. `propose_session` (`initiation` of `offer`, `own_initiative` or `user_asked`, `title`, optional
+`description`, `group_key`, `authorization_ref`) records an offer or suggestion card; a projectless
+chat may use it. An `offer` (including a `user_asked` request with no matching launch authorization)
+ends the turn: the result metadata carries `turn_boundary: "awaiting_proposal"` and the sidecar stops
+the batch, so the model waits for the user's choice. An `own_initiative` suggestion starts nothing and
+the answer continues. The tool never creates a chat; the user's choice does.
+
+`complete_session_handoff` (`proposal_id`, `attempt_id`, `task`, optional `background`) is offered only
+in the handoff-only preparation turn that follows a New session choice, and is refused in any other
+turn; in the preparation turn it is the only Electron tool that passes the bridge. It must name the
+attempt the turn was prepared for, then creates the child and submits its first turn through
+`backendService.chatProposals.completeHandoff`, and on success returns
+`turn_boundary: "session_handoff_completed"`. Both tools are `tool_family: runtime`, read-only, always
+on (the Tools surface cannot switch them off), allowed in the Docker command sandbox bridge, classified
+as no-network for offline lockdown, unavailable in the hosted policy, and are offered only when the
+sidecar negotiated the matching producer tool. Results carry ids, states and reason codes only; the
+title, description, task and background are never echoed.
+
+
+### `session_message`
+
+Electron owns addressed agent messages through `backendService.chatMessages`. The closed actions are
+`{action:"list_targets"}`, `{action:"read",message_id}` and
+`{action:"send",destination_session_id,body}`; extra keys are rejected. Targets contain only session id,
+title, project label, free-form eligibility and grant expiry/remaining count. Read returns only inbox
+mail already included in this chat's context. A send binds the current session incarnation, turn and
+tool call to an immutable prepared operation. A live directional grant authorizes it; otherwise the
+tool asks once for the exact recipient, full body and envelope hash, even in Auto mode. Approval is
+one-off only. Denial or timeout cancels the preparation and returns `authorization_required` normally.
+The idle watchdog and transport deadline pause during human consent.
+
+The tool requires negotiated `session_messages` and a bound chat. Plan/read-only permits listing and
+reading, but blocks sending. Offline lockdown strips it (`possible` network egress). Hosted and Docker
+sandbox policies refuse it. Messages never wake or execute the recipient. Persisted tool receipts
+retain only action, outcome/reason, operation id, destination id/title and state; approval events retain
+the full exact-content preview separately from the clipped generic tool input.
 
 ## Diagnostics
 
@@ -1521,14 +1710,15 @@ One tool for loading the full body of a skill advertised in the system prompt's 
 
 ### `load_skill`
 
-Read a bundled/user/project skill's `SKILL.md` body by name and scope.
+Read a bundled/user/project skill's `SKILL.md` body, or one `references/<file>.md` file inside that skill's directory, by name and scope.
 
 - **Approval:** none (read-only).
 - **Side-effecting:** no.
 - **Workspace required:** no. Skill scope roots (bundled/user/project) are configured independently of the tools workspace root — see [Storage](#storage) below.
 - **Gated by:** `tools_load_skill_enabled` (default on).
-- **Parameters:** `name` (required) — the skill's directory slug as shown in the index, e.g. `load_skill(name="humanizer", scope="bundled")`, not the human-readable frontmatter title. `scope` (optional, `bundled` | `user` | `project`) — disambiguates when the same slug exists in more than one scope; when omitted, resolution tries `bundled`, then `user`, then `project` and returns the first match.
-- **Errors:** an invalid `name` (path separators, leading `.`, empty) or invalid `scope` value is rejected before any filesystem access (`CMP-TOOL-0004`). A `name`/`scope` combination that does not resolve to an indexed skill returns `CMP-TOOL-0040` with the list of currently available `scope/name` pairs.
+- **Parameters:** `name` (required) — the skill's directory slug as shown in the index, e.g. `load_skill(name="humanizer", scope="bundled")`, not the human-readable frontmatter title. `scope` (optional, `bundled` | `user` | `project`) — disambiguates when the same slug exists in more than one scope; when omitted, resolution tries `bundled`, then `user`, then `project` and returns the first match. `reference` (optional) — one `references/<file>.md` path named in the skill's `SKILL.md` body, e.g. `load_skill(name="reverse-engineer-anything", scope="user", reference="references/native-and-artifacts.md")`. It must match `^references/[A-Za-z0-9_][A-Za-z0-9._-]{0,63}\.md$` exactly: one file name directly under `references/`, `.md` only, no `..`, no backslash, no absolute path. Omitted or empty, the tool reads `SKILL.md` exactly as before.
+- **Bounds:** a reference is looked up in the skill directory that `SKILL.md` would come from (same name, scope precedence, enabled-scope check and per-skill disable list). `references/` and then the file are resolved strictly and must stay inside that skill directory, so a symlink or junction pointing outside it is refused. The read uses the `SKILL.md` byte cap (`MAX_SKILL_FILE_BYTES`, 15,360 bytes) and the same truncation marker. The result carries the usual `scope`, `name` and `truncated` metadata plus `reference`.
+- **Errors:** an invalid `name` (path separators, leading `.`, empty) or invalid `scope` value is rejected before any filesystem access (`CMP-TOOL-0004`). A `name`/`scope` combination that does not resolve to an indexed skill returns `CMP-TOOL-0040` with the list of currently available `scope/name` pairs. A `reference` that does not match the pattern is rejected before any filesystem access (`CMP-TOOL-0004`), as is one that resolves outside the skill directory. A missing reference file returns `CMP-TOOL-0040` (`unknown skill reference ...`). A disabled scope or skill refuses a reference exactly as it refuses `SKILL.md`.
 - **Source:** [`sidecar/ai/tools/builtins/skills.py`](../sidecar/ai/tools/builtins/skills.py).
 
 ### Product Owner Review skill
@@ -1623,6 +1813,37 @@ Trivial single-step tasks should not produce a todo list — the tool is meant f
 
 Todos live in sidecar runtime memory for the active session. They are not persisted to disk and do not appear in `turn_events[]`. The list resets when the session ends or when `todo_write` is called with an empty array.
 
+## Earlier chats
+
+`conversations_recent({limit?})` lists up to 20 earlier non-empty chats in the current project, newest first (default 10), with titles and counts only. `conversation_open({session_id, around_message_id?, window?})` reads the last 20 plain user/assistant text rows by default, or a centered window around a text message (maximum 40). Text is clipped at 2,000 characters per row with a clipping marker and a 16,000-character total text budget; `more_before` and `more_after` indicate omitted rows.
+
+Both tools use Electron's canonical store through `tool.execute_electron`. Project and caller identities come only from the trusted execution binding. The caller, opted-out, lockdown, plugin, diagnostic and child chats are hidden; archived chats remain visible. Invisible ids share one `not_found` result, and an unknown or non-text anchor returns `message_not_found`. Earlier chat content is background data, not instructions. These read-only tools work in Plan Mode and read-only chats, are registered only with `memory_v2_enabled` via `tools_conversations_enabled`, and refuse callers in lockdown. Hosted capability policy disables them.
+
+`conversations_search({query, limit?})` (row 58 W4) searches earlier chats in the current project and returns up to `limit` hits (1..10, default 5) as `{mode, results:[{session_id, title, message_id, role, created_at, snippet}], note}`; the note points the model at `conversation_open` with `session_id` and `around_message_id` for context. The query (1..500 characters) goes to the sidecar's derived index `<userData>/conversation-index.db` through `conversations.search` with the trusted project and the caller excluded; `mode` is `lexical` (FTS5) or `hybrid` when the semantic catalog's embedder is on. Every hit is re-checked against Electron's canonical chat list with the same visibility rules (stale, deleted, other-project and hidden chats are dropped; an unreadable lineage store drops all), titles come from the canonical summary, snippets are clipped to 280 characters and the output to 16,000 characters. An unavailable index answers `{results: [], note: "Search is not available right now."}` rather than an error.
+
+Electron's `ConversationIndexPump` (`services/backend/conversation-index-pump.js`) keeps the index current while the main model is idle: it indexes every visible non-empty chat in every project (newest 500 text rows, 2,000 characters each, up to 3 chats per 20 s tick), purges deleted or hidden ones, and a committed chat delete purges that chat right away (best effort).
+
+## Memory
+
+One sidecar-owned tool for Jenny's durable memory across chats. It runs in-process in the sidecar (a `synthetic` manifest entry, like `delegate` and `monitor`) because it needs the memory store and the trusted request context; the builtin tool subprocess can reach neither.
+
+### `memory`
+
+Remember, correct, forget and look up durable memories about the user and the current project.
+
+- **Approval:** none: the built-in policy default is `auto` on both evaluators (`sidecar/ai/tools/policy.py`, `services/tools/tool-policy-evaluator.js`); an explicit user policy still wins. Consent rides the per-request memory policy instead: when the user pauses saving, writes are refused as `paused` (the user's `/remember` still works); with "Ask before Jenny saves", `remember` goes to the pending approval list (`pending_approval`) and `update`/`forget` are refused as `approval_required`.
+- **Side-effecting:** per action: `remember`, `update` and `forget` write; `recall` and `list` are read-only and always answer, even when memory is off in chats.
+- **Workspace required:** no.
+- **Gated by:** `tools_memory_enabled`, derived from the internal `memory_v2_enabled` flag (default on; `JENNY_ENABLE_MEMORY_V2=0` removes the tool from the managed-sidecar catalog).
+- **Plan Mode:** `remember` is allowed (the manifest's `availability.plan_mode_artifact_write` bit plus a per-action rule in `plan_artifact_policy.py` and `plan-artifact-policy.js`); `update` and `forget` stay blocked until the build. A read-only capture outside Plan Mode (propose mode, sub-agents, automations) blocks all three writes.
+- **Unavailable:** in hosted mode (`HOSTED_TOOL_CAPABILITY_POLICY.tools_memory_enabled: false`, and it is not a hosted-allowed tool), to sub-agents (`READ_ONLY_DISABLED_TOOLS` and a handler refusal for any non-main surface or depth), and in offline lockdown (handler refusal; the lockdown table classifies it `none` because it makes no network calls).
+- **Scope:** the project comes from the request's trusted execution context (else its memory policy) and the session from the dispatch; the schema has no `project_id`, `session_id` or `expected_revision` parameter and a model-supplied one is rejected by schema validation. `scope` is `project` (default), `global` (lands in General; only when the user says it applies everywhere) or `chat` (this conversation only). `always_on` puts a short, stable memory in every prompt and is refused with the current always-on lines when the budget is full.
+- **Observed ids:** `update` and `forget` act only on ids this session has seen in a `recall`, `list` or write result, at the revision seen; an unseen id is refused as `unobserved`, and a row changed since is a `conflict` that refreshes the seen revision. The sidecar keeps at most 200 ids for each of 64 sessions.
+- **Replay:** each write's operation id is `tool:<session>:<call id>`, so a replayed call returns the original result without writing twice.
+- **Results:** one line per outcome (`Remembered [id 12, preference, project]: ...`, `Updated [id 12, revision 3]: ...`, `Forgot [id 12].`, `Already remembered [id 12]: ...`, one sentence for a refusal or conflict); `recall`/`list` return `[id 12] (preference, project) text` lines and `(more: cursor=...)` when a list has another page. Metadata (`result_kind: "memory"`, `action`, `status`, `memory_id`, `revision`, `operation_id`, `scope`, `kind`, `duplicate`, `undoable`, `reason`, `text_preview` of at most 80 characters) is the only memory data that persists with the tool result (`services/backend/memory-result-metadata.js`); memory text never reaches a log.
+- **Parameters:** `action` (required: `remember`, `update`, `forget`, `recall`, `list`), `text` (up to 400 characters; `remember`, `update`), `kind` (`preference`, `fact` (default), `decision`, `convention`, `person`, `routine`, `lesson`), `scope`, `always_on`, `id` (`update`, `forget`), `query` (up to 2000 characters; `recall`), `limit` (1-8, default 5; `recall`), `cursor` (`list`).
+- **Source:** [`sidecar/ai/routing/tool_execution_memory.py`](../sidecar/ai/routing/tool_execution_memory.py) (handler, registered in `SYNTHETIC_TOOL_HANDLERS` in [`tool_execution_tool_handlers.py`](../sidecar/ai/routing/tool_execution_tool_handlers.py)); store API [`sidecar/ai/memory/service.py`](../sidecar/ai/memory/service.py); canonical descriptor [`services/tools/tool-manifest.json`](../services/tools/tool-manifest.json).
+
 ## MCP servers
 
 An MCP server is a standalone connection the user adds directly to their Jenny
@@ -1635,6 +1856,49 @@ inspected advertised-tools digest. Only rows that are both approved and
 enabled are forwarded to the sidecar. Editing the row invalidates its trust,
 and material tool-surface drift disables the row and returns it to pending
 review.
+
+Schema v2 rows may also carry `env` (non-secret configuration added to the
+scrubbed stdio environment, add-only; reserved and secret-like names are
+refused), the stdio containment limits `memory_limit_mb` and `max_processes`,
+`request_timeout_seconds` (raises the per-call deadline of that server's
+`mcp__<server>__*` tools above the global tool timeout, never below it; the
+turn's remaining working time still bounds it) and `inspect_timeout_seconds`
+(the Test connection budget). These keys are part of the approved
+configuration digest, so changing one returns the row to review; a row without
+them keeps its v1 digest.
+
+Tool annotations are untrusted server metadata. The trust review shows which
+tools claim `readOnlyHint` without `openWorldHint` or `destructiveHint`, and
+by default a claim changes nothing and is not part of the approved tools
+digest, so a surface approved before claims were shown keeps its approval. A
+row may set `read_only_auto_allow: true` (stdio and SSE, off by default, part
+of the configuration digest): then the claims are recorded in the tools digest
+offered for approval, so a server that adds, drops or changes one afterwards
+goes back to review, and each approved claiming tool registers as not
+side-effecting, so its calls default to auto approval, a failed call may be
+replayed after a reconnect, and it is offered in read-only and Plan mode. An
+explicit policy rule or per-tool setting still wins, and a tool that declares
+a write action stays side-effecting. Electron's execution authority admits an
+approved, enabled server's tools from the sidecar's tool status (which carries
+each tool's `side_effecting`, fail-closed) and applies the same policy.
+In Settings › Extensions the review tags each claiming tool **read-only**, and
+the connection's details drawer holds the **Read-only tools run without
+asking** switch, pending or approved; flipping it saves the row and returns it
+to review.
+
+A few servers have a built-in preset (`sidecar/ai/mcp/presets.py`), matched by
+the exact row name and nothing else: a row named `rea` gets the rea preset, a
+row named `rea2`, `REA` or `rea-agents` gets none. A preset names up to 12
+starter tools that tool search never defers and that fill the schema slots the
+context-budget filter has left after the request's own picks (they never evict
+a relevance, repair or pairing guarantee), so a small-context local model sees
+their full schemas while the server's other tools stay reachable through
+`tool_search`, and adds a short,
+static usage note (`# Connected tool guidance: <server>`) to the request while
+any of that server's tools are offered. Presets are code, not configuration;
+the rea preset's 12 starter schemas cost about 6.9k tokens.
+
+For the opt-in Windows managed install and packaged skill copy, see [Installing rea into Jenny](tutorials/02-adding-mcp-server.md#installing-rea-into-jenny-windows).
 
 ### Who is trusted
 
@@ -1664,3 +1928,31 @@ Follow-ups from the 2026-10-07 Codex audit wave (landed 2026-10-08):
 
 - Atomic writes (`file_atomic_write.py`, used by `write_file`, `edit_file`, `apply_patch` and rollback) pin the validated parent directory. On POSIX hosts with `dir_fd` support the parent is opened once (`O_NOFOLLOW`), its identity compared with the validated one, and the temporary file is created (`O_EXCL`, mode 0600), replaced and, on failure, unlinked relative to that handle; on Windows the parent and temp identity are re-checked before any content is written, so a parent swapped for a junction after validation leaks at most an empty file name. Temp cleanup is identity-based and always runs.
 - Context bootstrap reads (`context_io.read_bounded_context_text`, used by the prompt builders and `skills`) verify the opened descriptor with the same final-path containment check as the desktop file readers (`file_state.verify_authorized_handle`, now public) before any byte is read, returning `unsafe_path` and closing the descriptor on failure; an authorized root that is itself a junction or symlink is resolved once so its own files still read.
+
+
+### POSIX owned-process durability record
+
+Managed desktop configuration passes `owned_process_ledger_path`, an application
+profile path, to the runtime and builtin tool host. Foreground and background
+commands record their actual OwnedProcessService supervisor once; sandbox and
+MCP launches record separately. Version-1 records include owner and launched
+process identity (PID, PGID, UID, executable, boot/start identity, command hash).
+Atomic OS-locked writes fail open with a warning. A supervised entry is forgotten
+only after the existing full-tree cleanup verdict confirms it; exit or an empty
+process group alone does not supply that proof. Unconfirmed retention is capped
+at 50 with a warning when dropping the oldest. Windows Job Objects are unchanged.
+The durability plan
+tracks recovery and trusted restart handoff qualification separately.
+
+
+Owned background-process restart contract: a managed Linux restart transfers the
+builtin host and background jobs through a profile-owned identity ledger. Late
+launches inherit the armed transfer atomically; the original host persists output
+and settles confirmed cleanup after adoption. Unexpected owner death runs fresh
+identity recovery before admission; missing processes alone remain unconfirmed.
+The private helper is not a model tool. Windows Job Object behavior is unchanged.
+
+PDF reads (`read_file` and rich-file inspection) configure the pinned optional
+PyMuPDF add-on to send diagnostics to stderr before opening any document. This
+is independent of catalog initialization and preserves framed JSON-RPC stdout;
+extraction results, page budgets and add-on failure messages are unchanged.

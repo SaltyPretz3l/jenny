@@ -22,6 +22,7 @@
     'proactive_suggestion',
     'question_batch',
     'slash_command_output',
+    'memory_note',
     'tool_result',
   ]);
 

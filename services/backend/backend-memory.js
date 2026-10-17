@@ -1,8 +1,6 @@
+const crypto = require('crypto');
 const { API_VERSION } = require('./sidecar-client');
-const {
-  RESPONSE_STYLE_RECALL_LIMIT,
-  buildMemorySuggestionMessages,
-} = require('./backend-service-utils');
+const { normalizeMemorySettings } = require('../shell-config-normalizers');
 const {
   ensureArray,
   isPlainObject,
@@ -13,9 +11,13 @@ const {
 } = require('../projects/project-schema');
 
 const MAX_MEMORY_CANDIDATE_LENGTH = 50_000;
-const MAX_MEMORY_SUGGESTION_USER_MESSAGES = 3;
 const MEMORY_LIST_PAGE_SIZE = 250;
 const MEMORY_LIST_MAX_ITEMS = 10_000;
+const OPERATION_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const WRITE_STATUSES = new Set(['saved', 'conflict', 'refused']);
+const REASON_PATTERN = /^[a-z_]{1,64}$/;
+// memory.update takes these flat fields (sidecar/runtime/memory.py UPDATE_FIELDS).
+const UPDATE_FIELDS = Object.freeze(['lesson_text', 'lesson_kind', 'title', 'always_on', 'remove_provenance']);
 
 async function requestMemoryRpc(service, method, params = {}) {
   return service.sidecarClient.request(method, {
@@ -30,24 +32,116 @@ function captureMemoryAuthority(service, sessionId = null) {
     : service.projectAuthority.captureSession(sessionId);
 }
 
-function dismissedFingerprintKey(projectId, fingerprint) {
-  const normalized = String(fingerprint || '').trim().toLowerCase();
-  return normalized ? `${projectId}\0${normalized}` : '';
+// Settings names the row's revision so a write cannot overwrite a newer one.
+function expectedRevisionParam(options) {
+  const value = options?.expectedRevision;
+  if (value === undefined || value === null) return {};
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error('expectedRevision is invalid');
+  return { expected_revision: value };
 }
 
-function resolveDismissedFingerprint(service, sessionIdOrFingerprint, fingerprint) {
-  const usesSessionScope = fingerprint !== undefined;
-  const authority = captureMemoryAuthority(
-    service,
-    usesSessionScope ? String(sessionIdOrFingerprint || '').trim() : null
-  );
-  return {
-    authority,
-    key: dismissedFingerprintKey(
-      authority.project_id,
-      usesSessionScope ? fingerprint : sessionIdOrFingerprint
-    ),
+const countOf = (value) => (Number.isSafeInteger(value) && value > 0 ? value : 0);
+
+// The v9 write outcome the renderer may see: status, ids, flags and the reason
+// token. Memory text only reaches the renderer inside a returned row.
+function summarizeMemoryWrite(payload) {
+  const summary = {};
+  if (WRITE_STATUSES.has(payload?.status)) summary.status = payload.status;
+  if (typeof payload?.operation_id === 'string' && OPERATION_ID_PATTERN.test(payload.operation_id)) {
+    summary.operation_id = payload.operation_id;
+  }
+  if (typeof payload?.duplicate === 'boolean') summary.duplicate = payload.duplicate;
+  if (typeof payload?.undoable === 'boolean') summary.undoable = payload.undoable;
+  if (typeof payload?.reason === 'string' && REASON_PATTERN.test(payload.reason)) summary.reason = payload.reason;
+  return summary;
+}
+
+// Memory policy (row 58 W1): the global switches live in the shell config
+// `memory` section; a missing section or config service reads as the defaults.
+function readMemorySettings(service) {
+  const raw = service?.configService?.getState?.()?.memory;
+  const settings = normalizeMemorySettings(raw);
+  // takeNotes (W2 reflection) defaults on: only an explicit false turns it off.
+  const takeNotes = Object.hasOwn(settings, 'takeNotes') ? settings.takeNotes : raw?.takeNotes;
+  return { ...settings, takeNotes: takeNotes !== false };
+}
+
+// One random epoch source per Electron process (BackendService), so a restarted
+// Electron never inherits a higher stale epoch from the sidecar's fence.
+function memoryEpochSource(service) {
+  if (!service._memoryEpochSource) service._memoryEpochSource = crypto.randomUUID();
+  return service._memoryEpochSource;
+}
+
+// Best-effort, in bump order: the sidecar's apply fence learns every epoch.
+// A failure is a WARN; it never throws into the bump's caller.
+function pushMemoryPolicyEpoch(service, epoch) {
+  if (typeof service?.sidecarClient?.request !== 'function') return;
+  const send = async () => {
+    try {
+      await requestMemoryRpc(service, 'memory.policy_epoch', {
+        policy_epoch: epoch,
+        epoch_source: memoryEpochSource(service),
+      });
+    } catch (error) {
+      service._emitServiceLog?.('WARN', 'memory.policy_epoch_push_failed', {
+        epoch,
+        reason: String(error?.reason || error?.code || 'push_failed').slice(0, 64),
+      });
+    }
   };
+  service._memoryEpochPush = (service._memoryEpochPush || Promise.resolve()).then(send);
+}
+
+// Resolves once every epoch push sent so far has settled.
+async function flushMemoryPolicyEpochPush(service) {
+  await service?._memoryEpochPush;
+}
+
+function bumpMemoryPolicyEpoch(service, reason) {
+  service._memoryPolicyEpoch = (Number(service._memoryPolicyEpoch) || 0) + 1;
+  service._emitServiceLog?.('INFO', 'memory.policy_epoch_bumped', {
+    epoch: service._memoryPolicyEpoch,
+    reason: String(reason || 'unspecified').slice(0, 64),
+  });
+  pushMemoryPolicyEpoch(service, service._memoryPolicyEpoch);
+  return service._memoryPolicyEpoch;
+}
+
+// In-process and monotonic (not persisted in W1). A settings change is noticed
+// on the next read, which is the next request that carries the policy.
+function memoryPolicyEpoch(service) {
+  const signature = JSON.stringify(readMemorySettings(service));
+  if (service._memorySettingsSignature !== undefined && service._memorySettingsSignature !== signature) {
+    bumpMemoryPolicyEpoch(service, 'memory_settings_changed');
+  }
+  service._memorySettingsSignature = signature;
+  return Number(service._memoryPolicyEpoch) || 0;
+}
+
+function buildMemoryPolicy(service, { includeMemory, memoryOptOut, projectId }) {
+  const settings = readMemorySettings(service);
+  const recall = includeMemory === true && settings.useInChats;
+  let capture = 'auto';
+  if (settings.pauseSaving || memoryOptOut === true) capture = 'off';
+  else if (settings.askBeforeSaving) capture = 'ask';
+  const epoch = typeof service.memoryPolicyEpoch === 'function' ? service.memoryPolicyEpoch() : 0;
+  return {
+    enabled: recall,
+    project_id: projectId,
+    capture,
+    recall,
+    policy_epoch: Number.isSafeInteger(epoch) && epoch >= 0 ? epoch : 0,
+  };
+}
+
+// Wraps a session preference write: a changed memory_opt_out moves the epoch.
+async function trackMemoryOptOutChange(service, sessionId, write) {
+  const optedOut = () => service.sessionStore?.getSession?.(sessionId)?.context_preferences?.memory_opt_out === true;
+  const before = optedOut();
+  const result = await write();
+  if (optedOut() !== before) bumpMemoryPolicyEpoch(service, 'session_memory_opt_out_changed');
+  return result;
 }
 
 function unavailableMemoryStatus(reason) {
@@ -86,52 +180,6 @@ async function getMemoryStatus(service) {
     });
     return unavailableMemoryStatus(reason);
   }
-}
-
-function dismissMemorySuggestion(service, sessionIdOrFingerprint, fingerprint) {
-  const { key } = resolveDismissedFingerprint(service, sessionIdOrFingerprint, fingerprint);
-  if (key) {
-    service._dismissedMemoryFingerprints.delete(key);
-    service._dismissedMemoryFingerprints.add(key);
-    if (typeof service.trimDismissedMemoryFingerprints === 'function') {
-      service.trimDismissedMemoryFingerprints();
-    }
-  }
-}
-
-function isMemorySuggestionDismissed(service, sessionIdOrFingerprint, fingerprint) {
-  const { key } = resolveDismissedFingerprint(service, sessionIdOrFingerprint, fingerprint);
-  return key ? service._dismissedMemoryFingerprints.has(key) : false;
-}
-
-async function suggestMemoriesForSession(service, sessionId) {
-  const resolvedSessionId = String(sessionId || '').trim();
-  const authority = captureMemoryAuthority(service, resolvedSessionId);
-  if (!service.sidecarClient) {
-    service._emitServiceLog('INFO', 'memory.suggest_skipped', {
-      sessionId: resolvedSessionId,
-      reason: 'sidecar_unavailable',
-    });
-    return { suggestions: [] };
-  }
-
-  const messages = buildMemorySuggestionMessages(
-    service.sessionStore.getSessionMessages(resolvedSessionId),
-    { maxUserMessages: MAX_MEMORY_SUGGESTION_USER_MESSAGES }
-  );
-  const payload = await requestMemoryRpc(service, 'memory.suggest', {
-    project_id: authority.project_id,
-    session_id: resolvedSessionId,
-    messages,
-  });
-  const suggestions = ensureArray(payload?.suggestions)
-    .filter((s) => {
-      const fp = String(s?.content_fingerprint || '').trim().toLowerCase();
-      return !fp || !service._dismissedMemoryFingerprints.has(
-        dismissedFingerprintKey(authority.project_id, fp)
-      );
-    });
-  return { suggestions };
 }
 
 async function saveMemoryForSession(service, sessionId, candidate) {
@@ -181,6 +229,7 @@ async function saveMemoryForSession(service, sessionId, candidate) {
       isPlainObject(payload?.memory)
         ? payload.memory
       : null,
+    ...summarizeMemoryWrite(payload),
   };
 }
 
@@ -244,7 +293,8 @@ async function updateApprovedMemory(
   service,
   memoryId,
   patch,
-  projectId = GENERAL_PROJECT_ID
+  projectId = GENERAL_PROJECT_ID,
+  options = {}
 ) {
   const resolvedMemoryId = Number(memoryId);
   if (!Number.isInteger(resolvedMemoryId) || resolvedMemoryId <= 0) {
@@ -257,6 +307,7 @@ async function updateApprovedMemory(
   if (!resolvedProjectId) {
     throw new Error('projectId is invalid');
   }
+  const revisionParam = expectedRevisionParam(options);
   if (!service.sidecarClient) {
     service._emitServiceLog('INFO', 'memory.update_skipped', {
       memoryId: resolvedMemoryId,
@@ -267,21 +318,30 @@ async function updateApprovedMemory(
       memory: null,
     };
   }
+  const changes = {};
+  for (const field of UPDATE_FIELDS) {
+    if (patch[field] !== undefined) changes[field] = patch[field];
+  }
+  if (Object.keys(changes).length === 0) {
+    throw new Error('patch has no updatable field');
+  }
   const payload = await requestMemoryRpc(service, 'memory.update', {
     project_id: resolvedProjectId,
     memory_id: resolvedMemoryId,
-    patch,
+    ...revisionParam,
+    ...changes,
   });
   return {
-    updated: payload?.updated === true,
+    updated: payload?.status === 'saved',
     memory:
       isPlainObject(payload?.memory)
         ? payload.memory
         : null,
+    ...summarizeMemoryWrite(payload),
   };
 }
 
-async function deleteApprovedMemory(service, memoryId, projectId = GENERAL_PROJECT_ID) {
+async function deleteApprovedMemory(service, memoryId, projectId = GENERAL_PROJECT_ID, options = {}) {
   const resolvedMemoryId = Number(memoryId);
   if (!Number.isInteger(resolvedMemoryId) || resolvedMemoryId <= 0) {
     throw new Error('memoryId is required');
@@ -290,6 +350,7 @@ async function deleteApprovedMemory(service, memoryId, projectId = GENERAL_PROJE
   if (!resolvedProjectId) {
     throw new Error('projectId is invalid');
   }
+  const revisionParam = expectedRevisionParam(options);
   if (!service.sidecarClient) {
     service._emitServiceLog('INFO', 'memory.delete_skipped', {
       memoryId: resolvedMemoryId,
@@ -300,37 +361,146 @@ async function deleteApprovedMemory(service, memoryId, projectId = GENERAL_PROJE
   const payload = await requestMemoryRpc(service, 'memory.delete', {
     project_id: resolvedProjectId,
     memory_id: resolvedMemoryId,
+    ...revisionParam,
   });
+  const deletedId = Number.isInteger(payload?.memory_id) ? payload.memory_id : payload?.memory?.id;
   return {
     deleted: payload?.deleted === true,
-    memory_id: Number.isInteger(payload?.memory_id) ? payload.memory_id : null,
+    memory_id: Number.isInteger(deletedId) ? deletedId : null,
+    memory: isPlainObject(payload?.memory) ? payload.memory : null,
+    ...summarizeMemoryWrite(payload),
   };
 }
 
-async function deletePendingMemory(service, sessionId, contentFingerprint) {
+// The chat chip's Undo (row 58 W1): inverts one recorded operation in the
+// session's project. Refusals and conflicts come back as results.
+async function undoMemoryOperation(service, sessionId, operationId) {
   const resolvedSessionId = String(sessionId || '').trim();
-  const resolvedFingerprint = String(contentFingerprint || '').trim().toLowerCase();
   if (!resolvedSessionId) {
     throw new Error('sessionId is required');
   }
-  if (!resolvedFingerprint) {
-    throw new Error('contentFingerprint is required');
+  const resolvedOperationId = String(operationId || '').trim();
+  if (!OPERATION_ID_PATTERN.test(resolvedOperationId)) {
+    throw new Error('operationId is invalid');
   }
   const authority = captureMemoryAuthority(service, resolvedSessionId);
   if (!service.sidecarClient) {
+    service._emitServiceLog('INFO', 'memory.undo_skipped', { sessionId: resolvedSessionId, reason: 'sidecar_unavailable' });
+    return { status: 'refused', reason: 'sidecar_unavailable' };
+  }
+  // A global-scope write from a project chat lives in General: the store answers
+  // not_found for the session's project, so the undo is retried once there. The
+  // project choice stays main-side; the renderer never names one.
+  const undoOperationId = `ui:${crypto.randomUUID()}`;
+  const send = (projectId) => requestMemoryRpc(service, 'memory.undo', {
+    project_id: projectId,
+    operation_id: resolvedOperationId,
+    undo_operation_id: undoOperationId,
+  });
+  let summary = summarizeMemoryWrite(await send(authority.project_id));
+  if (summary.reason === 'not_found' && authority.project_id !== GENERAL_PROJECT_ID) {
+    summary = summarizeMemoryWrite(await send(GENERAL_PROJECT_ID));
+  }
+  return summary;
+}
+
+// The Settings Undo (row 58 W1b): Settings lists the row's own project, so there
+// is no General retry. Refusals and conflicts come back as results.
+async function undoApprovedMemoryChange(service, operationId, projectId = GENERAL_PROJECT_ID) {
+  const resolvedOperationId = String(operationId || '').trim();
+  if (!OPERATION_ID_PATTERN.test(resolvedOperationId)) {
+    throw new Error('operationId is invalid');
+  }
+  const resolvedProjectId = normalizeProjectId(projectId);
+  if (!resolvedProjectId) {
+    throw new Error('projectId is invalid');
+  }
+  if (!service.sidecarClient) {
+    service._emitServiceLog('INFO', 'memory.undo_skipped', { reason: 'sidecar_unavailable' });
+    return { status: 'refused', reason: 'sidecar_unavailable' };
+  }
+  return summarizeMemoryWrite(await requestMemoryRpc(service, 'memory.undo', {
+    project_id: resolvedProjectId,
+    operation_id: resolvedOperationId,
+    undo_operation_id: `ui:${crypto.randomUUID()}`,
+  }));
+}
+
+// Chat delete (row 58 W1): drops the deleted chat's chat-scope memories. The
+// caller treats a throw or a missing sidecar as a skip; startup reconciliation retries it.
+async function purgeSessionMemories(service, sessionId) {
+  const resolvedSessionId = String(sessionId || '').trim();
+  if (!resolvedSessionId) {
+    throw new Error('sessionId is required');
+  }
+  if (!service.sidecarClient) {
+    return { ok: false, reason: 'sidecar_unavailable' };
+  }
+  const payload = await requestMemoryRpc(service, 'memory.purge_session', { session_id: resolvedSessionId });
+  bumpMemoryPolicyEpoch(service, 'session_purged');
+  return { ok: true, removed: countOf(payload?.removed) };
+}
+
+// The Settings Memory page's "clear the forgotten list" (row 58 W4).
+async function clearMemorySuppressions(service, projectId = null) {
+  const resolvedProjectId = projectId === null ? null : normalizeProjectId(projectId);
+  if (projectId !== null && !resolvedProjectId) {
+    throw new Error('projectId is invalid');
+  }
+  if (!service.sidecarClient) {
+    return { cleared: 0 };
+  }
+  const payload = await requestMemoryRpc(service, 'memory.clear_suppressions',
+    resolvedProjectId ? { project_id: resolvedProjectId } : {});
+  return { cleared: countOf(payload?.cleared) };
+}
+
+// The queued row a pending action names. Settings passes the listed
+// candidate's own project (row 58 W4), so a proposal queued before its chat
+// moved still resolves; without it the session's current project is used.
+function pendingTarget(service, sessionId, contentFingerprint, projectId) {
+  const session = String(sessionId || '').trim();
+  const fingerprint = String(contentFingerprint || '').trim().toLowerCase();
+  if (!session) throw new Error('sessionId is required');
+  if (!fingerprint) throw new Error('contentFingerprint is required');
+  const named = projectId === undefined || projectId === null ? null : normalizeProjectId(projectId);
+  if (named === '') throw new Error('projectId is invalid');
+  return {
+    session_id: session,
+    content_fingerprint: fingerprint,
+    project_id: named || captureMemoryAuthority(service, session).project_id,
+  };
+}
+
+async function deletePendingMemory(service, sessionId, contentFingerprint, projectId) {
+  const target = pendingTarget(service, sessionId, contentFingerprint, projectId);
+  if (!service.sidecarClient) {
     service._emitServiceLog('INFO', 'memory.pending_delete_skipped', {
-      sessionId: resolvedSessionId,
+      sessionId: target.session_id,
       reason: 'sidecar_unavailable',
     });
     return { deleted: false };
   }
-  const payload = await requestMemoryRpc(service, 'memory.pending.delete', {
-    project_id: authority.project_id,
-    session_id: resolvedSessionId,
-    content_fingerprint: resolvedFingerprint,
-  });
+  const payload = await requestMemoryRpc(service, 'memory.pending.delete', target);
+  return { deleted: payload?.deleted === true };
+}
+
+// Pending Approve: the sidecar resolves the queued row by session and fingerprint
+// and writes it into the row's own project; refusals come back as results.
+async function acceptPendingMemory(service, sessionId, contentFingerprint, projectId) {
+  const target = pendingTarget(service, sessionId, contentFingerprint, projectId);
+  if (!service.sidecarClient) {
+    service._emitServiceLog('INFO', 'memory.pending_accept_skipped', {
+      sessionId: target.session_id,
+      reason: 'sidecar_unavailable',
+    });
+    return { accepted: false };
+  }
+  const payload = await requestMemoryRpc(service, 'memory.pending.accept', target);
   return {
-    deleted: payload?.deleted === true,
+    accepted: payload?.accepted === true,
+    memory: isPlainObject(payload?.memory) ? payload.memory : null,
+    ...summarizeMemoryWrite(payload),
   };
 }
 
@@ -361,53 +531,19 @@ async function recallApprovedMemories(service, query, limit = 3, { sessionId = n
   };
 }
 
-async function recallRecentApprovedMemories(
-  service,
-  lessonKind,
-  limit = 2,
-  { sessionId = null } = {}
-) {
-  const normalizedLessonKind = String(lessonKind || '').trim().toLowerCase();
-  const normalizedLimit = Number.isInteger(limit) ? limit : RESPONSE_STYLE_RECALL_LIMIT;
-  const authority = captureMemoryAuthority(service, sessionId);
-  if (!normalizedLessonKind) {
-    service._emitServiceLog('INFO', 'memory.recall_recent_skipped', {
-      reason: 'blank_lesson_kind',
-    });
-    return { memories: [] };
-  }
-  if (!service.sidecarClient) {
-    service._emitServiceLog('INFO', 'memory.recall_recent_skipped', {
-      reason: 'sidecar_unavailable',
-      lessonKind: normalizedLessonKind,
-    });
-    return { memories: [] };
-  }
-  const payload = await requestMemoryRpc(service, 'memory.recall_recent', {
-    project_id: authority.project_id,
-    ...(sessionId === null ? {} : { include_general: true }),
-    lesson_kind: normalizedLessonKind,
-    limit: normalizedLimit,
-  });
-  return {
-    memories: Array.isArray(payload?.memories) ? payload.memories : [],
-  };
-}
-
-// Project delete (PO review 2026-09-27, D10): the sidecar moves every memory
-// row of `fromProjectId` to `toProjectId` in one SQLite transaction (a memory
-// General already holds merges into General's copy). `moved` counts approved
-// memories now living in the target, merged ones included.
+// Project delete (row 58 W1, replacing the D10 move to General): the sidecar
+// archives every memory of `projectId` and drops its pending candidates in one
+// SQLite transaction; archived rows stay restorable. Idempotent, so the
+// reconcile pass may re-issue it.
 //
 // The caller (project-delete-operation.js) must tell "nothing committed" from
 // "unknown": a returned `ok: false` is definite (no request was sent, or the
 // sidecar answered with an error, which means its transaction rolled back); a
 // throw means the request went out and no answer came back (timeout, pipe
-// drop, restart), so the move may have committed.
-async function moveProjectMemories(service, fromProjectId, toProjectId) {
-  const from = normalizeProjectId(fromProjectId);
-  const to = normalizeProjectId(toProjectId);
-  if (!from || !to || from === to || from === GENERAL_PROJECT_ID) {
+// drop, restart), so the archive may have committed.
+async function archiveProjectMemories(service, projectId) {
+  const resolvedProjectId = normalizeProjectId(projectId);
+  if (!resolvedProjectId || resolvedProjectId === GENERAL_PROJECT_ID) {
     throw new Error('projectId is invalid');
   }
   if (!service.sidecarClient || service.sidecarClient.connected === false) {
@@ -415,28 +551,38 @@ async function moveProjectMemories(service, fromProjectId, toProjectId) {
   }
   let payload;
   try {
-    payload = await requestMemoryRpc(service, 'memory.move_project', {
-      project_id: from,
-      target_project_id: to,
-    });
+    payload = await requestMemoryRpc(service, 'memory.archive_project', { project_id: resolvedProjectId });
   } catch (error) {
     // `rpc` is set only for an error response the sidecar sent.
     if (!error?.rpc) throw error;
-    return { ok: false, reason: String(error.error_code || 'memory_move_refused').slice(0, 120) };
+    return { ok: false, reason: String(error.error_code || 'memory_archive_refused').slice(0, 120) };
   }
-  const count = (value) => (Number.isSafeInteger(value) && value > 0 ? value : 0);
-  service._emitServiceLog?.('INFO', 'memory.project_moved', {
-    moved: count(payload?.moved), merged: count(payload?.merged), pendingMoved: count(payload?.pending_moved),
-  });
-  return { ok: true, moved: count(payload?.moved) + count(payload?.merged) };
+  const archived = countOf(payload?.archived);
+  const pendingRemoved = countOf(payload?.pending_removed);
+  service._emitServiceLog?.('INFO', 'memory.project_archived', { archived, pendingRemoved });
+  bumpMemoryPolicyEpoch(service, 'project_archived');
+  return { ok: true, archived, pending_removed: pendingRemoved };
 }
 
 module.exports = {
-  moveProjectMemories,
+  OPERATION_ID_PATTERN,
+  REASON_PATTERN,
+  acceptPendingMemory,
+  archiveProjectMemories,
+  buildMemoryPolicy,
+  bumpMemoryPolicyEpoch,
+  clearMemorySuppressions,
+  flushMemoryPolicyEpochPush,
+  memoryEpochSource,
+  memoryPolicyEpoch,
+  readMemorySettings,
+  requestMemoryRpc,
+  purgeSessionMemories,
+  summarizeMemoryWrite,
+  trackMemoryOptOutChange,
+  undoApprovedMemoryChange,
+  undoMemoryOperation,
   getMemoryStatus,
-  dismissMemorySuggestion,
-  isMemorySuggestionDismissed,
-  suggestMemoriesForSession,
   saveMemoryForSession,
   listApprovedMemories,
   listPendingMemories,
@@ -444,5 +590,4 @@ module.exports = {
   deleteApprovedMemory,
   deletePendingMemory,
   recallApprovedMemories,
-  recallRecentApprovedMemories,
 };

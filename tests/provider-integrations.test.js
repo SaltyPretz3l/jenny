@@ -111,3 +111,23 @@ test('provider integration registry filters codex CLI catalog by engine type', (
   );
   assert.deepEqual(registry.appendModelEntries([], { engineType: 'ollama' }), []);
 });
+
+test('provider integration registry includes only available foreign-provider models with their engine tag', () => {
+  const readyModel = { id: 'codex-cli/default', provider: 'codex-cli', available: true };
+  const registry = createProviderIntegrationRegistry([
+    {
+      getModelCatalog() {
+        return [
+          readyModel,
+          { id: 'codex-cli/gpt-6-luna', provider: 'codex-cli', available: false },
+        ];
+      },
+    },
+  ]);
+
+  assert.deepEqual(
+    registry.appendModelEntries([], { engineType: 'ollama', includeAvailable: true }),
+    [{ ...readyModel, engine_type: 'codex-cli' }]
+  );
+  assert.equal(readyModel.engine_type, undefined);
+});

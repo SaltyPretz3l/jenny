@@ -50,6 +50,9 @@
   var SUBMISSION_CAPACITY = entry('loop', 'calm', null,
     jt('chat.runtimeRefusal.submissionCapacity.title', 'Too many sends at once'),
     jt('chat.runtimeRefusal.submissionCapacity.hint', 'Wait a moment, then send again.'));
+  var SANDBOX_TRANSITION = entry('loop', 'calm', null,
+    jt('chat.runtimeRefusal.sandboxTransition.title', 'Command sandbox is changing'),
+    jt('chat.runtimeRefusal.submissionCapacity.hint', 'Wait a moment, then send again.'));
   var RUN_MODE_CHANGED = entry('loop', 'calm', null,
     jt('chat.runtimeRefusal.runModeChanged.title', 'Run mode changed mid-request'),
     jt('chat.runtimeRefusal.runModeChanged.hint', 'You switched modes while this ran, so the reply stopped. Send again to continue in the new mode.'));
@@ -122,6 +125,10 @@
   var SKILL_NOT_AVAILABLE = entry('setup', 'danger', null,
     jt('chat.runtimeRefusal.unknown.title', "Jenny couldn't do that"),
     jt('chat.runtimeRefusal.skillNotAvailable.hint', "That skill isn't available in this chat. Pick one from the / menu and send again."));
+  /* A linked chat whose first turn has not started yet; the original chat's card has Retry and Cancel. */
+  var LINKED_FIRST_TURN = entry('setup', 'calm', null,
+    jt('chat.runtimeRefusal.linkedFirstTurn.title', 'This chat is still starting'),
+    jt('chat.runtimeRefusal.linkedFirstTurn.hint', "Its first turn hasn't started. Try again or cancel it from the original chat, then send."));
   var SUBMISSION_REFUSED = entry('transport', 'danger', 'open_diagnostics',
     jt('chat.runtimeRefusal.submissionRefused.title', "Jenny couldn't queue that"),
     jt('chat.runtimeRefusal.submissionRefused.hint', "The runtime didn't accept the message. Your draft is back in the composer."));
@@ -141,6 +148,7 @@
     host_pending_capacity: HOST_QUEUE_FULL,
     pending_input_capacity: MESSAGE_TOO_LARGE,
     runtime_submission_capacity: SUBMISSION_CAPACITY,
+    command_sandbox_transition: SANDBOX_TRANSITION,
     budget_exhausted: BUDGET_EXHAUSTED,
     budget_exceeded: BUDGET_EXHAUSTED,
     budget_provider_not_allowed: BUDGET_PROVIDER,
@@ -161,6 +169,7 @@
     runtime_submission_refused: SUBMISSION_REFUSED,
     runtime_submission_request_invalid: SUBMISSION_REFUSED,
     skill_not_available: SKILL_NOT_AVAILABLE,
+    linked_first_turn_pending: LINKED_FIRST_TURN,
   });
 
   var RUNTIME_REFUSAL_REASONS = Object.freeze(Object.keys(VOCABULARY));

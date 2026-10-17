@@ -10,7 +10,7 @@
  * data-log-index and tabindex survive. Callers can ensureMounted() before
  * focusing an off-screen row.
  *
- * Pin invariant (never unmount): selected and focused rows remain materialized.
+ * Pin invariant (never unmount): selected, focused and roving tab-stop rows remain materialized.
  *
  * This is the canonical behavior with no feature-flag branch. When
  * IntersectionObserver is unavailable, rebuild() is a no-op and the list stays
@@ -107,6 +107,8 @@
     function isPinned(el) {
       if (!el) { return true; }
       if (el.getAttribute && el.getAttribute('aria-selected') === 'true') return true;
+      // The roving tab stop: unmounting it would leave the list with no keyboard entry point.
+      if (el.getAttribute && el.getAttribute('tabindex') === '0') return true;
       var activeEl = doc && doc.activeElement;
       if (activeEl && (activeEl === el || (el.contains && el.contains(activeEl)))) {
         return true;

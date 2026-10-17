@@ -7,7 +7,7 @@
 // to detect, so a regression in any cascade step surfaces here.
 //
 // App-version dimension: every fixture pins the assumption that
-// `package.json:version` is `1.2.0`. The lockstep_release policy
+// `package.json:version` matches EXPECTED_APP_VERSION. The lockstep_release policy
 // (services/backend/schema-version-registry.js) treats schema versions as
 // release-coupled; if the app version bumps without a matching
 // userdata-v<N> fixture being added, the release gate fails fast at
@@ -30,8 +30,8 @@ const {
 
 const FIXTURE_ROOT = path.join(__dirname, 'fixtures');
 const APP_VERSION = require('../../package.json').version;
-const EXPECTED_APP_VERSION = '1.4.0';
-const EXPECTED_SCHEMA_VERSION = 24;
+const EXPECTED_APP_VERSION = '1.5.0';
+const EXPECTED_SCHEMA_VERSION = 25;
 const FIXTURE_DIRS = [
   'userdata-v3',
   'userdata-v4',
@@ -54,6 +54,7 @@ const FIXTURE_DIRS = [
   'userdata-v23-current',
   'userdata-v24-current',
   'userdata-v24-journal-recovery',
+  'userdata-v25-current',
 ];
 
 test.afterEach(async () => {
@@ -729,9 +730,10 @@ test('release-compat: v22 migrates to the journal layout and settles an interrup
   );
 });
 
-// ---- v24 current: chat = base + append-only journal, index = base + journal ----
-// userdata-v24-current is userdata-v23-current at schema 24 (same chat ids) plus one
-// journal delta that sets `suggested_changes`; v23-current is now the migration source.
+// ---- v25 current: chat = base + append-only journal, index = base + journal ----
+// userdata-v25-current is userdata-v24-current at schema 25 (same chat ids) plus one
+// journal delta that sets `workspace_view` and `coordination_revision`; v24-current
+// (and v23-current) are now migration sources.
 
 const JOURNAL_CHAT = 'sess_v23_journaled';
 const SECOND_CHAT = 'sess_v23_second';
@@ -790,8 +792,8 @@ function assertJournalFixtureContent(store) {
   );
 }
 
-test('release-compat: v24 current fixture holds un-compacted base + journal state on disk', () => {
-  const { sessionsPath } = loadFixture('userdata-v24-current');
+test('release-compat: v25 current fixture holds un-compacted base + journal state on disk', () => {
+  const { sessionsPath } = loadFixture('userdata-v25-current');
   const base = rawChatBase(sessionsPath, JOURNAL_CHAT);
   assert.equal(base.schema_version, EXPECTED_SCHEMA_VERSION);
   assert.ok(base.journal_epoch >= 2, 'the fixture chat base is at epoch 2 or later');
@@ -807,8 +809,8 @@ test('release-compat: v24 current fixture holds un-compacted base + journal stat
   assert.ok(fs.statSync(path.join(sessionsDir, '_index.1.journal')).size > 0);
 });
 
-test('release-compat: v24 current profile loads every journaled message, title and turn event', () => {
-  const { sessionsPath } = loadFixture('userdata-v24-current');
+test('release-compat: v25 current profile loads every journaled message, title and turn event', () => {
+  const { sessionsPath } = loadFixture('userdata-v25-current');
   const logs = createLogCollector();
   const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger, sessionJournal: true });
   assert.equal(store.hasPendingMigrations(), false);
@@ -819,8 +821,8 @@ test('release-compat: v24 current profile loads every journaled message, title a
   assertCleanJournalLogs(logs);
 });
 
-test('release-compat: v24 current profile loads without writing a byte', () => {
-  const { tmpRoot, sessionsPath } = loadFixture('userdata-v24-current');
+test('release-compat: v25 current profile loads without writing a byte', () => {
+  const { tmpRoot, sessionsPath } = loadFixture('userdata-v25-current');
   const before = snapshotFiles(tmpRoot);
   const logs = createLogCollector();
   const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger, sessionJournal: true });
@@ -836,8 +838,8 @@ test('release-compat: v24 current profile loads without writing a byte', () => {
   assertCleanJournalLogs(logs);
 });
 
-test('release-compat: v24 current profile keeps earlier content after one more write', () => {
-  const { sessionsPath } = loadFixture('userdata-v24-current');
+test('release-compat: v25 current profile keeps earlier content after one more write', () => {
+  const { sessionsPath } = loadFixture('userdata-v25-current');
   const logs = createLogCollector();
   const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger, sessionJournal: true });
   assert.ok(store.appendMessage(JOURNAL_CHAT, {
@@ -860,8 +862,8 @@ test('release-compat: v24 current profile keeps earlier content after one more w
   reopened.dispose();
 });
 
-test('release-compat: v24 current profile opens with the journal kill switch and writes whole files', () => {
-  const { sessionsPath } = loadFixture('userdata-v24-current');
+test('release-compat: v25 current profile opens with the journal kill switch and writes whole files', () => {
+  const { sessionsPath } = loadFixture('userdata-v25-current');
   const logs = createLogCollector();
   const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger, sessionJournal: false });
   assert.equal(store.hasPendingMigrations(), false);
@@ -888,7 +890,7 @@ test('release-compat: v24 current profile opens with the journal kill switch and
   reopened.dispose();
 });
 
-test('release-compat: v24 lost base rename recovers the state at the end of the next journal', () => {
+test('release-compat: v24 lost base rename recovers the state at the end of the next journal', async () => {
   const { sessionsPath } = loadFixture('userdata-v24-journal-recovery');
   assert.equal(rawChatBase(sessionsPath, RECOVERY_CHAT).journal_epoch, 1, 'the surviving base is the older one');
   const journalText = (epoch) => fs.readFileSync(
@@ -897,14 +899,17 @@ test('release-compat: v24 lost base rename recovers the state at the end of the 
   assert.doesNotMatch(journalText(1), /"continues"/);
   assert.match(journalText(2), /"epoch":2,"continues":true/);
 
+  assert.equal(readChat(sessionsPath, RECOVERY_CHAT).journalStatus, 'ok', 'the raw files replay to the final state');
   const logs = createLogCollector();
   const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger, sessionJournal: true });
+  // The fixture is schema 24: the v24 -> v25 migration runs, then recovery state is read.
+  assert.equal(store.hasPendingMigrations(), true);
+  assert.equal((await store.runPendingMigrations({ batchSize: 1 })).success, true);
   assert.equal(store.hasPendingMigrations(), false);
   const expectedIds = ['r_user_1', 'r_user_2', 'r_user_3', 'r_after_1', 'r_after_2', 'r_after_3'];
   const session = store.getSession(RECOVERY_CHAT);
   assert.equal(session.title, 'Lost rename (final)');
   assert.deepEqual(session.messages.map((message) => message.id), expectedIds);
-  assert.equal(readChat(sessionsPath, RECOVERY_CHAT).journalStatus, 'ok');
   assert.equal(store.listSessions()[0].message_count, 6);
   assertCleanJournalLogs(logs);
 
@@ -925,8 +930,8 @@ test('release-compat: v24 lost base rename recovers the state at the end of the 
   reopened.dispose();
 });
 
-test('release-compat: v24 current profile loads journaled suggested changes', () => {
-  const { sessionsPath } = loadFixture('userdata-v24-current');
+test('release-compat: v25 current profile loads journaled suggested changes and workspace view', () => {
+  const { sessionsPath } = loadFixture('userdata-v25-current');
   const store = new ElectronSessionStore(sessionsPath, { sessionJournal: true });
   const record = store.getSession(JOURNAL_CHAT).suggested_changes;
   assert.equal(record.schema_version, 1);
@@ -938,14 +943,19 @@ test('release-compat: v24 current profile loads journaled suggested changes', ()
   assert.deepEqual(store.getSession(SECOND_CHAT).suggested_changes, {
     schema_version: 1, seq: 0, entries: [], file_heads: {},
   });
+  assert.deepEqual(store.getSession(JOURNAL_CHAT).workspace_view, {
+    schema_version: 1, rail_visible: false, disclosures: { changes: true, outputs: true }, children_expanded: null,
+  });
+  assert.equal(store.getSession(JOURNAL_CHAT).coordination_revision, 2);
+  assert.equal(store.getSession(SECOND_CHAT).coordination_revision, 0);
   store.dispose();
 });
 
-test('release-compat: v23 migrates to v24 with an empty suggested-changes record and keeps its journals', async () => {
+test('release-compat: v23 migrates to the current schema with an empty suggested-changes record and keeps its journals', async () => {
   const { sessionsPath } = loadFixture('userdata-v23-current');
   const logs = createLogCollector();
   const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger, sessionJournal: true });
-  assert.equal(store.hasPendingMigrations(), true, 'a v23 fixture queues the v23 -> v24 migration');
+  assert.equal(store.hasPendingMigrations(), true, 'a v23 fixture queues the v23 -> current migration');
   // Not getSession before this: a record loaded first would win over the migrated one.
   const result = await store.runPendingMigrations({ batchSize: 1 });
   assert.equal(result.ran, true);
@@ -958,6 +968,28 @@ test('release-compat: v23 migrates to v24 with an empty suggested-changes record
   assert.deepEqual(store.getSession(JOURNAL_CHAT).suggested_changes, {
     schema_version: 1, seq: 0, entries: [], file_heads: {},
   });
+  assertCleanJournalLogs(logs);
+  store.dispose();
+});
+
+const DEFAULT_WORKSPACE_VIEW = { schema_version: 1, rail_visible: null, disclosures: {}, children_expanded: null };
+
+test('release-compat: v24 current migrates to v25 with coordination defaults and keeps its journals', async () => {
+  const { sessionsPath } = loadFixture('userdata-v24-current');
+  const logs = createLogCollector();
+  const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger, sessionJournal: true });
+  assert.equal(store.hasPendingMigrations(), true, 'a v24 fixture queues the v24 -> v25 migration');
+  const result = await store.runPendingMigrations({ batchSize: 1 });
+  assert.deepEqual([result.ran, result.success, store.hasPendingMigrations()], [true, true, false]);
+  assert.ok(logs.entries.find((entry) => entry.event === 'session_store.split_schema_migration_completed'));
+  assert.equal(readPersistedPayload(sessionsPath).schema_version, EXPECTED_SCHEMA_VERSION);
+  assert.equal(readChat(sessionsPath, JOURNAL_CHAT).value.schema_version, EXPECTED_SCHEMA_VERSION);
+  assertJournalFixtureContent(store);
+  for (const chat of [JOURNAL_CHAT, SECOND_CHAT]) {
+    const migrated = store.getSession(chat);
+    assert.deepEqual([migrated.workspace_view, migrated.coordination_revision, migrated.spawned_from],
+      [DEFAULT_WORKSPACE_VIEW, 0, null]);
+  }
   assertCleanJournalLogs(logs);
   store.dispose();
 });

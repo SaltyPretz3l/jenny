@@ -4,7 +4,7 @@
 mutation counter and, when due, store maintenance). Maintenance already
 swallows database errors; any other failure there used to escape from the
 write that had just committed, so Electron was told a saved, edited, deleted
-or moved memory had failed. Found while fixing review finding DPR-008, where
+or archived memory had failed. Found while fixing review finding DPR-008, where
 the project delete rolls back on exactly that answer.
 """
 
@@ -17,15 +17,17 @@ from typing import Callable
 
 import pytest
 
-from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, build_content_digest
+from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, build_text_digest
 from sidecar.ai.memory.store import MemoryStore
 from sidecar.ai.memory.store_shared import MEMORY_MAINTENANCE_MUTATION_INTERVAL
+from tests.sidecar.ai.memory.memory_v9_helpers import find_row, forget_row, save_row, update_row
 
 PROJECT_ALPHA = "project_alpha"
 
 
 def _save(store: MemoryStore, lesson: str, *, project_id: str = GENERAL_PROJECT_ID):
-    return store.save_memory(
+    return save_row(
+        store,
         session_id="session-1",
         title=f"Preference: {lesson}",
         lesson_text=lesson,
@@ -38,14 +40,14 @@ def _save(store: MemoryStore, lesson: str, *, project_id: str = GENERAL_PROJECT_
 
 def _insert_pending(store: MemoryStore, lesson: str) -> str:
     now = datetime.now(timezone.utc).isoformat()
-    fingerprint = build_content_digest("preference", lesson)
+    fingerprint = build_text_digest(lesson)
     store._connection.execute(
         """
         INSERT INTO pending_memory_candidates (
             session_id, source_request_id, title, lesson_text, lesson_kind,
-            confidence, source_excerpt, content_fingerprint, family_key,
+            confidence, source_excerpt, content_fingerprint,
             category, created_at, updated_at, project_id
-        ) VALUES ('session-1', 'request-1', 'Pending', ?, 'preference', 0.9, '', ?, '', '', ?, ?, ?)
+        ) VALUES ('session-1', 'request-1', 'Pending', ?, 'preference', 0.9, '', ?, '', ?, ?, ?)
         """,
         (lesson, fingerprint, now, now, GENERAL_PROJECT_ID),
     )
@@ -57,7 +59,7 @@ def _write_save_new(store: MemoryStore) -> Callable[[], None]:
     def write() -> None:
         memory, created = _save(store, "The user writes Rust.")
         assert created is True
-        assert store.get_memory_by_id(memory.id) is not None
+        assert find_row(store, memory.id, project_id=GENERAL_PROJECT_ID) is not None
 
     return write
 
@@ -76,11 +78,13 @@ def _write_update(store: MemoryStore) -> Callable[[], None]:
     memory, _created = _save(store, "The user prefers tea.")
 
     def write() -> None:
-        updated = store.update_memory(
-            memory_id=memory.id, title="Preference: coffee", lesson_text="The user prefers coffee."
+        updated = update_row(
+            store, memory.id, title="Preference: coffee", lesson_text="The user prefers coffee."
         )
-        assert updated.lesson_text == "The user prefers coffee."
-        stored = store.get_memory_by_id(memory.id)
+        assert updated.status == "saved"
+        assert updated.memory is not None
+        assert updated.memory.lesson_text == "The user prefers coffee."
+        stored = find_row(store, memory.id, project_id=GENERAL_PROJECT_ID)
         assert stored is not None and stored.lesson_text == "The user prefers coffee."
 
     return write
@@ -90,8 +94,9 @@ def _write_delete(store: MemoryStore) -> Callable[[], None]:
     memory, _created = _save(store, "Forget me.")
 
     def write() -> None:
-        assert store.delete_memory(memory.id) is True
-        assert store.get_memory_by_id(memory.id) is None
+        assert forget_row(store, memory.id).status == "saved"
+        forgotten = find_row(store, memory.id, project_id=GENERAL_PROJECT_ID)
+        assert forgotten is not None and forgotten.status == "archived"
 
     return write
 
@@ -110,15 +115,13 @@ def _write_delete_pending(store: MemoryStore) -> Callable[[], None]:
     return write
 
 
-def _write_move(store: MemoryStore) -> Callable[[], None]:
+def _write_archive(store: MemoryStore) -> Callable[[], None]:
     memory, _created = _save(store, "Alpha lesson.", project_id=PROJECT_ALPHA)
 
     def write() -> None:
-        result = store.move_project_memories(
-            source_project_id=PROJECT_ALPHA, target_project_id=GENERAL_PROJECT_ID
-        )
-        assert result == {"moved": 1, "merged": 0, "pending_moved": 0}
-        assert store.get_memory_by_id(memory.id, project_id=GENERAL_PROJECT_ID) is not None
+        assert store.archive_project(PROJECT_ALPHA) == {"archived": 1, "pending_deleted": 0}
+        archived = find_row(store, memory.id, project_id=PROJECT_ALPHA)
+        assert archived is not None and archived.status == "archived"
 
     return write
 
@@ -129,7 +132,7 @@ _WRITES = {
     "update": _write_update,
     "delete": _write_delete,
     "delete_pending": _write_delete_pending,
-    "move_project": _write_move,
+    "archive_project": _write_archive,
 }
 
 
@@ -197,7 +200,7 @@ def test_an_error_inside_the_transaction_still_fails_the_write_and_rolls_back(
 ) -> None:
     """The guard covers what follows the commit, never the write itself."""
     store = MemoryStore(tmp_path / "memory.db")
-    fingerprint = build_content_digest("preference", "Never stored.")
+    fingerprint = build_text_digest("Never stored.")
     try:
         with pytest.raises(RuntimeError, match="inside the transaction"):
             with store._write_transaction():

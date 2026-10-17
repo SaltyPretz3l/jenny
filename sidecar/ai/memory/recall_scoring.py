@@ -6,12 +6,6 @@ import re
 from datetime import datetime, timedelta
 
 from sidecar.ai.memory.datetime_utils import parse_iso_datetime
-from sidecar.ai.memory.families import (
-    GATED_MEMORY_KINDS,
-    PROJECT_CONTEXT_FAMILY_PATTERNS,
-    TOOL_STRATEGY_QUERY_PATTERNS,
-    WORKING_PREFERENCE_FAMILY_PATTERNS,
-)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -62,7 +56,6 @@ _RECALL_STOPWORDS = {
 TITLE_OVERLAP_WEIGHT = 12.0
 LESSON_TEXT_OVERLAP_WEIGHT = 10.0
 SOURCE_EXCERPT_OVERLAP_WEIGHT = 8.0
-MIN_GATED_OVERLAP_SCORE = 16.0
 
 # ---------------------------------------------------------------------------
 # Public helpers
@@ -98,52 +91,17 @@ def recency_bonus(updated_at: str, *, now: datetime) -> float:
     return 0.0
 
 
-def intent_patterns_for_memory(
-    lesson_kind: str,
-    family_key: str,
-) -> tuple[re.Pattern[str], ...] | None:
-    """Return intent-gate regex patterns for a memory, or ``None``."""
-    if not family_key:
-        return None
-    if lesson_kind == "tool_strategy":
-        return TOOL_STRATEGY_QUERY_PATTERNS.get(family_key)
-    if lesson_kind == "working_preference":
-        return WORKING_PREFERENCE_FAMILY_PATTERNS.get(family_key)
-    if lesson_kind == "project_context":
-        return PROJECT_CONTEXT_FAMILY_PATTERNS.get(family_key)
-    return None
-
-
-def matches_gated_intent(
-    lesson_kind: str,
-    family_key: str,
-    normalized_query: str,
-) -> bool:
-    """Return ``True`` when *normalized_query* matches a gated memory's intent."""
-    patterns = intent_patterns_for_memory(lesson_kind, family_key)
-    if not patterns:
-        return False
-    return any(pattern.search(normalized_query) for pattern in patterns)
-
-
 def score_memory(
     *,
-    lesson_kind: str,
-    family_key: str,
     title: str,
     lesson_text: str,
     source_excerpt: str,
     confidence: float,
     updated_at: str,
     query_tokens: set[str],
-    normalized_query: str,
     now: datetime,
 ) -> float:
-    """Compute a relevance score for a single approved memory."""
-    is_gated = lesson_kind in GATED_MEMORY_KINDS
-    if is_gated and not matches_gated_intent(lesson_kind, family_key, normalized_query):
-        return 0.0
-
+    """Compute a relevance score for a single approved memory (every kind alike)."""
     title_overlap = overlap_count(query_tokens, tokenize(title))
     lesson_overlap = overlap_count(query_tokens, tokenize(lesson_text))
     excerpt_overlap = overlap_count(query_tokens, tokenize(source_excerpt))
@@ -153,8 +111,6 @@ def score_memory(
         + excerpt_overlap * SOURCE_EXCERPT_OVERLAP_WEIGHT
     )
     if weighted_overlap <= 0.0:
-        return 0.0
-    if is_gated and weighted_overlap < MIN_GATED_OVERLAP_SCORE:
         return 0.0
     return (
         weighted_overlap

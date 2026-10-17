@@ -92,8 +92,10 @@ class SetupService extends EventEmitter {
     refreshManagedConfig = null,
     killProcessTreeImpl = null,
     getLlamaServerManager = () => null,
+    getOwnedOllamaPid = () => 0,
   } = {}) {
     super();
+    this.getOwnedOllamaPid = getOwnedOllamaPid;
     this.configService = configService || null;
     this.toolsListProvider = typeof toolsListProvider === 'function' ? toolsListProvider : null;
     this.fetchImpl = typeof fetchImpl === 'function' ? fetchImpl : null;

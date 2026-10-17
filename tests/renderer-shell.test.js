@@ -83,7 +83,7 @@ test('renderer queues pasted image attachments and renders them in the transcrip
   assert.equal(shell.__state.chatCalls.length, 1);
   assert.equal(shell.__state.chatCalls[0].attachments[0].kind, 'image');
   assert.equal(Object.prototype.hasOwnProperty.call(shell.__state.chatCalls[0].attachments[0], 'bytes'), false);
-  assert.equal(window.document.querySelectorAll('.message-attachment-image-preview').length, 1);
+  assert.equal(window.document.querySelectorAll('.inv-artifact-figure--attachment img').length, 1);
 });
 
 test('renderer surfaces composer context menu paste failures', async (t) => {

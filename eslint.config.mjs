@@ -11,6 +11,8 @@ const rendererContextCompositionFiles = [
   "renderer/app/renderer-app-lifecycle-composition.js",
 ];
 
+const noFollowRemoval = "Use removeTree/removeTreeSync from services/fs-remove-no-follow.js: Node's rm follows junctions after a Windows EPERM.";
+
 export default [
   {
     ignores: [
@@ -70,6 +72,33 @@ export default [
         ...globals.node,
       },
     },
+  },
+  {
+    // Node's rm (recursive or not) stat()s through a Windows junction after a transient EPERM and
+    // empties its target; services/fs-remove-no-follow.js is the only removal path.
+    files: ["services/**/*.js", "scripts/uninstall.js"],
+    rules: {
+      "no-restricted-syntax": ["error",
+        { selector: "CallExpression[callee.property.name=/^(rm|rmSync)$/]", message: noFollowRemoval },
+        { selector: "CallExpression[callee.name=/^(rm|rmSync)$/]", message: noFollowRemoval },
+        { selector: "MemberExpression[computed=true][property.value=/^(rm|rmSync)$/]", message: noFollowRemoval },
+        { selector: "ObjectPattern > Property[key.name=/^(rm|rmSync)$/]", message: noFollowRemoval },
+        // An options object held in a variable is not resolved; review rmdir calls that pass one.
+        { selector: "CallExpression[callee.property.name=/^rmdir(Sync)?$/] Property[key.name='recursive']",
+          message: noFollowRemoval },
+        { selector: "CallExpression[callee.property.name=/^rmdir(Sync)?$/] Property[key.value='recursive']",
+          message: noFollowRemoval },
+        { selector: "CallExpression[callee.name=/^rmdir(Sync)?$/] Property[key.name='recursive']",
+          message: noFollowRemoval },
+        { selector: "CallExpression[callee.name=/^rmdir(Sync)?$/] Property[key.value='recursive']",
+          message: noFollowRemoval },
+      ],
+    },
+  },
+  {
+    // Pending migration by the row 54 NInfer owner; same pattern as services/image-engine-service.js.
+    files: ["services/ninfer-runtime-install.js", "services/ninfer-artifact-download.js"],
+    rules: { "no-restricted-syntax": "off" },
   },
   {
     files: browserShellFiles,

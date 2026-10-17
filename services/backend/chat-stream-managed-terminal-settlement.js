@@ -6,12 +6,15 @@ const {
   buildQuestionBatchTerminalMutation,
 } = require('./chat-stream-session-lifecycle');
 const { settleTerminalMutation } = require('./chat-terminal-settlement-service');
-const { buildTerminalMessageExtras, patchLastSegmentDiscardedDrafts } = require('./chat-stream-discarded-drafts');
+const {
+  buildTerminalMessageExtras, completionEventFields, patchLastSegmentDiscardedDrafts,
+} = require('./chat-stream-discarded-drafts');
 const {
   buildTerminalErrorPayload,
   enrichTerminalErrorPayloadForEmit,
 } = require('./chat-stream-terminal-utils');
 const { buildInteractiveQuestionBatchVisibleText } = require('./interactive-session-utils');
+const { finishTerminalReport, prepareTerminalReport } = require('./session-report-admission');
 
 function supportsManagedTerminalCoordinator(ctx) {
   return Boolean(
@@ -46,6 +49,9 @@ async function settleMutation(ctx, {
       },
     };
   }
+  // A linked child's reserved report: the marker rides this terminal patch, the conversion follows a durable settle.
+  const report = prepareTerminalReport(ctx, { kind, mutation, rendererPayload });
+  if (report && !report.anchor && repairMessage?.role === 'assistant') repairMessage.terminal_report_message_id = report.messageId;
   const settled = await settleTerminalMutation(ctx.service, {
     lease: ctx.turnLease,
     rawStore: ctx.turnLease.store,
@@ -68,6 +74,7 @@ async function settleMutation(ctx, {
     ctx.terminalCoordinatorHandled = true;
     ctx.terminalPersistRefused = settled.result?.durableTerminal !== true;
   }
+  finishTerminalReport(ctx, report, settled);
   return settled;
 }
 
@@ -143,6 +150,7 @@ async function settleManagedAssistantCompletion(ctx) {
     normalizedInteractiveResponse: ctx.normalizedInteractiveResponse,
     exchangeTitle: ctx.exchangeTitle,
     resumableStop: ctx.resumableStop,
+    completion: ctx.completion,
     discardedDrafts: finalHasText ? ctx.discardedDrafts : null,
     timestamp,
     includeAssistantMessage: Boolean(assistant),
@@ -155,7 +163,7 @@ async function settleManagedAssistantCompletion(ctx) {
   // segment this settle commits, or is patched onto the last saved one.
   const refusedCarrier = finalHasText ? null
     : [...refusedSegments].reverse().find((message) => String(message?.content || '').trim()) || null;
-  if (refusedCarrier) Object.assign(refusedCarrier, buildTerminalMessageExtras({ discardedDrafts: ctx.discardedDrafts }));
+  if (refusedCarrier) Object.assign(refusedCarrier, buildTerminalMessageExtras({ discardedDrafts: ctx.discardedDrafts, completion: ctx.completion }));
   const canonicalAssistant = mutation.messages.find((message) => message.id === assistant?.id)
     || mutation.messages[mutation.messages.length - 1]
     || null;
@@ -173,6 +181,7 @@ async function settleManagedAssistantCompletion(ctx) {
       content: ctx.assistantText,
       ...(ctx.turnUsage ? { usage: ctx.turnUsage } : {}),
       ...(ctx.resumableStop ? { resumableStop: ctx.resumableStop } : {}),
+      ...completionEventFields(ctx.completion),
       ...(ctx.discardedDrafts ? { discardedDrafts: ctx.discardedDrafts } : {}),
       ...ctx.eventBase,
     },
@@ -180,7 +189,7 @@ async function settleManagedAssistantCompletion(ctx) {
   if (settled.handled) {
     if (assistant) ctx.visibleAssistantMessageId = assistant.id;
     if (!finalHasText && !refusedCarrier && settled.result?.durableTerminal === true) {
-      patchLastSegmentDiscardedDrafts(ctx.service?.sessionStore, ctx.resolvedSessionId, ctx.persistedTextSegmentIds, ctx.discardedDrafts);
+      patchLastSegmentDiscardedDrafts(ctx.service?.sessionStore, ctx.resolvedSessionId, ctx.persistedTextSegmentIds, ctx.discardedDrafts, ctx.completion);
     }
     ctx.visibleCompletionEmitted = settled.result?.visibleTerminal === true;
     ctx.transcriptCollector.resetSlice();

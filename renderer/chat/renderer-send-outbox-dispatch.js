@@ -104,6 +104,8 @@
         runtimePreferencesSnapshot: queuedSend.runtimePreferences || null,
       };
       const queuedMeta = sendingEntry.meta && typeof sendingEntry.meta === 'object' ? sendingEntry.meta : null;
+      dispatchOptions.imageEditSnapshot = queuedMeta?.imageEditSnapshot || null;
+      dispatchOptions.promptBlock = queuedMeta?.promptBlock || null;
       dispatchOptions.skillInvocation = queuedMeta?.skillInvocation && typeof queuedMeta.skillInvocation === 'object'
         ? queuedMeta.skillInvocation : null;
       if (queuedMeta && Object.prototype.hasOwnProperty.call(queuedMeta, 'mentionContentsSnapshot')) {

@@ -57,6 +57,31 @@
     return Number.isInteger(code) ? code : null;
   }
 
+  // The memory chip (row 58 W1) rebuilds from exactly these scalar fields after a
+  // cold reopen; the memory text itself is never among them.
+  const MEMORY_METADATA_KEYS = Object.freeze(['result_kind', 'action', 'status', 'memory_id', 'revision',
+    'operation_id', 'scope', 'kind', 'duplicate', 'undoable', 'reason', 'text_preview', 'origin']);
+
+  function copyMemoryMetadata(metadata, value) {
+    for (const key of MEMORY_METADATA_KEYS) {
+      const field = value[key];
+      if (typeof field === 'string') metadata[key] = field.slice(0, 256);
+      else if (typeof field === 'boolean' || Number.isSafeInteger(field)) metadata[key] = field;
+    }
+  }
+
+  // The proposal cards (row 59 checkpoint 3) rebuild from these ids after a cold reopen;
+  // display content always comes from the live record, never from the stored result.
+  const PROPOSAL_METADATA_KEYS = Object.freeze(['result_kind', 'proposal_id', 'revision', 'decision_state', 'action_state']);
+
+  function copyProposalMetadata(metadata, value) {
+    for (const key of PROPOSAL_METADATA_KEYS) {
+      const field = value[key];
+      if (typeof field === 'string') metadata[key] = field.slice(0, 128);
+      else if (Number.isSafeInteger(field)) metadata[key] = field;
+    }
+  }
+
   // `toolResult` is the stored tool_result the metadata belongs to: older
   // results carry the command's exit status only at their top level.
   function cloneSubagentReportMetadata(value, toolResult) {
@@ -81,6 +106,8 @@
     // Home calendar cards rebuild from these bounded persisted fields after a
     // cold reopen; without them only the generic tool result remains.
     if (resultKind === 'home') copyHomeMetadata(metadata, value);
+    if (resultKind === 'memory') copyMemoryMetadata(metadata, value);
+    if (resultKind === 'git_proposal' || resultKind === 'command_proposal') copyProposalMetadata(metadata, value);
     // A command the shell tool stopped at its time limit reads Timed out (B11).
     if (value.timed_out === true) metadata.timed_out = true;
     // A command's own exit status: the row reads "exit N" after a reopen too.

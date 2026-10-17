@@ -24,11 +24,12 @@ for (const [encrypted, spooled] of [[false, false], [true, false], [false, true]
     const started = new Promise((resolve) => { announceStarted = resolve; });
     const originalRead = fs.createReadStream;
     const originalWrite = fs.createWriteStream;
-    const originalRemove = fs.promises.rm;
-    t.mock.method(fs.promises, 'rm', async (file, ...args) => {
+    const originalRemove = fs.promises.rmdir;
+    t.mock.method(fs.promises, 'rmdir', async (file, ...args) => {
       if (spooled && encrypted && !cleanupRetried && path.basename(String(file)).startsWith('.inventory-')) {
         cleanupRetried = true;
-        throw Object.assign(new Error('temporary staging cleanup failure'), { code: 'EPERM' });
+        // Escape the removal helper's own retries to exercise the outer cleanup.
+        throw Object.assign(new Error('temporary staging cleanup failure'), { code: 'EIO' });
       }
       return originalRemove(file, ...args);
     });

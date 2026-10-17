@@ -36,6 +36,15 @@ status_matches_tool_family = _tool_families.status_matches_tool_family
 # ``None``, which a captured request authority uses for "explicitly unbound".
 _UNSET_ROOT: Any = object()
 
+KNOWLEDGE_SCOPE_GUIDANCE = (
+    "## Knowledge Scope\n"
+    "For a file or subfolder search, use path including its registered folder "
+    "prefix and omit root. Use root alone only for a whole registered folder. "
+    "After a scope error with effects none, make one corrected call; do not only "
+    "describe the correction. Expand the same "
+    "source with knowledge_view and its expected_source_hash when provided."
+)
+
 BOOTSTRAP_DIRNAME = "BOOTSTRAP"
 BOOTSTRAP_FILES = ("IDENTITY.md", "SOUL.md", "USER.md")
 WORKSPACE_INSTRUCTION_FILENAME = "agentj.md"

@@ -25,6 +25,15 @@ def _descriptor(
     )
 
 
+def test_recall_defaults_to_auto() -> None:
+    descriptor = next(d for d in manifest_descriptors() if d.name == "recall_tool_output")
+    decision = evaluate_tool_policy(
+        descriptor=descriptor, arguments={"call_id": "old"}, mode="assist", snapshot=None,
+    )
+    assert decision.decision == "auto"
+    assert decision.stage == "tool_default"
+
+
 def test_evaluate_tool_policy_denies_before_legacy_auto() -> None:
     snapshot = ToolPolicySnapshot(
         version=2,
@@ -429,6 +438,15 @@ def test_evaluate_tool_policy_redacts_policy_metadata_text() -> None:
     assert "ignore all previous instructions" not in decision.reason.lower()
     assert "sk-abcdefghi" not in str(metadata["matched_rule_id"])
     assert "sk-abcdefghi" not in str(metadata["reason"])
+
+def test_session_message_actions_default_to_auto_with_tool_owned_consent() -> None:
+    descriptor = next(d for d in manifest_descriptors(config=None) if d.name == "session_message")
+    for action in ("list_targets", "read", "send"):
+        decision = evaluate_tool_policy(
+            descriptor=descriptor, arguments={"action": action}, mode="chat", snapshot=None,
+        )
+        assert decision.decision == "auto", action
+
 
 def test_verify_defaults_to_auto_despite_being_side_effecting() -> None:
     """`verify` runs the user's own saved Test Runner configurations.

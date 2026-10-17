@@ -376,3 +376,39 @@ test('normalizeEmbeddingSettings keeps valid values and collapses anything else 
   assert.deepEqual(win(null), win({}));
   assert.deepEqual(win([]), win({}));
 });
+
+test('NInfer settings backfill, bound the watchdog thresholds, and persist a deep-merged patch (row 54)', () => {
+  const fresh = normalizeState({});
+  assert.deepEqual(fresh.localEngines.ninfer, {
+    lastUsedArtifactId: '', suggestionDismissed: false, contextSize: 153600, mtp: true, vision: true,
+    watchdog: { enabled: false, maxWatts: 460, maxTempC: 83 },
+  });
+  const bounded = normalizeState({ localEngines: { ninfer: {
+    lastUsedArtifactId: '../evil', contextSize: 12345, mtp: 'no', suggestionDismissed: 1,
+    watchdog: { enabled: 'yes', maxWatts: 5000, maxTempC: 20 },
+  } } }).localEngines.ninfer;
+  assert.deepEqual(bounded, {
+    lastUsedArtifactId: '', suggestionDismissed: false, contextSize: 153600, mtp: true, vision: true,
+    watchdog: { enabled: false, maxWatts: 460, maxTempC: 83 },
+  });
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-ninfer-settings-'));
+  trackDirectory(userDataPath);
+  const service = new ShellConfigService({ userDataPath, env: {} });
+  assert.deepEqual(service.updateNinferSettings({ watchdog: { enabled: true, maxWatts: 430 } }).watchdog,
+    { enabled: true, maxWatts: 430, maxTempC: 83 });
+  // A later toggle keeps the user's watt threshold.
+  assert.deepEqual(service.updateNinferSettings({ watchdog: { enabled: false } }).watchdog,
+    { enabled: false, maxWatts: 430, maxTempC: 83 });
+  const updated = service.updateNinferSettings({ lastUsedArtifactId: 'qwen3.8-27b-nvfp4', contextSize: 131072, mtp: false, vision: false });
+  assert.equal(updated.lastUsedArtifactId, 'qwen3.8-27b-nvfp4');
+  assert.equal(updated.contextSize, 131072);
+  assert.equal(updated.mtp, false);
+  assert.equal(updated.vision, false);
+  const persisted = JSON.parse(fs.readFileSync(service.store.filePath, 'utf8'));
+  assert.equal(persisted.localEngines.ninfer.watchdog.maxWatts, 430);
+  assert.equal(persisted.localEngines.ninfer.lastUsedArtifactId, 'qwen3.8-27b-nvfp4');
+  assert.equal(new ShellConfigService({ userDataPath, env: {} }).getLocalEngines().ninfer.vision, false);
+  assert.equal(service.updateNinferSettings({ mtp: false }).vision, false);
+  // An unchanged patch writes nothing and returns the current slice.
+  assert.deepEqual(service.updateNinferSettings({ mtp: false }), updated);
+});

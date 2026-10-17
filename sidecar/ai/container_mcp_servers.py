@@ -9,6 +9,7 @@ with a scrubbed minimal environment.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -20,8 +21,10 @@ from sidecar.ai.config import (
 )
 from sidecar.ai.execution_policy import desktop_policy_is_enforced
 from sidecar.ai.feature_flags import (
+    BUILTIN_DEFAULT_ON_FLAGS,
     FEATURE_GIT_TRACKING,
     FEATURE_SHELL_SECURITY,
+    is_default_on_flag_enabled,
     is_feature_flag_enabled,
 )
 from sidecar.ai.host_policy import host_policy_is_enforced
@@ -186,6 +189,21 @@ def _diagnostics_mcp_args(config: RuntimeConfig) -> list[str]:
     ]
 
 
+def _builtin_feature_flag_args(feature_flags: dict[str, bool]) -> list[str]:
+    """The feature flags the builtin subprocess consumes, as argv."""
+    args = [
+        "--shell-security-enabled",
+        "1" if is_feature_flag_enabled(feature_flags, FEATURE_SHELL_SECURITY) else "0",
+        "--git-tracking-enabled",
+        "1" if is_feature_flag_enabled(feature_flags, FEATURE_GIT_TRACKING) else "0",
+    ]
+    # Row 60 default-on behaviour flags (kill switches, not guardrails).
+    for flag in BUILTIN_DEFAULT_ON_FLAGS:
+        enabled = is_default_on_flag_enabled(feature_flags, flag)
+        args.extend([f"--{flag.replace('_', '-')}-enabled", "1" if enabled else "0"])
+    return args
+
+
 def _default_mcp_servers(
     config: RuntimeConfig,
     workspace_root: Path | None,
@@ -206,6 +224,8 @@ def _default_mcp_servers(
             # Resolved in THIS process so config (and the sanctioned env
             # override) reach the builtin server despite its scrubbed
             # subprocess environment.
+            "--owned-process-ledger-path", config.owned_process_ledger_path or "",
+            "--owned-process-owner-pid", str(os.getpid()),
             "--operation-ledger-root",
             str(resolve_operation_ledger_root(config)),
         ]
@@ -289,22 +309,10 @@ def _default_mcp_servers(
     )
     # SECURITY: run_command runs *inside* this subprocess, so the shell-security
     # command classifier and git-operation telemetry are inert unless their
-    # feature flags cross the boundary. Forward the two flags the subprocess
+    # feature flags cross the boundary. Forward the flags the subprocess
     # consumes as booleans (flag names, not secrets — argv-safe); anything else
     # stays behind the managed-config channel.
-    feature_flags = config.feature_flags or {}
-    args.extend(
-        [
-            "--shell-security-enabled",
-            "1" if is_feature_flag_enabled(feature_flags, FEATURE_SHELL_SECURITY) else "0",
-        ]
-    )
-    args.extend(
-        [
-            "--git-tracking-enabled",
-            "1" if is_feature_flag_enabled(feature_flags, FEATURE_GIT_TRACKING) else "0",
-        ]
-    )
+    args.extend(_builtin_feature_flag_args(config.feature_flags or {}))
     if getattr(sys, "frozen", False):
         command_args = ["--mcp-builtin-server", *args]
     else:

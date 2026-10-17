@@ -10,6 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED, CMP_TOOL_EXECUTION_FAILED
+from sidecar.ai.tools.builtins import shell_settings
+from sidecar.ai.tools.builtins.edit_fallbacks import (
+    FallbackAmbiguity,
+    FallbackMatch,
+    find_fallback,
+)
 from sidecar.ai.tools.builtins.file_state import build_no_match_message
 from sidecar.ai.tools.builtins.filesystem import failure_result
 from sidecar.ai.tools.contracts import ToolHandlerResult
@@ -33,15 +39,16 @@ def _fold_edits(
     *,
     content: str,
     context: _FoldContext,
+    fallback_notices: list[str] | None = None,
 ) -> tuple[str, int, bool, tuple[int, ...]] | ToolHandlerResult:
     total_replacements = 0
     applied_replace_all = False
     skipped: list[int] = []
     failures: list[tuple[int, str, str, dict[str, object]]] = []
     for index, (old_string, new_string, replace_all) in enumerate(edits, start=1):
-        normalized_old = _normalize_newlines(old_string)
-        normalized_new = _normalize_newlines(new_string)
-        occurrences = content.count(normalized_old)
+        normalized_old, normalized_new, occurrences, fallback = _prepare_match(
+            content, old_string, new_string, replace_all=replace_all
+        )
         if old_string == new_string and occurrences:
             # A batch item that restates matching text unchanged is skipped and
             # reported instead of discarding the batch's real edits with it.
@@ -59,18 +66,19 @@ def _fold_edits(
         )
         if failure is not None:
             message, code, metadata = failure
+            if isinstance(fallback, FallbackAmbiguity):
+                message += f"\n{fallback.notice}"
             if not context.name_failures:
                 return failure_result(message=message, error_code=code, metadata=metadata)
             # Batch: keep evaluating later items against the content without this
             # one applied so every problem is reported in a single turn.
             failures.append((index, f"Edit {index}: {message}", code, metadata))
             continue
-        content = _apply_edit(
-            content,
-            normalized_old,
-            normalized_new,
-            replace_all=replace_all,
+        content = _apply_prepared_edit(
+            content, normalized_old, normalized_new, replace_all=replace_all, fallback=fallback
         )
+        if isinstance(fallback, FallbackMatch) and fallback_notices is not None:
+            fallback_notices.append(fallback.step)
         total_replacements += replacement_count
         applied_replace_all = applied_replace_all or replace_all
     if failures:
@@ -85,6 +93,38 @@ def _fold_edits(
             metadata={"path": context.relative_path},
         )
     return content, total_replacements, applied_replace_all, tuple(skipped)
+
+
+def _prepare_match(
+    content: str, old: str, new: str, *, replace_all: bool
+) -> tuple[str, str, int, FallbackMatch | FallbackAmbiguity | None]:
+    old, new = _normalize_newlines(old), _normalize_newlines(new)
+    occurrences = content.count(old)
+    fallback = None
+    if (
+        occurrences == 0 and not replace_all
+        and shell_settings.default_on_feature_enabled("edit_match_fallbacks")
+    ):
+        fallback = find_fallback(content, old, new)
+        if isinstance(fallback, FallbackMatch):
+            return content[fallback.start:fallback.end], fallback.replacement, 1, fallback
+    return old, new, occurrences, fallback
+
+
+def _apply_prepared_edit(
+    content: str, old: str, new: str, *, replace_all: bool,
+    fallback: FallbackMatch | FallbackAmbiguity | None,
+) -> str:
+    if not isinstance(fallback, FallbackMatch):
+        return _apply_edit(content, old, new, replace_all=replace_all)
+    start, end = fallback.start, fallback.end
+    if (
+        new == "" and not old.endswith("\n")
+        and (start == 0 or content[start - 1] == "\n")
+        and content[end:end + 1] == "\n"
+    ):
+        end += 1
+    return content[:start] + new + content[end:]
 
 
 def _edit_failure(  # noqa: PLR0913 - explicit per-item match context.

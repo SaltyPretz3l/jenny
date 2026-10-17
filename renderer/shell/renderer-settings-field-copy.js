@@ -88,6 +88,11 @@
       sectionId: 'context',
       keywords: ['remember', 'recall', jt('settings.fieldCopy.contextIncludeMemoryToggle.keywords.savedMemories', 'saved memories'), jt('settings.fieldCopy.contextIncludeMemoryToggle.keywords.longTermMemory', 'long-term memory')],
     },
+    contextMemoryOptOutToggle: {
+      label: jt('settings.fieldCopy.contextMemoryOptOutToggle.label', "Don't remember this chat"),
+      description: jt('settings.fieldCopy.contextMemoryOptOutToggle.description', 'Jenny keeps no notes from this chat and does not remember things said here. /remember still works.'),
+      sectionId: 'context',
+    },
     contextCompactionToggle: {
       label: jt('settings.fieldCopy.contextCompactionToggle.label', 'Automatic summarization'),
       description: jt('settings.fieldCopy.contextCompactionToggle.description', 'Summarize older turns when a chat no longer fits the model.'),
@@ -122,11 +127,25 @@
       sectionId: 'memories',
       keywords: ['memory', 'memories', 'remember', 'recall', 'approved', jt('settings.fieldCopy.memoryManager.keywords.pendingReview', 'pending review'), jt('settings.fieldCopy.memoryManager.keywords.longTermMemory', 'long-term memory')],
     },
-    memoryCaptureSuggestions: {
-      label: jt('settings.fieldCopy.memoryCaptureSuggestions.label', 'Offer local memory suggestions'),
-      description: jt('settings.fieldCopy.memoryCaptureSuggestions.description', 'Offer one local suggestion after a completed turn; approval is always required.'),
+    memoryTakeNotes: {
+      label: jt('settings.fieldCopy.memoryTakeNotes.label', 'Jenny takes notes automatically'),
+      description: jt('settings.fieldCopy.memoryTakeNotes.description', 'When Jenny is idle, your local model reads your recent messages and saves lasting facts and preferences. Each note shows in the chat with Undo.'),
       sectionId: 'memories',
-      keywords: [jt('settings.fieldCopy.memoryCaptureSuggestions.keywords.captureSuggestions', 'capture suggestions'), jt('settings.fieldCopy.memoryCaptureSuggestions.keywords.rememberThis', 'remember this'), jt('settings.fieldCopy.memoryCaptureSuggestions.keywords.memorySuggestion', 'memory suggestion'), jt('settings.fieldCopy.memoryCaptureSuggestions.keywords.offerMemory', 'offer memory')],
+    },
+    memoryAskBeforeSaving: {
+      label: jt('settings.fieldCopy.memoryAskBeforeSaving.label', 'Ask before Jenny saves'),
+      description: jt('settings.fieldCopy.memoryAskBeforeSaving.description', 'New memories wait for your approval in the pending list.'),
+      sectionId: 'memories',
+    },
+    memoryPauseSaving: {
+      label: jt('settings.fieldCopy.memoryPauseSaving.label', 'Pause saving'),
+      description: jt('settings.fieldCopy.memoryPauseSaving.description', 'Jenny saves nothing new; /remember still works.'),
+      sectionId: 'memories',
+    },
+    memoryUseInChats: {
+      label: jt('settings.fieldCopy.memoryUseInChats.label', 'Use memory in chats'),
+      description: jt('settings.fieldCopy.memoryUseInChats.description', 'Jenny recalls what she knows when it is relevant. Off hides memory from every chat; you can still ask her to look something up.'),
+      sectionId: 'memories',
     },
 
     // ── Personality ──────────────────────────────────────────────────────
@@ -207,6 +226,18 @@
       description: jt('settings.fieldCopy.appearanceTitlebarLoadToggle.description', 'GPU and VRAM as a small read-out next to the health dot. CPU, GPU and VRAM are always in the health popover.'),
       sectionId: 'appearance',
       keywords: ['cpu', 'gpu', 'vram', 'ram', jt('settings.fieldCopy.appearanceTitlebarLoadToggle.keywords.systemLoad', 'system load'), jt('settings.fieldCopy.appearanceTitlebarLoadToggle.keywords.titleBar', 'title bar')],
+    },
+    performanceShowCounterToggle: {
+      label: jt('settings.fieldCopy.performanceShowCounterToggle.label', 'Show performance in the session rail'),
+      description: jt('settings.fieldCopy.performanceShowCounterToggle.description', 'Adds a Performance section to the session rail: writing speed, prompt reading, time to first token and cache reuse. A short speed readout also sits on the Session button when the rail is folded away. It only measures; turning it on never restarts a request.'),
+      sectionId: 'appearance',
+      keywords: [jt('settings.fieldCopy.performanceShowCounterToggle.keywords.speed', 'speed'), jt('settings.fieldCopy.performanceShowCounterToggle.keywords.tokensPerSecond', 'tokens per second'), 'tok/s', jt('settings.fieldCopy.performanceShowCounterToggle.keywords.counter', 'counter'), jt('settings.fieldCopy.performanceShowCounterToggle.keywords.session', 'session rail')],
+    },
+    performanceGpuWarningsToggle: {
+      label: jt('settings.fieldCopy.performanceGpuWarningsToggle.label', 'GPU memory warnings'),
+      description: jt('settings.fieldCopy.performanceGpuWarningsToggle.description', 'Warns in the health menu when graphics memory runs low while the local engine is generating. It only observes: Jenny never stops or changes anything for you.'),
+      sectionId: 'appearance',
+      keywords: ['gpu', 'vram', jt('settings.fieldCopy.performanceGpuWarningsToggle.keywords.graphicsMemory', 'graphics memory'), jt('settings.fieldCopy.performanceGpuWarningsToggle.keywords.slowdown', 'slowdown'), jt('settings.fieldCopy.performanceGpuWarningsToggle.keywords.healthMenu', 'health menu')],
     },
     appearanceArtifactAutoOpenToggle: {
       label: jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.label', 'Open the artifact panel when an artifact arrives'),

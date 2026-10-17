@@ -6,7 +6,9 @@ const crypto = require('node:crypto');
 const { isLocalAbsolutePath } = require('./shell-config-engines');
 const { readGgufArchitecture } = require('./gguf-header');
 
-const SLOTS = Object.freeze(['diffusion', 'text_encoder', 'vae']);
+const REQUIRED_SLOTS = Object.freeze(['diffusion', 'text_encoder', 'vae']);
+const OPTIONAL_SLOTS = Object.freeze(['vision_projector']);
+const ALL_SLOTS = Object.freeze([...REQUIRED_SLOTS, ...OPTIONAL_SLOTS]);
 const FOLDER_SLOTS = { diffusion_models: 'diffusion', unet: 'diffusion', text_encoders: 'text_encoder', clip: 'text_encoder', llm: 'text_encoder', vae: 'vae' };
 const DEFAULT_LIMITS = { maxDepth: 3, maxEntries: 2000, maxPerSlot: 64 };
 const failure = (reason) => ({ ok: false, reason });
@@ -49,7 +51,7 @@ function scanModelFolder(rootPath, {
   const families = loadFamilies().families;
   const pathApi = pathFor(platform);
   const rootFolders = pathApi.relative(pathApi.parse(rootPath).root, rootPath).split(pathApi.sep);
-  const candidates = { diffusion: [], text_encoder: [], vae: [] };
+  const candidates = { diffusion: [], text_encoder: [], vae: [], vision_projector: [] };
   let entries = 0;
   let truncated = false;
 
@@ -68,6 +70,7 @@ function scanModelFolder(rootPath, {
       if (family) slot = 'diffusion';
       else if (/^(qwen3vl|qwen2vl|qwen3|llama|t5|clip)/i.test(architecture || '')) slot = 'text_encoder';
     }
+    if (extension === '.gguf' && /mmproj/i.test(pathApi.basename(absolute))) slot = 'vision_projector';
     if (!slot) return;
     if (candidates[slot].length >= bounds.maxPerSlot) { truncated = true; return; }
     try {
@@ -108,7 +111,7 @@ function scanModelFolder(rootPath, {
   }
 
   walk(rootPath, [], 0);
-  for (const slot of SLOTS) candidates[slot].sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  for (const slot of ALL_SLOTS) candidates[slot].sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
   return { ok: true, root: rootPath, candidates, truncated };
 }
 
@@ -127,7 +130,7 @@ function validSet(set) {
   return set && typeof set === 'object' && typeof set.id === 'string' && /^[a-f0-9]{12}$/.test(set.id)
     && typeof set.label === 'string' && typeof set.family === 'string'
     && isLocalAbsolutePath(set.root) && Number.isFinite(set.created_at)
-    && set.files && SLOTS.every((slot) => set.files[slot]
+    && set.files && [...REQUIRED_SLOTS, ...OPTIONAL_SLOTS.filter(slot => set.files[slot] !== undefined)].every((slot) => set.files[slot]
       && validName(set.files[slot].name) && Number.isSafeInteger(set.files[slot].size_bytes)
       && set.files[slot].size_bytes >= 0);
 }
@@ -165,7 +168,7 @@ function collectFiles(root, names, fsImpl, pathApi) {
     // A directory link to a share resolves to a network path; the store must
     // never hold one (every later read would refuse the whole store).
     if (!isLocalAbsolutePath(realRoot, { platform: pathApi === path.win32 ? 'win32' : 'linux' })) return failure('root_not_local_path');
-    for (const slot of SLOTS) {
+    for (const slot of ALL_SLOTS.filter((key) => names[key])) {
       const absolute = fsImpl.realpathSync(pathApi.join(root, ...names[slot].split('/')));
       if (!insideRoot(realRoot, absolute, pathApi)) return failure('name_escapes_root');
       const stat = fsImpl.statSync(absolute);
@@ -177,13 +180,13 @@ function collectFiles(root, names, fsImpl, pathApi) {
   } catch (_error) { return failure('file_missing'); }
 }
 
-function saveModelSet({ storePath, root, diffusion, text_encoder, vae, family, label }, {
+function saveModelSet({ storePath, root, diffusion, text_encoder, vae, vision_projector, family, label }, {
   platform = process.platform, fsImpl = fs, families, now = Date.now, readArchitecture = readGgufArchitecture,
 } = {}) {
   const valid = validateRoot(root, platform, fsImpl);
   if (!valid.ok) return valid;
-  const names = { diffusion, text_encoder, vae };
-  if (!SLOTS.every((slot) => validName(names[slot]))) return failure('invalid_name');
+  const names = { diffusion, text_encoder, vae, ...(vision_projector ? { vision_projector } : {}) };
+  if (!REQUIRED_SLOTS.every((slot) => validName(names[slot])) || (vision_projector !== undefined && vision_projector !== '' && !validName(vision_projector))) return failure('invalid_name');
   const table = families || loadFamilies().families;
   if (!Object.hasOwn(table, family)) return failure('unknown_family');
   const pathApi = pathFor(platform);
@@ -200,9 +203,16 @@ function saveModelSet({ storePath, root, diffusion, text_encoder, vae, family, l
   if (preset.unsupported_encoder_patterns.some((pattern) => encoder.includes(pattern.toLowerCase()))) {
     return failure('image_text_encoder_unsupported');
   }
+  if (vision_projector) {
+    try {
+      if (!preset.vision_flag || pathApi.extname(vision_projector).toLowerCase() !== '.gguf'
+        || readArchitecture(collected.paths.vision_projector, { fsImpl }) !== 'clip') return failure('image_projector_unsupported');
+    } catch (_error) { return failure('image_projector_unsupported'); }
+  }
   const store = readStore(storePath, fsImpl);
   if (store.ok === false) return store;
-  const identity = [...SLOTS.map((slot) => collected.paths[slot]), ...SLOTS.map((slot) => collected.files[slot].size_bytes)].join('\n');
+  const slots = ALL_SLOTS.filter((slot) => collected.paths[slot]);
+  const identity = [...slots.map((slot) => collected.paths[slot]), ...slots.map((slot) => collected.files[slot].size_bytes)].join('\n');
   const id = crypto.createHash('sha256').update(identity).digest('hex').slice(0, 12);
   const index = store.sets.findIndex((set) => set.id === id);
   if (index === -1 && store.sets.length >= 16) return failure('too_many_sets');
@@ -224,9 +234,9 @@ function resolveModelSet(id, { storePath, fsImpl = fs }) {
   if (store.ok === false) return store;
   const set = store.sets.find((entry) => entry.id === id);
   if (!set) return failure('model_set_not_found');
-  const names = Object.fromEntries(SLOTS.map((slot) => [slot, set.files[slot].name]));
+  const names = Object.fromEntries(ALL_SLOTS.filter((slot) => set.files[slot]).map((slot) => [slot, set.files[slot].name]));
   const collected = collectFiles(set.root, names, fsImpl, path);
-  if (!collected.ok || !SLOTS.every((slot) => collected.files[slot].size_bytes === set.files[slot].size_bytes)) {
+  if (!collected.ok || !Object.keys(names).every((slot) => collected.files[slot].size_bytes === set.files[slot].size_bytes)) {
     return failure('image_model_set_stale');
   }
   return { ok: true, set, paths: collected.paths };
@@ -251,6 +261,6 @@ function setDefaultModelSet(id, { storePath, fsImpl = fs }) {
 }
 
 module.exports = {
-  SLOTS, loadFamilies, familyForArchitecture, scanModelFolder, saveModelSet,
+  REQUIRED_SLOTS, OPTIONAL_SLOTS, loadFamilies, familyForArchitecture, scanModelFolder, saveModelSet,
   listModelSets, resolveModelSet, removeModelSet, setDefaultModelSet,
 };

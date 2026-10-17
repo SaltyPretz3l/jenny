@@ -2,6 +2,8 @@
 
 const { createHash } = require('node:crypto');
 const { estimateMessagesTokens } = require('./context-budget-trimmer');
+const { validateEnvelope } = require('./session-message-envelope');
+const { HANDOFF_ROW_KIND, normalizeSessionHandoff } = require('./session-handoff-context');
 
 // Electron-owned compaction snapshot (JCA-003).
 //
@@ -33,7 +35,8 @@ const { estimateMessagesTokens } = require('./context-budget-trimmer');
 
 const COMPACTION_SNAPSHOT_VERSION = 2;
 const COMPACTION_SNAPSHOT_STRATEGIES = new Set(['full', 'micro']);
-const COMPACTION_MESSAGE_ROLES = new Set(['system', 'user', 'assistant']);
+// `context` entries are attributed addressed session messages and first-turn handoffs kept verbatim (never as user/assistant text).
+const COMPACTION_MESSAGE_ROLES = new Set(['system', 'user', 'assistant', 'context']);
 const COMPACTION_SNAPSHOT_ORIGINS = new Set(['manual', 'automatic']);
 const COMPACTION_SNAPSHOT_MAX_MESSAGES = 64;
 const COMPACTION_SNAPSHOT_MAX_BYTES = 512 * 1024;
@@ -53,6 +56,15 @@ function normalizeCompactionSnapshotMessage(entry) {
   const content = String(entry.content || '');
   if (Buffer.byteLength(content, 'utf8') > COMPACTION_SNAPSHOT_MESSAGE_MAX_BYTES) {
     return null;
+  }
+  if (role === 'context') {
+    const handoff = entry.kind === HANDOFF_ROW_KIND ? normalizeSessionHandoff(entry.session_handoff) : null;
+    if (handoff) return entry.content === handoff.body ? { role, kind: HANDOFF_ROW_KIND, content: handoff.body, session_handoff: handoff } : null;
+    const envelope = validateEnvelope(entry.session_message);
+    if (entry.kind !== 'session_message' || !envelope || entry.content !== envelope.body) {
+      return null;
+    }
+    return { role, kind: 'session_message', content: envelope.body, session_message: envelope };
   }
   return { role, content };
 }
@@ -260,6 +272,14 @@ function fingerprintCompactionPrefix(messages) {
     tool_result: message?.tool_result ?? null,
     interactive_batch: message?.interactive_batch ?? null,
     interactive_round_recap: message?.interactive_round_recap ?? null,
+    // Added only for addressed-message rows, so every other row keeps its historical digest.
+    ...(message?.session_message ? {
+      session_message: { message_id: message.session_message.message_id, body_sha256: message.session_message.body_sha256 },
+      disposition: message.disposition ?? null,
+    } : {}),
+    ...(message?.session_handoff ? {
+      session_handoff: { proposal_id: message.session_handoff.proposal_id, body_sha256: message.session_handoff.body_sha256 },
+    } : {}),
   }));
   return createHash('sha256').update(JSON.stringify(semanticRows), 'utf8').digest('hex');
 }

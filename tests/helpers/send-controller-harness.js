@@ -133,7 +133,7 @@ function createControllerHarness(messages, options = {}) {
     approvalModeController: options.approvalModeController || null,
     createSendReceiptStore: options.createSendReceiptStore,
     compactionCoordinator: options.compactionCoordinator || null,
-    slashCommandRegistry: null,
+    slashCommandRegistry: options.slashCommandRegistry || null,
     // Split view W1-4b: a pane session context built over this harness's state.
     ...(typeof options.sessionContextFor === 'function' ? { sessionContext: options.sessionContextFor(state) } : {}),
     constants: {

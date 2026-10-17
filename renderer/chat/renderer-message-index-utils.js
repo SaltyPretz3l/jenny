@@ -16,6 +16,7 @@
   const NON_ASSISTANT_KINDS = new Set([
     'interactive_round_recap',
     'slash_command_output',
+    'memory_note',
   ]);
 
   const NON_REPLY_ASSISTANT_KINDS = new Set([
@@ -23,10 +24,11 @@
     'proactive_suggestion',
     'question_batch',
     'slash_command_output',
+    'memory_note',
     'tool_use',
   ]);
 
-  // Resume-affordance tail: like NON_ASSISTANT_KINDS, plus the two assistant-role
+  // Resume-affordance tail: like NON_ASSISTANT_KINDS, plus the assistant-role
   // rows that get APPENDED after a turn already ended. Status is deliberately not
   // considered -- a newer error or cancelled terminal must still supersede an
   // older budget stop, which is why latestReplyAssistantMessageId (complete-only)
@@ -36,12 +38,14 @@
     'proactive_suggestion',
     'question_batch',
     'slash_command_output',
+    'memory_note',
   ]);
 
   const STREAMING_INELIGIBLE_KINDS = new Set([
     'question_batch',
     'interactive_round_recap',
     'slash_command_output',
+    'memory_note',
   ]);
 
   // Turn plumbing that can legitimately trail the live assistant segment
@@ -104,6 +108,8 @@
           String(lifecycle?.model || ''),
           String(lifecycle?.provider || ''),
           boundedValueSignature(lifecycle?.usage),
+          String(lifecycle?.childActivity?.sequence || ''),
+          String(lifecycle?.reasoningEffort || ''),
           String(lifecycle?.terminalReason || lifecycle?.terminal_reason || ''),
           String(lifecycle?.taskType || lifecycle?.task_type || ''),
           String(lifecycle?.source || ''),
@@ -129,6 +135,8 @@
         String(step?.model || ''),
         String(step?.provider || ''),
         boundedValueSignature(step?.usage),
+        String(step?.childActivity?.sequence || ''),
+        String(step?.reasoningEffort || ''),
         String(step?.terminalReason || step?.terminal_reason || ''),
         String(step?.stage || ''),
         String(step?.status || ''),

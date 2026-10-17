@@ -7,7 +7,13 @@ import logging
 from datetime import date
 from typing import Any
 
-from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, MemoryPolicy
+from sidecar.ai.memory.contracts import (
+    GENERAL_PROJECT_ID,
+    MAX_RECENT_CHATS,
+    MEMORY_CAPTURE_MODES,
+    MemoryPolicy,
+    RecentChat,
+)
 from sidecar.runtime.diagnostics import log_event
 from sidecar.runtime.vision_attachments import normalize_vision_attachments  # noqa: F401
 
@@ -22,7 +28,7 @@ _REASONING_EFFORT_ALIASES = {
 }
 _SESSION_START_DATE_ISO_ERROR = "chat.send params.session_start_date must be an ISO date string"
 _MEMORY_POLICY_KEYS = frozenset(
-    {"enabled", "include_response_style", "project_id"}
+    {"enabled", "project_id", "capture", "recall", "policy_epoch", "recent_chats"}
 )
 _APPROVED_PLAN_KEYS = frozenset({"plan_id", "title", "summary", "steps", "notes", "verification"})
 
@@ -166,6 +172,22 @@ def approved_plan_from_params(params: Any) -> dict[str, Any] | None:
     return normalized
 
 
+def _recent_chats(value: Any) -> tuple[RecentChat, ...]:
+    prefix = "chat.send params.memory_policy.recent_chats"
+    if not isinstance(value, list) or len(value) > MAX_RECENT_CHATS:
+        raise ValueError(f"{prefix} must be a list of at most 6 objects")
+    chats = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"session_id", "title"}:
+            raise ValueError(f"{prefix} entries need exactly session_id and title")
+        try:
+            chats.append(RecentChat(item["session_id"], item["title"]))
+        except ValueError as error:
+            raise ValueError(f"{prefix} entry is invalid") from error
+    # MemoryPolicy keeps the first of duplicate session ids.
+    return tuple(chats)
+
+
 def memory_policy_from_params(params: Any) -> MemoryPolicy | None:
     """Normalize the additive memory policy; omission preserves legacy behavior."""
 
@@ -178,15 +200,26 @@ def memory_policy_from_params(params: Any) -> MemoryPolicy | None:
     if unknown:
         raise ValueError("chat.send params.memory_policy contains unsupported fields")
     enabled = value.get("enabled", True)
-    include_response_style = value.get("include_response_style", True)
+    capture = value.get("capture", "auto")
+    recall = value.get("recall", True)
+    policy_epoch = value.get("policy_epoch", 0)
     if not isinstance(enabled, bool):
         raise ValueError("chat.send params.memory_policy.enabled must be a boolean")
-    if not isinstance(include_response_style, bool):
-        raise ValueError("chat.send params.memory_policy.include_response_style must be a boolean")
+    if not isinstance(capture, str) or capture not in MEMORY_CAPTURE_MODES:
+        raise ValueError("chat.send params.memory_policy.capture must be auto, ask or off")
+    if not isinstance(recall, bool):
+        raise ValueError("chat.send params.memory_policy.recall must be a boolean")
+    if isinstance(policy_epoch, bool) or not isinstance(policy_epoch, int) or policy_epoch < 0:
+        raise ValueError(
+            "chat.send params.memory_policy.policy_epoch must be a non-negative integer"
+        )
     return MemoryPolicy(
         enabled=enabled,
-        include_response_style=include_response_style,
         project_id=value.get("project_id", GENERAL_PROJECT_ID),
+        capture=capture,
+        recall=recall,
+        policy_epoch=policy_epoch,
+        recent_chats=_recent_chats(value.get("recent_chats", [])),
     )
 
 

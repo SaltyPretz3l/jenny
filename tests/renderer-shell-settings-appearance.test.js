@@ -697,11 +697,12 @@ test('appearance card groups its controls into labelled scopes with accessible s
   const doc = window.document;
   const card = doc.querySelector('section.settings-card[data-settings-section="appearance"]');
 
-  // Five primary field groups are labelled regions (Theme, Typography,
-  // Language, Chat layout, Background); Advanced is a collapsed fold that
+  // Six primary field groups are labelled regions (Theme, Typography,
+  // Language, Chat layout, Background, Performance - the last hidden until
+  // the performance bridge exists); Advanced is a collapsed fold that
   // also holds the app zoom, rather than another form region.
   const groups = card.querySelectorAll('.settings-group[role="group"]');
-  assert.equal(groups.length, 5);
+  assert.equal(groups.length, 6);
   assert.ok(doc.getElementById('appearanceLanguageField').closest('.settings-group').contains(doc.getElementById('appearanceLanguageHeading')), 'the Language heading sits in the group it names');
   assert.ok(card.querySelector('details.appearance-advanced #appearanceAppZoomSelect'), 'app zoom sits in the Advanced fold');
   const chatLayout = doc.getElementById('appearanceChatLayoutHeading').closest('.settings-group');

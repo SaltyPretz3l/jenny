@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
@@ -61,7 +62,7 @@ def _validate_resume_state(  # noqa: C901, PLR0912 - ordered recovery-state vali
                     "restore_state_ambiguous",
                     "Restore staging state changed and requires review.",
                 )
-    conflicts = _preflight_conflicts(root, pending, staging)
+    conflicts = _preflight_conflicts(root, pending, staging, decision_by_id)
     conflict_ids = {cast(str, item["inverse_step_id"]) for item in conflicts}
     occupants = cast(list[dict[str, Any]], record["restore"]["protected_occupants"])
     for item in pending:
@@ -96,6 +97,63 @@ def _validate_resume_state(  # noqa: C901, PLR0912 - ordered recovery-state vali
                     "restore_state_ambiguous",
                     "An alternate restore destination became occupied.",
                 )
+
+
+def _resume_preflight(root: Path, record: Mapping[str, Any]) -> dict[str, object]:
+    """Non-mutating preflight of an in-progress restore: what resuming will run.
+
+    The report keeps the ``preflight`` shape (no new conflicts: the recorded
+    decisions stand) and lists only the steps a resume still executes;
+    ``resume`` names the completed steps, their receipt and the decisions it
+    continues from; ``completed_moves`` gives both ends of each completed
+    ``move_back`` so a client without memory of the stopped Undo can still
+    build that move's Redo.
+    """
+    from sidecar.ai.tools.workspace_restore import (
+        _decision_map,
+        _inverse_plan,
+        _outside_undo_set,
+        _public_step,
+        _receipt,
+    )
+
+    restore = cast(Mapping[str, Any], record["restore"])
+    plan = _inverse_plan(record)
+    staging = cast(list[dict[str, Any]], restore["staging_entries"])
+    _validate_resume_state(root, record, plan, staging)
+    completed = set(cast(list[str], restore["completed_inverse_step_ids"]))
+    decisions = _decision_map(record)
+    remaining = [
+        item for item in plan
+        if item["step"]["step_id"] not in completed
+        and decisions.get(item["step"]["step_id"], {}).get("outcome") != "skip"
+    ]
+    remaining_ids = {item["step"]["step_id"] for item in remaining}
+    return {
+        "change_set_id": record["change_set_id"],
+        "status": "preflight",
+        "conflicts": [],
+        "inverse_plan": [_public_step(item) for item in remaining],
+        "staging_entries": [
+            copy.deepcopy(item) for item in staging if item["inverse_step_id"] in remaining_ids
+        ],
+        "outside_undo_set": _outside_undo_set(record),
+        "resume": {
+            "restore_status": "in_progress",
+            "completed_inverse_step_ids": list(restore["completed_inverse_step_ids"]),
+            "decisions": copy.deepcopy(restore["decisions"]),
+            "receipt": _receipt(record, only=completed),
+            "completed_moves": [
+                {
+                    "inverse_step_id": item["step"]["step_id"],
+                    "from_relative_path": item["step"]["from_relative_path"],
+                    "to_relative_path": item["step"]["to_relative_path"],
+                }
+                for item in plan
+                if item["step"]["step_id"] in completed and item["step"]["kind"] == "move_back"
+            ],
+        },
+    }
 
 
 def _step_paths(
@@ -150,6 +208,8 @@ def _stage_move_sources(
         WorkspaceRestoreError,
         _assert_signature,
         _fsync_directory,
+        _guarded_replace,
+        _remove_exact,
         _safe_path,
         _signature,
     )
@@ -171,8 +231,7 @@ def _stage_move_sources(
             and _signature(source) == expected
             and _same_file(source, stage)
         ):
-            source.unlink()
-            _fsync_directory(source.parent)
+            _remove_exact(source)
             continue
         _assert_signature(source, entry["expected_signature"], "restore_state_ambiguous")
         stage.parent.mkdir(parents=True, exist_ok=True)
@@ -188,11 +247,11 @@ def _stage_move_sources(
                     "restore_stage_collision", "Restore staging path is occupied."
                 ) from error
             except OSError:
-                os.rename(source, stage)
+                _guarded_replace(source, stage)
             else:
-                source.unlink()
+                _remove_exact(source)
         else:
-            os.rename(source, stage)
+            _guarded_replace(source, stage)
         _fsync_directory(stage.parent)
 
 
@@ -203,4 +262,9 @@ def _same_file(left: Path, right: Path) -> bool:
         return False
 
 
-__all__ = ["_stage_move_sources", "_validate_completed_step", "_validate_resume_state"]
+__all__ = [
+    "_resume_preflight",
+    "_stage_move_sources",
+    "_validate_completed_step",
+    "_validate_resume_state",
+]

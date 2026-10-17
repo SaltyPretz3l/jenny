@@ -120,23 +120,9 @@
   background: color-mix(in srgb, var(--widget-attachment-bg) 92%, transparent);
 }
 
-.message-attachment-image {
-  margin: 0;
-  padding: var(--space-4);
-}
-
 .message-attachment-unavailable {
   color: var(--text-secondary);
   font-size: var(--font-size-footnote);
-}
-
-.message-attachment-image-preview {
-  display: block;
-  width: min(240px, 64vw);
-  max-height: 240px;
-  border-radius: var(--radius-base);
-  object-fit: contain;
-  background: rgba(0, 0, 0, 0.18);
 }
 
 .message-attachment-audio {

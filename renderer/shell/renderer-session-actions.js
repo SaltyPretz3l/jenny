@@ -50,6 +50,7 @@
       stopSessionStream,
       getProjectSwitcher,
       openLinkedSessions,
+      openSendToChat,
     } = deps.callbacks;
 
     const contextMenu = deps.inventory?.contextMenu || windowRef.inventoryContextMenu;
@@ -368,6 +369,40 @@
       return false;
     }
 
+    // "Report back to the original chat" (row 59 cp5b-1) for a linked child. The summary projects
+    // reporting_enabled (null: the container is frozen, so the switch is unavailable). A confirmed setReporting
+    // answer is held only until the summary refreshes, so a later backend change (parent deleted) still shows.
+    const reportingConfirmed = new Map();
+    function getMessagesStore() {
+      const holder = deps.chatMessagesStore || windowRef.rendererChatMessagesStore;
+      const store = typeof holder?.getDefaultStore === 'function' ? holder.getDefaultStore() : holder;
+      return store && typeof store.setReporting === 'function' ? store : null;
+    }
+
+    function isReportingEnabled(summary) {
+      const projected = summary.reporting_enabled === undefined ? true : summary.reporting_enabled;
+      const confirmed = reportingConfirmed.get(summary.id);
+      if (confirmed && confirmed.basis === projected) return confirmed.value;
+      reportingConfirmed.delete(summary.id);
+      return typeof projected === 'boolean' ? projected : null;
+    }
+
+    async function toggleReportBack(sessionId) {
+      const summary = getSummary(sessionId);
+      const store = getMessagesStore();
+      if (!summary || !store) return false;
+      const next = !isReportingEnabled(summary);
+      const answer = await store.setReporting(sessionId, next);
+      if (answer?.ok !== true) {
+        showSessionActionError(new Error(jt('sidebar.sessionActions.reportBackFailed', "Couldn't change whether this chat reports back. Try again.")), jt('sidebar.sessionActions.reportBackFailedTitle', 'Report Back Failed'));
+        return false;
+      }
+      const value = typeof answer.enabled === 'boolean' ? answer.enabled : next;
+      reportingConfirmed.set(sessionId, { value, basis: summary.reporting_enabled === undefined ? true : summary.reporting_enabled });
+      appendClientLog('INFO', 'sessions.report_back_updated', { sessionId, enabled: value });
+      return true;
+    }
+
     function openSessionRowMenu({ sessionId, anchorX, anchorY, trigger }) {
       const summary = getSummary(sessionId);
       if (!summary || state.ui.sidebarBulkBusy || metaPending.has(sessionId) || isSessionPendingDelete(sessionId)) {
@@ -404,6 +439,23 @@
             action: () => openLinkedSessions(sessionId, trigger || rowMenuButton(sessionId)),
           }]
         : [];
+      // Addressed messaging (row 59 cp4): any live, non-plugin chat can be the sender; the
+      // dialog owns the recipient picker. Archived chats are not offered, nor a chat without a
+      // session incarnation (imported, or legacy before its first turn), which cannot be addressed.
+      const sendItems = typeof openSendToChat === 'function' && summary.session_type !== 'plugin' && !archived
+        && summary.messaging_addressable !== false
+        ? [{ label: jt('sidebar.sessionActions.sendToChat', 'Send to chat…'), action: () => openSendToChat(sessionId, trigger || rowMenuButton(sessionId)) }]
+        : [];
+      const linkedChild = Boolean(summary.spawned_from) && summary.session_type !== 'plugin' && getMessagesStore();
+      const reportItems = linkedChild
+        ? [{
+            label: jt('sidebar.sessionActions.reportBack', 'Report back to the original chat'),
+            toggle: true,
+            checked: isReportingEnabled(summary) === true,
+            disabled: isReportingEnabled(summary) === null,
+            action: () => toggleReportBack(sessionId),
+          }]
+        : [];
       contextMenu.show({
         rootEl: windowRef.document.body,
         anchorX,
@@ -422,6 +474,8 @@
             : []),
           { label: jt('common.rename', 'Rename'), action: () => beginInlineRename(sessionId) },
           ...linkItems,
+          ...sendItems,
+          ...reportItems,
           ...moveItems,
           { label: archived ? jt('sidebar.sessionActions.unarchive', 'Unarchive') : jt('sidebar.sessionActions.archive', 'Archive'), action: () => toggleArchiveSession(sessionId) },
           { separator: true },

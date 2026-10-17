@@ -3,88 +3,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
-const zlib = require('node:zlib');
 const Module = require('node:module');
-const { trackDirectory } = require('../helpers/resource-cleanup');
-const { crc32 } = require('../../services/backend/png-validator');
 const { ChatGpuHandoffError, CHAT_GPU_HANDOFF_CODES } = require('../../services/backend/chat-gpu-handoff');
 const { TOOL_ERROR_CODES } = require('../../services/backend/error-codes');
 const toolModule = require('../../services/tools/builtin/image-generate-tool');
 const { createImageGenerateTool, IMAGE_GENERATE_BUDGET_MS, RESTORE_RESERVE_MS, VALIDATION_MARGIN_MS } = toolModule;
 
-const ID = 'abcdef123456';
-const UUID = '01234567-89ab-4cde-8fab-0123456789ab';
-const FAMILY = {
-  diffusion_flag: '--diffusion-model', encoder_flag: '--llm', vae_flag: '--vae',
-  defaults: { steps: 20, cfg_scale: 2.5, sampler: 'euler', flow_shift: 3 },
-  resolutions: ['1024x1024', '1472x1120'], extra_args: ['--fa', '--offload-to-cpu'],
-  min_total_vram_mb: 8000, free_vram_headroom_mb: 3000,
-};
-
-function png(width = 1024, height = 1024) {
-  const chunk = (type, data) => {
-    const buffer = Buffer.alloc(data.length + 12);
-    buffer.writeUInt32BE(data.length);
-    buffer.write(type, 4);
-    data.copy(buffer, 8);
-    buffer.writeUInt32BE(crc32(buffer.subarray(4, -4)), buffer.length - 4);
-    return buffer;
-  };
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(width);
-  header.writeUInt32BE(height, 4);
-  header[8] = 8;
-  return Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), chunk('IHDR', header),
-    chunk('IDAT', zlib.deflateSync(Buffer.alloc(height * (width + 1)))), chunk('IEND', Buffer.alloc(0))]);
-}
-
-function fixture(t, overrides = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-image-tool-'));
-  trackDirectory(root);
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const calls = [];
-  const set = { id: ID, family: 'test_family', files: { diffusion: { name: 'diffusion-Q4_K.gguf', size_bytes: 1048577 } } };
-  const paths = Object.fromEntries(['diffusion', 'text_encoder', 'vae'].map((slot) => [slot, path.join(root, `${slot}.gguf`)]));
-  const artifact = { artifact_id: 'artifact-1', artifact_kind: 'image', display_path: 'artifacts/generated.png' };
-  const handoff = {
-    async suspend(...args) { calls.push(['suspend', ...args]); return { leaseId: 'lease-1' }; },
-    registerRender(render) { calls.push(['register', render]); },
-    async restoreAndRelease(options) { calls.push(['restore', options]); return { restored: true, released: true, reason: options.reason }; },
-    closing: false,
-  };
-  const context = {
-    backendService: { options: { userDataPath: root }, chatGpuHandoff: handoff,
-      imageEngine: { resolveExecutable() { calls.push(['engine']); return { ok: true, path: path.join(root, 'sd-cli.exe'), tag: 'test-tag' }; } } },
-    artifactService: { async createBinaryArtifact(...args) { calls.push(['artifact', ...args]); return { output: 'saved', metadata: artifact }; } },
-    sessionId: 'session-1', streamId: 'stream-1', callId: 'call-1', workingDirectory: root, logger: () => {},
-  };
-  const dependencies = {
-    async runImageGeneration(options) {
-      calls.push(['run', options]);
-      const buffer = png(options.expectedWidth, options.expectedHeight);
-      await fs.promises.writeFile(options.outputPath, buffer);
-      return { status: 'ok', exitCode: 0, seconds: { load: 1, sample: 2, total: 3 }, png: { width: options.expectedWidth, height: options.expectedHeight, buffer }, stderrTail: [] };
-    },
-    resolveModelSet(id, options) { calls.push(['resolve', id, options]); return { ok: true, set, paths }; },
-    listModelSets(options) { calls.push(['list', options]); return { sets: [set], default_id: ID }; },
-    loadFamilies() { return { families: { test_family: FAMILY } }; },
-    randomUUID: () => UUID, now: () => 1000, fs,
-    ...overrides,
-  };
-  return { root, calls, set, paths, artifact, handoff, context, dependencies,
-    tool: createImageGenerateTool(dependencies), input: { prompt: 'A quiet garden', seed: 42 } };
-}
-
-function failed(result, reason, restored) {
-  assert.equal(result.isError, true);
-  assert.equal(result.errorCode, TOOL_ERROR_CODES.EXECUTION_FAILED);
-  assert.equal(result.metadata.result_kind, 'image_generate');
-  assert.equal(result.metadata.status, 'failed');
-  assert.equal(result.metadata.reason, reason);
-  if (restored !== undefined) assert.equal(result.metadata.chat_restore, restored);
-}
+const { ID, UUID, FAMILY, png, fixture, failed } = require('../helpers/image-generate-fixture');
 
 test('registry fallback loads without requiring the unfinished runner', () => {
   const original = Module._load;
@@ -99,6 +25,24 @@ test('registry fallback loads without requiring the unfinished runner', () => {
     assert.equal(loaded.name, 'image_generate');
     assert.equal(typeof loaded.execute, 'function');
   } finally { Module._load = original; }
+});
+
+test('advertised complete size pairs and defaults match every installed family preset', () => {
+  const manifest = require('../../services/tools/tool-manifest.json');
+  const families = require('../../config/sdcpp-families.json').families;
+  const descriptor = manifest.tools.find(({ name }) => name === 'image_generate');
+  const advertised = [...new Set(descriptor.description.match(/\d+x\d+/g))];
+  assert.equal(advertised.length, 8);
+  for (const family of Object.values(families)) {
+    assert.deepEqual(advertised, family.resolutions);
+  }
+  const { width, height } = descriptor.parameters.properties;
+  assert.deepEqual([width.default, height.default], [1024, 1024]);
+  assert.deepEqual(width.enum, advertised.map((pair) => Number(pair.split('x')[0])));
+  assert.deepEqual(height.enum, advertised.map((pair) => Number(pair.split('x')[1])));
+  assert.ok(descriptor.description.includes('portrait example: 1120x1472'));
+  assert.ok(descriptor.description.includes('landscape example: 1472x1120'));
+  assert.ok(descriptor.description.includes('do not combine dimensions from different pairs'));
 });
 
 test('collaborators are checked before the engine or model set', async (t) => {
@@ -146,12 +90,30 @@ test('every parameter violation names the parameter and stops before suspend', a
     const f = fixture(t);
     const result = await f.tool.execute({ ...f.input, [parameter]: value }, f.context);
     failed(result, 'image_invalid_params');
+    assert.equal(result.metadata.failure_class, 'bad_arguments');
+    assert.equal(result.metadata.effects, 'none');
+    assert.ok(result.metadata.remediation.includes('image_generate'));
     assert.ok(result.content.includes(parameter), result.content);
     assert.equal(result.content.includes('\n'), false);
     if (parameter === 'width' || parameter === 'height') {
       for (const size of FAMILY.resolutions) assert.ok(result.content.includes(size));
     }
     assert.equal(f.calls.some(([kind]) => kind === 'suspend'), false);
+  }
+});
+
+test('mismatched size pairs and invalid dimension types carry repair advice without GPU work', async (t) => {
+  for (const [width, height] of [[1472, 1472], [1024, 1120], [1024, '1024'],
+    [null, 1024], [true, 1024], [1024, NaN], [Infinity, 1024]]) {
+    const f = fixture(t);
+    const result = await f.tool.execute({ ...f.input, width, height }, f.context);
+    failed(result, 'image_invalid_params');
+    assert.equal(result.metadata.failure_class, 'bad_arguments');
+    assert.equal(result.metadata.effects, 'none');
+    assert.ok(result.metadata.remediation.includes('matching width/height pair'));
+    assert.ok(result.metadata.remediation.includes('omit both dimensions'));
+    for (const size of FAMILY.resolutions) assert.ok(result.metadata.remediation.includes(size));
+    assert.equal(f.calls.some(([kind]) => ['suspend', 'register', 'run', 'artifact', 'restore'].includes(kind)), false);
   }
 });
 
@@ -176,12 +138,14 @@ test('happy path uses exact argv, publishes after release, records provenance an
   const f = fixture(t);
   const result = await f.tool.execute({ ...f.input, model_set_id: ID, negative_prompt: 'blur', width: 1472, height: 1120, steps: 25, cfg_scale: 4 }, f.context);
   assert.equal(result.isError, false);
-  assert.equal(result.content, 'Generated a 1472x1120 image (seed 42, 25 steps, 3s).\n'
-    + 'Saved as artifacts/generated.png. The image is already shown to the user in the chat.');
+  assert.equal(result.content, 'Image: A quiet garden.\nGenerated a 1472x1120 image (seed 42, 25 steps, 3s).\n'
+    + 'Saved as artifacts/generated.png. The image is already shown to the user in the chat.\n'
+    + 'The primary image is already shown in chat. Briefly acknowledge completion; do not add another Markdown image or invent an image URL.\n'
+    + JSON.stringify({ image_title: 'A quiet garden', source_artifact_id: 'artifact-1' }));
   assert.equal(result.metadata.result_kind, 'image_generated');
   assert.deepEqual(result.metadata.generatedArtifacts, [f.artifact]);
   assert.deepEqual(result.metadata.provenance, { backend: 'sdcpp', family: 'test_family', engine_tag: 'test-tag',
-    model_set_id: ID, quant: 'Q4_K', seed: 42, width: 1472, height: 1120, steps: 25, cfg_scale: 4,
+    model_set_id: ID, quant: 'Q4_K', model_label: 'test_family · Q4_K', seed: 42, width: 1472, height: 1120, steps: 25, cfg_scale: 4,
     image_prompt: 'A quiet garden', image_negative_prompt: 'blur' });
   const [, owner, memory] = f.calls.find(([kind]) => kind === 'suspend');
   assert.deepEqual(owner, { kind: 'builtin', tool_name: 'image_generate', call_id: 'call-1', stream_id: 'stream-1' });
@@ -207,7 +171,7 @@ test('happy path uses exact argv, publishes after release, records provenance an
   const [, sessionId, artifactInput] = f.calls.find(([kind]) => kind === 'artifact');
   assert.equal(sessionId, f.context.sessionId);
   assert.deepEqual(artifactInput, { content: png(1472, 1120), artifactKind: 'image', mimeType: 'image/png',
-    title: 'Generated image', fileName: `${options.opId}.png`, width: 1472, height: 1120, pngValidated: true });
+    title: 'A quiet garden', fileName: 'A quiet garden.png', width: 1472, height: 1120, pngValidated: true });
   assert.equal(fs.existsSync(options.outputPath), false);
   assert.deepEqual(f.calls.find(([kind]) => kind === 'resolve').slice(1), [ID, { storePath: path.join(f.root, 'image-models.json') }]);
   assert.equal(f.calls.some(([kind]) => kind === 'list'), false);
@@ -216,6 +180,14 @@ test('happy path uses exact argv, publishes after release, records provenance an
 // F29: the persisted tool_result keeps the prompt sent to the engine. The
 // canonical normalizer redacts engine/system prompt keys named "prompt", so
 // provenance must not use that name or the caption showed "[redacted]".
+test('provenance labels the model with the saved set label, else the family label', async (t) => {
+  const labelled = fixture(t);
+  labelled.set.label = '  My Qwen  ';
+  assert.equal((await labelled.tool.execute(labelled.input, labelled.context)).metadata.provenance.model_label, 'My Qwen');
+  const family = fixture(t, { loadFamilies: () => ({ families: { test_family: { ...FAMILY, label: 'Test Family' } } }) });
+  assert.equal((await family.tool.execute(family.input, family.context)).metadata.provenance.model_label, 'Test Family · Q4_K');
+});
+
 test('provenance survives the canonical tool_result normalizer unchanged', async (t) => {
   const { buildCanonicalTurnEvent } = require('../../services/backend/canonical-turn-event');
   const f = fixture(t);
@@ -407,8 +379,8 @@ test('failed chat restore still returns the image and restart guidance', async (
   assert.equal(result.isError, false);
   assert.equal(result.metadata.chat_restore, 'failed');
   assert.equal(result.metadata.reason, 'image_chat_restore_failed');
-  assert.equal(result.content.split('\n')[1], 'Saved as artifacts/generated.png. The image is already shown to the user in the chat.');
-  assert.equal(result.content.split('\n')[2], 'The chat engine did not come back; send your next message to restart it.');
+  assert.equal(result.content.split('\n')[2], 'Saved as artifacts/generated.png. The image is already shown to the user in the chat.');
+  assert.equal(result.content.split('\n').at(-1), 'The chat engine did not come back; send your next message to restart it.');
   assert.deepEqual(result.metadata.generatedArtifacts, [f.artifact]);
 });
 
@@ -495,4 +467,116 @@ test('failure maps chat restore failure and redacts service-owned paths from std
   assert.equal(result.content.includes(f.root), false);
   assert.equal(result.content.includes('\n'), false);
   assert.equal(f.calls.filter(([kind]) => kind === 'restore').length, 1);
+});
+
+test('edit reads a session-bound reference before GPU handoff and publishes a new image with source provenance', async (t) => {
+  const fx = fixture(t, { readReference: async (options) => {
+    assert.equal(options.sessionId, 'session-1'); assert.equal(options.artifactId, 'original-image');
+    return { artifactId: options.artifactId, width: 1024, height: 1024, buffer: png(), region: null };
+  } });
+  fx.paths.vision_projector = path.join(fx.root, 'vision.gguf');
+  fx.dependencies.loadFamilies = () => ({ families: { test_family: { ...FAMILY, vision_flag: '--llm_vision' } } });
+  const result = await createImageGenerateTool(fx.dependencies).execute({ ...fx.input, source_artifact_id: 'original-image' }, fx.context);
+  assert.equal(result.isError, false);
+  assert.equal(result.metadata.provenance.source_artifact_id, 'original-image');
+  const run = fx.calls.find(([name]) => name === 'run')[1];
+  assert.equal(run.argv[run.argv.indexOf('--llm_vision') + 1], fx.paths.vision_projector);
+  assert.equal(run.argv.includes('-r'), true);
+  assert.equal(fs.existsSync(run.argv[run.argv.indexOf('-r') + 1]), false, 'temporary reference removed after settlement');
+});
+
+test('editing without a projector fails before GPU handoff', async (t) => {
+  const fx = fixture(t);
+  const result = await fx.tool.execute({ ...fx.input, source_artifact_id: 'original-image' }, fx.context);
+  failed(result, 'image_edit_unavailable');
+  assert.equal(fx.calls.some(([name]) => name === 'suspend'), false);
+});
+
+test('model title becomes searchable artifact metadata and a safe, unique filename', async (t) => {
+  const fx = fixture(t);
+  const result = await fx.tool.execute({ ...fx.input, title: 'Green apple on a blue plate' }, fx.context);
+  assert.equal(result.isError, false);
+  const input = fx.calls.find(([name]) => name === 'artifact')[2];
+  assert.equal(input.title, 'Green apple on a blue plate');
+  assert.equal(input.fileName, 'Green apple on a blue plate.png');
+  const bad = await fx.tool.execute({ ...fx.input, title: 'x'.repeat(101) }, fx.context);
+  assert.equal(bad.isError, true);
+});
+
+
+test('invalid edit references fail before suspending chat or starting the engine', async (t) => {
+  const fx = fixture(t, { readReference: async () => { throw new Error('wrong session or corrupt image'); } });
+  fx.paths.vision_projector = path.join(fx.root, 'vision.gguf');
+  fx.dependencies.loadFamilies = () => ({ families: { test_family: { ...FAMILY, vision_flag: '--llm_vision' } } });
+  const result = await createImageGenerateTool(fx.dependencies).execute({ ...fx.input, source_artifact_id: 'original' }, fx.context);
+  failed(result, 'image_edit_source_invalid');
+  assert.equal(fx.calls.some(([name]) => name === 'suspend' || name === 'run'), false);
+});
+
+test('edit staging refuses a linked scratch directory without writing a source copy', async (t) => {
+  const fx = fixture(t, { readReference: async () => ({ artifactId: 'original', width: 1024, height: 1024, buffer: png(), region: null }) });
+  fx.paths.vision_projector = path.join(fx.root, 'vision.gguf');
+  fx.dependencies.loadFamilies = () => ({ families: { test_family: { ...FAMILY, vision_flag: '--llm_vision' } } });
+  const outside = path.join(fx.root, 'outside');
+  fs.mkdirSync(outside);
+  fs.symlinkSync(outside, path.join(fx.root, 'image-engine-scratch'), process.platform === 'win32' ? 'junction' : 'dir');
+  const result = await createImageGenerateTool(fx.dependencies).execute({ ...fx.input, source_artifact_id: 'original' }, fx.context);
+  assert.equal(result.isError, true);
+  assert.equal(fx.calls.some(([name]) => name === 'run'), false);
+  assert.deepEqual(fs.readdirSync(outside), []);
+  assert.equal(fx.calls.filter(([name]) => name === 'restore').length, 1);
+});
+
+
+test('null input and invalid edit geometry return actionable errors before GPU work', async(t)=>{
+  const fx=fixture(t,{readReference:async()=>{throw new Error('image_edit_invalid_region');}});
+  assert.equal((await fx.tool.execute(null,fx.context)).metadata.failure_class,'bad_arguments');
+  fx.paths.vision_projector=path.join(fx.root,'vision.gguf');fx.dependencies.loadFamilies=()=>({families:{test_family:{...FAMILY,vision_flag:'--llm_vision'}}});
+  const result=await createImageGenerateTool(fx.dependencies).execute({...fx.input,source_artifact_id:'original'},fx.context);
+  assert.match(result.content,/region/);assert.match(result.metadata.remediation,/region/);
+  assert.equal(fx.calls.some(([name])=>name==='suspend'),false);
+});
+
+test('edits retain source dimensions and reject unsupported source sizes before GPU work', async(t)=>{
+  for(const [width,height,overrides] of [[800,600,{}],[1024,1024,{width:1472,height:1120}]]){
+    const fx=fixture(t,{readReference:async()=>({artifactId:'original',width,height,buffer:png(width,height)})});
+    fx.paths.vision_projector=path.join(fx.root,'vision.gguf');fx.dependencies.loadFamilies=()=>({families:{test_family:{...FAMILY,vision_flag:'--llm_vision'}}});
+    const result=await createImageGenerateTool(fx.dependencies).execute({...fx.input,source_artifact_id:'original',...overrides},fx.context);
+    assert.equal(result.metadata.reason,'image_edit_size_unsupported');assert.doesNotMatch(result.metadata.remediation,/omit both/);
+    assert.equal(fx.calls.some(([name])=>name==='suspend'),false);
+  }
+});
+
+test('fallback title preserves Unicode scalars and the real artifact service persists safe unique names', async(t)=>{
+  const {ArtifactWorkspaceService}=require('../../services/artifact-workspace-service');
+  const fx=fixture(t);const service=new ArtifactWorkspaceService({configService:{getState:()=>({toolsWorkspaceRoot:fx.root})},sessionMessageReader:()=>[]});
+  fx.context.artifactService=service;
+  const result=await fx.tool.execute({...fx.input,prompt:'a'.repeat(99)+'🌱 garden'},fx.context);
+  assert.equal(result.isError,false);const artifact=result.metadata.generatedArtifacts[0];
+  assert.equal(artifact.title,'a'.repeat(99)+'🌱');assert.equal(artifact.title.isWellFormed(),true);
+  assert.ok(fs.existsSync(path.join(fx.root,artifact.display_path)));
+  assert.match(artifact.file_name,/^[a-z0-9-]+\.png$/);
+});
+
+
+test('generated schema stays in parity and freehand has at least three points',()=>{
+  const manifest=require('../../services/tools/tool-manifest.json');
+  const {updateImageToolSchema}=require('../../scripts/generate-image-tool-schema');
+  assert.deepEqual(updateImageToolSchema(structuredClone(manifest),require('../../config/sdcpp-families.json').families),manifest);
+  const validate=new (require('ajv'))({strict:false}).compile(manifest.tools.find(x=>x.name==='image_generate').parameters);
+  assert.equal(validate({prompt:'edit',region:{kind:'freehand',points:[[1,1],[10,10]]}}),false);
+  assert.equal(validate({prompt:'edit',region:{kind:'freehand',points:[[1,1],[10,10],[20,1]]}}),true);
+});
+
+test('a cancel that lands after the render but before publication publishes nothing and removes scratch', async (t) => {
+  const controller = new AbortController();
+  const f = fixture(t);
+  const restore = f.handoff.restoreAndRelease;
+  // The owning turn is lost while the chat engine is being restored.
+  f.handoff.restoreAndRelease = async (options) => { controller.abort(); return restore(options); };
+  f.context.abortSignal = controller.signal;
+  failed(await f.tool.execute(f.input, f.context), 'image_cancelled', 'ok');
+  assert.equal(f.calls.some(([kind]) => kind === 'artifact'), false, 'no unreferenced artifact is published');
+  const output = f.calls.find(([kind]) => kind === 'run')[1].outputPath;
+  assert.equal(fs.existsSync(output), false, 'the rendered scratch PNG is removed');
 });

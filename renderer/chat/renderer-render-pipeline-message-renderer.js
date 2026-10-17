@@ -205,7 +205,9 @@
       // A4: an approval card's state (live, paused, inactive) moves without any
       // message changing, so neither the no-op guard, the settled-root memo nor
       // a streaming patch would repaint it. Committed only by a full render.
-      const approvalCardKey = globalThis.rendererApprovalBlock?.approvalCardStateKey?.(state, paneSessionId) || '';
+      // The proposal cards' read model (row 59 checkpoint 3) rides the same comparand.
+      const approvalCardKey = (globalThis.rendererApprovalBlock?.approvalCardStateKey?.(state, paneSessionId) || '')
+        + (globalThis.rendererProposalCardStore?.proposalCardStateKey?.(paneSessionId) || '');
       // Transcript view is baked into row markup as expansion defaults: a switch
       // on this pane's session commits through a full render (session-scoped
       // comparand; a pane session change is already a full render).

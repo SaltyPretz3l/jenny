@@ -49,6 +49,8 @@
    * @param {string} [opts.copyId] - Unique ID for copy-target linking
    * @param {string} [opts.ariaLabel='Code output'] - Accessible label
    * @param {string} [opts.className] - Additional class on the wrapper
+   * @param {string} [opts.copyLabel] - Accessible name and tooltip of the copy button (defaults from label)
+   * @param {string} [opts.toolbarActionsHtml] - Trusted markup placed before the copy button in the toolbar
    * @returns {string} HTML string
    */
   function codeblock(opts) {
@@ -60,7 +62,7 @@
     var lineNumbers = Boolean(o.lineNumbers);
     var hasLabel = o.label != null && o.label !== '';
     var caption = hasLabel ? escapeHtml(o.label) : (lang || 'text');
-    var copyAria = escapeHtml(hasLabel ? jt('inventory.codeblock.copyLabel', 'Copy {label}', { label: String(o.label).toLowerCase() }) : jt('inventory.codeblock.copyCode', 'Copy code'));
+    var copyAria = escapeHtml(o.copyLabel ? String(o.copyLabel) : hasLabel ? jt('inventory.codeblock.copyLabel', 'Copy {label}', { label: String(o.label).toLowerCase() }) : jt('inventory.codeblock.copyCode', 'Copy code'));
     var ariaLabel = escapeHtml(o.ariaLabel || jt('inventory.codeblock.codeOutput', 'Code output'));
     var copyId = o.copyId ? escapeHtml(o.copyId) : '';
     var wrapCls = 'inv-codeblock-wrap';
@@ -82,9 +84,10 @@
     }
 
     var toolbar = '';
-    if (copyable || lang || hasLabel) {
+    if (copyable || lang || hasLabel || o.toolbarActionsHtml) {
       toolbar = '<div class="inv-codeblock-toolbar">'
         + '<span class="inv-codeblock-language">' + caption + '</span>'
+        + (typeof o.toolbarActionsHtml === 'string' ? o.toolbarActionsHtml : '')
         + copyButton
         + '</div>';
     }

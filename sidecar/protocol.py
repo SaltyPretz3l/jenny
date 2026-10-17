@@ -10,7 +10,7 @@ CONTENT_LENGTH_HEADER = "Content-Length"
 # changes can bump one shared API version without extra capability negotiation.
 # Upgrade policy: see docs/operations/versioning-and-migration.md.
 # The paired client constant lives at services/backend/sidecar-client.js.
-API_VERSION = "2026-08-17"
+API_VERSION = "2026-10-15"
 
 INITIALIZE_METHOD = "initialize"
 # Initialize `mode` discriminator value (sidecar/runtime/initialize_mode.py owns
@@ -20,8 +20,16 @@ INITIALIZE_METHOD = "initialize"
 INITIALIZE_MODE_FULL_RUNTIME = "full_runtime"
 SHUTDOWN_METHOD = "shutdown"
 BACKGROUND_RUN_METHOD = "background.run"
+# Optional subagent_routing: host-normalized provider preferences, captured on
+# ChatRequestContext for this turn. It changes neither engine nor tool authority.
 CHAT_SEND_METHOD = "chat.send"
 CHAT_CANCEL_METHOD = "chat.cancel"
+# Exact-command Run adapter (row 59 checkpoint 3): a chat-shaped turn that runs ONE
+# already-proposed run_command call through the ordinary policy/approval/admission/
+# execution owners with no model. Cancelled by the existing chat.cancel (request_id).
+# Capability: initialize result ``command_proposal_version`` (1). Desktop only: it is
+# deliberately absent from HOST_ALLOWED_RPC_METHODS.
+COMMAND_EXECUTE_PROPOSAL_METHOD = "command.execute_proposal"
 # Inbound shell->sidecar NOTIFICATION (no id, no response): the shell observed
 # the managed local engine producing work (decode/prompt-eval/load telemetry on
 # its captured stderr). Stamps the engine-liveness clock consulted by the
@@ -34,6 +42,7 @@ SESSION_RUN_MODE_UPDATED_METHOD = "session.run_mode_updated"
 # ALLOWED_NOTIFICATION_METHODS. Success re-emits the existing
 # CONTEXT_COMPACTED_METHOD notification; no new notification channel exists.
 CHAT_COMPACT_METHOD = "chat.compact"
+CONTEXT_PREVIEW_METHOD = "context.preview"
 MODELS_LIST_METHOD = "models.list"
 MODELS_UNLOAD_METHOD = "models.unload"
 # Returns the models currently resident in the app-managed Ollama daemon
@@ -42,25 +51,54 @@ MODELS_UNLOAD_METHOD = "models.unload"
 # load" self-catalog feature. See sidecar/runtime/request_dispatch.py.
 MODELS_RESIDENT_METHOD = "models.resident"
 MODELS_OLLAMA_BLOB_METHOD = "models.ollama_blob"
-MEMORY_SUGGEST_METHOD = "memory.suggest"
 MEMORY_SAVE_METHOD = "memory.save"
 MEMORY_LIST_METHOD = "memory.list"
 MEMORY_PENDING_LIST_METHOD = "memory.pending.list"
 MEMORY_PENDING_DELETE_METHOD = "memory.pending.delete"
+MEMORY_PENDING_ACCEPT_METHOD = "memory.pending.accept"
 MEMORY_UPDATE_METHOD = "memory.update"
 MEMORY_DELETE_METHOD = "memory.delete"
 MEMORY_RECALL_METHOD = "memory.recall"
-MEMORY_RECALL_RECENT_METHOD = "memory.recall_recent"
 MEMORY_STATUS_METHOD = "memory.status"
-# Desktop project delete: move every memory row of one project to another
-# (General) in one transaction. Never exposed as a tool.
-MEMORY_MOVE_PROJECT_METHOD = "memory.move_project"
+# Memory v2 (schema v9) user actions from Electron; never exposed as tools.
+# Undo/restore act on the operations ledger; archive_project is the desktop
+# project delete; purge_session is a chat delete; clear_suppressions empties
+# the forgotten list ("Clear forgotten list").
+MEMORY_UNDO_METHOD = "memory.undo"
+MEMORY_RESTORE_METHOD = "memory.restore"
+MEMORY_ARCHIVE_PROJECT_METHOD = "memory.archive_project"
+MEMORY_PURGE_SESSION_METHOD = "memory.purge_session"
+MEMORY_EXPORT_SESSION_METHOD = "memory.export_session"
+MEMORY_IMPORT_SESSION_METHOD = "memory.import_session"
+MEMORY_CHAT_SESSIONS_METHOD = "memory.chat_sessions"
+MEMORY_CLEAR_SUPPRESSIONS_METHOD = "memory.clear_suppressions"
+# Memory v2 reflection ("Jenny takes notes", row 58 W2). reflection_state,
+# policy_epoch and apply run inline; reflect is a preemptible auxiliary
+# inference (family `inference`) that carries inference_context and writes
+# nothing. Electron re-checks consent before it calls apply.
+MEMORY_REFLECTION_STATE_METHOD = "memory.reflection_state"
+MEMORY_POLICY_EPOCH_METHOD = "memory.policy_epoch"
+MEMORY_REFLECT_METHOD = "memory.reflect"
+MEMORY_APPLY_METHOD = "memory.apply"
+# Memory v2 W4: erase (hard delete of one row, inline), operations (the
+# content-free undo ledger, inline) and embed_step (Electron pumps it while the
+# chat model is idle and hybrid recall is on; family `memory_index`).
+MEMORY_ERASE_METHOD = "memory.erase"
+MEMORY_OPERATIONS_METHOD = "memory.operations"
+MEMORY_EMBED_STEP_METHOD = "memory.embed_step"
 # Semantic catalog (row 41): Electron pumps index_step while the chat model is
 # idle; search/status/purge serve the knowledge tools and Settings. Desktop only.
 CATALOG_INDEX_STEP_METHOD = "catalog.index_step"
 CATALOG_SEARCH_METHOD = "catalog.search"
 CATALOG_STATUS_METHOD = "catalog.status"
 CATALOG_PURGE_METHOD = "catalog.purge"
+# Conversation index (row 58 W4): Electron pushes chat text into the derived
+# conversation-index.db and searches it for conversations_search. Desktop only.
+CONVERSATIONS_INDEX_STATE_METHOD = "conversations.index_state"
+CONVERSATIONS_INDEX_SESSION_METHOD = "conversations.index_session"
+CONVERSATIONS_PURGE_METHOD = "conversations.purge"
+CONVERSATIONS_SEARCH_METHOD = "conversations.search"
+CONVERSATIONS_EMBED_STEP_METHOD = "conversations.embed_step"
 SUGGESTIONS_GENERATE_METHOD = "suggestions.generate"
 COMMIT_GENERATE_MESSAGE_METHOD = "commit.generate_message"
 HARDWARE_PROFILE_METHOD = "hardware.profile"
@@ -68,6 +106,7 @@ HARDWARE_VRAM_USAGE_METHOD = "hardware.vram_usage"
 HARNESS_INSPECT_METHOD = "harness.inspect"
 HARNESS_TURN_DIAGNOSTIC_METHOD = "harness.turn_diagnostic"
 MCP_INSPECT_METHOD = "mcp.inspect"
+MCP_PROMPT_GET_METHOD = "mcp.prompt_get"
 WORKSPACE_LIST_CHANGE_SETS_METHOD = "workspace.list_change_sets"
 WORKSPACE_PREFLIGHT_UNDO_METHOD = "workspace.preflight_undo"
 WORKSPACE_UNDO_CHANGE_SET_METHOD = "workspace.undo_change_set"
@@ -105,26 +144,46 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
         BACKGROUND_RUN_METHOD,
         CHAT_SEND_METHOD,
         CHAT_CANCEL_METHOD,
+        COMMAND_EXECUTE_PROPOSAL_METHOD,
         CHAT_COMPACT_METHOD,
+        CONTEXT_PREVIEW_METHOD,
         MODELS_LIST_METHOD,
         MODELS_UNLOAD_METHOD,
         MODELS_RESIDENT_METHOD,
         MODELS_OLLAMA_BLOB_METHOD,
-        MEMORY_SUGGEST_METHOD,
         MEMORY_SAVE_METHOD,
         MEMORY_LIST_METHOD,
         MEMORY_PENDING_LIST_METHOD,
         MEMORY_PENDING_DELETE_METHOD,
+        MEMORY_PENDING_ACCEPT_METHOD,
         MEMORY_UPDATE_METHOD,
         MEMORY_DELETE_METHOD,
         MEMORY_RECALL_METHOD,
-        MEMORY_RECALL_RECENT_METHOD,
         MEMORY_STATUS_METHOD,
-        MEMORY_MOVE_PROJECT_METHOD,
+        MEMORY_UNDO_METHOD,
+        MEMORY_RESTORE_METHOD,
+        MEMORY_ARCHIVE_PROJECT_METHOD,
+        MEMORY_PURGE_SESSION_METHOD,
+        MEMORY_EXPORT_SESSION_METHOD,
+        MEMORY_IMPORT_SESSION_METHOD,
+        MEMORY_CHAT_SESSIONS_METHOD,
+        MEMORY_CLEAR_SUPPRESSIONS_METHOD,
+        MEMORY_REFLECTION_STATE_METHOD,
+        MEMORY_POLICY_EPOCH_METHOD,
+        MEMORY_REFLECT_METHOD,
+        MEMORY_APPLY_METHOD,
+        MEMORY_ERASE_METHOD,
+        MEMORY_OPERATIONS_METHOD,
+        MEMORY_EMBED_STEP_METHOD,
         CATALOG_INDEX_STEP_METHOD,
         CATALOG_SEARCH_METHOD,
         CATALOG_STATUS_METHOD,
         CATALOG_PURGE_METHOD,
+        CONVERSATIONS_INDEX_STATE_METHOD,
+        CONVERSATIONS_INDEX_SESSION_METHOD,
+        CONVERSATIONS_PURGE_METHOD,
+        CONVERSATIONS_SEARCH_METHOD,
+        CONVERSATIONS_EMBED_STEP_METHOD,
         SUGGESTIONS_GENERATE_METHOD,
         COMMIT_GENERATE_MESSAGE_METHOD,
         HARDWARE_PROFILE_METHOD,
@@ -132,6 +191,7 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
         HARNESS_INSPECT_METHOD,
         HARNESS_TURN_DIAGNOSTIC_METHOD,
         MCP_INSPECT_METHOD,
+        MCP_PROMPT_GET_METHOD,
         WORKSPACE_LIST_CHANGE_SETS_METHOD,
         WORKSPACE_PREFLIGHT_UNDO_METHOD,
         WORKSPACE_UNDO_CHANGE_SET_METHOD,
@@ -165,6 +225,14 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
 # per request; a missing or invalid value falls back to the initialized
 # RuntimeConfig value and never fails the turn. See
 # sidecar/ai/routing/route_policy_runtime.py (``with_request_safety``).
+# Row 59 cp6 additive chat.send field, following WO-26 / D3:
+# params.inference_performance = {live: bool, provider_kind:
+# "ninfer"|"llama-server"|"ollama"|"other"}. Closed object; invalid fields
+# (including unknown keys) are ignored, never a turn failure. Only live=True
+# with provider_kind="ninfer" requests timings_per_token / return_progress.
+# Desktop advertises inference_performance_version: 1; hosted strips it.
+# Terminal capture is always on; notifications are ephemeral, outside history.
+INFERENCE_PERFORMANCE_METHOD = "inference.performance"
 CHAT_TOKEN_METHOD = "chat.token"
 # Streamed assistant text token. Required payload: ``delta`` and ``role``.
 # Optional additive payload: ``sequence`` (monotonic token index) so Electron
@@ -208,6 +276,10 @@ CHAT_QUESTION_BATCH_METHOD = "chat.question_batch"
 # resumable budget stop: ``tool_cap``, ``diminishing_returns``,
 # ``context_budget``, or ``max_iterations``. The key is omitted when absent;
 # this is not a new notification method and needs no allowlist change.
+# ``chat.done.params.completion_reason`` + ``proposal_id`` are an additive optional
+# pair (both or neither) naming an end-of-turn session-proposal boundary:
+# ``awaiting_proposal`` (a propose_session offer) or ``session_handoff_completed``
+# (a complete_session_handoff). The turn may carry no visible text; not a Resume stop.
 CHAT_DONE_METHOD = "chat.done"
 CHAT_ERROR_METHOD = "chat.error"
 # Scrubbed account-usage snapshot per provider response; never a canonical event.
@@ -227,12 +299,17 @@ TOOL_EXECUTE_ELECTRON_METHOD = "tool.execute_electron"
 # authority check. It is never advertised as a model tool or notification.
 RUNTIME_OPERATION_METHOD = "runtime.operation"
 MONITOR_EVENT_METHOD = "monitor.event"
+# delegate child frames additionally carry reasoning_effort and child_activity:
+# cumulative sequence, <=40 sanitized steps, <=4000 visible-text characters,
+# counts/truncation flags and an optional current-response visible-token estimate.
+# Advisory/ephemeral only; terminal report metadata remains reload authority.
 AGENT_PROGRESS_METHOD = "agent.progress"
 BUDGET_UPDATE_METHOD = "budget.update"
 # Ephemeral compaction-start notification; never enters the canonical turn record.
 # Payload: standard chat ctx + ``phase``, ``tokens_before``, ``message_count``.
 CONTEXT_COMPACTION_STARTED_METHOD = "context.compaction_started"
 CONTEXT_COMPACTED_METHOD = "context.compacted"
+HEURISTIC_FIRE_METHOD = "heuristic.fire"
 # Mid-turn context-usage snapshot for the composer context ring. EPHEMERAL:
 # snapshots are never journaled and never enter the canonical turn record --
 # ``chat.done``'s usage block stays the terminal truth. Payload: standard chat
@@ -270,7 +347,9 @@ ALLOWED_NOTIFICATION_METHODS: frozenset[str] = frozenset(
         BUDGET_UPDATE_METHOD,
         CONTEXT_COMPACTION_STARTED_METHOD,
         CONTEXT_COMPACTED_METHOD,
+        HEURISTIC_FIRE_METHOD,
         CONTEXT_USAGE_METHOD,
+        INFERENCE_PERFORMANCE_METHOD,
         CHAT_PLAN_USAGE_METHOD,
         RUNTIME_GAP_CANDIDATE_METHOD,
         RUNTIME_PROGRESS_METHOD,

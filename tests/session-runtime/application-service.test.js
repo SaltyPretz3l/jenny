@@ -469,7 +469,7 @@ test('the refusal passthrough is a closed allowlist, not the raw failure text', 
   const passthrough = [
     'runtime_closing', 'runtime_disabled', 'runtime_submission_capacity', 'host_pending_capacity',
     'project_pending_capacity', 'session_pending_capacity', 'pending_input_capacity',
-    'runtime_transcript_cache_pressure', 'session_busy',
+    'runtime_transcript_cache_pressure', 'session_busy', 'command_sandbox_transition',
   ];
   for (const code of passthrough) {
     const runtime = { store, submit: async () => { throw Object.assign(new Error(code), { code, submissionOutcome: 'rejected' }); } };

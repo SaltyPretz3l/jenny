@@ -1,5 +1,5 @@
 const {
-  normalizeJennyLevel,
+  mapStructuredLogLevelToken,
   resolveStructuredLogLevel,
 } = require('./log-level-utils');
 const { normalizeString } = require('./shared/normalize');
@@ -13,7 +13,9 @@ const {
 } = require('../renderer/shared/log-contract-utils');
 
 function normalizeLevel(value) {
-  return normalizeJennyLevel(value, 'INFO');
+  const token = String(value || '').trim().toUpperCase();
+  if (token === 'CRITICAL' || token === 'ERR') return 'ERROR';
+  return token === 'TRACE' ? 'INFO' : mapStructuredLogLevelToken(token, 'INFO');
 }
 
 function toFiniteNumberOrNull(value) {
@@ -121,17 +123,18 @@ function normalizeLogEntry(entry = {}, defaults = {}) {
   );
   const status = normalizeLogStatus(pickFirstPresent(entry.status, details.status, defaults.status), redactionOptions);
   const durationMs = toFiniteNumberOrNull(entry.duration_ms ?? details.duration_ms);
-  const rawData = entry && typeof entry.data === 'object' && !Array.isArray(entry.data)
-    ? { ...entry.data }
-    : { ...details };
+  const dataIsDetails = typeof entry.data !== 'object'
+    || Array.isArray(entry.data) || entry.data === entry.details;
+  const rawData = dataIsDetails ? details : { ...entry.data };
   const level = resolveEntryLevel(entry.level || defaults.level, { event, details, data: rawData });
   const rawTs = pickFirstNonEmpty(entry.ts, defaults.ts, new Date().toISOString());
-  const ts = redactText(rawTs, redactionOptions) === rawTs ? rawTs : new Date().toISOString();
+  const parsedTs = redactText(rawTs, redactionOptions) === rawTs ? Date.parse(rawTs) : NaN;
+  const ts = Number.isFinite(parsedTs) ? new Date(parsedTs).toISOString() : new Date().toISOString();
   const requestedMode = pickFirstNonEmpty(entry.redaction_mode, defaults.redaction_mode, 'redacted');
   const redactionMode = requestedMode === 'sanitized_snippets' ? requestedMode : 'redacted';
   const message = redactText(rawMessage, redactionOptions);
   const data = redactLogValue(rawData, redactionOptions);
-  const redactedDetails = redactLogValue(details, redactionOptions);
+  const redactedDetails = dataIsDetails ? data : redactLogValue(details, redactionOptions);
   const normalized = {
     ts,
     level,

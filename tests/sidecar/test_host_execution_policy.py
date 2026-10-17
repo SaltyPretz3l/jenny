@@ -17,6 +17,7 @@ from sidecar.ai.config_models import MCPServerConfig
 from sidecar.ai.container_mcp_servers import _default_mcp_servers
 from sidecar.ai.context.builder import WorkspaceStatus
 from sidecar.ai.host_policy import (
+    HOST_ALLOWED_RPC_METHODS,
     HOST_ALLOWED_TOOL_NAMES,
     HOST_EXECUTION_POLICY_VERSION,
     HostPolicyError,
@@ -359,3 +360,9 @@ def test_hosted_approval_schema_rejects_malformed_command_before_approval():
             validate_tool_arguments(
                 tool_name="run_command", arguments=arguments, input_schema=schema
             )
+
+
+def test_hosted_memory_rpc_allowlist_is_read_only() -> None:
+    """Hosted memory stays fail-closed: reads only, no v2 write or lifecycle method."""
+    memory_methods = {m for m in HOST_ALLOWED_RPC_METHODS if m.startswith("memory.")}
+    assert memory_methods == {"memory.status", "memory.list", "memory.recall"}

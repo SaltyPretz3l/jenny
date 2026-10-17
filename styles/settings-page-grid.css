@@ -10,14 +10,14 @@
    is always inside a group, so it never stretches across the page; whatever
    does span the page stops at --settings-wide-max. */
 .settings-view {
-  --settings-wide-max: 1120px;
+  --settings-wide-max: var(--page-wide-max);
 }
 
 .settings-content-scroll .settings-card.settings-section-active,
 .settings-flow {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(500px, 100%), 1fr));
-  column-gap: 64px;
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--page-group-min), 100%), 1fr));
+  column-gap: var(--page-group-gap);
   align-items: start;
 }
 

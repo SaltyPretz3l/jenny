@@ -10,7 +10,7 @@ test('uses canonical history shaping and returns only bounded metadata', () => {
   const messages = Array.from({ length: 16 }, (_, index) => ({
     role: index % 2 ? 'assistant' : 'user', content: `${secret}-${index}`,
   }));
-  const store = { getSession: () => ({
+  const store = { peekSession: () => ({
     messages,
     context_preferences: {
       history_scope: 'recent', include_personality: true, include_memory: true,
@@ -19,6 +19,7 @@ test('uses canonical history shaping and returns only bounded metadata', () => {
     linked_session_ids: ['a', 'b'],
     compaction_snapshot: { summary: secret },
   }) };
+  store.getSession = () => assert.fail('context details must not settle or write session state');
   const summary = buildNextTurnContextSummary(store, 'session-1', {
     attachment_count: 999, has_active_file: true, has_mentions: true,
   });
@@ -32,14 +33,14 @@ test('uses canonical history shaping and returns only bounded metadata', () => {
 
 test('fails closed for malformed or missing sessions', () => {
   assert.deepEqual(buildNextTurnContextSummary(null, 'x'), { status: 'unavailable', reason: 'session_unavailable' });
-  assert.deepEqual(buildNextTurnContextSummary({ getSession: () => null }, 'x'), { status: 'unavailable', reason: 'session_not_found' });
-  assert.deepEqual(buildNextTurnContextSummary({ getSession: () => { throw new Error('private path'); } }, 'x'), {
+  assert.deepEqual(buildNextTurnContextSummary({ peekSession: () => null }, 'x'), { status: 'unavailable', reason: 'session_not_found' });
+  assert.deepEqual(buildNextTurnContextSummary({ peekSession: () => { throw new Error('private path'); } }, 'x'), {
     status: 'unavailable', reason: 'session_read_failed',
   });
 });
 
 test('counts provider-shaped history after filtering and tool-call folding', () => {
-  const store = { getSession: () => ({
+  const store = { peekSession: () => ({
     messages: [
       { id: 'u1', role: 'user', content: 'Question' },
       { id: 'p1', role: 'assistant', kind: 'proactive_suggestion', content: 'Ignore me' },

@@ -1,7 +1,7 @@
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) { module.exports = factory(); return; }
-  root.rendererDiagnosticsIssueExplanations = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  if (typeof module === 'object' && module.exports) { module.exports = factory(require('./diagnostics-issue-utils')); return; }
+  root.rendererDiagnosticsIssueExplanations = factory(root.diagnosticsIssueUtils);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (issueUtils) {
   'use strict';
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) {
     return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) {
@@ -23,6 +23,7 @@
     'sidecar.memory': 'memory', 'memory.': 'memory',
     'ide.': 'workspace', 'renderer.workspace': 'workspace',
     'sidecar.': 'localEngine', 'electron.': 'app', 'ipc.': 'app',
+    'ai.': 'localEngine', 'runtime.': 'localEngine',
     'renderer.': 'appWindow', 'models.': 'models', 'ollama.': 'models',
     'llama': 'models', 'tool.': 'tools',
   };
@@ -58,6 +59,13 @@
       area: AREA_LABELS.app,
     },
     {
+      // The toast's own copy, so Needs attention says what the warning means.
+      id: 'ollamaTrayConflict', events: ['ollama.tray_app_conflict_detected'],
+      title: function () { return jt('models.ollama.tray.conflictTitle', 'Ollama Tray App Conflict'); },
+      cause: function () { return jt('models.ollama.tray.conflictMessage', "The Ollama tray app can silently kill Jenny's engine. Quit it or disable its Startup shortcut to prevent unexpected restarts."); },
+      action: null, area: AREA_LABELS.models,
+    },
+    {
       // llama.cpp's own W-level stderr lines (chat engine or the catalog embedder);
       // its E lines keep the per-area fallback.
       id: 'engineNotice', events: ['llama.server.output', 'ollama.output'],
@@ -68,21 +76,28 @@
     },
   ];
   function string(value) { return typeof value === 'string' ? value : ''; }
-  function rank(severity) { return severity === 'ERROR' ? 2 : severity === 'WARN' ? 1 : 0; }
-  function areaFor(component) {
+  function matchesEntry(entry, group) {
+    return entry.events.includes(string(group.event)) && (!entry.match || entry.match(group)
+      || Array.isArray(group.members) && group.members.some(function (member) { return member && matchesEntry(entry, member); }));
+  }
+  function matchIssueVariant(group) {
+    return ENTRIES.some(function (entry) { return entry.match && matchesEntry(entry, group || {}); });
+  }
+  function areaFor(component, layer) {
     var name = string(component).toLowerCase();
     var longest = '';
     Object.keys(AREA_PREFIXES).forEach(function (prefix) {
       if (name.startsWith(prefix) && prefix.length > longest.length) longest = prefix;
     });
-    return (longest ? AREA_LABELS[AREA_PREFIXES[longest]] : AREA_LABELS.app)();
+    var layerArea = { sidecar: 'localEngine', renderer: 'appWindow', electron: 'app' }[string(layer)];
+    return (longest ? AREA_LABELS[AREA_PREFIXES[longest]] : AREA_LABELS[layerArea] || AREA_LABELS.app)();
   }
   function explainIssue(group) {
     group = group || {};
     var event = string(group.event);
     for (var i = 0; i < ENTRIES.length; i += 1) {
       var entry = ENTRIES[i];
-      if (entry.events.includes(event) && (!entry.match || entry.match(group))) {
+      if (matchesEntry(entry, group)) {
         return {
           id: entry.id, title: entry.title(),
           cause: entry.cause(group),
@@ -91,13 +106,13 @@
         };
       }
     }
-    var area = areaFor(group.component);
+    var area = areaFor(group.component, group.layer);
     return {
       id: 'fallback:' + event,
       title: group.severity === 'ERROR'
         ? jt('diagnostics.issues.explain.fallback.errorTitle', '{area} reported an error', { area: area })
         : jt('diagnostics.issues.explain.fallback.warningTitle', '{area} reported a warning', { area: area }),
-      cause: jt('diagnostics.issues.explain.fallback.cause', 'Jenny has no specific advice for this yet. Technical details show what was recorded.'),
+      cause: jt('diagnostics.issues.explain.fallback.cause', 'Jenny has no specific advice for this yet. Open Details to see what was recorded.'),
       action: null, area: area,
     };
   }
@@ -114,13 +129,15 @@
       }
       current.members.push(member);
       current.count += Number.isFinite(group.count) ? group.count : 1;
-      if (rank(group.severity) > rank(current.severity)) current.severity = group.severity;
+      if (issueUtils.severityRank(group.severity) > issueUtils.severityRank(current.severity)) current.severity = group.severity;
       var ts = string(group.ts);
-      if (ts > current.ts) current.ts = ts;
+      var chronological = issueUtils.compareEntriesChronologically({ ts: ts }, { ts: current.ts });
+      if (chronological > 0 || chronological === 0 && ts > current.ts) current.ts = ts;
     });
     return Array.from(merged.values()).sort(function (a, b) {
-      return rank(b.severity) - rank(a.severity) || (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0);
+      return issueUtils.severityRank(b.severity) - issueUtils.severityRank(a.severity)
+        || issueUtils.compareEntriesChronologically(b, a) || (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0);
     });
   }
-  return Object.freeze({ explainIssue: explainIssue, mergeByExplanation: mergeByExplanation });
+  return Object.freeze({ explainIssue: explainIssue, mergeByExplanation: mergeByExplanation, matchIssueVariant: matchIssueVariant });
 });

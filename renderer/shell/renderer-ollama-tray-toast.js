@@ -4,7 +4,8 @@
  *
  * Depends on the `window.jennyShell.ollamaTray` bridge and the
  * `ollama_tray_remediation` feature flag, and fails soft when either is absent.
- * Toasts are deduplicated per session.
+ * Toasts are deduplicated per session, and "Don't show again" silences them
+ * on later launches (the WARN stays in Diagnostics).
  *
  * Remediation actions run only from an explicit click.
  */
@@ -24,6 +25,33 @@
 
   // Show at most once per app session.
   var shownThisSession = false;
+  // Per-profile opt-out; the detection WARN still lands in Diagnostics.
+  var DISMISSED_STORAGE_KEY = 'jenny.ollamaTray.conflictToastDismissed';
+
+  function resolveStorage(deps) {
+    if (deps && deps.storage !== undefined) return deps.storage;
+    try {
+      return root && root.localStorage ? root.localStorage : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function isDismissed(storage) {
+    try {
+      return Boolean(storage) && storage.getItem(DISMISSED_STORAGE_KEY) === '1';
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function rememberDismissed(storage) {
+    try {
+      if (storage) storage.setItem(DISMISSED_STORAGE_KEY, '1');
+    } catch (_error) {
+      // best effort: the toast still closes for this session
+    }
+  }
 
   function isFeatureEnabled(featureFlags) {
     return Boolean(featureFlags && featureFlags.ollama_tray_remediation === true);
@@ -79,7 +107,7 @@
       });
   }
 
-  function buildActions(deps) {
+  function buildActions(deps, getToastId) {
     var bridge = deps.bridge || null;
     var showToast = typeof deps.showToast === 'function' ? deps.showToast : null;
     var appendClientLog = typeof deps.appendClientLog === 'function' ? deps.appendClientLog : null;
@@ -136,6 +164,16 @@
           navigate('models');
         },
       },
+      {
+        id: 'dismiss',
+        label: jt('models.ollama.tray.dontShowAgain', 'Do not show again'),
+        kind: 'default',
+        onClick: function onDismissClick() {
+          rememberDismissed(resolveStorage(deps));
+          var toastId = getToastId();
+          if (toastId && typeof deps.dismissToast === 'function') deps.dismissToast(toastId);
+        },
+      },
     ];
   }
 
@@ -144,7 +182,7 @@
    * tray-conflict WARN AND the flag is on. Dedup: shows at most once per
    * app session (module-level guard).
    *
-   * @param {Object} entry - a log entry from window.jennyShell.logs.onAppend
+   * @param {Object} entry - a log entry from window.jennyShell.diagnostics.logs.onEntry
    * @param {Object} deps
    * @param {Function} deps.showToast - (message, options) => toastId; mirrors
    *   renderer-shell/renderer-toast-utils.js's showToastMessage
@@ -153,6 +191,9 @@
    * @param {Function} [deps.navigate] - (sectionId) => void; routes to
    *   Settings > <sectionId>, mirrors openSettingsSection
    * @param {Function} [deps.appendClientLog] - (level, event, payload) => void
+   * @param {Function} [deps.dismissToast] - (toastId) => void; closes the toast
+   *   when the owner picks "Don't show again"
+   * @param {Object} [deps.storage] - localStorage-shaped store for that choice
    */
   function handleOllamaTrayConflictLogEntry(entry, deps) {
     var d = deps || {};
@@ -162,7 +203,7 @@
     if (!isFeatureEnabled(d.featureFlags)) {
       return;
     }
-    if (shownThisSession) {
+    if (shownThisSession || isDismissed(resolveStorage(d))) {
       return;
     }
     if (typeof d.showToast !== 'function') {
@@ -170,8 +211,9 @@
     }
     shownThisSession = true;
 
-    var actions = buildActions(d);
-    d.showToast(
+    var toastId = null;
+    var actions = buildActions(d, function () { return toastId; });
+    toastId = d.showToast(
       jt('models.ollama.tray.conflictMessage', "The Ollama tray app can silently kill Jenny's engine. Quit it or disable its Startup shortcut to prevent unexpected restarts."),
       {
         title: jt('models.ollama.tray.conflictTitle', 'Ollama Tray App Conflict'),

@@ -27,6 +27,8 @@
       dropReasoningStream = () => {},
       rawHandleComplete = async () => ({ buffered: false, terminal: false }),
       rawHandleError = async () => ({ buffered: false, terminal: false }),
+      dismissToast,
+      chatStreamToastSource,
       // Desktop notifications: told about every settled terminal, after cleanup.
       onTerminal = () => {},
     } = deps || {};
@@ -113,9 +115,17 @@
       try { applyLiveTurnPayload(payload); } catch (_e) { /* defensive */ }
       settleTerminalStreamAffordances(payload);
       const terminalMessageId = readTerminalMessageId(payload);
+      const shownBefore = Date.now();
       let result;
       try {
         result = await rawHandleComplete(payload);
+        // Only a complete the handler settled clears the session's error toast
+        // (a stale or unknown stream's complete, terminal false, is not a
+        // recovery), and only a toast shown before this complete began: the
+        // handler dispatches a queued send, which may already have failed.
+        if (result?.terminal && typeof dismissToast === 'function' && chatStreamToastSource) {
+          dismissToast(`${chatStreamToastSource}:${String(payload?.sessionId || payload?.streamId || 'active')}`, { shownBefore });
+        }
         return result;
       } finally {
         cleanupTerminalStreamState(payload?.streamId);

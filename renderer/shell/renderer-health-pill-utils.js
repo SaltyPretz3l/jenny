@@ -190,6 +190,8 @@
       : null;
     const noticeStorage = resolveNoticeStorage(dependencies.storage, windowRef);
     const now = typeof dependencies.now === 'function' ? dependencies.now : () => Date.now();
+    /* Row 59 cp6: GPU-memory evidence (renderer-health-pill-gpu.js). Null without the performance bridge. */
+    const gpuFeed = globalThis.rendererHealthPillGpu?.createGpuFeed({ window: windowRef, showToastMessage, openPopover: () => { if (!state.open) openPopover(); }, onChange: () => onGpuChange() }) || null;
     let unsubscribeErrorCenter = null;
     let unsubscribeUnattendedPause = null;
     let unsubscribeReminderFired = null;
@@ -235,7 +237,14 @@
         deriveRuntimeHealthState, now: now(), loadingSinceMs: state.loadingSince,
       });
       state.loadingSince = signal.loading ? (state.loadingSince || now()) : 0;
-      return signal;
+      return gpuFeed ? gpuFeed.adjustSignal(signal) : signal;
+    }
+
+    function onGpuChange() {
+      if (state.disposed) return;
+      if (state.snapshot && !state.error) state.toneLabel = computeSignal();
+      renderPill();
+      if (state.open) refreshPopoverContent();
     }
 
     function cancelElapsedTick() {
@@ -277,7 +286,8 @@
     function getRuntimeNames() {
       const runtime = state.snapshot && state.snapshot.runtime;
       return {
-        engine: normString(runtime && runtime.engine),
+        engine: markup && typeof markup.engineLabelForRuntime === 'function'
+          ? markup.engineLabelForRuntime(runtime || null) : normString(runtime && runtime.engine),
         model: normString(runtime && runtime.model),
       };
     }
@@ -304,6 +314,7 @@
         pauseState: state.runModeFacet.pauseState,
         systemStats: state.systemStats,
         titlebarLoad: isTitlebarLoadShown(),
+        gpuSection: gpuFeed ? gpuFeed.sectionHtml() : '',
       };
     }
 
@@ -320,7 +331,7 @@
       const runtime = state.snapshot && state.snapshot.runtime;
       const logs = state.snapshot && state.snapshot.logs;
       const slow = state.snapshot && state.snapshot.slow_operations;
-      const server = runtime && runtime.llama_server;
+      const server = runtime && (runtime.managed_server || runtime.llama_server);
       return [
         state.error,
         state.toneLabel.tone, state.toneLabel.label, state.toneLabel.summary,
@@ -335,10 +346,11 @@
         lifecycle && lifecycle.model_acquisition && lifecycle.model_acquisition.total_bytes,
         runtime && runtime.engine, runtime && runtime.model, runtime && runtime.model_loaded,
         server && server.state, server && server.alias, server && server.port,
-        server && server.acceleration_mode, server && server.last_error,
+        server && server.acceleration_mode, server && server.last_error, server && server.kind,
+        server && server.stopped_by, server && server.watchdog_watts,
         logs && logs.available && Array.isArray(logs.recent_issues) ? logs.recent_issues.length : 0,
         slow && slow.available && Array.isArray(slow.items) ? slow.items.length : 0,
-        statsSignature(), isTitlebarLoadShown(),
+        statsSignature(), isTitlebarLoadShown(), gpuFeed ? gpuFeed.signature() : '',
         getRecentErrors().map(function entrySig(entry) {
           return entry.key + ':' + entry.code + ':' + entry.at + ':' + entry.seen;
         }).join(','),
@@ -504,6 +516,7 @@
       const actionButton = target.closest('[data-health-pill-action]');
       if (!actionButton) return;
       const action = actionButton.getAttribute('data-health-pill-action');
+      if (action === 'hide-gpu-warning') { if (gpuFeed) void gpuFeed.dismiss(); return; }
       if (action === 'clear-errors') {
         /* EH-W11: clear the error center and keep the popover open —
          * the section omits itself on the re-render. */
@@ -537,13 +550,14 @@
               .finally(function finishRetry() { localRetryInFlight = false; });
           }
         }
-      } else if (action === 'restart-llama-server') {
-        /* Crash policy: the managed llama-server is never respawned on its
-         * own; this row and the next chat are the two recovery paths. */
-        const restart = windowRef?.jennyShell?.llamaServer?.restart;
+      } else if (action === 'restart-llama-server' || action === 'restart-ninfer') {
+        /* Crash policy: a managed server (llama-server or NInfer) is never
+         * respawned on its own; this row and the next chat are the two recovery paths. */
+        const bridge = action === 'restart-ninfer' ? windowRef?.jennyShell?.ninfer : windowRef?.jennyShell?.llamaServer;
+        const restart = bridge?.restart;
         if (!localRestartInFlight && typeof restart === 'function') {
           localRestartInFlight = true;
-          Promise.resolve(restart.call(windowRef.jennyShell.llamaServer))
+          Promise.resolve(restart.call(bridge))
             .catch(function ignoreRestartFailure() {})
             .finally(function finishRestart() {
               localRestartInFlight = false;
@@ -900,6 +914,7 @@
       state.queuedRefresh = null;
       cancelElapsedTick();
       closePopover();
+      if (gpuFeed) gpuFeed.dispose();
       if (documentRef) documentRef.removeEventListener('visibilitychange', handleVisibilityChange);
       if (typeof unsubscribeUnattendedPause === 'function') {
         try { unsubscribeUnattendedPause(); } catch (_error) { /* optional bridge cleanup */ }
@@ -982,6 +997,7 @@
       } catch (_error) { /* optional bridge */ }
     }
     globalThis.rendererHealthPillController = controller;
+    if (gpuFeed) gpuFeed.start();
     renderPill();
     refreshRunModeFacet();
     return controller;

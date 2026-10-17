@@ -30,7 +30,7 @@ function fixture(t) {
   const starts = [];
   h.service._startManagedSidecarChatStream = async request => {
     const { inference } = request.runtimeOperationGateway;
-    const base = { schema_version: 1, api_version: '2026-08-17', kind: 'inference',
+    const base = { schema_version: 1, api_version: '2026-10-15', kind: 'inference',
       operation_id: `operation_${starts.length}`, request_id: inference.requestId,
       session_id: h.sessionId, authority_revision: inference.authorityRevision };
     const work = runtime.store.listSummaries({ sessionId: h.sessionId }).items.find(item => item.status === 'running');

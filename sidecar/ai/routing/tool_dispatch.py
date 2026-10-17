@@ -10,7 +10,7 @@ from sidecar.ai.error_codes import CMP_TOOL_DISABLED, CMP_TOOL_EXECUTION_FAILED
 from sidecar.ai.host_policy import HOST_EXECUTION_POLICY_VERSION
 from sidecar.ai.mcp.exceptions import MCPError
 from sidecar.ai.routing.auto_checkpoint import inject_restore_point
-from sidecar.ai.routing.tool_authority import admit_scoped_tool_call
+from sidecar.ai.routing.tool_authority import admit_scoped_tool_call, is_electron_handoff_completion
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 
 _PROCESS_BACKED_BUILTINS = frozenset({
@@ -22,6 +22,8 @@ _ELECTRON_RESOURCE_START_TOOLS = frozenset({
     "jenny_status", "worktree_list", "worktree_create", "worktree_select", "worktree_delete",
     "automation_list", "automation_read", "workspace_present", "preview_test",
     "home", "task_board", "project_notes", "verify", "image_generate", "run_command",
+    "propose_git_action", "propose_command", "propose_session",
+    "session_message", "conversations_recent", "conversation_open", "conversations_search",
 })
 _CLEANUP_FIELDS = frozenset({
     "cleanup", "output_readers_terminated", "process_tree_terminated", "reason",
@@ -150,6 +152,19 @@ def _dispatch_ready(callback: Callable[[], None] | None) -> None:
         callback()
 
 
+def _admitted_start_callback(
+    ready: Callable[[], None] | None, admit: Callable[[], None], *, deferred: bool,
+) -> Callable[[], None] | None:
+    if not deferred:
+        return ready
+
+    def start() -> None:
+        admit()
+        _dispatch_ready(ready)
+
+    return start
+
+
 def dispatch_tool_call(  # noqa: PLR0913
     *, kernel: Any, call: Any, tool_arguments: dict[str, Any], descriptor: Any,
     request_id: str, session_id: str | None, runtime: Any,
@@ -172,11 +187,32 @@ def dispatch_tool_call(  # noqa: PLR0913
             message="hosted run_command requires the Electron execution worker bridge",
             retryable=False,
         )
-    admit_scoped_tool_call(
-        runtime=runtime, call=call, descriptor=descriptor,
-        tool_arguments=tool_arguments, visible_arguments=admission_arguments,
-        builtin_server_name=builtin_server_name, timeout_seconds=timeout_seconds,
+    request_context = getattr(runtime, "request_context", None)
+    # Docker command consent belongs to Electron. Its prepare exchange must run
+    # before checking the resulting approval, but admission still precedes the
+    # one-use producer start. Legacy dispatch and preparation-only turns retain
+    # their early authority check.
+    deferred_command_admission = (
+        call.tool_id == "run_command"
+        and getattr(descriptor, "server_name", "") == electron_server_name
+        and callable(on_dispatch_ready)
+        and getattr(request_context, "execution_context", None) is not None
+        and getattr(request_context, "handoff_preparation", None) is None
     )
+
+    def admit_call() -> None:
+        admit_scoped_tool_call(
+            runtime=runtime, call=call, descriptor=descriptor,
+            tool_arguments=tool_arguments, visible_arguments=admission_arguments,
+            builtin_server_name=builtin_server_name, timeout_seconds=timeout_seconds,
+        )
+
+    # Completion is authorized by Electron's exact preparation/attempt binding,
+    # not a runtime resource operation (which preparation deliberately refuses).
+    if not deferred_command_admission and not is_electron_handoff_completion(
+        runtime, call, descriptor, electron_server_name,
+    ):
+        admit_call()
     dispatch_kwargs = {"on_output_chunk": on_output_chunk} if on_output_chunk else {}
     if descriptor is not None and getattr(descriptor, "server_name", "") == electron_server_name:
         request_context = getattr(runtime, "request_context", None)
@@ -187,8 +223,12 @@ def dispatch_tool_call(  # noqa: PLR0913
             }
         resource_start = (
             on_dispatch_ready if call.tool_id in _ELECTRON_RESOURCE_START_TOOLS
-            and callable(getattr(runtime, "continuation_checkpoint", None))
+            and (deferred_command_admission
+                 or callable(getattr(runtime, "continuation_checkpoint", None)))
             and getattr(request_context, "execution_context", None) is not None else None
+        )
+        resource_start = _admitted_start_callback(
+            resource_start, admit_call, deferred=deferred_command_admission,
         )
         if resource_start is None:
             _dispatch_ready(on_dispatch_ready)

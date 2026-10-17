@@ -71,7 +71,7 @@ test('buildSettingsToggleListMarkup finds the switch through the shared row buil
 
 test('buildContextToggleListsMarkup splits prefs and feature flags by persistence path', () => {
   const lists = buildContextToggleListsMarkup({
-    contextPreferences: { includePersonality: true, includeMemory: false },
+    contextPreferences: { includePersonality: true, includeMemory: false, memoryOptOut: true },
     featureFlags: { token_budget: true, context_compaction: false },
     prefsDisabled: false,
     flagsDisabled: true,
@@ -81,10 +81,12 @@ test('buildContextToggleListsMarkup splits prefs and feature flags by persistenc
   const sources = new JSDOM(`<!doctype html><body>${lists.sources}</body>`).window.document;
   const runtime = new JSDOM(`<!doctype html><body>${lists.runtime}</body>`).window.document;
 
-  // sources = the 2 session runtime-preference toggles (not disabled here)
-  assert.equal(sources.querySelectorAll('[data-inv-toggle]').length, 2);
+  // sources = the 3 session runtime-preference toggles (not disabled here)
+  assert.equal(sources.querySelectorAll('[data-inv-toggle]').length, 3);
   assert.equal(sources.querySelector('[data-inv-toggle="contextIncludePersonalityToggle"]').getAttribute('aria-checked'), 'true');
   assert.equal(sources.querySelector('[data-inv-toggle="contextIncludeMemoryToggle"]').getAttribute('aria-checked'), 'false');
+  // Memory v2 (row 58 W1): the per-chat "Don't remember this chat" flag.
+  assert.equal(sources.querySelector('[data-inv-toggle="contextMemoryOptOutToggle"]').getAttribute('aria-checked'), 'true');
 
   // runtime = automatic summarization only (token budget left the page), disabled here
   assert.equal(runtime.querySelectorAll('[data-inv-toggle]').length, 1);

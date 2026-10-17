@@ -11,28 +11,15 @@ function _pendingTimingKey(userDataPath, streamId) {
   return `${userDataPath}\0${streamId}`;
 }
 
-function _purgePendingClientTiming(emitLog, now = Date.now()) {
-  for (const [key, entry] of _pendingClientTiming) {
-    if (now - entry.storedAt <= CLIENT_TIMING_PENDING_TTL_MS) continue;
-    _pendingClientTiming.delete(key);
-    clearTimeout(entry.expiryTimer);
-    emitLog('WARN', 'chat.turn_diagnostic_client_timing_expired', {
-      streamId: entry.streamId,
-    });
-  }
-}
-
 function _storePendingClientTiming(
   emitLog, userDataPath, streamId, timing, { preferExisting = false } = {}
 ) {
-  _purgePendingClientTiming(emitLog);
   const key = _pendingTimingKey(userDataPath, streamId);
   const existing = _pendingClientTiming.get(key);
   clearTimeout(existing?.expiryTimer);
   _pendingClientTiming.delete(key);
   const entry = {
     streamId,
-    storedAt: Date.now(),
     timing: preferExisting
       ? { ...timing, ...(existing?.timing || {}) }
       : { ...(existing?.timing || {}), ...timing },
@@ -58,8 +45,7 @@ function _storePendingClientTiming(
   }
 }
 
-function _takePendingClientTiming(emitLog, userDataPath, streamId) {
-  _purgePendingClientTiming(emitLog);
+function _takePendingClientTiming(_emitLog, userDataPath, streamId) {
   const key = _pendingTimingKey(userDataPath, streamId);
   const entry = _pendingClientTiming.get(key);
   _pendingClientTiming.delete(key);

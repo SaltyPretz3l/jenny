@@ -62,7 +62,7 @@ test('normalizeLayout drops unknown and duplicate views (first wins)', () => {
   const out = normalizeLayout(raw);
   assertValid(out);
   assert.deepEqual(stackOf(out, 'explorer').views, ['explorer', 'search', 'source-control']);
-  assert.deepEqual(stackOf(out, 'terminal').views, ['terminal', 'problems', 'run', 'test-runner', 'test-output']);
+  assert.deepEqual(stackOf(out, 'terminal').views, ['terminal', 'problems', 'run', 'test-runner', 'test-output', 'activity']);
   assert.deepEqual(stackOf(out, 'chat').views, ['chat', 'changes']);
 });
 
@@ -90,7 +90,7 @@ test('normalizeLayout drops empty view stacks and collapses single-child splits'
   // re-homed by the append rule.
   assert.equal(
     shape(out.root),
-    'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output),chat+changes!)',
+    'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output+activity),chat+changes!)',
   );
 });
 
@@ -118,7 +118,7 @@ test('normalizeLayout creates missing home stacks (left edge, collapsed bottom, 
   assertValid(out);
   assert.equal(
     shape(out.root),
-    'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output!),chat+changes!)',
+    'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output+activity!),chat+changes!)',
   );
   const out2 = normalizeLayout({
     v: 1,
@@ -127,7 +127,7 @@ test('normalizeLayout creates missing home stacks (left edge, collapsed bottom, 
   assertValid(out2);
   assert.equal(
     shape(out2.root),
-    'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output),chat+changes!)',
+    'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output+activity),chat+changes!)',
   );
 });
 

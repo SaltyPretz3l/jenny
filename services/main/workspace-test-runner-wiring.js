@@ -189,7 +189,7 @@ function createWorkspaceTestRunnerWiring(deps = {}) {
       let bundle;
       if (pinnedRun && pinnedRun.runId === String(runId || '')) {
         bundle = pinnedRun.bundle;
-        pinnedRun = null;
+        if (patch.terminationConfirmed !== false) pinnedRun = null;
       } else {
         bundle = bundleForCurrentRoot();
       }
@@ -233,6 +233,7 @@ function createWorkspaceTestRunnerWiring(deps = {}) {
     makeRunId: deps.makeRunId,
     log,
     resourceAdmissionProvider: deps.resourceAdmissionProvider,
+    activityScopeProvider: deps.activityScopeProvider,
     // S13: forward the service's run lifecycle to the renderer as a bridge push.
     // Flag-gated (belt-and-braces: run/abort are already gated, so the service
     // only emits under an enabled run) so a disabled feature never pushes.
@@ -250,7 +251,7 @@ function createWorkspaceTestRunnerWiring(deps = {}) {
     return Boolean(flags && flags.workspace_test_runner === true);
   }
 
-  function forProjectAuthority(authority, owner, { isAllowed = () => true } = {}) {
+  function forProjectAuthority(authority, owner, { isAllowed = () => true, sessionId = null } = {}) {
     const captured = Object.freeze({ ...authority });
     const assertCurrent = () => owner.requireCurrent(captured);
     assertCurrent();
@@ -267,6 +268,7 @@ function createWorkspaceTestRunnerWiring(deps = {}) {
       const bundle = bundleForCurrentRoot(captured.root_path || '');
       const configs = normalizeConfigs(bundle?.configStore.read({ configs: [] })?.configs || []);
       return { root: captured.root_path || '', configs, assertCurrent: assertRunCurrent,
+        activityScope: {schema_version:1,project_id:captured.project_id,session_id:sessionId,root_id:captured.root_id,root_revision:captured.root_revision},
         abortSignal: execution?.abortSignal || null,
         beforeProducer: execution?.beforeProducer || null, toolClaim: execution?.toolClaim || null,
         history: bundle ? {
@@ -278,7 +280,7 @@ function createWorkspaceTestRunnerWiring(deps = {}) {
           recordSkip: (...args) => bundle.history.recordSkip(...args),
           recordFinish(configId, runId, patch) {
             const result = bundle.history.recordFinish(configId, runId, patch);
-            if (pinnedRun?.runId === String(runId)) pinnedRun = null;
+            if (pinnedRun?.runId === String(runId) && patch.terminationConfirmed !== false) pinnedRun = null;
             return result;
           },
         } : null };
@@ -299,13 +301,17 @@ function createWorkspaceTestRunnerWiring(deps = {}) {
 
   return {
     forProjectAuthority,
+    getActivityRuns: () => service.getActivityRuns(),
+    getRunOutput: runId => service.getRunOutput(runId),
+    subscribeActivity: listener => service.subscribeActivity(listener),
     hasWorkspaceRun: () => service.hasWorkspaceRun(),
     listConfigs: () => (flagEnabled() ? service.listConfigs() : disabledEnvelope()),
     run: (payload) => (flagEnabled() ? service.run(payload) : disabledEnvelope()),
     // S14: abort is flag-gated like run — off => inert disabled envelope (no signal),
     // never reaching the service's controller.
-    abort: () => (flagEnabled() || service.getState().activeRun ? service.abort() : disabledEnvelope()),
+    abort: (payload) => (flagEnabled() || service.getState().activeRun ? service.abort(payload) : disabledEnvelope()),
     abortAndWait: () => service.abortAndWait(),
+    abortRun: payload => service.abortAndWait(payload),
     dispose: () => service.dispose(),
     // S18: flag-gated config write — off => inert disabled envelope (no persist).
     saveConfigs: (configs) => (flagEnabled() ? service.saveConfigs(configs) : disabledEnvelope()),

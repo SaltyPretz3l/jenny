@@ -220,7 +220,6 @@
       refreshObservability = async () => {},
       showToastMessage, dismissToast,
       dismissStreamErrors,
-      maybeSuggestMemoryCapture,
       appendClientLog,
       getInteractiveComposerStatusNotice,
       persistInteractiveFallbackRequest,
@@ -636,7 +635,6 @@
       refreshSnapshots,
       refreshObservability,
       dismissStreamErrors,
-      maybeSuggestMemoryCapture,
       getInteractiveComposerStatusNotice,
       persistInteractiveFallbackRequest,
       requestInteractiveGuardrailAnswer,
@@ -714,6 +712,8 @@
       dropReasoningStream: (streamId) => reasoningStreamMerger.drop(streamId),
       rawHandleComplete,
       rawHandleError,
+      dismissToast,
+      chatStreamToastSource: TOAST_SOURCE.chatStream,
       onTerminal: (event) => {
         // The away digest goes first: it only arms a coalesced read and never throws.
         state.awayDigestReader?.onRunSettled?.(event);

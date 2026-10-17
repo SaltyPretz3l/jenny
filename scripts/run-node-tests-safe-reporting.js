@@ -81,7 +81,9 @@ function isInfrastructureFailure(file, result) {
   if (!result || result.timedOut || result.terminationFailed || result.collateralKilled || result.code === 0) return false;
   const output = String(result.output || '');
   if (hasTestEvents(output, file) || /AssertionError|ERR_ASSERTION/.test(output)) return false;
-  const crashpad = /(?:^crashpad\s+not connected(?::[^\r\n]*)?\r?$|^\[[^\r\n]*ERROR:crashpad[^\r\n]*\]\s*not connected\b)/im.test(output);
+  // Node's TAP reporter prefixes child stderr with "# ". Assertion/test-event
+  // checks above still take precedence over a startup signature in that output.
+  const crashpad = /^(?:# )?(?:crashpad\s+not connected(?::[^\r\n]*)?\r?$|\[[^\r\n]*ERROR:crashpad[^\r\n]*\]\s*not connected\b)/im.test(output);
   const minusOne = result.code === -1 || result.code === 0xFFFFFFFF;
   return minusOne || crashpad;
 }

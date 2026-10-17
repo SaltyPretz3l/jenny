@@ -202,3 +202,19 @@ test('inspectContextPreferences does not warn for boolean include_active_file_co
   const { warnings } = inspectContextPreferences({ include_active_file_context: false });
   assert.ok(!warnings.some((w) => w.includes('include_active_file_context')));
 });
+
+/* ── memory_opt_out (memory v2, row 58) ── */
+
+test('memory_opt_out defaults to false and round-trips both spellings', () => {
+  assert.equal(DEFAULT_CONTEXT_PREFERENCES.memory_opt_out, false);
+  assert.equal(normalizeContextPreferences({}).memory_opt_out, false);
+  assert.equal(normalizeContextPreferences({ memory_opt_out: true }).memory_opt_out, true);
+  assert.equal(normalizeContextPreferences({ memoryOptOut: true }).memory_opt_out, true);
+  assert.equal(normalizeContextPreferences({ memory_opt_out: false, memoryOptOut: true }).memory_opt_out, false);
+});
+
+test('a malformed memory_opt_out falls back to false with a warning', () => {
+  const { normalized, warnings } = inspectContextPreferences({ memory_opt_out: 'yes' });
+  assert.equal(normalized.memory_opt_out, false);
+  assert.ok(warnings.includes('context_preferences.memory_opt_out'));
+});

@@ -93,7 +93,30 @@ def test_manifest_capability_is_owned_only_by_first_party_artifact_tools() -> No
         if entry.get("availability", {}).get("plan_mode_artifact_write") is True
     }
 
-    assert flagged == {"create_artifact", "mermaid_generate", "todo_write"}
+    assert flagged == {"create_artifact", "mermaid_generate", "memory", "todo_write"}
+
+
+def test_plan_mode_allows_memory_remember_but_not_update_or_forget() -> None:
+    descriptor = CanonicalToolDescriptor(
+        name="memory",
+        description="memory",
+        input_schema={"type": "object", "properties": {}},
+        side_effecting=True,
+        read_only=False,
+        availability=CanonicalToolAvailability(plan_mode_artifact_write=True),
+    )
+
+    def eligible(arguments: object, *, plan_mode: bool = True) -> bool:
+        return is_plan_artifact_write_eligible(
+            descriptor, "memory", arguments, plan_mode=plan_mode, read_only=True
+        )
+
+    assert eligible({"action": "remember", "text": "Uses tabs"})
+    assert not eligible({"action": "remember", "text": "Uses tabs"}, plan_mode=False)
+    for action in ("update", "forget", "REMEMBER", ""):
+        assert not eligible({"action": action, "id": 3, "text": "x"})
+    assert not eligible(None)
+    assert not eligible(["remember"])
 
 
 def test_plan_mode_keeps_the_todo_list_writable() -> None:

@@ -50,6 +50,36 @@ test('explicit approval and auto policy both pass through Electron authority', a
     assert.equal(result.metadata.execution.backend, 'docker');
   }
 });
+
+test('captured Auto grants cover default sandbox asks, with explicit policy and stale controls', async () => {
+  const { SessionExecutionAuthority } = require('../services/backend/session-execution-authority');
+  for (const scenario of ['auto', 'ask', 'paranoid', 'explicit_ask', 'rule_ask', 'deny', 'closed', 'forged']) {
+    const setup = fixture();
+    setup.service.toolPermissionStore.getSnapshot = () => ({ version: 1,
+      rules: scenario === 'rule_ask' ? [{ id: 'ask-command', decision: 'ask', match: { tool_id: 'run_command' } }] : [],
+      legacy_policies: scenario === 'explicit_ask' ? { run_command: 'ask' }
+        : scenario === 'deny' ? { run_command: 'deny' } : {} });
+    setup.service.configService.getState = () => ({ commandSandbox: { enabled: true },
+      safetyMode: scenario === 'paranoid' ? 'paranoid' : 'normal' });
+    const owner = new SessionExecutionAuthority({
+      projectAuthority: setup.service.projectAuthority, permissionStore: setup.service.toolPermissionStore,
+      knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
+      resolveProjectWorkspaceServices: () => ({}),
+    });
+    setup.options.executionAuthority = owner.captureSession('session', {
+      requestId: 'stream', approvalMode: scenario === 'ask' ? 'prompt' : 'auto_run',
+    });
+    if (scenario === 'closed') owner.close(setup.options.executionAuthority);
+    if (scenario === 'forged') setup.options.executionAuthority = { autoRun: true };
+    let prompts = 0;
+    setup.options.authorize = async () => { prompts++; return true; };
+    const result = await executeSandboxCommand(setup.service, setup.options);
+    const refused = ['deny', 'closed', 'forged'].includes(scenario);
+    assert.equal(result.success, !refused, scenario);
+    assert.equal(setup.submitted(), refused ? 0 : 1, scenario);
+    assert.equal(prompts, ['auto', 'deny', 'closed', 'forged'].includes(scenario) ? 0 : 1, scenario);
+  }
+});
 test('deny response and foreground-only schema reject without a host fallback', async () => {
   const setup = fixture();
   setup.options.authorize = async () => false;
@@ -150,5 +180,5 @@ test('cancelled bridge result persists before terminal settlement and releases t
 });
 
 test('the sandbox bridge passes every Electron-owned shell-free tool through (seam 17 of a new manifest tool)', () => {
-  assert.deepEqual([...SANDBOX_BRIDGE_TOOLS].sort(), ['ask_user', 'exit_plan_mode', 'home', 'project_notes', 'run_command', 'task_board']);
+  assert.deepEqual([...SANDBOX_BRIDGE_TOOLS].sort(), ['ask_user', 'complete_session_handoff', 'conversation_open', 'conversations_recent', 'conversations_search', 'exit_plan_mode', 'home', 'project_notes', 'propose_command', 'propose_session', 'run_command', 'task_board']);
 });

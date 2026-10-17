@@ -15,7 +15,6 @@
 
   const REHOST_EVENT = 'subagent-monitor:rehost';
   const DEFAULT_PANEL_ID = 'artifactReviewPanel';
-  const FOCUS_ATTRIBUTES = ['data-subagent-select', 'data-subagent-back', 'data-subagent-close'];
 
   // One monitor controller per chat pane. Two pages, at every width: the tree
   // (a delegation's children) and one child's drill-in. In Chat the monitor
@@ -69,6 +68,7 @@
     let cachedParts = null;
     let lastAsideHtml = '';
     let lastDockStage = null;
+    let hadResponseSelection = false;
 
     function currentMessages() {
       return getMessages(readSessionId().trim()) || [];
@@ -142,6 +142,8 @@
           summary: child.summary,
           answer: child.answer,
           steps: child.steps,
+          activity: child.activity,
+          reasoningEffort: child.reasoningEffort,
           stepCount: child.stepCount,
           model: child.model,
           provider: child.provider,
@@ -168,17 +170,6 @@
       return { model, parts: cachedParts, changed: true };
     }
 
-    function withFocusKept(rootEl, write) {
-      const active = rootEl?.ownerDocument?.activeElement;
-      let kept = null;
-      if (active && rootEl.contains(active)) {
-        const attribute = FOCUS_ATTRIBUTES.find((name) => active.hasAttribute?.(name));
-        if (attribute) kept = { attribute, value: active.getAttribute(attribute) };
-      }
-      write();
-      if (kept) rootEl.querySelector?.(`[${kept.attribute}="${cssEscape(kept.value)}"]`)?.focus?.({ preventScroll: true });
-    }
-
     function paintAside(parts) {
       if (!inspector) return false;
       const html = `<div class="subagent-monitor-shell" data-subagent-page="${page}">${parts.header}${parts.body}${parts.footer}</div>`;
@@ -186,7 +177,7 @@
       inspector.setAttribute('aria-hidden', 'false');
       if (html === lastAsideHtml && inspector.firstElementChild) return false;
       lastAsideHtml = html;
-      withFocusKept(inspector, () => { inspector.innerHTML = html; });
+      viewUtils.preserveLiveState(inspector, () => viewUtils.updateMarkup(inspector, html));
       return true;
     }
 
@@ -198,8 +189,17 @@
       inspector.innerHTML = '';
     }
 
+    function handleSelectionChange() {
+      const selection = windowRef.getSelection?.();
+      const selected = selection && !selection.isCollapsed && contentRoot()?.contains(selection.anchorNode);
+      if (selected) hadResponseSelection = true;
+      else if (hadResponseSelection) { hadResponseSelection = false; render({ force: true }); }
+    }
+
     function render(renderOptions = {}) {
       if (disposed || !openKey || !hosted) return false;
+      const selection = windowRef.getSelection?.();
+      if (selection && !selection.isCollapsed && contentRoot()?.contains(selection.anchorNode)) hadResponseSelection = true;
       if (renderOptions.force) { lastSignature = ''; cachedParts = null; lastAsideHtml = ''; }
       const computed = compute(renderOptions.now);
       if (!computed) {
@@ -217,7 +217,7 @@
         if (hosted === 'panel') {
           const rail = resolveRail();
           rail?.setPage?.(page);
-          rail?.repaint?.();
+          rail?.repaint?.({ force: renderOptions.force === true });
         } else {
           paintAside(computed.parts);
         }
@@ -541,6 +541,8 @@
 
     // What the panel rail sees of this controller.
     const handle = {
+      preserveLiveState: viewUtils.preserveLiveState,
+      updateMarkup: viewUtils.updateMarkup,
       isBoundTo: (record) => Boolean(openKey) && hosted === 'panel'
         && record?.key === openKey && record?.sessionId === readSessionId().trim(),
       panelMarkup: () => (openKey && hosted === 'panel' && !disposed ? (compute()?.parts || null) : null),
@@ -555,6 +557,7 @@
       documentRef.addEventListener('click', handleDocumentClick);
       documentRef.addEventListener('keydown', handleDocumentKeydown);
       documentRef.addEventListener('visibilitychange', handleVisibilityChange);
+      documentRef.addEventListener('selectionchange', handleSelectionChange);
       windowRef.addEventListener?.(REHOST_EVENT, rehost);
       lastDockStage = isDockStage();
       reconcile();
@@ -567,6 +570,7 @@
       documentRef?.removeEventListener?.('click', handleDocumentClick);
       documentRef?.removeEventListener?.('keydown', handleDocumentKeydown);
       documentRef?.removeEventListener?.('visibilitychange', handleVisibilityChange);
+      documentRef?.removeEventListener?.('selectionchange', handleSelectionChange);
       windowRef.removeEventListener?.(REHOST_EVENT, rehost);
       clearElapsedTick();
     }

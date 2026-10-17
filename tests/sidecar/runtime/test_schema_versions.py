@@ -4,6 +4,7 @@ import sys
 
 import sidecar.ai.container as container_mod
 from sidecar import server
+from sidecar.ai.conversations.store import CONVERSATION_INDEX_SCHEMA_VERSION
 from sidecar.ai.engines.ollama_catalog_cache import (
     SCHEMA_VERSION as OLLAMA_CATALOG_CACHE_SCHEMA_VERSION,
 )
@@ -38,6 +39,10 @@ def test_get_all_schema_versions_returns_sidecar_registry() -> None:
     assert catalog_entry["version"] == SEMANTIC_CATALOG_SCHEMA_VERSION
     assert catalog_entry["source"] == "sidecar/ai/semantic/store.py"
     assert catalog_entry["surface"] == "Semantic catalog index"
+    conversation_entry = by_id["sidecar.conversation_index"]
+    assert conversation_entry["version"] == CONVERSATION_INDEX_SCHEMA_VERSION == 1
+    assert conversation_entry["source"] == "sidecar/ai/conversations/store.py"
+    assert conversation_entry["forward_policy"] == "reject_future_rebuild_corrupt_cache"
     assert by_id["sidecar.runtime_gap"]["version"] == RUNTIME_GAP_SCHEMA_VERSION
     assert "sidecar.plugin_contract_set" not in by_id
     assert (

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import threading
 from collections.abc import Sequence
@@ -35,6 +36,8 @@ from sidecar.ai.routing.generation_runtime import (
     generate_step as _generate_step_runtime,
 )
 from sidecar.ai.routing.loop_runtime import LoopRuntime
+from sidecar.ai.routing.turn_boundary import TurnBoundary, detect_turn_boundary  # noqa: F401
+from sidecar.ai.tools.handoff_preparation import charge_preparation_generation
 from sidecar.ai.tools.models import (
     GenerationResult,
     GenerationUsage,
@@ -121,6 +124,8 @@ class ChatDecision:
     streamed_event_types: frozenset[str] = field(default_factory=frozenset)
     completion_source: str = "model"
     resumable_stop: str | None = None
+    # End-of-turn boundary (turn_boundary.TurnBoundary); chat.done carries its wire pair.
+    turn_boundary: Any | None = None
     # An explicit terminal failure carried through the normal decision seam.
     # The runtime serializes this as chat.error + turn_failed and must not emit
     # chat.done. None preserves the ordinary successful-decision contract.
@@ -138,6 +143,8 @@ class ChatDecision:
 
 
 class AgentKernel:
+    _diagnostics_store: Any
+
     def __init__(
         self,
         *,
@@ -166,6 +173,45 @@ class AgentKernel:
         self._cache_break_detector = CacheBreakDetector()
         self._compaction_breakers = CompactionCircuitBreakerRegistry()
         self._tokenizer_lock = threading.Lock()
+        if isinstance(self._context_builder, ContextBuilder):
+            self._context_builder._subagent_model_guidance = self._subagent_model_guidance
+
+    def _subagent_model_guidance(self, subagent_routing: Any = None) -> str:
+        from sidecar.ai.routing.subagent_model_routing import render_subagent_model_guidance
+
+        return render_subagent_model_guidance(self._config, self._engine, subagent_routing)
+
+    def create_subagent_router(self, config: RuntimeConfig) -> AgentKernel:
+        """Own a child engine while sharing only the existing read-only service seams."""
+        from sidecar.ai.engines.factory import create_engine
+        from sidecar.ai.routing.subagent_model_routing import close_subagent_engine
+
+        selection = create_engine(
+            config,
+            provider_descriptor=getattr(self._engine, "provider_descriptor", None),
+            provider_authority_check=getattr(self._engine, "_authority_check", None),
+        )
+        try:
+            if (
+                selection.engine_type != config.engine_type or selection.model != config.model
+                or selection.fallback_from is not None
+            ):
+                raise RuntimeError("Subagent engine failed to initialize the selected model")
+            diagnostics = getattr(self._engine, "_turn_diagnostics_store", None)
+            setter = getattr(selection.engine, "set_turn_diagnostics_store", None)
+            if callable(setter):
+                setter(diagnostics)
+            child = AgentKernel(
+                config=config, engine=selection.engine, mcp_client=self._mcp_client,
+                context_builder=copy.copy(self._context_builder), memory_store=self._memory_store,
+                harness_snapshot_provider=self._harness_snapshot_provider,
+                monitor_manager=self._monitor_manager, max_iterations=self._max_iterations,
+            )
+            child._diagnostics_store = getattr(self, "_diagnostics_store", diagnostics)
+            return child
+        except BaseException:
+            close_subagent_engine(selection.engine)
+            raise
 
     def set_harness_snapshot_provider(self, provider: Any | None) -> None:
         self._harness_snapshot_provider = provider
@@ -516,6 +562,7 @@ class AgentKernel:
         runtime: LoopRuntime | None = None,
         response_format: Any | None = None,
     ) -> tuple[GenerationResult, set[str]]:
+        charge_preparation_generation(runtime)  # a handoff preparation turn gets two generations
         return _generate_step_runtime(
             self,
             latest_user_content=latest_user_content,

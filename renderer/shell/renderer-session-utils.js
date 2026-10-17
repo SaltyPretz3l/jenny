@@ -182,7 +182,6 @@
       isInteractiveOtherTrigger,
       getActiveSession,
       patchSessionSummary,
-      rekeyDismissedMemorySession,
       rekeySessionArtifacts,
       clearProjectionContextCacheForSession = function noopClearProjectionContextCacheForSession() {},
       rekeyProjectionContextCache = function noopRekeyProjectionContextCache(_sourceSessionId, targetSessionId) {
@@ -658,7 +657,7 @@
       return list.filter((message) => {
         const kind = String(message && message.kind || '');
         return kind !== 'question_batch' && kind !== 'interactive_round_recap' &&
-          kind !== 'tool_use' && kind !== 'tool_result' && kind !== 'slash_command_output';
+          kind !== 'tool_use' && kind !== 'tool_result' && kind !== 'slash_command_output' && kind !== 'memory_note';
       });
     }
 
@@ -972,7 +971,6 @@
         }
       }
 
-      rekeyDismissedMemorySession?.(normalizedSource, normalizedTarget);
       rekeySessionArtifacts?.(normalizedSource, normalizedTarget);
 
       return normalizedTarget;

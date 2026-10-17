@@ -7,6 +7,8 @@
   const MAX_RENDERED_MEMORIES = 200;
   const MAX_STATUS_REASONS = 8;
   const MAX_STATUS_REASON_INPUTS = 32;
+  // Mirrors MAX_FORGOTTEN_SCOPES in sidecar/ai/memory/store.py.
+  const MAX_FORGOTTEN_SCOPES = 64;
 
   function isPlainObject(value) {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -72,7 +74,29 @@
       preserved: raw.preserved === true,
       repairRequired: raw.repair_required === true,
       degradedReasons: reasons,
+      alwaysOnBudget: normalizeAlwaysOnBudget(raw.always_on_budget),
+      forgottenScopes: normalizeScopeIds(raw.forgotten_scopes),
     };
+  }
+
+  // Scopes whose rows are all forgotten keep their tab and Forgotten fold.
+  function normalizeScopeIds(raw) {
+    if (!Array.isArray(raw)) return [];
+    const ids = raw.slice(0, MAX_FORGOTTEN_SCOPES)
+      .filter((id) => typeof id === 'string' && /^[\w.:-]{1,128}$/u.test(id));
+    return [...new Set(ids)];
+  }
+
+  // The always-on section's character budget (sidecar contracts.py); null
+  // keeps the page's built-in defaults.
+  function normalizeAlwaysOnBudget(raw) {
+    if (!isPlainObject(raw)) return null;
+    const budgetChars = boundedCount(raw.budget_chars);
+    const headingReserve = boundedCount(raw.heading_reserve);
+    const rowOverhead = boundedCount(raw.row_overhead);
+    return budgetChars && headingReserve !== null && rowOverhead !== null && budgetChars <= 100_000
+      ? { budgetChars, headingReserve, rowOverhead }
+      : null;
   }
 
   function buildMemoryHealthMessages(status) {
@@ -105,42 +129,49 @@
     return [...new Set(messages)];
   }
 
-  function safeDomId(value) {
-    const raw = String(value || 'unknown');
-    const stem = raw.replace(/[^A-Za-z0-9_-]+/g, '-').slice(0, 88) || 'unknown';
-    let hash = 2166136261;
-    for (let index = 0; index < raw.length; index += 1) {
-      hash ^= raw.charCodeAt(index);
-      hash = Math.imul(hash, 16777619);
-    }
-    return `${stem}-${(hash >>> 0).toString(36)}`;
-  }
-
   function createMemorySettingsRenderer(deps) {
     const { state, escapeHtml = (value) => String(value || '') } = deps || {};
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
-    const actionButton = root.inventoryActionButton;
     const textField = root.inventoryTextField;
     const selectField = root.inventorySelectField;
-    const toggleSwitch = root.inventoryToggleSwitch?.toggleSwitch;
-    const badge = root.inventoryBadge;
-    const collapsible = root.inventoryCollapsible || {};
     const settingsFoundation = root.rendererSettingsFoundation || {};
     const settingsSupport = root.rendererSettingsSupport || {};
+    const pageViewUtils = root.rendererMemoryPageViewUtils
+      || (typeof require === 'function' ? require('./renderer-memory-page-view-utils') : {});
     const kindOptions = Array.isArray(deps?.kindOptions) ? deps.kindOptions : [];
     const getProjectLabel = typeof deps?.getProjectLabel === 'function' ? deps.getProjectLabel : (projectId) => String(projectId || '');
-    const GENERAL_PROJECT_ID = 'project_general';
-    const button = (options) => typeof actionButton === 'function' ? actionButton(options) : '';
+    const MEMORY_POLICY_TOGGLE_IDS = ['memoryTakeNotes', 'memoryAskBeforeSaving', 'memoryPauseSaving', 'memoryUseInChats'];
+    const view = pageViewUtils.createMemoryPageView?.({
+      escapeHtml,
+      getKindLabel: deps?.getKindLabel,
+      chatTitle: (sessionId) => chatTitle(sessionId),
+    }) || null;
     let scheduledPendingFocusKey = '';
+
+    function findChat(sessionId) {
+      const id = String(sessionId || '').trim();
+      if (!id) return null;
+      const sessions = Array.isArray(state?.sessions) ? state.sessions : [];
+      return sessions.find((row) => row && (row.id === id || row.session_id === id)) || null;
+    }
+
+    // The chat by its title; '' when it is gone or untitled (never a raw id).
+    function chatTitle(sessionId) {
+      return String(findChat(sessionId)?.title || '').trim().slice(0, 80);
+    }
 
     function captureControlFocus(dom) {
       const active = root.document?.activeElement;
       if (!active || !dom.memorySection?.contains(active)) return null;
       let selector = '';
-      if (['memoryManagerSearchInput', 'memoryManagerKindFilter', 'pendingMemorySort'].includes(active.id)) {
+      if (['memoryManagerSearchInput', 'memoryManagerKindFilter'].includes(active.id) || /^memoryText\d+$/.test(active.id)) {
         selector = `#${active.id}`;
-      } else if (active.matches?.('[data-inv-toggle="memoryCaptureSuggestions"]')) {
-        selector = '[data-inv-toggle="memoryCaptureSuggestions"]';
+      } else if (MEMORY_POLICY_TOGGLE_IDS.includes(active.dataset?.invToggle) || /^memoryAlwaysOn-\d+$/.test(active.dataset?.invToggle || '')) {
+        selector = `[data-inv-toggle="${active.dataset.invToggle}"]`;
+      } else if (active.dataset?.memoryScope) {
+        selector = `[data-memory-scope="${active.dataset.memoryScope}"]`;
+      } else if (active.dataset?.memoryFold) {
+        selector = `[data-memory-fold="${active.dataset.memoryFold}"]`;
       }
       return selector ? {
         selector,
@@ -159,132 +190,36 @@
       }
     }
 
+    // Memory v2 switches (shell config `memory`); renderer-memory-actions-utils.js binds them.
+    function renderPolicyToggles(dom) {
+      const host = dom.memorySection?.querySelector?.('#memoryPolicyHost');
+      if (!host || typeof settingsSupport.buildSettingsToggleListMarkup !== 'function') return;
+      const memory = state.features?.memory || {};
+      host.innerHTML = settingsSupport.buildSettingsToggleListMarkup({
+        escapeHtml,
+        toggleSwitch: root.inventoryToggleSwitch?.toggleSwitch,
+        fields: [
+          { id: 'memoryTakeNotes', checked: memory.takeNotes !== false },
+          { id: 'memoryAskBeforeSaving', checked: memory.askBeforeSaving === true },
+          { id: 'memoryPauseSaving', checked: memory.pauseSaving === true },
+          { id: 'memoryUseInChats', checked: memory.useInChats !== false },
+        ],
+      });
+    }
+
     function renderControls(dom) {
-      const focusSnapshot = captureControlFocus(dom);
-      if (dom.memoryCapturePreferenceHost && typeof toggleSwitch === 'function') {
-        dom.memoryCapturePreferenceHost.innerHTML = toggleSwitch({
-          id: 'memoryCaptureSuggestions', label: jt('memory.settings.captureSuggestionsLabel', 'Offer local memory suggestions'),
-          checked: state.features?.memory?.captureSuggestions !== false,
-          description: jt('memory.settings.captureSuggestionsDescription', 'At most one suggestion per completed turn; approval is always required.'),
-          descriptionId: 'memoryCaptureSuggestionsDescription',
-        });
-      }
-      if (dom.pendingMemorySortHost && typeof selectField === 'function') {
-        dom.pendingMemorySortHost.innerHTML = selectField({
-          id: 'pendingMemorySort', label: jt('memory.settings.sortLabel', 'Sort'), value: state.memoryManager.pendingSort,
-          options: [{ value: 'newest', label: jt('memory.sort.newest', 'Newest') }, { value: 'oldest', label: jt('memory.sort.oldest', 'Oldest') }, { value: 'confidence', label: jt('memory.sort.highestConfidence', 'Highest confidence') }],
-        });
-      }
-      if (dom.memoryProjectFilterHost && typeof selectField === 'function') {
-        dom.memoryProjectFilterHost.innerHTML = selectField({ id: 'memoryManagerProjectFilter', label: jt('settings.runtime.projectLabel', 'Project'), value: state.memoryManager.projectFilter || 'all', options: projectOptions() });
-      }
+      renderPolicyToggles(dom);
       if (dom.memoryKindFilterHost && typeof selectField === 'function') {
         dom.memoryKindFilterHost.innerHTML = selectField({ id: 'memoryManagerKindFilter', label: jt('memory.settings.kindLabel', 'Kind'), value: state.memoryManager.filter, options: kindOptions });
       }
       if (dom.memorySearchHost && typeof textField === 'function') {
-        dom.memorySearchHost.innerHTML = textField({ id: 'memoryManagerSearchInput', label: jt('memory.settings.searchLabel', 'Search'), value: state.memoryManager.searchQuery, placeholder: jt('memory.settings.searchPlaceholder', 'Search approved memories'), maxLength: 120 });
+        dom.memorySearchHost.innerHTML = textField({ id: 'memoryManagerSearchInput', label: jt('memory.settings.searchLabel', 'Search'), value: state.memoryManager.searchQuery, placeholder: jt('memory.page.searchPlaceholder', 'Search memories'), maxLength: 120 });
       }
-      restoreControlFocus(dom, focusSnapshot);
-    }
-
-    // The source chat by its title, never a raw session id (N5, 2026-09-27
-    // gate); a chat that is gone or untitled reads as plain "Chat".
-    function sourceChatLabel(sessionId) {
-      const id = String(sessionId || '').trim();
-      if (!id) return '';
-      const sessions = Array.isArray(state?.sessions) ? state.sessions : [];
-      const title = String(sessions.find((row) => row && (row.id === id || row.session_id === id))?.title || '').trim().slice(0, 80);
-      return title
-        ? jt('memory.provenance.chatTitled', 'Chat: {title}', { title })
-        : jt('memory.provenance.chat', 'Chat');
-    }
-
-    function provenanceMarkup(memory, { allowRemove = false, identity = '' } = {}) {
-      if (memory.provenance === 'source_removed') {
-        return '<p class="memory-provenance memory-provenance--removed">' + escapeHtml(jt('memory.provenance.sourceRemoved', 'Source removed; memory retained.')) + '</p>';
+      if (dom.memoryFilesHost && view && !dom.memoryFilesHost.childElementCount) dom.memoryFilesHost.innerHTML = view.filesMarkup();
+      const headerActions = dom.memorySection?.querySelector?.('#memoryHeaderActions');
+      if (headerActions && !headerActions.childElementCount && typeof root.inventoryActionButton === 'function') {
+        headerActions.innerHTML = root.inventoryActionButton({ id: 'memoryExportButton', label: jt('memory.page.export', 'Export as Markdown'), variant: 'secondary', size: 'sm', dataset: { 'memory-page-action': 'export' } });
       }
-      const excerpt = String(memory.source_excerpt || '').slice(0, 240);
-      const session = sourceChatLabel(memory.session_id);
-      const date = String(memory.updated_at || memory.created_at || '').slice(0, 64);
-      if (!excerpt && !session && !date) return '';
-      const panelId = `memory-source-${safeDomId(identity || memory.id || memory.content_fingerprint)}`;
-      const triggerText = jt('memory.provenance.sourceDate', 'Source · {date}', { date: date ? date.slice(0, 10) : jt('memory.provenance.dateUnavailable', 'Date unavailable') });
-      const trigger = typeof collapsible.trigger === 'function'
-        ? collapsible.trigger({ id: panelId, className: 'memory-provenance-trigger', children: escapeHtml(triggerText) })
-        : '';
-      const content = '<div class="memory-provenance-meta">'
-        + `<span>${escapeHtml(date || jt('memory.provenance.dateUnavailable', 'Date unavailable'))}</span>`
-        + (session ? `<span>${escapeHtml(session)}</span>` : '')
-        + '</div>'
-        + (excerpt ? `<q>${escapeHtml(excerpt)}</q>` : '')
-        + (allowRemove ? button({ id: `remove-provenance-${safeDomId(memory.id)}`, label: jt('memory.actions.removeSource', 'Remove source'), variant: 'ghost', size: 'sm', dataset: { 'memory-action': 'remove-provenance', 'memory-id': String(memory.id) } }) : '');
-      const panel = typeof collapsible.content === 'function'
-        ? collapsible.content({ id: panelId, className: 'memory-provenance-panel', children: content })
-        : content;
-      return `<div class="memory-provenance">${trigger}${panel}</div>`;
-    }
-
-    // Memories live in a per-project layer over the General layer, so the list
-    // shows every project and labels rows that belong to a named project.
-    function projectOptions() {
-      const options = [{ value: 'all', label: jt('memory.filters.all', 'All') }];
-      const seen = new Set(['all']);
-      const known = Array.isArray(state.memoryManager.projects) ? state.memoryManager.projects : [];
-      const memories = Array.isArray(state.memoryManager.memories) ? state.memoryManager.memories : [];
-      for (const id of [...known.map((project) => project.id), ...memories.map((memory) => memory.project_id)]) {
-        const projectId = String(id || '').trim();
-        if (!projectId || seen.has(projectId)) continue;
-        seen.add(projectId);
-        options.push({ value: projectId, label: getProjectLabel(projectId) });
-      }
-      return options;
-    }
-
-    function projectBadge(projectId) {
-      const id = String(projectId || '').trim();
-      if (!id || id === GENERAL_PROJECT_ID) return '';
-      const text = getProjectLabel(id);
-      return typeof badge === 'function'
-        ? badge({ tone: 'default', size: 'sm', text, className: 'memory-record-project' })
-        : `<span class="memory-record-project">${escapeHtml(text)}</span>`;
-    }
-
-    function kindBadge(kind) {
-      const text = deps.getKindLabel(kind);
-      return typeof badge === 'function'
-        ? badge({ tone: 'muted', size: 'sm', text })
-        : `<span>${escapeHtml(text)}</span>`;
-    }
-
-    function approvedMarkup(memory) {
-      const editing = Number(state.memoryManager.editingMemoryId) === Number(memory.id);
-      const pendingAction = state.memoryManager.pendingActionById.get(Number(memory.id)) || '';
-      const title = deps.getFieldValue(memory, 'title');
-      const lessonText = deps.getFieldValue(memory, 'lesson_text');
-      const actions = editing
-        ? button({ id: `save-memory-${memory.id}`, label: pendingAction === 'save' ? jt('memory.actions.saving', 'Saving…') : jt('common.save', 'Save'), variant: 'primary', disabled: Boolean(pendingAction) || !deps.hasDraftChanges(memory), dataset: { 'memory-action': 'save', 'memory-id': String(memory.id) } })
-          + button({ id: `cancel-memory-${memory.id}`, label: jt('common.cancel', 'Cancel'), variant: 'ghost', disabled: Boolean(pendingAction), dataset: { 'memory-action': 'cancel', 'memory-id': String(memory.id) } })
-        : button({ id: `edit-memory-${memory.id}`, label: jt('common.edit', 'Edit'), variant: 'secondary', size: 'sm', dataset: { 'memory-action': 'edit', 'memory-id': String(memory.id) } })
-          + button({ id: `delete-memory-${memory.id}`, label: pendingAction === 'delete' ? jt('memory.actions.deleting', 'Deleting…') : jt('common.delete', 'Delete'), variant: 'danger', size: 'sm', disabled: Boolean(pendingAction), dataset: { 'memory-action': 'delete', 'memory-id': String(memory.id) } });
-      const body = editing && typeof textField === 'function'
-        ? textField({ id: `memoryTitle${memory.id}`, label: jt('memory.settings.titleLabel', 'Title'), value: title, maxLength: 120, spellcheck: true, dataset: { 'memory-draft-field': 'title', 'memory-id': String(memory.id) } })
-          + textField({ id: `memoryLesson${memory.id}`, label: jt('memory.settings.memoryLabel', 'Memory'), value: lessonText, maxLength: 240, multiline: true, spellcheck: true, dataset: { 'memory-draft-field': 'lesson_text', 'memory-id': String(memory.id) } })
-        : `<div class="memory-record-heading">${kindBadge(memory.lesson_kind)}${projectBadge(memory.project_id)}<strong class="memory-record-title">${escapeHtml(memory.title)}</strong></div><p>${escapeHtml(memory.lesson_text)}</p>`;
-      return `<article class="memory-record" role="listitem" data-memory-id="${memory.id}"><div class="memory-record-main">`
-        + body + provenanceMarkup(memory, { allowRemove: true, identity: `approved-${memory.id}` })
-        + `</div><div class="memory-record-actions">${actions}</div></article>`;
-    }
-
-    function pendingMarkup(candidate) {
-      const key = deps.buildPendingKey(candidate.session_id, candidate.content_fingerprint);
-      const pendingAction = state.memoryManager.pendingReviewActionByKey.get(key) || '';
-      const identity = `pending-${key}`;
-      return `<article class="memory-record" role="listitem" data-pending-memory-key="${escapeHtml(key)}"><div class="memory-record-main">`
-        + `<div class="memory-record-heading">${kindBadge(candidate.lesson_kind)}${projectBadge(candidate.project_id)}<strong class="memory-record-title">${escapeHtml(candidate.title)}</strong></div><p>${escapeHtml(candidate.lesson_text)}</p>`
-        + provenanceMarkup(candidate, { identity }) + `</div><div class="memory-record-actions">`
-        + button({ id: `approve-${safeDomId(key)}`, label: pendingAction === 'approve' ? jt('memory.actions.approving', 'Approving…') : jt('memory.actions.approve', 'Approve'), variant: 'primary', size: 'sm', disabled: Boolean(pendingAction), dataset: { 'pending-memory-action': 'approve', 'session-id': candidate.session_id, fingerprint: candidate.content_fingerprint } })
-        + button({ id: `dismiss-${safeDomId(key)}`, label: pendingAction === 'discard' ? jt('memory.actions.dismissing', 'Dismissing…') : jt('common.dismiss', 'Dismiss'), variant: 'ghost', size: 'sm', disabled: Boolean(pendingAction), dataset: { 'pending-memory-action': 'discard', 'session-id': candidate.session_id, fingerprint: candidate.content_fingerprint } })
-        + '</div></article>';
     }
 
     function renderStatus(dom, approvedFallback, pendingFallback) {
@@ -294,8 +229,6 @@
       const countStatus = statusUnavailable ? null : status;
       const approved = countStatus?.counts.approved ?? approvedFallback;
       const pending = countStatus?.counts.pending ?? pendingFallback;
-      if (dom.approvedMemoryCount) dom.approvedMemoryCount.textContent = String(approved);
-      if (dom.pendingMemoryCount) dom.pendingMemoryCount.textContent = String(pending);
       const approvedUnavailable = state.memoryManager.unavailable === true;
       const pendingUnavailable = state.memoryManager.pendingUnavailable === true;
       const listUnavailable = approvedUnavailable || pendingUnavailable;
@@ -313,9 +246,8 @@
         : allListsUnavailable
           ? jt('memory.settings.dataUnavailable', 'Memory data is unavailable.')
           : jt('memory.settings.countSummary', '{approved} approved · {pending} pending{availability}', { approved, pending, availability: listUnavailable ? jt('memory.settings.partiallyAvailableSuffix', ' · partially available') : status?.available ? '' : jt('memory.settings.healthUnavailableSuffix', ' · health details unavailable') });
-      // A healthy, loaded summary only repeated the header badge and the
-      // per-list count badges, so it shows only while it says something more
-      // (loading, partial, unavailable or degraded).
+      // A healthy, loaded summary only repeated the header badge, so it shows
+      // only while it says something more (loading, partial, unavailable or degraded).
       const summaryRedundant = !loading && Boolean(status?.available) && !degraded;
       if (dom.memorySummary) dom.memorySummary.hidden = summaryRedundant;
       if (summaryRedundant) {
@@ -359,7 +291,7 @@
           || !dom.memorySection?.classList.contains('settings-section-active')) {
           return;
         }
-        const target = [...(dom.pendingMemoryList?.querySelectorAll?.('[data-pending-memory-key]') || [])]
+        const target = [...(dom.pendingMemoryHost?.querySelectorAll?.('[data-pending-memory-key]') || [])]
           .find((node) => node.dataset.pendingMemoryKey === focusKey)
           || dom.memoryPageHeading;
         if (!target || typeof target.focus !== 'function') return;
@@ -369,54 +301,101 @@
       });
     }
 
-    function renderMemoryPage() {
-      const dom = getDom() || {};
-      if (!dom.memorySection) return;
-      renderControls(dom);
-      const memories = Array.isArray(state.memoryManager.memories) ? state.memoryManager.memories : [];
-      const query = String(state.memoryManager.searchQuery || '').trim().toLowerCase();
-      const kind = String(state.memoryManager.filter || 'all');
-      const project = String(state.memoryManager.projectFilter || 'all');
-      const filteredAll = memories.filter((memory) => (kind === 'all' || memory.lesson_kind === kind) && (project === 'all' || memory.project_id === project) && (!query || deps.searchText(memory).includes(query)));
-      const pendingAll = deps.sortPending(state.memoryManager.pendingCandidates, state.memoryManager.pendingSort);
-      const approvedLimit = Math.max(Number(state.memoryManager.approvedVisibleLimit) || MAX_RENDERED_MEMORIES, MAX_RENDERED_MEMORIES);
-      const basePendingLimit = Math.max(Number(state.memoryManager.pendingVisibleLimit) || MAX_RENDERED_MEMORIES, MAX_RENDERED_MEMORIES);
-      const pendingFocusIndex = pendingAll.findIndex((candidate) => (
-        deps.buildPendingKey(candidate.session_id, candidate.content_fingerprint)
-          === state.memoryManager.pendingFocusKey
-      ));
-      const pendingLimit = pendingFocusIndex >= basePendingLimit
-        ? Math.ceil((pendingFocusIndex + 1) / MAX_RENDERED_MEMORIES) * MAX_RENDERED_MEMORIES
-        : basePendingLimit;
-      const filtered = filteredAll.slice(0, approvedLimit);
-      const pending = pendingAll.slice(0, pendingLimit);
-      renderStatus(dom, memories.length, pendingAll.length);
-      // One empty message per list: the list's live status line carries it and
-      // the list itself stays empty (no second, centered placeholder row).
-      const approvedIdleMessage = state.memoryManager.loaded && !memories.length
-        ? jt('memory.status.noApproved', 'No approved memories saved yet.')
-        : state.memoryManager.status;
-      const pendingIdleMessage = state.memoryManager.pendingLoaded && !pendingAll.length
-        ? jt('memory.status.noPending', 'No pending memory candidates are waiting right now.')
-        : state.memoryManager.pendingStatus;
-      if (dom.approvedMemoryStatus) dom.approvedMemoryStatus.textContent = state.memoryManager.loading ? jt('memory.settings.loadingApproved', 'Loading approved memories…') : state.memoryManager.unavailable ? state.memoryManager.status : memories.length && !filtered.length ? jt('memory.settings.noApprovedMatches', 'No approved memories match these filters.') : approvedIdleMessage;
-      if (dom.pendingMemoryStatus) dom.pendingMemoryStatus.textContent = state.memoryManager.pendingLoading ? jt('memory.settings.loadingPending', 'Loading pending review…') : state.memoryManager.pendingUnavailable ? state.memoryManager.pendingStatus : pendingIdleMessage;
+    // Proposals show while "Ask before Jenny saves" is on, and after it is
+    // turned off for as long as some still wait.
+    function renderPending(dom, pendingAll) {
+      if (!dom.pendingMemoryHost || !view) return;
+      dom.pendingMemoryHost.innerHTML = pendingAll.length && !state.memoryManager.pendingUnavailable
+        ? view.pendingMarkup(pendingAll.slice(0, MAX_RENDERED_MEMORIES), deps.buildPendingKey, state.memoryManager.pendingReviewActionByKey, getProjectLabel)
+        : '';
+      dom.pendingMemoryHost.hidden = !dom.pendingMemoryHost.innerHTML;
+    }
+
+    function listStatusText(scopeRows, filtered) {
+      if (state.memoryManager.loading && !state.memoryManager.loaded) return jt('memory.page.loading', 'Loading…');
+      if (state.memoryManager.unavailable) return state.memoryManager.status;
+      if (!scopeRows.length) return jt('memory.page.empty', 'Jenny hasn’t remembered anything here yet. Tell her “remember that…” in a chat, or type /remember.');
+      return filtered.length ? '' : jt('memory.page.noMatches', 'No memories match.');
+    }
+
+    function renderList(dom, scopeRows, filteredAll) {
+      const limit = Math.max(Number(state.memoryManager.approvedVisibleLimit) || MAX_RENDERED_MEMORIES, MAX_RENDERED_MEMORIES);
+      const filtered = filteredAll.slice(0, limit);
+      const editingId = Number(state.memoryManager.editingMemoryId);
       if (dom.approvedMemoryList) {
-        dom.approvedMemoryList.innerHTML = filtered.map(approvedMarkup).join('');
+        dom.approvedMemoryList.innerHTML = filtered.map((memory) => view.recordMarkup(memory, {
+          editing: editingId === memory.id,
+          draftText: deps.getFieldValue(memory, 'lesson_text'),
+          busy: Boolean(state.memoryManager.pendingActionById.get(memory.id)),
+          sourceAvailable: Boolean(findChat(memory.session_id)),
+        })).join('');
         dom.approvedMemoryList.hidden = !filtered.length;
       }
-      if (dom.pendingMemoryList) {
-        dom.pendingMemoryList.innerHTML = pending.map(pendingMarkup).join('');
-        dom.pendingMemoryList.hidden = !pending.length;
+      if (dom.approvedMemoryStatus) dom.approvedMemoryStatus.textContent = listStatusText(scopeRows, filtered);
+      if (dom.approvedMemoryMoreHost) {
+        dom.approvedMemoryMoreHost.innerHTML = filtered.length < filteredAll.length && typeof root.inventoryActionButton === 'function'
+          ? root.inventoryActionButton({ id: 'show-more-approved-memories', label: jt('memory.settings.showMore', 'Show {count} more', { count: Math.min(MAX_RENDERED_MEMORIES, filteredAll.length - filtered.length) }), variant: 'secondary', dataset: { 'memory-list-action': 'show-more-approved' } })
+          : '';
       }
-      // Sort and filter controls only help once a list has items to act on.
-      if (dom.pendingMemorySortHost) dom.pendingMemorySortHost.hidden = !pendingAll.length;
-      const approvedFiltersHost = dom.memoryProjectFilterHost?.closest?.('.memory-page-filters');
-      if (approvedFiltersHost) approvedFiltersHost.hidden = !memories.length;
-      if (dom.approvedMemoryMoreHost) dom.approvedMemoryMoreHost.innerHTML = filtered.length < filteredAll.length
-        ? button({ id: 'show-more-approved-memories', label: jt('memory.settings.showMore', 'Show {count} more', { count: Math.min(MAX_RENDERED_MEMORIES, filteredAll.length - filtered.length) }), variant: 'secondary', dataset: { 'memory-page-action': 'show-more-approved' } }) : '';
-      if (dom.pendingMemoryMoreHost) dom.pendingMemoryMoreHost.innerHTML = pending.length < pendingAll.length
-        ? button({ id: 'show-more-pending-memories', label: jt('memory.settings.showMore', 'Show {count} more', { count: Math.min(MAX_RENDERED_MEMORIES, pendingAll.length - pending.length) }), variant: 'secondary', dataset: { 'memory-page-action': 'show-more-pending' } }) : '';
+    }
+
+    // hasRows: the scope has active or forgotten rows.
+    function renderFolds(dom, scope, scopeRows, hasRows) {
+      const busy = typeof deps?.pageBusy === 'function' ? deps.pageBusy() : {};
+      const archived = state.memoryManager.archivedByScope.get(scope) || [];
+      if (dom.memoryForgottenHost) {
+        dom.memoryForgottenHost.innerHTML = view.forgottenMarkup(archived, {
+          open: state.memoryManager.forgottenOpen === true, loading: state.memoryManager.archivedLoading === true, busyIds: busy.archived || new Set(),
+          deletedProject: pageViewUtils.isDeletedProjectScope(scope, state.memoryManager.projects),
+        });
+      }
+      if (dom.memoryHistoryHost) {
+        const byId = new Map([...scopeRows, ...archived].map((memory) => [memory.id, memory]));
+        dom.memoryHistoryHost.innerHTML = view.historyMarkup(state.memoryManager.operationsByScope.get(scope) || [], byId, {
+          open: state.memoryManager.historyOpen === true, loading: state.memoryManager.operationsLoading === true, busyIds: busy.operations || new Set(),
+        });
+      }
+      // An empty tab has nothing forgotten or changed worth a fold, unless one is open.
+      const showFolds = hasRows || archived.length > 0 || state.memoryManager.forgottenOpen === true || state.memoryManager.historyOpen === true;
+      if (dom.memoryForgottenHost) dom.memoryForgottenHost.hidden = !showFolds;
+      if (dom.memoryHistoryHost) dom.memoryHistoryHost.hidden = !showFolds;
+    }
+
+    function renderMemoryPage() {
+      const dom = getDom() || {};
+      if (!dom.memorySection || !view) return;
+      const focusSnapshot = captureControlFocus(dom);
+      renderControls(dom);
+      const memories = Array.isArray(state.memoryManager.memories) ? state.memoryManager.memories : [];
+      const projects = Array.isArray(state.memoryManager.projects) ? state.memoryManager.projects : [];
+      // Until the user picks a tab, open on General or else the first scope with rows.
+      if (!state.memoryManager.scopeTabChosen) {
+        const general = pageViewUtils.GENERAL_PROJECT_ID;
+        const hasGeneral = memories.some((memory) => pageViewUtils.memoryScope(memory) === general);
+        state.memoryManager.scopeTab = hasGeneral || !memories.length ? general : pageViewUtils.memoryScope(memories[0]);
+      }
+      const scope = state.memoryManager.scopeTab || pageViewUtils.GENERAL_PROJECT_ID;
+      const scopeRows = memories.filter((memory) => pageViewUtils.memoryScope(memory) === scope);
+      const query = String(state.memoryManager.searchQuery || '').trim().toLowerCase();
+      const kind = String(state.memoryManager.filter || 'all');
+      const filteredAll = scopeRows.filter((memory) => (kind === 'all' || memory.lesson_kind === kind) && (!query || deps.searchText(memory).includes(query)));
+      const pendingAll = deps.sortPending(state.memoryManager.pendingCandidates);
+      renderStatus(dom, memories.length, pendingAll.length);
+      const forgottenScopes = state.memoryManager.statusSnapshot?.forgottenScopes || [];
+      if (dom.memoryTabsHost) {
+        dom.memoryTabsHost.innerHTML = view.tabsMarkup(pageViewUtils.buildScopeTabs(memories, projects, scope, getProjectLabel, forgottenScopes), scope);
+      }
+      if (dom.memoryMeter) {
+        dom.memoryMeter.innerHTML = view.meterMarkup(pageViewUtils.alwaysOnUsage(memories, scope, state.memoryManager.statusSnapshot?.alwaysOnBudget), scope);
+        dom.memoryMeter.hidden = !dom.memoryMeter.innerHTML;
+      }
+      // Search and the kind filter only help once the tab has rows.
+      const tools = dom.memoryKindFilterHost?.closest?.('.memory-page-filters');
+      if (tools) tools.hidden = !scopeRows.length;
+      renderPending(dom, pendingAll);
+      renderList(dom, scopeRows, filteredAll);
+      renderFolds(dom, scope, scopeRows, scopeRows.length > 0 || forgottenScopes.includes(scope));
+      restoreControlFocus(dom, focusSnapshot);
       applyPendingFocus(dom);
     }
 

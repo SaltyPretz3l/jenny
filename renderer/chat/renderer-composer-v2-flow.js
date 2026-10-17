@@ -221,7 +221,7 @@
         }
         return;
       }
-      await startPromptSend(prompt, { restoreInputOnError: true });
+      await startPromptSend(prompt, { restoreInputOnError: true, attachImageEditDraft: true });
     }
 
     function handleInteractiveOptionSelect(batchId, questionId, optionId) {

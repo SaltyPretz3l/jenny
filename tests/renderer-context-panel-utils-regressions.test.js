@@ -88,51 +88,44 @@ test('the context panel starts collapsed unless the user explicitly expanded it'
   assert.equal(bindWithStoredPreference({ collapsed: false }), false, 'an explicit expand is honored');
 });
 
-// 2026-09-27 rail polish: humanized rows, selection, list semantics, jump,
-// focus preservation, Activity disclosure (Session Pulse removed).
+// Row 59 checkpoint 2: the context panel dropped its Artifacts list (the session rail's Outputs row opens
+// the artifact review panel). It keeps the toggle, the Diagnostic log and Activity.
 const orbitCard = require('../renderer/inventory/orbit-card.js');
 
 const RAIL_MARKUP = '<aside id="panel">'
-  + '<section id="contextArtifactSection"><span id="contextArtifactCount">0</span>'
-  + '<button id="contextArtifactExpand" type="button"></button><button id="contextPanelToggle" type="button"></button>'
-  + '<div id="contextArtifactList" role="list"></div></section>'
+  + '<section id="contextArtifactSection"><div class="context-section-header">'
+  + '<button id="contextPanelToggle" type="button"></button></div></section>'
   + '<section class="logs-collapsed" id="contextLogSection">'
   + '<button id="contextLogDisclosure" type="button" aria-expanded="false"><span id="contextLogCount">0</span></button>'
   + '<div id="contextSessionLogs" hidden></div></section></aside>';
 
-// One minute ago: the meta line's age is formatted live (Intl, en -> '1m ago').
-const ONE_MINUTE_AGO = new Date(Date.now() - 60000).toISOString();
-const FIXTURES = Object.freeze({
-  image: { id: 'img1', artifactType: 'image', title: 'cat.png', status: 'available', sourceMessageId: 'm1', timestamp: ONE_MINUTE_AGO, image: { width: 640, height: 480 } },
-  doc: { id: 'doc1', artifactType: 'generated_file', title: 'Plan', status: 'available', sourceMessageId: 'm2', timestamp: ONE_MINUTE_AGO, generatedFile: { fileName: 'plan.md', isMarkdownDocument: true } },
-  file: { id: 'file1', artifactType: 'generated_file', title: 'Script', status: 'available', sourceMessageId: '', timestamp: ONE_MINUTE_AGO, generatedFile: { fileName: 'main.py', isMarkdownDocument: false } },
-  tool: { id: 'tool1', artifactType: 'tool_output', title: 'Researched the topic', status: 'completed', sourceMessageId: 'm3', timestamp: ONE_MINUTE_AGO, tool: { toolName: 'delegate', summary: 'Researched the topic', isError: false } },
-  failed: { id: 'tool2', artifactType: 'tool_output', title: 'Search failed', status: 'error', sourceMessageId: 'm4', timestamp: ONE_MINUTE_AGO, tool: { toolName: 'web_search', isError: true } },
-});
-
-function mountRail(t, { artifacts = [], logs = [], artifactsState = {}, withJump = true } = {}) {
+function mountRail(t, { logs = [], sidePanel = null, activity = null } = {}) {
   const jsdom = new JSDOM(`<!doctype html><body>${RAIL_MARKUP}</body>`);
   const doc = jsdom.window.document;
-  const ctx = { artifacts, logs };
-  const calls = { open: [], jump: [] };
-  const state = { ui: { activeView: 'chat' }, currentSessionId: 's1', artifacts: artifactsState };
+  const ctx = { logs };
+  const calls = { views: [], artifactReads: 0, ownerLines: [] };
+  const state = { ui: { activeView: 'chat' }, currentSessionId: 's1', artifacts: {} };
   const originalI18n = globalThis.jennyI18n;
+  const originalActivity = globalThis.rendererChatActivity;
   globalThis.jennyI18n = { tag: () => 'en' };
+  if (activity) globalThis.rendererChatActivity = activity;
   const callbacks = {
     escapeHtml: orbitCard.escapeHtml,
     updateComposerSafeOffset() {},
-    getArtifactsForSession: (sessionId) => (sessionId === 's1' ? ctx.artifacts : []),
+    setActiveView: view => calls.views.push(view),
+    getArtifactsForSession: () => { calls.artifactReads += 1; return [{ id: 'a1', title: 'Plan' }]; },
     getLogEntries: () => ctx.logs,
-    openArtifactTarget: (id) => { calls.open.push(id); return Promise.resolve(); },
+    openArtifactTarget: () => Promise.resolve(),
+    sidePanel: sidePanel ? { ...sidePanel, syncOwnerLine: (panel, mode) => calls.ownerLines.push(mode), getSessionId: () => 's1' } : null,
   };
-  if (withJump) callbacks.jumpToArtifactSource = (id) => { calls.jump.push(id); };
   const controller = createContextPanelController({
     state,
     dom: {
       chatContextPanel: doc.getElementById('panel'),
-      contextArtifactList: doc.getElementById('contextArtifactList'),
       contextSessionLogs: doc.getElementById('contextSessionLogs'),
       contextPanelToggle: doc.getElementById('contextPanelToggle'),
+      // A stale composition may still hand these over: the panel ignores them.
+      contextArtifactList: doc.getElementById('contextArtifactList'),
       contextArtifactExpand: doc.getElementById('contextArtifactExpand'),
     },
     callbacks,
@@ -144,11 +137,10 @@ function mountRail(t, { artifacts = [], logs = [], artifactsState = {}, withJump
     controller.dispose();
     if (originalI18n === undefined) delete globalThis.jennyI18n;
     else globalThis.jennyI18n = originalI18n;
+    if (originalActivity === undefined) delete globalThis.rendererChatActivity;
+    else globalThis.rendererChatActivity = originalActivity;
   });
-  const list = doc.getElementById('contextArtifactList');
-  const card = (id) => list.querySelector(`[data-orbit-card-id="${id}"]`);
-  const meta = (id) => card(id).querySelector('.orbit-card-meta').textContent;
-  return { doc, window: jsdom.window, controller, ctx, calls, state, list, card, meta };
+  return { doc, window: jsdom.window, controller, ctx, calls, state };
 }
 
 test('orbitCard renders tone, tooltip and a leading escaped status span', () => {
@@ -171,111 +163,26 @@ test('orbitCard renders tone, tooltip and a leading escaped status span', () => 
     + '<span class="orbit-card-body"><span class="orbit-card-title" dir="auto">T</span><span class="orbit-card-meta">M</span></span></button>');
 });
 
-test('artifact rows carry humanized meta per type and never a raw enum', (t) => {
-  const f = FIXTURES;
-  const { list, card, meta, doc } = mountRail(t, { artifacts: [f.image, f.doc, f.file, f.tool, f.failed] });
-  assert.equal(doc.getElementById('contextArtifactCount').textContent, '5');
-  assert.equal(meta('img1'), 'Image · 640×480 · 1m ago');
-  assert.equal(meta('doc1'), 'Document · plan.md · 1m ago');
-  assert.equal(meta('file1'), 'File · main.py · 1m ago');
-  assert.equal(meta('tool1'), 'Tool result · delegate · 1m ago');
-  assert.equal(card('tool1').querySelector('.orbit-card-title').textContent, 'Researched the topic');
-  assert.equal(card('tool1').getAttribute('title'), 'Researched the topic');
-  assert.equal(card('tool1').dataset.tone, 'muted');
-  assert.equal(card('doc1').dataset.tone, 'accent');
-  // A failed result swaps the age for a danger status.
-  assert.equal(meta('tool2'), 'Failed · Tool result · web_search');
-  const status = card('tool2').querySelector('.orbit-card-status');
-  assert.equal(status.textContent, 'Failed');
-  assert.equal(status.dataset.tone, 'danger');
-  assert.doesNotMatch(list.textContent, /TOOL_OUTPUT|GENERATED_FILE|IMAGE\b/);
-  // Per-type icons are stroke glyphs with no fill attributes.
-  assert.equal(list.querySelectorAll('.orbit-card-icon svg [fill]').length, 0);
-  assert.ok(card('img1').querySelector('.orbit-card-icon svg circle'), 'image glyph');
-});
-
-test('a missing image shows a muted Missing status and no size when dimensions are unknown', (t) => {
-  const missing = { ...FIXTURES.image, id: 'img2', status: 'missing', image: { width: 0, height: 0 } };
-  const { card, meta } = mountRail(t, { artifacts: [missing] });
-  assert.equal(meta('img2'), 'Missing · Image');
-  assert.equal(card('img2').querySelector('.orbit-card-status').dataset.tone, 'muted');
-});
-
-test('each row is a listitem holding the card and, with a source message, a jump button', (t) => {
-  const f = FIXTURES;
-  const { list, card, calls, window } = mountRail(t, { artifacts: [f.image, f.file] });
-  const items = list.querySelectorAll(':scope > [role="listitem"]');
-  assert.equal(items.length, 2);
-  assert.equal(list.querySelectorAll(':scope > button').length, 0, 'no bare buttons under role=list');
-  const jump = items[0].querySelector('.orbit-card-jump');
-  assert.ok(jump, 'jump button with a sourceMessageId');
-  assert.equal(jump.dataset.artifactJump, 'm1');
-  assert.equal(jump.getAttribute('aria-label'), 'Jump to message');
-  assert.equal(card('img1').contains(jump), false, 'the jump button is a sibling, not nested');
-  assert.equal(items[1].querySelector('.orbit-card-jump'), null, 'no jump without a sourceMessageId');
-  assert.equal(list.getAttribute('role'), 'list');
-
-  jump.querySelector('svg').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  assert.deepEqual(calls.jump, ['m1']);
-  assert.deepEqual(calls.open, [], 'a jump never opens the artifact');
-  card('file1').click();
-  assert.deepEqual(calls.open, ['file1']);
-  assert.deepEqual(calls.jump, ['m1']);
-});
-
-test('focus stays on the same row across a re-render with changed data', (t) => {
-  const f = FIXTURES;
-  const rail = mountRail(t, { artifacts: [f.image, f.doc] });
-  const before = rail.card('doc1');
-  before.focus();
-  assert.equal(rail.doc.activeElement, before);
-  rail.ctx.artifacts = [f.tool, f.image, f.doc];
+test('the panel no longer lists artifacts: nothing is read, rendered or listened to', (t) => {
+  const rail = mountRail(t);
   rail.controller.renderContextPanel();
-  const after = rail.card('doc1');
-  assert.notEqual(after, before, 'the row was rebuilt');
-  assert.equal(rail.doc.activeElement, after, 'focus returned to the rebuilt row');
-
-  const jump = after.parentNode.querySelector('.orbit-card-jump');
-  jump.focus();
-  rail.ctx.artifacts = [f.doc];
   rail.controller.renderContextPanel();
-  const rebuiltJump = rail.card('doc1').parentNode.querySelector('.orbit-card-jump');
-  assert.notEqual(rebuiltJump, jump);
-  assert.equal(rail.doc.activeElement, rebuiltJump, 'focus returned to the rebuilt jump button');
+  assert.equal(rail.calls.artifactReads, 0, 'the artifact source is never read');
+  assert.equal(rail.doc.querySelector('.context-artifact-item'), null);
+  assert.equal(rail.doc.querySelector('.orbit-card'), null);
+  assert.doesNotMatch(rail.doc.getElementById('panel').textContent, /Files, images, and tool results/);
 });
 
-test('an identical re-render leaves the row nodes in place', (t) => {
-  const f = FIXTURES;
-  const rail = mountRail(t, { artifacts: [f.image, f.doc] });
-  const first = rail.list.firstElementChild;
-  rail.controller.renderContextPanel();
-  assert.equal(rail.list.firstElementChild, first);
-});
-
-test('the rail renders without any Session Pulse dom and explains an empty list', (t) => {
-  const rail = mountRail(t, { artifacts: [] });
-  assert.equal(rail.doc.getElementById('contextPulse'), null);
-  assert.equal(rail.doc.querySelector('.context-metric-row'), null);
-  const empty = rail.list.querySelector('p.context-empty-state');
-  assert.ok(empty);
-  assert.equal(empty.textContent, 'Files, images, and tool results from this chat appear here.');
-  assert.equal(rail.doc.getElementById('contextArtifactCount').textContent, '0');
-  assert.equal(empty.getAttribute('role'), null, 'the empty sentence is not a listitem');
-  assert.equal(rail.list.getAttribute('role'), null, 'an empty list is not announced as a one-item list');
-});
-
-test('the age is localized through Intl and the jump button needs a jump callback', (t) => {
-  const rail = mountRail(t, { artifacts: [FIXTURES.image] });
-  assert.equal(rail.meta('img1'), 'Image · 640×480 · 1m ago');
-  globalThis.jennyI18n = { tag: () => 'fr' };
-  rail.ctx.artifacts = [{ ...FIXTURES.image, id: 'img9' }];
-  rail.controller.renderContextPanel();
-  assert.equal(rail.meta('img9'), 'Image · 640×480 · -1 min');
-
-  // A composition without the callback (the fallback configuration) renders no inert jump button.
-  const noJump = mountRail(t, { artifacts: [FIXTURES.image], withJump: false });
-  assert.ok(noJump.card('img1'));
-  assert.equal(noJump.list.querySelector('.orbit-card-jump'), null);
+test('the toggle outlives the Artifacts list and still collapses and expands the panel', (t) => {
+  const rail = mountRail(t);
+  const panel = rail.doc.getElementById('panel');
+  const toggle = rail.doc.getElementById('contextPanelToggle');
+  assert.equal(panel.classList.contains('collapsed'), true, 'collapsed by default');
+  toggle.click();
+  assert.equal(panel.classList.contains('collapsed'), false);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  toggle.click();
+  assert.equal(panel.classList.contains('collapsed'), true);
 });
 
 test('the Activity disclosure toggles the feed and stays visible with zero entries', (t) => {
@@ -310,4 +217,38 @@ test('the Activity disclosure toggles the feed and stays visible with zero entri
   assert.equal(disclosure.getAttribute('aria-expanded'), 'false');
   assert.equal(feed.hidden, true);
   assert.equal(section.classList.contains('logs-collapsed'), true);
+});
+
+test('Activity-enabled context replaces log disclosure with diagnostic navigation',t=>{
+ const rail=mountRail(t,{logs:[{event:'test'}]});rail.state.features={featureFlags:{activity_monitor:true}};
+ rail.controller.renderContextPanel();const button=rail.doc.getElementById('contextLogDisclosure');
+ assert.equal(button.hasAttribute('aria-expanded'),false);button.click();assert.deepEqual(rail.calls.views,['logs']);assert.equal(rail.doc.getElementById('contextSessionLogs').hidden,true);
+});
+
+test('the owner line is synced as "context" normally and as "activity" while Activity is open', (t) => {
+  let open = false;
+  const fakeActivity = { createChatActivity: () => ({
+    render() {}, bind() {}, dispose() {}, close() { open = false; },
+    isOpen: () => open,
+    open() { open = true; return true; },
+  }) };
+  const rail = mountRail(t, { sidePanel: { claim: () => false }, activity: fakeActivity });
+  assert.equal(rail.calls.ownerLines.at(-1), 'context');
+  rail.controller.renderContextPanel();
+  assert.equal(rail.calls.ownerLines.at(-1), 'context');
+  assert.equal(rail.controller.openActivity(), true);
+  assert.equal(rail.calls.ownerLines.at(-1), 'activity', 'Activity names its owner in one-pane view too');
+  rail.controller.renderContextPanel();
+  assert.equal(rail.calls.ownerLines.at(-1), 'activity');
+  open = false;
+  rail.controller.renderContextPanel();
+  assert.equal(rail.calls.ownerLines.at(-1), 'context');
+});
+
+test('opening Activity that does not open syncs nothing extra', (t) => {
+  const fakeActivity = { createChatActivity: () => ({ render() {}, bind() {}, dispose() {}, isOpen: () => false, open: () => false }) };
+  const rail = mountRail(t, { sidePanel: { claim: () => false }, activity: fakeActivity });
+  const before = rail.calls.ownerLines.length;
+  assert.equal(rail.controller.openActivity(), false);
+  assert.equal(rail.calls.ownerLines.length, before);
 });

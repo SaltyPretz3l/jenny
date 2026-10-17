@@ -6,7 +6,9 @@
 // change through the sidecar's typed write (plan C3/C4). Electron never writes
 // suggestion bytes itself; the sidecar journal makes every apply undoable.
 
+const { randomUUID } = require('crypto');
 const records = require('./suggested-changes-records');
+const { markApplyAttempt, openApplyAttempts, settleApplyAttempts } = require('./suggested-changes-receipt');
 const relations = require('./suggested-changes-relations');
 const { readSuggestedChanges, writeSuggestedChanges } = require('./suggested-changes-store');
 
@@ -14,6 +16,7 @@ const PROPOSE_TOOL_NAME = 'propose_change';
 const MAX_DIGEST_OLD_CHARS = 4000;
 // How long a change Send marked `revising` may wait for its run to be admitted.
 const REVISION_START_GRACE_MS = 5000;
+const MAX_UNSAVED_RECEIPTS = 20;
 
 function publicEntry(entry, state) {
   return { ...entry, expected_hash: records.expectedHashFor(state, entry) };
@@ -78,10 +81,11 @@ function buildRevisionDigest(state, commented) {
 }
 
 class SuggestedChangesService {
-  constructor({ getStore, projectAuthority = null, applyRequest = null, emit = null, logger = null, now = null, isSessionRunning = null } = {}) {
+  constructor({ getStore, projectAuthority = null, applyRequest = null, findApplyChangeSet = null, emit = null, logger = null, now = null, isSessionRunning = null } = {}) {
     this._getStore = typeof getStore === 'function' ? getStore : () => null;
     this._projectAuthority = projectAuthority;
     this._applyRequest = applyRequest;
+    this._findApplyChangeSet = findApplyChangeSet;
     this._emit = typeof emit === 'function' ? emit : () => {};
     this._logger = typeof logger === 'function' ? logger : () => {};
     this._now = typeof now === 'function' ? now : () => new Date().toISOString();
@@ -89,14 +93,151 @@ class SuggestedChangesService {
     this._applying = new Set();
     // Suggestions whose apply is in flight: decisions on them wait (`busy`).
     this._applyingIds = new Set();
+    // sessionId -> applied receipts whose save failed; folded in on the next read.
+    this._unsavedReceipts = new Map();
+    // Journal lookups for attempts that outlived the in-memory receipt (restart).
+    this._attemptLookups = new Set();
+    this._reconciling = new Map();
+    // Suggestions whose attempt is being looked up: decisions wait (`busy`)
+    // and revisions of them are recorded once the lookup has settled.
+    this._recoveringIds = new Set();
+    // Of those, the ones whose committed match did not save: they stay
+    // protected (revisions held) until a later reconciliation saves them.
+    this._unsavedRecoveryIds = new Set();
+    // lookup key -> the committed match whose receipt did not save: the retry
+    // saves it again without needing the journal to list it (w2f6-R1).
+    this._unsavedMatches = new Map();
+    this._heldOutcomes = [];
   }
 
   _isApplying(sessionId, id) {
-    return this._applyingIds.has(`${sessionId}\u0000${id}`);
+    const key = `${sessionId}\u0000${id}`;
+    return this._applyingIds.has(key) || this._recoveringIds.has(key);
   }
 
   _read(sessionId) {
-    return readSuggestedChanges(this._getStore(), sessionId);
+    const state = readSuggestedChanges(this._getStore(), sessionId);
+    const pending = this._unsavedReceipts.get(sessionId);
+    return state && pending ? this._foldUnsavedReceipts(sessionId, state, pending) : state;
+  }
+
+  // The sidecar applied and journaled these, but the receipt did not save
+  // (A19-F4): fold them in so History and Undo see the change set, and save.
+  _foldUnsavedReceipts(sessionId, state, pending) {
+    let next = state;
+    for (const item of pending) {
+      const changeSetId = item.result.workspace_change_set?.change_set_id;
+      const folded = item.ids.every((id) => {
+        const entry = next.entries.find((candidate) => candidate.id === id);
+        return !entry || (entry.status === 'applied' && entry.applied?.change_set_id === changeSetId);
+      });
+      if (folded) continue;
+      const receipt = records.applyReceipt(next, { result: item.result, revisions: item.revisions, now: this._now() });
+      next = settleApplyAttempts(receipt.state, item.ids).state;
+    }
+    const stored = next === state ? state : this._write(sessionId, next);
+    if (stored) this._unsavedReceipts.delete(sessionId);
+    return stored || next;
+  }
+
+  // An attempt still open with no receipt in memory (the app restarted after a
+  // receipt save failed): ask the journal of the session's own workspace
+  // whether that apply committed and fold it in, so History and Undo find its
+  // change set (A19-F4). A miss is remembered per apply id and workspace
+  // identity; an unavailable workspace or a failed lookup retries later.
+  reconcileApplyAttempts(sessionId) {
+    if (typeof this._findApplyChangeSet !== 'function') return Promise.resolve(false);
+    if (!this._reconciling.has(sessionId)) {
+      const run = this._reconcileAttempts(sessionId).finally(() => this._reconciling.delete(sessionId));
+      this._reconciling.set(sessionId, run);
+    }
+    return this._reconciling.get(sessionId);
+  }
+
+  async _reconcileAttempts(sessionId) {
+    const state = this._read(sessionId);
+    let changed = false;
+    const authority = state ? this._captureAuthority(sessionId) : null;
+    // Every selected attempt is protected before the first lookup awaits, and
+    // each is released once its own lookup has settled.
+    const selected = [];
+    const busy = (entry) => this._isApplying(sessionId, entry.id) && !this._unsavedRecoveryIds.has(`${sessionId}\u0000${entry.id}`);
+    for (const [applyId, entries] of authority ? openApplyAttempts(state) : []) {
+      const key = [sessionId, applyId, authority.root_path, authority.device_id, authority.inode].join('\u0000');
+      if (this._attemptLookups.has(key) || entries.some(busy)) continue;
+      this._attemptLookups.add(key);
+      const idKeys = entries.map((entry) => `${sessionId}\u0000${entry.id}`);
+      for (const idKey of idKeys) this._recoveringIds.add(idKey);
+      selected.push({ applyId, entries, key, idKeys });
+    }
+    for (const { applyId, entries, key, idKeys } of selected) {
+      // A retry of an unsaved match whose lookup throws stays protected.
+      let outcome = idKeys.every((idKey) => this._unsavedRecoveryIds.has(idKey)) ? 'unsaved' : false;
+      try {
+        outcome = await this._recoverAttempt({ key, authority, sessionId, applyId, entries });
+        if (outcome === true) changed = true;
+      } catch (error) {
+        this._attemptLookups.delete(key);
+        this._logger('WARN', 'suggested_changes.apply_attempt_lookup_failed', {
+          sessionId, message: String(error?.message || error || '').slice(0, 240),
+        });
+      } finally {
+        // An unsaved match keeps its entries protected: replaying a held
+        // revision now would clear the attempt the retry folds in (w2f5-R3).
+        const unsaved = outcome === 'unsaved';
+        for (const idKey of idKeys) {
+          if (unsaved) {
+            this._unsavedRecoveryIds.add(idKey);
+          } else {
+            this._unsavedRecoveryIds.delete(idKey);
+            this._recoveringIds.delete(idKey);
+          }
+        }
+        if (!unsaved) this._replayHeldOutcomes(sessionId);
+      }
+    }
+    return changed;
+  }
+
+  // Folds a committed match in; true once saved, 'unsaved' when the save
+  // failed (the lookup is forgotten so a later read retries it).
+  async _recoverAttempt({ key, authority, sessionId, applyId, entries }) {
+    const remembered = this._unsavedMatches.get(key) || null;
+    const found = remembered || await this._findApplyChangeSet({ authority, sessionId, applyId });
+    const current = found?.state === 'committed' ? this._read(sessionId) : null;
+    if (!current) return remembered ? 'unsaved' : false;
+    const ids = entries.map((entry) => entry.id);
+    const result = {
+      status: 'applied',
+      workspace_change_set: { change_set_id: found.change_set_id },
+      items: ids.map((id) => ({ suggestion_id: id, outcome: 'applied', after_hash: null, diff: null })),
+    };
+    const revisions = Object.fromEntries(entries.map((entry) => [entry.id, entry.apply_attempt.revision]));
+    const folded = records.applyReceipt(current, { result, revisions, now: this._now() });
+    // Only an attempt whose applied association is now held is cleared.
+    const held = ids.filter((id) => folded.state.entries.find((entry) => entry.id === id)?.status === 'applied');
+    if (this._write(sessionId, settleApplyAttempts(folded.state, held).state)) {
+      this._unsavedMatches.delete(key);
+      return true;
+    }
+    this._unsavedMatches.set(key, found);
+    this._attemptLookups.delete(key);
+    return 'unsaved';
+  }
+
+  _replayHeldOutcomes(sessionId) {
+    const held = this._heldOutcomes.filter((outcome) => outcome.sessionId === sessionId);
+    this._heldOutcomes = this._heldOutcomes.filter((outcome) => outcome.sessionId !== sessionId);
+    for (const outcome of held) this.recordToolOutcome(outcome);
+  }
+
+  _captureAuthority(sessionId) {
+    try {
+      const authority = this._projectAuthority?.captureSession?.(sessionId);
+      return authority?.root_path && authority.device_id && authority.inode ? authority : null;
+    } catch (_error) {
+      return null; // the project folder is unavailable now
+    }
   }
 
   _write(sessionId, state) {
@@ -110,6 +251,9 @@ class SuggestedChangesService {
   list(sessionId, { persist = true } = {}) {
     const state = this._read(sessionId);
     if (!state) return null;
+    if (persist && openApplyAttempts(state).size) {
+      this.reconcileApplyAttempts(sessionId).catch(() => {});
+    }
     return publicView(sessionId, this._releaseFinishedRevisions(sessionId, state, { persist }));
   }
 
@@ -149,6 +293,12 @@ class SuggestedChangesService {
     const state = this._read(sessionId);
     if (!state || !metadata) return null;
     const recorded = records.recordSuggestion(state, { metadata, toolCallId: callId, turnId, now: this._now() });
+    // A revision of an entry under receipt recovery waits for it: revising now
+    // would drop the attempt the recovery is about to fold in.
+    if (recorded.revised && this._recoveringIds.has(`${sessionId}\u0000${recorded.entry.id}`)) {
+      this._heldOutcomes.push({ toolName, sessionId, callId, turnId, result });
+      return null;
+    }
     // The same result arriving again (canonical event plus legacy notification): nothing to write or announce.
     if (recorded.duplicate) return recorded.entry;
     if (!recorded.entry) {
@@ -272,9 +422,17 @@ class SuggestedChangesService {
         expected_hash: records.expectedHashFor(state, member),
       }));
       const revisions = Object.fromEntries(batch.map((member) => [member.id, member.revision]));
+      const ids = batch.map((member) => member.id);
+      const applyId = randomUUID();
+      // Which apply is about to write, saved before the sidecar writes (A19-F4);
+      // an attempt that cannot be saved is never dispatched.
+      if (!this._write(sessionId, markApplyAttempt(state, { ids, applyId, revisions, now: this._now() }))) {
+        this._logger('WARN', 'suggested_changes.apply_attempt_unsaved', { sessionId });
+        return { ok: false, error: 'write_failed' };
+      }
       let result;
       try {
-        result = await this._applyRequest({ authority, sessionId, items });
+        result = await this._applyRequest({ authority, sessionId, items, applyId });
       } catch (error) {
         this._logger('WARN', 'suggested_changes.apply_failed', {
           sessionId, message: String(error?.message || error || '').slice(0, 240),
@@ -285,13 +443,18 @@ class SuggestedChangesService {
       const current = this._read(sessionId);
       if (!current) return { ok: false, error: 'not_found' };
       const folded = records.applyReceipt(current, { result, revisions, now: this._now() });
-      // The files changed either way; a receipt that failed to save is reported,
-      // and the journal change set still lets History undo it.
-      const receiptSaved = !folded.changed.length || Boolean(this._write(sessionId, folded.state));
+      const settled = settleApplyAttempts(folded.state, ids);
+      // The files changed either way; a receipt that failed to save is reported
+      // and kept, and the next read folds it in so History can undo it.
+      const receiptSaved = !(folded.changed.length || settled.changed) || Boolean(this._write(sessionId, settled.state));
       if (!receiptSaved) {
         this._logger('ERROR', 'suggested_changes.receipt_write_failed', {
           sessionId, changeSetId: result?.workspace_change_set?.change_set_id || null,
         });
+        if (result?.status === 'applied') {
+          const pending = [...(this._unsavedReceipts.get(sessionId) || []), { result, revisions, ids }];
+          this._unsavedReceipts.set(sessionId, pending.slice(-MAX_UNSAVED_RECEIPTS));
+        }
       }
       // A group refused by one member reports that member's outcome.
       const outcomes = Array.isArray(result?.items) ? result.items : [];

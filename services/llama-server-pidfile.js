@@ -224,6 +224,7 @@ function shutdownLlamaServerSync({
 // verified exit clears it.
 function reconcileRetainedPid({
   userDataPath,
+  pidFileName = PID_FILENAME,
   logger,
   platform = process.platform,
   spawnSyncImpl = spawnSync,
@@ -231,7 +232,7 @@ function reconcileRetainedPid({
   getProcessCommandLineSyncImpl = getProcessCommandLineSync,
 } = {}) {
   const log = normalizeLogger(logger);
-  const pidPath = getPidFilePath(userDataPath);
+  const pidPath = getPidFilePath(userDataPath, pidFileName);
   const record = readPidFile(pidPath);
   const pid = record.pid;
   if (!pid || !isProcessAliveImpl(pid)) {

@@ -192,6 +192,7 @@
           history_scope: preferences.contextPreferences.historyScope,
           include_personality: preferences.contextPreferences.includePersonality,
           include_memory: preferences.contextPreferences.includeMemory,
+          memory_opt_out: preferences.contextPreferences.memoryOptOut === true,
         },
       };
       if (typeof preferences.runMode === 'string' && preferences.runMode.trim()) {

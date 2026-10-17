@@ -182,6 +182,9 @@
       upgradeRequired: source.upgradeRequired === true,
       versionStatus: String(source.versionStatus || ''),
       minimumVersion: String(source.minimumVersion || ''),
+      ...(source.port && ['free', 'occupied', 'unknown'].includes(source.port.state)
+        ? { port: { state: source.port.state, port: 11434 } } : {}),
+      ...(source.daemon && typeof source.daemon === 'object' ? { daemon: source.daemon } : {}),
     };
   }
 

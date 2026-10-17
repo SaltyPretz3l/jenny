@@ -1,4 +1,4 @@
-/* renderer/shell/renderer-phase-percentiles-utils.js - Diagnostics phase percentile renderer. */
+/* renderer/shell/renderer-phase-percentiles-utils.js - Diagnostics chat-timing table (phase percentiles). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -6,7 +6,10 @@
   }
   root.rendererPhasePercentilesUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const escapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
+  const stateIcon = globalThis.inventoryStateIcon || (typeof require === 'function' ? require('../inventory/state-icon') : null);
   const PHASE_ORDER = [
     'click_to_optimistic_render',
     'optimistic_render_to_context_assembly_started',
@@ -19,17 +22,26 @@
     'completion_to_terminal_persist',
   ];
 
-  const PHASE_LABELS = {
-    click_to_optimistic_render: jt('diagnostics.phases.clickToOptimisticRender', 'Click to optimistic render'),
-    optimistic_render_to_context_assembly_started: jt('diagnostics.phases.optimisticRenderToAssemblyStart', 'Optimistic render to assembly start'),
-    context_assembly_elapsed_no_memory_git: jt('diagnostics.phases.contextAssemblyNoMemoryGit', 'Context assembly, no memory/Git'),
-    context_assembly_elapsed_memory_git: jt('diagnostics.phases.contextAssemblyMemoryGit', 'Context assembly, memory/Git'),
-    context_assembly_completed_to_sidecar_request_sent: jt('diagnostics.phases.assemblyCompleteToSidecarSent', 'Assembly complete to sidecar sent'),
-    sidecar_request_sent_to_provider_request_start: jt('diagnostics.phases.sidecarSentToProviderStart', 'Sidecar sent to provider start'),
-    provider_request_start_to_first_chunk: jt('diagnostics.phases.providerStartToFirstChunk', 'Provider start to first chunk'),
-    first_chunk_to_first_visible_token: jt('diagnostics.phases.firstChunkToFirstVisibleToken', 'First chunk to first visible token'),
-    completion_to_terminal_persist: jt('diagnostics.phases.completionToTerminalPersist', 'Completion to terminal persist'),
-  };
+  // This script loads before the shared formatters, so they are resolved when a table is built.
+  function format() {
+    return globalThis.rendererDiagnosticsFormat || (typeof require === 'function' ? require('./renderer-diagnostics-format') : null);
+  }
+
+  // Built per call so a locale switch reaches the labels.
+  function phaseLabel(phaseName) {
+    const labels = {
+      click_to_optimistic_render: jt('diagnostics.phases.clickToOptimisticRender', 'Click to optimistic render'),
+      optimistic_render_to_context_assembly_started: jt('diagnostics.phases.optimisticRenderToAssemblyStart', 'Optimistic render to assembly start'),
+      context_assembly_elapsed_no_memory_git: jt('diagnostics.phases.contextAssemblyNoMemoryGit', 'Context assembly, no memory/Git'),
+      context_assembly_elapsed_memory_git: jt('diagnostics.phases.contextAssemblyMemoryGit', 'Context assembly, memory/Git'),
+      context_assembly_completed_to_sidecar_request_sent: jt('diagnostics.phases.assemblyCompleteToSidecarSent', 'Assembly complete to sidecar sent'),
+      sidecar_request_sent_to_provider_request_start: jt('diagnostics.phases.sidecarSentToProviderStart', 'Sidecar sent to provider start'),
+      provider_request_start_to_first_chunk: jt('diagnostics.phases.providerStartToFirstChunk', 'Provider start to first chunk'),
+      first_chunk_to_first_visible_token: jt('diagnostics.phases.firstChunkToFirstVisibleToken', 'First chunk to first visible token'),
+      completion_to_terminal_persist: jt('diagnostics.phases.completionToTerminalPersist', 'Completion to terminal persist'),
+    };
+    return Object.prototype.hasOwnProperty.call(labels, phaseName) ? labels[phaseName] : format().humanize(phaseName);
+  }
 
   function classifyBackendPhase(phase) {
     switch (String(phase || '').trim().toLowerCase()) {
@@ -53,24 +65,6 @@
     }
   }
 
-  function isLocalEngine(engine) {
-    return !['chatgpt', 'codex-cli'].includes(String(engine || '').trim().toLowerCase());
-  }
-
-  const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
-
-  function formatMs(value) {
-    if (value == null || String(value).trim() === '') return 'TBD';
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) {
-      return 'TBD';
-    }
-    if (numeric >= 1000) {
-      return `${(numeric / 1000).toFixed(2)}s`;
-    }
-    return `${Math.round(numeric)}ms`;
-  }
-
   function deriveVerdict(stats, target) {
     const count = Number(stats?.count || 0);
     if (!count) {
@@ -84,9 +78,6 @@
     const p95 = Number(stats?.p95);
     const targetP50 = Number(target?.p50);
     const targetP95 = Number(target?.p95);
-    if (!Number.isFinite(targetP50) || !Number.isFinite(targetP95)) {
-      return 'empty';
-    }
     if (p50 <= targetP50 && p95 <= targetP95) {
       return 'pass';
     }
@@ -103,273 +94,70 @@
     return PHASE_ORDER.concat(extras);
   }
 
-  function buildPhaseRows(payload, escapeHtml) {
-    const phases = payload?.phases && typeof payload.phases === 'object' ? payload.phases : {};
-    const targets = payload?.targets && typeof payload.targets === 'object' ? payload.targets : {};
-    return getPhaseNames(payload).map((phaseName) => {
-      const stats = phases[phaseName] || {};
-      const target = targets[phaseName] || {};
-      const verdict = deriveVerdict(stats, target);
-      return [
-        '<tr>',
-        `<td>${escapeHtml(PHASE_LABELS[phaseName] || phaseName)}</td>`,
-        `<td>${escapeHtml(formatMs(stats.p50))}</td>`,
-        `<td>${escapeHtml(formatMs(stats.p95))}</td>`,
-        `<td>${escapeHtml(formatMs(stats.p99))}</td>`,
-        `<td>${escapeHtml(Number(stats.count || 0))}</td>`,
-        `<td>${escapeHtml(formatMs(target.p50))}</td>`,
-        `<td>${escapeHtml(formatMs(target.p95))}</td>`,
-        `<td><span class="phase-verdict phase-verdict-${escapeHtml(verdict)}">${escapeHtml(verdict)}</span></td>`,
-        '</tr>',
-      ].join('');
-    }).join('');
-  }
-
-  function firstNonEmpty(...values) {
-    for (const value of values) {
-      const normalized = String(value == null ? '' : value).trim();
-      if (normalized) {
-        return normalized;
-      }
+  // The verdict reads from the derived value, never from translated text. A step with no target has none.
+  function verdictCell(verdict) {
+    if (verdict === 'pass') {
+      return '<span class="diagnostics-verdict" data-verdict="pass">' + escapeHtml(jt('diagnostics.performance.onTarget', 'On target')) + '</span>';
+    }
+    if (verdict === 'warn') {
+      return '<span class="diagnostics-verdict" data-verdict="warn">' + stateIcon('warn', { tone: 'warn', size: 'sm' })
+        + escapeHtml(jt('diagnostics.performance.nearLimit', 'Near limit')) + '</span>';
+    }
+    if (verdict === 'fail') {
+      return '<span class="diagnostics-verdict" data-verdict="fail">' + stateIcon('error', { tone: 'error', size: 'sm' })
+        + escapeHtml(jt('diagnostics.performance.overTargetVerdict', 'Over target')) + '</span>';
     }
     return '';
   }
 
-  function getPhaseStats(payload, phaseName) {
+  // classNames: one class or a list of class tokens.
+  function headerCell(label, title, classNames) {
+    var className = [].concat(classNames || []).join(' ');
+    return '<th scope="col"' + (className ? ' class="' + className + '"' : '') + (title ? ' title="' + escapeHtml(title) + '"' : '') + '>' + escapeHtml(label) + '</th>';
+  }
+
+  /**
+   * The Chat timing table: only steps with samples are rows.
+   * @returns {{markup: string, measured: number, total: number, chats: number}} markup is '' when nothing is measured
+   */
+  function buildPhaseTimingView(payload) {
+    const fmt = format();
     const phases = payload?.phases && typeof payload.phases === 'object' ? payload.phases : {};
-    return phases[phaseName] && typeof phases[phaseName] === 'object' ? phases[phaseName] : {};
-  }
-
-  function sumSamples(payload) {
-    const phases = payload?.phases && typeof payload.phases === 'object' ? payload.phases : {};
-    return Object.values(phases).reduce((total, stats) => total + Number(stats?.count || 0), 0);
-  }
-
-  function applyHarnessHealthOverride(summary, harnessSnapshot, deriveRuntimeHealthState) {
-    if (!harnessSnapshot || typeof deriveRuntimeHealthState !== 'function') {
-      return summary;
-    }
-    let phase7;
-    try {
-      phase7 = deriveRuntimeHealthState(harnessSnapshot);
-    } catch (_error) {
-      return summary;
-    }
-    if (!phase7 || typeof phase7 !== 'object') {
-      return summary;
-    }
-    const tone = String(phase7.tone || '').trim();
-    if (tone !== 'warning' && tone !== 'danger') {
-      return summary;
-    }
-    const phase7Summary = String(phase7.summary || '').trim();
-    const badge = ['Unavailable', jt('diagnostics.phases.modelUnavailable', 'Model unavailable')].includes(summary.badge)
-      ? summary.badge
-      : tone === 'danger' ? 'Blocked' : 'Degraded';
-    return Object.assign({}, summary, {
-      badge,
-      summary: phase7Summary
-        // The override text may already end its sentence (".", "?", "。").
-        ? `${phase7Summary}${/[.!?…。！？؟]$/.test(phase7Summary) ? '' : '.'} ${summary.summary || ''}`.trim()
-        : summary.summary,
-    });
-  }
-
-  function buildRuntimeHealthSummary({ phasePercentilesState, runtimeHealthState, harnessSnapshot, deriveRuntimeHealthState } = {}) {
-    const state = phasePercentilesState && typeof phasePercentilesState === 'object'
-      ? phasePercentilesState
-      : {};
-    const runtime = runtimeHealthState && typeof runtimeHealthState === 'object'
-      ? runtimeHealthState
-      : {};
-    const payload = state.payload && typeof state.payload === 'object' ? state.payload : null;
-    const backend = runtime.backend && typeof runtime.backend === 'object' ? runtime.backend : {};
-    const status = runtime.status && typeof runtime.status === 'object' ? runtime.status : {};
-    const modelList = runtime.modelList && typeof runtime.modelList === 'object' ? runtime.modelList : {};
-    const offline = runtime.offline && typeof runtime.offline === 'object' ? runtime.offline : {};
-    const engine = firstNonEmpty(status.active_engine, status.engine, backend.engine, modelList.engine, 'local');
-    const backendPhase = firstNonEmpty(backend.phase, status.phase, 'unknown');
-    const phaseClass = classifyBackendPhase(backendPhase);
-    const modelUnavailable = phaseClass === 'model_unavailable';
-    const backendUnavailable = modelUnavailable || phaseClass === 'unavailable';
-    const backendReady = phaseClass === 'ready';
-    // While acquiring, loading or failed, name the requested model; once ready, the loaded one.
-    const requestedModel = firstNonEmpty(
-      backend.model_acquisition?.requested_model,
-      backend.model_lifecycle?.requested_model
-    );
-    const activeModel = firstNonEmpty(status.active_model, status.model, modelList.active_model);
-    const model = firstNonEmpty(
-      backendReady ? activeModel : requestedModel,
-      backendReady ? requestedModel : activeModel,
-      offline.preferredLocalModel,
-      jt('diagnostics.phases.noActiveModel', 'no active model')
-    );
-    const offlineActive = offline.mode === 'local_only' || offline.mode === 'offline';
-    const offlineUnavailableReason = offlineActive ? offline.unavailableReason : '';
-    const lastError = firstNonEmpty(
-      state.error,
-      backend.last_error,
-      backend.lastError,
-      backend.error,
-      status.last_error,
-      status.lastError,
-      offlineUnavailableReason
-    );
-    const catalogUnavailable = modelList.available === false;
-    const degraded = Boolean(
-      lastError
-      || catalogUnavailable
-      || backend.degraded === true
-      || status.degraded === true
-      || offline.degraded === true
-      || backendUnavailable
-      || (offline.mode === 'local_only' && offline.localChatReady === false)
-    );
-    const providerStats = getPhaseStats(payload, 'provider_request_start_to_first_chunk');
-    const visibleStats = getPhaseStats(payload, 'first_chunk_to_first_visible_token');
-    const providerP50 = formatMs(providerStats.p50);
-    const visibleP50 = formatMs(visibleStats.p50);
-    const sampleCount = sumSamples(payload);
-    const generatedAt = firstNonEmpty(payload?.generated_at, 'recently');
-    const baseSummary = {
-      badge: state.loading
-        ? 'Refreshing'
-        : modelUnavailable
-          ? jt('diagnostics.phases.modelUnavailable', 'Model unavailable')
-          : backendUnavailable
-            ? 'Unavailable'
-            : degraded
-              ? 'Degraded'
-              : backendReady
-                ? 'Healthy'
-                : phaseClass === 'acquiring'
-                  ? jt('healthPill.downloadingModel', 'Downloading model')
-                  : phaseClass === 'loading'
-                    ? jt('healthPill.loadingModel', 'Loading model')
-                    : sampleCount > 0
-                      ? jt('diagnostics.phases.retained', 'Retained')
-                      : 'Pending',
-      summary: jt('diagnostics.phases.runtimeHealthSummary', 'Runtime health: {engine} / {model}; backend {phase}.', { engine, model, phase: backendPhase }),
-      status: sampleCount > 0 && !backendReady
-        ? jt('diagnostics.phases.retainedSamples', 'Retained latency samples; backend {phase}.', { phase: backendPhase })
-          + (lastError ? ' ' + jt('diagnostics.phases.lastError', 'Last error: {error}', { error: lastError }) : '')
-        : lastError
-          ? jt('diagnostics.phases.lastError', 'Last error: {error}', { error: lastError })
-          : sampleCount > 0
-            ? jt('diagnostics.phases.snapshotSummary', 'Snapshot {generatedAt}. Provider start to first chunk P50 {providerP50}; first chunk to first visible token P50 {visibleP50}.', { generatedAt, providerP50, visibleP50 })
-            : backendUnavailable
-              ? jt('diagnostics.phases.latencyUnavailableUntilRecovery', 'Latency evidence is unavailable until the backend recovers.')
-              : jt('diagnostics.phases.noSamplesRecordedLaunch', 'No timings recorded in this app launch yet.'),
-      sampleHint: modelUnavailable
-        ? jt('diagnostics.phases.modelSamplingUnavailable', 'Model {model} is unavailable. Load an available model before collecting latency samples.', { model })
-        : backendUnavailable
-          ? jt('diagnostics.phases.samplingUnavailableUntilRecovery', 'Latency sampling is unavailable until the backend recovers.')
-          : !backendReady
-            ? jt('diagnostics.phases.samplingWaitForReady', 'Latency sampling will resume when the backend is ready.')
-            : isLocalEngine(engine)
-              ? jt('diagnostics.phases.sendLocalChatHintPlain', 'Send a local chat to start collecting timings.')
-              : jt('diagnostics.phases.sendChatHintPlain', 'Send a chat to start collecting timings.'),
-      recoveryLabel: degraded ? jt('diagnostics.phases.retryBackendStatus', 'Retry backend status') : jt('diagnostics.phases.openModels', 'Open Models'),
-      recoverySection: 'models',
-    };
-    if (state.loading) {
-      return baseSummary;
-    }
-    return applyHarnessHealthOverride(baseSummary, harnessSnapshot, deriveRuntimeHealthState);
-  }
-
-  function renderPhasePercentilesPane({
-    phasePercentilesState,
-    runtimeHealthState,
-    harnessSnapshot,
-    deriveRuntimeHealthState,
-    dom,
-    escapeHtml = defaultEscapeHtml,
-  } = {}) {
-    const state = phasePercentilesState && typeof phasePercentilesState === 'object'
-      ? phasePercentilesState
-      : {};
-    const paneDom = dom && typeof dom === 'object' ? dom : {};
-    const payload = state.payload && typeof state.payload === 'object' ? state.payload : null;
-    const phaseCount = payload?.phases && typeof payload.phases === 'object'
-      ? Object.keys(payload.phases).length
-      : 0;
-    const sampleCount = sumSamples(payload);
-    const health = buildRuntimeHealthSummary({
-      phasePercentilesState: state,
-      runtimeHealthState,
-      harnessSnapshot,
-      deriveRuntimeHealthState,
-    });
-
-    if (paneDom.diagnosticsBadge) {
-      const badgeText = state.loading
-        ? jt('diagnostics.phases.refreshing', 'Refreshing')
-        : state.error
-          ? jt('diagnostics.phases.error', 'Error')
-          : health.badge;
-      paneDom.diagnosticsBadge.textContent = badgeText;
-      paneDom.diagnosticsBadge.dataset.tone = ({
-        healthy: 'success',
-        live: 'success',
-        degraded: 'warning',
-        blocked: 'danger',
-        error: 'danger',
-        unavailable: 'danger',
-        'model unavailable': 'danger',
-        retained: 'warning',
-        refreshing: 'pending',
-        pending: 'pending',
-      })[String(badgeText).toLowerCase()] || 'pending';
-    }
-    if (paneDom.diagnosticsStatus) {
-      paneDom.diagnosticsStatus.textContent = String(state.error || '').trim()
-        || health.status;
-    }
-    if (paneDom.diagnosticsSummary) {
-      paneDom.diagnosticsSummary.textContent = state.loading
-        ? jt('diagnostics.phases.refreshingLive', 'Refreshing live phase percentiles...')
-        : state.error
-          ? jt('diagnostics.phases.unavailableDetail', 'Phase percentiles unavailable: {error}', { error: String(state.error || 'refresh failed').trim() })
-          : sampleCount > 0
-            ? jt('diagnostics.phases.summaryWithSamples', '{summary} {sampleCount} samples across {phaseCount} phases.', { summary: health.summary, sampleCount, phaseCount })
-            : `${health.summary} ${health.sampleHint}`;
-    }
-    if (paneDom.phasePercentilesTable) {
-      const markup = state.loading
-        ? '<div class="phase-percentiles-empty"><strong>' + escapeHtml(jt('diagnostics.phases.loadingSamples', 'Loading latency samples…')) + '</strong></div>'
-        : state.error
-          ? '<div class="phase-percentiles-empty" data-tone="error"><strong>' + escapeHtml(jt('diagnostics.phases.latencyUnavailable', 'Phase latency unavailable')) + '</strong><p>'
-            + escapeHtml(String(state.error || jt('diagnostics.phases.refreshFailed', 'Refresh failed')).trim()) + '</p></div>'
-          : sampleCount === 0
-            ? '<div class="phase-percentiles-empty"><strong>' + escapeHtml(jt('diagnostics.phases.noSamplesYet', 'No latency samples yet')) + '</strong><p>'
-              + escapeHtml(health.sampleHint) + '</p></div>'
-            : [
-              '<table class="phase-percentiles-table">',
-              '<thead><tr>',
-              '<th scope="col">Phase</th><th scope="col">P50</th><th scope="col">P95</th><th scope="col">P99</th><th scope="col">Count</th><th scope="col">Target P50</th><th scope="col">Target P95</th><th scope="col">Verdict</th>',
-              '</tr></thead>',
-              `<tbody>${buildPhaseRows(payload || { targets: {}, phases: {} }, escapeHtml)}</tbody>`,
-              '</table>',
-            ].join('');
-      if (paneDom.phasePercentilesTable.innerHTML !== markup) {
-        paneDom.phasePercentilesTable.innerHTML = markup;
-      }
-    }
-    if (paneDom.phasePercentilesResetButton) {
-      paneDom.phasePercentilesResetButton.disabled = state.loading || sampleCount === 0;
-    }
+    const targets = payload?.targets && typeof payload.targets === 'object' ? payload.targets : {};
+    const allNames = getPhaseNames(payload);
+    const names = allNames.filter((name) => Number(phases[name]?.count) > 0);
+    if (!names.length) return { markup: '', measured: 0, total: allNames.length, chats: 0 };
+    const rows = names.map((name) => {
+      const stats = phases[name] || {};
+      const target = targets[name] || {};
+      const hasTarget = fmt.formatMs(target.p50) !== fmt.EMPTY || fmt.formatMs(target.p95) !== fmt.EMPTY;
+      return '<tr>'
+        + '<td>' + escapeHtml(phaseLabel(name)) + '</td>'
+        + '<td class="diagnostics-num">' + escapeHtml(fmt.formatMs(stats.p50)) + '</td>'
+        + '<td class="diagnostics-num">' + escapeHtml(fmt.formatMs(stats.p95)) + '</td>'
+        + '<td class="diagnostics-num diagnostics-col-wide">' + escapeHtml(fmt.formatMs(stats.p99)) + '</td>'
+        + '<td class="diagnostics-num diagnostics-col-wide">' + escapeHtml(hasTarget ? fmt.formatMs(target.p50) + ' / ' + fmt.formatMs(target.p95) : fmt.EMPTY) + '</td>'
+        + '<td>' + verdictCell(deriveVerdict(stats, target)) + '</td>'
+        + '</tr>';
+    }).join('');
+    const markup = '<table class="diagnostics-table"><thead><tr>'
+      + headerCell(jt('diagnostics.performance.step', 'Step'))
+      + headerCell(jt('diagnostics.performance.typical', 'Typical'), 'P50', 'diagnostics-num')
+      + headerCell(jt('diagnostics.performance.slow', 'Slow'), 'P95', 'diagnostics-num')
+      + headerCell(jt('diagnostics.performance.slowest', 'Slowest'), 'P99', ['diagnostics-num', 'diagnostics-col-wide'])
+      + headerCell(jt('diagnostics.performance.target', 'Target'), 'P50 / P95', ['diagnostics-num', 'diagnostics-col-wide'])
+      + '<th scope="col"><span class="sr-only">' + escapeHtml(jt('diagnostics.performance.verdict', 'Verdict')) + '</span></th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table>';
+    // One chat contributes a sample to each step it passed through, so the busiest step counts the chats.
+    const chats = Math.max(...names.map((name) => Number(phases[name].count) || 0));
+    return { markup, measured: names.length, total: allNames.length, chats };
   }
 
   return {
-    PHASE_LABELS,
     PHASE_ORDER,
+    buildPhaseTimingView,
     classifyBackendPhase,
-    isLocalEngine,
-    buildRuntimeHealthSummary,
     deriveVerdict,
-    formatMs,
-    renderPhasePercentilesPane,
+    phaseLabel,
   };
 });

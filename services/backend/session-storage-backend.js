@@ -170,6 +170,9 @@ class SessionStorageBackend {
     // then maintained on every upsert/load/delete.
     this._scanActiveTurns = new Map();
     this._activeTurnScanSeeded = false;
+    // Non-persisted sessionId -> count of accepted writes that moved
+    // turn_event_seq_counter (every turn-event append path ends in upsert).
+    this._turnEventStamps = new Map();
     this._pendingSplitMigration = null;
     this._pendingMigrationPromise = null;
 
@@ -270,6 +273,14 @@ class SessionStorageBackend {
   }
 
   isDisposed() { return this._disposed; }
+
+  getTurnEventStamp(sessionId) { return this._turnEventStamps.get(sessionId) || 0; }
+
+  _bumpTurnEventStamp(sessionId, next) {
+    const previous = this._loadedSessions.get(sessionId);
+    if (previous && previous.turn_event_seq_counter === next?.turn_event_seq_counter) return;
+    this._turnEventStamps.set(sessionId, this.getTurnEventStamp(sessionId) + 1);
+  }
 
   getIndexSnapshot() {
     return {
@@ -387,6 +398,7 @@ class SessionStorageBackend {
         this._indexDirty = true;
       }
       recordAcceptedSessionMutation(this, sessionId, { indexChanged });
+      this._bumpTurnEventStamp(sessionId, normalized);
       this._loadedSessions.set(sessionId, normalized);
       this._transcriptCache.invalidate(sessionId, normalized);
       this._trackActiveTurn(sessionId, normalized);
@@ -447,6 +459,7 @@ class SessionStorageBackend {
       this._indexDirty = deferredIndexWrite;
       this._cachedIndex = nextIndex;
     }
+    this._bumpTurnEventStamp(sessionId, normalized);
     this._loadedSessions.set(sessionId, normalized);
     this._transcriptCache.invalidate(sessionId, normalized);
     recordAcceptedSessionMutation(this, sessionId, {
@@ -469,6 +482,7 @@ class SessionStorageBackend {
       return false;
     }
     const result = deleteSessionFromBackend(this, sessionId);
+    if (result === true) this._turnEventStamps.delete(sessionId);
     if (result === true) {
       this._transcriptCache.remove(sessionId);
       this._notifyCacheAvailability();

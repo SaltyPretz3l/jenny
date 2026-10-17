@@ -4,8 +4,11 @@ const {
   normalizedServerConfig,
   projectServerConfig,
   pendingTrust,
+  normalizePrompts,
+  approvedPrompts,
 } = require('./mcp-config-store');
 const { MCP_ERROR_CODES } = require('./backend/error-codes');
+const { readinessProbeLaunch, probeMcpReadiness } = require('./mcp-readiness-probe');
 
 const BUILTIN_SERVER = Object.freeze({
   name: 'jenny_local_tools',
@@ -176,11 +179,14 @@ function buildDiscoveryState({ backendStatus = {}, configuredServers = [], sseEn
     }
     const failure = failures.get(server.name) || null;
     const cooldown = cooldowns.get(server.name) || null;
+    const prompts = server.name === BUILTIN_SERVER.name ? [] : approvedPrompts(configured);
     return {
       name: server.name,
       transport: server.transport,
       status,
       toolsCount: toolCounts.get(server.name) || 0,
+      prompts,
+      promptsCount: prompts.length,
       failure,
       cooldown,
       url: server.url || '',
@@ -190,6 +196,7 @@ function buildDiscoveryState({ backendStatus = {}, configuredServers = [], sseEn
       builtin: server.name === BUILTIN_SERVER.name,
       enabled: server.name === BUILTIN_SERVER.name || configured?.enabled === true,
       trust: configured?.trust || null,
+      readOnlyAutoAllow: server.name !== BUILTIN_SERVER.name && configured?.read_only_auto_allow === true,
     };
   });
   return {
@@ -209,6 +216,7 @@ class McpDiscoveryService {
     configStore = null,
     now = () => new Date().toISOString(),
     log = () => {},
+    readinessProbe = probeMcpReadiness,
   } = {}) {
     if (!userDataPath) {
       throw new Error('userDataPath is required for McpDiscoveryService.');
@@ -220,6 +228,8 @@ class McpDiscoveryService {
     this.now = now;
     this.log = typeof log === 'function' ? log : () => {};
     this.lastInspections = new Map();
+    this.readiness = new Map();
+    this.readinessProbe = readinessProbe;
     this.inspectionControllers = new Map();
   }
 
@@ -262,12 +272,16 @@ class McpDiscoveryService {
     const storeState = this.configStore.getState();
     const config = storeState.document;
     const backendStatus = this.backendService?.currentStatus || {};
-    return buildDiscoveryState({
+    const state = buildDiscoveryState({
       backendStatus,
       configuredServers: config.mcp_servers,
       sseEnabled: config.mcp_sse_enabled === true,
       configStatus: storeState,
     });
+    for (const row of state.servers) {
+      row.readiness = readinessProbeLaunch(row) ? this.readiness.get(row.name) || null : null;
+    }
+    return state;
   }
 
   async refresh() {
@@ -290,7 +304,7 @@ class McpDiscoveryService {
     ))) return;
     const result = this.configStore.update((document) => ({ ...document,
       mcp_servers: document.mcp_servers.map((row) => drifted.has(row.name) ? {
-        ...row, enabled: false,
+        ...projectServerConfig(row), enabled: false,
         trust: pendingTrust(row, row.trust?.advertised_tools_digest),
       } : row),
     }));
@@ -323,6 +337,16 @@ class McpDiscoveryService {
       init_timeout_seconds: update.init_timeout_seconds === undefined
         ? previous.init_timeout_seconds : update.init_timeout_seconds,
     };
+    // The editor does not carry the hand-edited row extensions; an edit keeps
+    // them unless it sets them or moves the row off stdio (stdio-only keys).
+    const staysStdio = String(update.transport || 'stdio').trim().toLowerCase() === 'stdio';
+    for (const key of ['inspect_timeout_seconds', 'read_only_auto_allow', 'env', 'memory_limit_mb',
+      'max_processes', 'request_timeout_seconds']) {
+      if (update[key] === undefined && previous[key] !== undefined
+        && (staysStdio || key === 'inspect_timeout_seconds' || key === 'read_only_auto_allow')) {
+        merged[key] = previous[key];
+      }
+    }
     const auth = update.auth === undefined ? previous.auth : update.auth;
     if (isPlainObject(auth)) {
       // A stored credential only follows an edit to the same destination: a new
@@ -347,6 +371,7 @@ class McpDiscoveryService {
       } : row),
     }));
     this.lastInspections.delete(name);
+    this.readiness.delete(name);
     return this._afterMutation(result, 'mcp_server_updated');
   }
 
@@ -361,7 +386,85 @@ class McpDiscoveryService {
       mcp_servers: document.mcp_servers.filter((row) => row.name !== name),
     }));
     this.lastInspections.delete(name);
+    this.readiness.delete(name);
     return this._afterMutation(result, 'mcp_server_removed');
+  }
+
+  async checkReadiness({ name } = {}) {
+    const server = this._loadConfig().mcp_servers.find((row) => row.name === name);
+    if (!readinessProbeLaunch(server)) {
+      return structuredError('readiness_unavailable', 'This connection has no readiness check.');
+    }
+    const digest = configurationDigest(server);
+    const inspection = this.lastInspections.get(name);
+    if (server.trust?.status !== 'approved' && inspection?.configurationDigest !== digest) {
+      return structuredError('readiness_unconsented', 'Test the connection first.');
+    }
+    const readiness = await this.readinessProbe({ server: projectServerConfig(server) });
+    // A row edited or re-created while the probe ran keeps no result from the old command.
+    const current = this._loadConfig().mcp_servers.find((row) => row.name === name);
+    if (current && configurationDigest(current) === digest) this.readiness.set(name, readiness);
+    this.log('INFO', 'mcp.readiness.checked', { server_name: name,
+      healthy: readiness.healthy, reason: readiness.reason });
+    return { ok: true, readiness };
+  }
+
+  async getPrompt(payload = {}) {
+    const client = this.backendService?.sidecarClient;
+    if (!client?.connected || typeof client.request !== 'function') {
+      return structuredError('sidecar_unavailable', 'The local runtime is unavailable.');
+    }
+    const { name, prompt, arguments: args } = payload || {};
+    const server = this._loadConfig().mcp_servers.find((row) => row.name === name);
+    if (name !== BUILTIN_SERVER.name && !server) {
+      return structuredError('server_not_found', 'The MCP server was not found.');
+    }
+    if (name === BUILTIN_SERVER.name || server.enabled !== true) {
+      return structuredError('server_disabled', 'The MCP server is disabled.');
+    }
+    if (server.trust?.status !== 'approved' || server.trust.configuration_digest !== configurationDigest(server)) {
+      return structuredError('not_approved', 'Approve this MCP server configuration first.');
+    }
+    const definition = approvedPrompts(server).find((row) => row.name === prompt);
+    if (!definition) return structuredError('prompt_unknown', 'The prompt is not approved.');
+    if (!isPlainObject(args) || ![Object.prototype, null].includes(Object.getPrototypeOf(args))) {
+      return structuredError('argument_invalid', 'Prompt arguments must be an object.');
+    }
+    for (const [argument, value] of Object.entries(args)) {
+      if (!definition.arguments.some((row) => row.name === argument)
+        || typeof value !== 'string' || value.length > 4096) {
+        const error = structuredError('argument_invalid', 'A prompt argument is invalid.');
+        error.error.argument = argument.slice(0, 64);
+        return error;
+      }
+    }
+    for (const argument of definition.arguments) {
+      if (argument.required && (!Object.hasOwn(args, argument.name) || !args[argument.name].trim())) {
+        const error = structuredError('argument_missing', 'A required prompt argument is missing.');
+        error.error.argument = argument.name;
+        return error;
+      }
+    }
+    let reason = 'request_failed';
+    try {
+      const result = await client.request('mcp.prompt_get', {
+        accept_version: require('./backend/sidecar-client').API_VERSION,
+        server: name, name: prompt, arguments: args,
+      }, { timeoutMs: (server.request_timeout_seconds || 60) * 1000 + 5000 });
+      if (result?.ok === true && typeof result.text === 'string') {
+        const text = result.text.slice(0, 16000);
+        const chars = Number.isInteger(result.chars) && result.chars >= 0 ? result.chars : text.length;
+        return { ok: true, server: name, prompt, text, chars };
+      }
+      const allowed = ['params_invalid', 'mcp_unavailable', 'prompt_failed', 'prompt_cancelled',
+        'prompt_content_unsupported', 'prompt_result_invalid', 'too_many_prompts'];
+      if (result?.ok === true) reason = 'prompt_result_invalid';
+      else reason = allowed.includes(result?.failure?.reason) ? result.failure.reason : 'failed';
+    } catch (_error) { /* Request failures expose no transport diagnostics. */ }
+    this.log('WARN', 'mcp.prompt.failed', { server_name: name, prompt, reason });
+    const error = structuredError('prompt_unavailable', 'The prompt could not be fetched.');
+    error.error.reason = reason;
+    return error;
   }
 
   async testServer(payload = {}) {
@@ -403,12 +506,23 @@ class McpDiscoveryService {
         server: inspectionServer,
         mcp_sse_enabled: true,
         confirmed_stdio: server.transport !== 'stdio' || payload.confirmed === true,
-      }, { timeoutMs: 20_000, signal: controller.signal });
+      }, { timeoutMs: (server.inspect_timeout_seconds || 15) * 1000 + 5000, signal: controller.signal });
       if (!result?.ok || !/^[a-f0-9]{64}$/.test(String(result.tools_digest || ''))) return result;
+      const promptsDigest = String(result.prompts_digest || '');
+      const validPromptsDigest = promptsDigest === '' || /^[a-f0-9]{64}$/.test(promptsDigest);
+      const prompts = normalizePrompts(result.prompts);
       this.lastInspections.set(name, {
         configurationDigest: configurationDigest(server),
         toolsDigest: result.tools_digest,
+        promptsDigest: validPromptsDigest ? promptsDigest : '',
+        prompts: validPromptsDigest && prompts.ok ? prompts.value : [],
       });
+      if (readinessProbeLaunch(server)) {
+        // The readiness result is advisory: a probe failure never undoes a successful Test.
+        try { await this.checkReadiness({ name }); } catch (error) {
+          this.log('WARN', 'mcp.readiness.failed', { server_name: name, error_name: error?.name || 'Error' });
+        }
+      }
       return result;
     } catch (error) {
       this.log('WARN', 'mcp.inspect.failed', { server_name: name, error_name: error?.name || 'Error' });
@@ -443,8 +557,10 @@ class McpDiscoveryService {
     const result = this.configStore.update((document) => ({ ...document,
       mcp_servers: document.mcp_servers.map((row) => row.name === name ? { ...row,
         enabled: false,
+        prompts: inspected.prompts?.length ? inspected.prompts : undefined,
         trust: { status: 'approved', configuration_digest: inspected.configurationDigest,
-          advertised_tools_digest: inspected.toolsDigest, reviewed_at: this.now() },
+          advertised_tools_digest: inspected.toolsDigest, advertised_prompts_digest: inspected.promptsDigest,
+          reviewed_at: this.now() },
       } : row),
     }));
     return this._afterMutation(result, 'mcp_server_approved');
@@ -546,7 +662,7 @@ class McpDiscoveryService {
     const secretRef = mcpAuthSecretRef(serverName);
     const result = this.configStore.update((document) => ({ ...document,
       mcp_servers: document.mcp_servers.map((entry) => entry.name === serverName ? {
-        ...entry, enabled: false,
+        ...projectServerConfig(entry), enabled: false,
         auth: { ...entry.auth, secret_ref: secretRef },
         trust: pendingTrust({ ...entry, auth: { ...entry.auth, secret_ref: secretRef } }),
       } : entry),

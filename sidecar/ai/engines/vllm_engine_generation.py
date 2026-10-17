@@ -15,12 +15,20 @@ import httpx
 from sidecar.ai.engines.base import EngineMessage, clamp_timeout_to_deadline
 from sidecar.ai.engines.engine_events import EngineEvent
 from sidecar.ai.engines.provider_call_finalize import ProviderCallFinalizer
+from sidecar.ai.engines.provider_metrics import (
+    ProviderMetrics,
+    configure_metrics_request,
+    observe_nonstream,
+    observe_nonstream_body,
+)
 from sidecar.ai.engines.vllm_sse_stream import (
+    LlamaPrefillStream,
     _iter_bounded_sse_lines,  # noqa: F401 - compatibility re-export
     _iter_cancel_aware_sse_lines,
     _normalize_vllm_finish_reason,
     _parse_usage,
     _resolve_vllm_stream_finish_reason,
+    has_generated_delta,
 )
 from sidecar.ai.engines.vllm_tool_stream import (
     THINKING_BUDGET_ABORT_EVENT,
@@ -207,7 +215,9 @@ class _VLLMGenerationMixin:
         system: str = "",
         messages: list[EngineMessage] | None = None,
         response_format: Any = None,
+        cancel_handle: Any = None,
     ) -> str:
+        _raise_if_cancelled(cancel_handle)
         result = self.generate_with_tools(
             prompt=prompt,
             tools=[],
@@ -218,6 +228,7 @@ class _VLLMGenerationMixin:
             system=system,
             messages=messages,
             response_format=response_format,
+            cancel_handle=cancel_handle,
         )
         return result.content
 
@@ -233,7 +244,7 @@ class _VLLMGenerationMixin:
         response_format: Any = None,
         cancel_handle: Any = None,
         wall_clock_deadline: float | None = None,
-    ) -> Generator[StreamChunk, None, None]:
+    ) -> Generator[StreamChunk | EngineEvent, None, None]:
         # ``wall_clock_deadline`` is an OPTIONAL widening of BaseEngine.stream:
         # this mode previously hardcoded a 120 s transport timeout even though
         # its caller owns a turn deadline, so a transport acquisition could
@@ -252,6 +263,8 @@ class _VLLMGenerationMixin:
             response_format=response_format,
         )
         payload["stream"] = True
+        prefill = LlamaPrefillStream(self)
+        prefill.configure_request(payload)
         num_predict = self._fit_output_to_window(payload)
         # Opt into the OpenAI-style final usage chunk so streaming turns can
         # surface provider-reported prompt/completion token counts (and, when
@@ -278,6 +291,7 @@ class _VLLMGenerationMixin:
         )
 
         finalizer = ProviderCallFinalizer(self)
+        metrics = ProviderMetrics.for_engine(self)
         try:
             reasoning_parser = self._create_request_reasoning_parser()
             thinking_guard = (
@@ -312,6 +326,7 @@ class _VLLMGenerationMixin:
             # connection setup per call. The per-call timeout override carries
             # the deadline-clamped transport bound the old throwaway client got
             # from its constructor.
+            yield from metrics.start_events()
             with self._service.stream_response(
                 "POST",
                 "/chat/completions",
@@ -319,6 +334,7 @@ class _VLLMGenerationMixin:
                 timeout=request_timeout,
             ) as response:
                 response.raise_for_status()
+                yield from prefill.start_events()
                 for line in _iter_cancel_aware_sse_lines(response, cancel_handle):
                     if not line:
                         continue
@@ -351,12 +367,15 @@ class _VLLMGenerationMixin:
                         )
                         if parsed_usage is not None:
                             stream_usage = parsed_usage
+                    yield from prefill.feed(chunk)
+                    yield from metrics.feed(chunk)
                     normalizer.feed(chunk)  # diagnostic-only; logs and never raises
                     choices = chunk.get("choices")
                     if not isinstance(choices, list) or not choices:
                         continue
                     delta = choices[0].get("delta", {}) if isinstance(choices[0], dict) else {}
-                    self._record_first_chunk()
+                    if has_generated_delta(chunk):
+                        self._record_first_chunk()
 
                     reasoning = extract_reasoning_delta(delta)
                     if reasoning and not reasoning_output_enabled:
@@ -520,6 +539,8 @@ class _VLLMGenerationMixin:
             messages=messages,
             response_format=response_format,
         )
+        prefill = LlamaPrefillStream(self)
+        prefill.configure_request(payload)
         normalizer = ProviderStreamNormalizer(provider="vllm")
         content_parts: list[str] = []
         thinking_parts: list[str] = []
@@ -527,6 +548,7 @@ class _VLLMGenerationMixin:
         truncated_calls: list[NormalizedStreamEvent] = []
         usage: GenerationUsage | None = None
         finalizer = ProviderCallFinalizer(self)
+        metrics = ProviderMetrics.for_engine(self)
         finalizer.normalizer = normalizer
         try:
             started_at = time.monotonic()
@@ -555,6 +577,7 @@ class _VLLMGenerationMixin:
             # ``_iter_cancel_aware_sse_lines`` -- the same seam
             # chatgpt_subscription relies on -- which closes only this
             # response and leaves the pool intact.
+            yield from metrics.start_events()
             with self._service.stream_response(
                 "POST",
                 "/chat/completions",
@@ -575,6 +598,8 @@ class _VLLMGenerationMixin:
                         parser=reasoning_parser,
                         guard=thinking_guard,
                         truncated=truncated_calls,
+                        prefill=prefill,
+                        metrics=metrics,
                     )
                 )
             _collect_normalized_tool_calls(
@@ -687,6 +712,7 @@ class _VLLMGenerationMixin:
         )
         return payload
 
+    @observe_nonstream
     def generate_with_tools(  # BaseEngine transport contract.
         self,
         prompt: str,
@@ -698,7 +724,11 @@ class _VLLMGenerationMixin:
         system: str = "",
         messages: list[EngineMessage] | None = None,
         response_format: Any = None,
+        cancel_handle: Any = None,
     ) -> GenerationResult:
+        # ``cancel_handle`` is an optional widening of BaseEngine's contract,
+        # used by the cancellable ``generate`` above.
+        _raise_if_cancelled(cancel_handle)
         self._assert_ready()
         payload = self._build_payload(
             prompt=prompt,
@@ -732,7 +762,17 @@ class _VLLMGenerationMixin:
 
         finalizer = ProviderCallFinalizer(self)
         try:
-            body = self._service.post_json("/chat/completions", payload)
+            # A non-streaming completion sends no headers until it finishes, so
+            # a cancellable call needs a connection a cancel can sever before
+            # headers; the pooled client is never closed (see stream_with_tools).
+            body = (
+                self._service.post_json("/chat/completions", payload)
+                if cancel_handle is None
+                else self._service.post_json_interruptible(
+                    "/chat/completions", payload, cancel_handle=cancel_handle
+                )
+            )
+            observe_nonstream_body(body)
             self._record_first_chunk()
             self._record_provider_usage(body)
             result = self._parse_tool_completion(body)
@@ -838,5 +878,27 @@ class _VLLMGenerationMixin:
         if isinstance(reasoning_effort, str) and reasoning_effort.strip():
             payload["reasoning_effort"] = reasoning_effort.strip().lower()
         if response_format is not None and getattr(response_format, "is_json", False):
-            payload["response_format"] = {"type": "json_object"}
+            payload["response_format"] = self._json_response_format(response_format)
+        configure_metrics_request(self, payload)
         return payload
+
+    def _json_response_format(self, response_format: Any) -> dict[str, Any]:
+        """``json_object``, or llama.cpp's strict ``json_schema`` when opted in.
+
+        Only the managed llama-server opts in (``json_schema_response_format``);
+        other OpenAI-compatible servers sharing the label stay on json_object.
+        """
+        schema = getattr(response_format, "json_schema", None)
+        if (
+            getattr(self, "_json_schema_response_format", False) is True
+            and self._PROVIDER_LABEL == "openai-compatible"
+            and isinstance(schema, dict)
+            and schema
+        ):
+            title = schema.get("title")
+            name = title.strip() if isinstance(title, str) and title.strip() else "response"
+            return {
+                "type": "json_schema",
+                "json_schema": {"name": name, "schema": schema, "strict": True},
+            }
+        return {"type": "json_object"}

@@ -3,7 +3,7 @@
    that the extra width stays empty at the end (settings-rows.css flows the
    groups). */
 .settings-view {
-  --settings-shell-content-max: 1760px;
+  --settings-shell-content-max: var(--page-shell-max);
   --settings-rail-width: 232px;
 }
 

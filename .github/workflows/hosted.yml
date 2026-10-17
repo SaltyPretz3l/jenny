@@ -15,6 +15,7 @@ on:
       - 'renderer/shell/renderer-runs-view.js'
       - 'renderer/shell/renderer-runtime-limits-view.js'
       - 'renderer/features/renderer-plan-document.js'
+      - 'renderer/features/renderer-memory-chat-entry.js'
       - 'locales/**'
       - 'sidecar/**'
       - 'tests/server/**'

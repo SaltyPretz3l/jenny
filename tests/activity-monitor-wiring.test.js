@@ -1,0 +1,42 @@
+"use strict";
+const test=require('node:test'),assert=require('node:assert/strict');
+const {registerActivityMonitor,createActivityScopeResolver}=require('../services/main/activity-monitor-wiring');
+const {getBridgeChannel}=require('../services/ipc-contract');
+test('trusted transport scopes details/output and revalidates exact run cancellation',async()=>{
+ const handlers=new Map(),calls=[];let current='one';
+ const backendService={featureFlags:{activity_monitor:true},projectAuthority:{captureProject:id=>{if(id!=='p')throw Error('missing');return{project_id:id};},captureSession:id=>{if(id!=='s')throw Error('missing');return{project_id:'p'};}}};
+ const row=id=>({runId:id,sourceRevision:1,state:'running',cleanup:'pending',live:true,scope:{project_id:id==='one'?'p':'other',session_id:'s'},label:'Test'});
+ const source={getActivityRuns:()=>[row('one'),row('two')],subscribeActivity:()=>()=>{},getRunOutput:id=>({runId:id,stdoutTail:'exact '+id}),abortRun:({expectedRunId})=>{calls.push(expectedRunId);return{aborted:expectedRunId===current};}};
+ const projection=registerActivityMonitor({ipcMain:{handle:(ch,fn)=>handlers.set(ch,fn)},backendService,source,shellConfigService:{},sendBridgeEvent:()=>{},authorization:{authorize:event=>event?.trusted===true}});
+ const invoke=(method,payload,trusted=true)=>handlers.get(getBridgeChannel(method))({trusted},payload);
+ const q={schema_version:1,scope:{kind:'project',project_id:'p'}};
+ assert.equal((await invoke('activity.getSnapshot',q,false)).authorized,false);
+ const snap=await invoke('activity.getSnapshot',q);assert.equal(snap.items.length,1);
+ const detail={...q,epoch:snap.epoch,activity_id:'test:one'};
+ assert.equal((await invoke('workspaceTestRunner.getRunOutput',{...detail,activity_id:'test:two'})).available,false);
+ assert.equal((await invoke('workspaceTestRunner.getRunOutput',{...detail,epoch:'old'})).available,false);
+ assert.equal((await invoke('workspaceTestRunner.getRunOutput',detail)).record.stdoutTail,'exact one');
+ assert.equal((await invoke('workspaceTestRunner.abortRun',detail,false)).authorized,false);assert.deepEqual(calls,[]);
+ current='two';assert.equal((await invoke('workspaceTestRunner.abortRun',detail)).aborted,false);assert.deepEqual(calls,['one']);
+ assert.equal((await invoke('activity.getSnapshot',{...q,scope:{kind:'all',project_id:'p'}})).available,false);
+ const resolve=createActivityScopeResolver(backendService,{});assert.equal(resolve({kind:'session',session_id:'s'}).matches(row('two')),false);
+ backendService.featureFlags.activity_monitor=false;assert.equal((await invoke('activity.getSnapshot',q)).reason,'feature_disabled');projection.dispose();
+});
+
+test('project names come from the project owner only after trusted scope filtering',async()=>{
+ const handlers=new Map(),lookups=[];
+ let name='Atlas\u202e\n <b>tools</b>';
+ const backendService={featureFlags:{activity_monitor:true},projectAuthority:{captureProject:id=>({project_id:id})},projectService:{get:id=>{lookups.push(id);return id==='p'?{id,name}:null;}}};
+ const row=id=>({runId:id,state:'finished',scope:{project_id:id},label:'Tests'});
+ const source={getActivityRuns:()=>[row('p'),row('other')],subscribeActivity:()=>()=>{}};
+ const projection=registerActivityMonitor({ipcMain:{handle:(ch,fn)=>handlers.set(ch,fn)},backendService,source,shellConfigService:{},sendBridgeEvent:()=>{},authorization:{authorize:e=>e?.trusted===true}});
+ const invoke=(method,payload,trusted=true)=>handlers.get(getBridgeChannel(method))({trusted},payload);
+ const q={schema_version:1,scope:{kind:'project',project_id:'p'}};
+ await invoke('activity.getSnapshot',q,false);assert.deepEqual(lookups,[]);
+ const snapshot=await invoke('activity.getSnapshot',q);assert.deepEqual(lookups,['p']);
+ assert.equal(snapshot.items[0].project_name,'Atlas <b>tools</b>');assert.equal(snapshot.items[0].project_id,'p');
+ name='Renamed';const detail={...q,epoch:snapshot.epoch,activity_id:'test:p'};
+ assert.equal((await invoke('activity.getDetail',detail)).item.project_name,'Renamed');
+ assert.equal((await invoke('activity.getDetail',{...detail,activity_id:'test:other'})).available,false);
+ name='';assert.equal((await invoke('activity.getDetail',detail)).item.project_name,null);projection.dispose();
+});

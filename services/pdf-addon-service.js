@@ -25,7 +25,8 @@
  * restart the managed sidecar once no chat is running; while waiting,
  * `applyPending` is true. Remove unsets the directory first and deletes it
  * after the restart, because Windows keeps the loaded .pyd locked; a failed
- * delete is retried at the next start.
+ * delete is retried at the next start. Every delete goes through removeTree,
+ * never Node's rm, which follows a junction after a transient Windows EPERM.
  */
 
 const fs = require('node:fs');
@@ -38,6 +39,7 @@ const { pipeline } = require('node:stream/promises');
 const DEFAULT_MANIFEST = require('../config/pdf-addon-manifest.json');
 const { downloadPinnedFile } = require('./pinned-download');
 const { extractWheel } = require('./pdf-addon-wheel');
+const { removeTree } = require('./fs-remove-no-follow');
 const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
 const { SIDECAR_ALLOWED_ENV } = require('./backend/sidecar-manager');
 const { t } = require('./i18n-main');
@@ -235,7 +237,7 @@ class PdfAddonService extends EventEmitter {
     }
     for (const name of names) {
       if (name.startsWith(STAGING_PREFIX) && !this.operation) {
-        await fs.promises.rm(path.join(this.root, name), { recursive: true, force: true }).catch(() => {});
+        await removeTree(path.join(this.root, name)).catch(() => {});
       }
     }
     await this._removePending();
@@ -398,7 +400,7 @@ class PdfAddonService extends EventEmitter {
       this._emit();
       const version = this.manifest.version;
       const target = path.join(this.root, version);
-      await fs.promises.rm(target, { recursive: true, force: true });
+      await removeTree(target);
       await this._renameWithRetry(siteDir, target);
       this.pendingRemoval = this.pendingRemoval.filter((name) => name !== version);
       this.installed = { version, dir: target, probe: 'ok' };
@@ -422,7 +424,7 @@ class PdfAddonService extends EventEmitter {
         else this._setPhase('failed');
       }
     } finally {
-      await fs.promises.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+      await removeTree(stagingDir).catch(() => {});
       this.operation = null;
       this.progress = { downloadedBytes: 0, totalBytes: 0 };
       this._emit();
@@ -540,7 +542,7 @@ class PdfAddonService extends EventEmitter {
     for (const name of this.pendingRemoval) {
       if (name === this.installed?.version) continue;
       try {
-        await fs.promises.rm(path.join(this.root, name), { recursive: true, force: true });
+        await removeTree(path.join(this.root, name));
       } catch (error) {
         remaining.push(name);
         this._log('WARN', 'pdf_addon.remove_deferred', { code: String(error?.code || '') });

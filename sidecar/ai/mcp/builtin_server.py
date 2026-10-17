@@ -31,7 +31,11 @@ from sidecar.ai.mcp.builtin_request_scope import (
     TRUSTED_EXECUTION_CONTEXT_KEY,
     builtin_request_scope,
 )
-from sidecar.ai.mcp.builtin_server_cli import build_argument_parser
+from sidecar.ai.mcp.builtin_server_cli import (
+    DEFAULT_BUILTIN_FEATURE_FLAGS,
+    build_argument_parser,
+    builtin_feature_flags,
+)
 from sidecar.ai.mcp.builtin_server_io import (
     CANCEL_NOTIFICATION_METHOD,  # noqa: F401 - stable public re-export.
     configure_stdio,
@@ -190,7 +194,7 @@ def _default_tools(
         "skills_project_enabled": True,
         "skills_disabled_ids": (),
         "skills_auto_index": "auto",
-        "feature_flags": {"shell_security": False, "git_tracking": False},
+        "feature_flags": dict(DEFAULT_BUILTIN_FEATURE_FLAGS),
         **(config or {}),
     }
     host_policy = host_policy_from_cli(config["host_mode"], config["host_execution_policy_version"])
@@ -854,6 +858,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         "workspace_recovery_root": args.workspace_recovery_root,
         "pre_change_snapshot_root": args.pre_change_snapshot_root,
     }
+    from sidecar.runtime.owned_process_tracking import configure as configure_owned_processes
+    configure_owned_processes(
+        args.owned_process_ledger_path, owner_pid=args.owned_process_owner_pid
+    )
     ledger_root_arg = str(args.operation_ledger_root or "").strip()
     configure_operation_ledger(
         ledger_root_arg if ledger_root_arg else resolve_operation_ledger_root()
@@ -950,10 +958,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             "skills_project_enabled": _parse_bool_arg(args.skills_project_enabled),
             "skills_disabled_ids": skills_disabled_ids,
             "skills_auto_index": args.skills_auto_index,
-            "feature_flags": {
-                "shell_security": _parse_bool_arg(args.shell_security_enabled),
-                "git_tracking": _parse_bool_arg(args.git_tracking_enabled),
-            },
+            "feature_flags": builtin_feature_flags(args),
         },
         workspace_root_present=workspace.root is not None,
         request_scoped_authority=True,
@@ -987,6 +992,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             _write_response(response)
     finally:
         try:
+            from sidecar.ai.tools.builtins.shell_background import has_active_background_jobs
+            from sidecar.runtime.owned_process_tracking import drain_handoff
+            drain_handoff(has_active_background_jobs)
             shutdown_lsp_tools()
         finally:
             if logging_configured:

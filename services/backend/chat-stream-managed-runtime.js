@@ -26,7 +26,7 @@ const {
   hasValidInteractiveQuestionCount,
 } = require('./interactive-session-utils');
 const { isDeniedTerminalStatus, resolveTerminalRouting } = require('./chat-stream-terminal-utils');
-const { buildTerminalMessageExtras, patchLastSegmentDiscardedDrafts } = require('./chat-stream-discarded-drafts');
+const { buildTerminalMessageExtras, completionEventFields, patchLastSegmentDiscardedDrafts } = require('./chat-stream-discarded-drafts');
 const { settleDeniedTerminal } = require('./chat-stream-managed-runtime-denial');
 const { logAndBuildActiveTurnClaimRefusedError, logAndBuildUserMessagePersistRefusedError } = require('./chat-stream-managed-runtime-admission-claim');
 const {
@@ -337,14 +337,15 @@ function createManagedChatStreamRuntime({
     return message;
   }
 
-  function emitThinkingStatus(text, thinkingId) {
+  function emitThinkingStatus(text, thinkingId, progress = null) {
     const nextText = String(text || '').trim();
-    if (thinkingStatusText === nextText) {
+    if (!progress && thinkingStatusText === nextText) {
       return;
     }
     thinkingStatusText = nextText;
     emitChatStream({
       type: 'thinking_status',
+      ...(progress ? { progress } : {}),
       text: nextText,
       thinkingId: String(thinkingId || ''),
       ...eventBase,
@@ -470,7 +471,7 @@ function createManagedChatStreamRuntime({
     if (visibleCompletionEmitted) {
       return true;
     }
-    if (!String(assistantText || '').trim()) {
+    if (!String(assistantText || '').trim() && !ctx.completion) { // a turn-boundary completion may end with no visible text
       // Successful managed-sidecar tool work gets visible fallback text;
       // no-tool and failed-only empty completions remain fail-closed.
       if (!toolResultCounts.successful) {
@@ -518,7 +519,7 @@ function createManagedChatStreamRuntime({
       type: 'complete',
       content: assistantText,
       ...(turnUsage ? { usage: turnUsage } : {}),
-      ...(resumableStop ? { resumableStop } : {}),
+      ...(resumableStop ? { resumableStop } : {}), ...completionEventFields(ctx.completion),
       ...(discardedDrafts ? { discardedDrafts } : {}),
       ...eventBase,
     }, { channel: 'control', phase: null });
@@ -563,8 +564,8 @@ function createManagedChatStreamRuntime({
           // The final slice flushes through the segment path; null from it is
           // a real refusal, undefined is a no-op (nothing left to persist —
           // every segment already landed at a tool boundary).
-          const segmentSummary = persistCurrentTextSegment({ resumableStop, discardedDrafts });
-          if (segmentSummary === undefined) patchLastSegmentDiscardedDrafts(service.sessionStore, resolvedSessionId, persistedTextSegmentIds, discardedDrafts);
+          const segmentSummary = persistCurrentTextSegment({ resumableStop, discardedDrafts, completion: ctx.completion });
+          if (segmentSummary === undefined) patchLastSegmentDiscardedDrafts(service.sessionStore, resolvedSessionId, persistedTextSegmentIds, discardedDrafts, ctx.completion);
           transcriptCollector.resetSlice();
           // Audit A3: a refusal of ANY segment this turn — a prior mid-stream
           // flush or this final slice — leaves the reply partially
@@ -591,7 +592,7 @@ function createManagedChatStreamRuntime({
             finalizedAt: assistantTimestamp,
             client_message_id: assistantBaseMessageId,
             model_used: model,
-            ...buildTerminalMessageExtras({ resumableStop, discardedDrafts }),
+            ...buildTerminalMessageExtras({ resumableStop, discardedDrafts, completion: ctx.completion }),
             ...transcriptCollector.buildAssistantMessageFields({
               fallbackReasoningEntries: reasoningEntries,
             }),

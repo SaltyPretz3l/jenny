@@ -46,8 +46,6 @@
     --chat-sprite-size: clamp(22px, 5vw, 24px);
     --chat-sprite-rail-offset: clamp(24px, 7vw, 32px);
     --chat-user-bubble-max-width: 100%;
-    --content-column-width: min(100%, calc(100vw - var(--sidebar-current-width) - 112px));
-    --composer-width: min(100%, calc(100vw - var(--sidebar-current-width) - 72px));
     --context-panel-width: 0px;
     --thread-node-gap: 12px;
   }
@@ -75,16 +73,6 @@
   .chat-view .hero-subtitle {
     max-width: 420px;
     font-size: var(--font-size-footnote);
-  }
-
-  .chat-view .chat-thread-column {
-    --_thread-col-content: min(var(--content-column-width), calc(100vw - 48px));
-    width: calc(var(--_thread-col-content) + var(--chat-sprite-rail-offset));
-    margin-inline-start: max(0px, calc((100% - var(--_thread-col-content)) / 2 - var(--chat-sprite-rail-offset)));
-  }
-
-  .chat-view.chat-empty .hero-stage::before {
-    --_thread-col-content: min(var(--content-column-width), calc(100vw - 48px));
   }
 
   .chat-view .chat-entry.assistant {
@@ -234,12 +222,9 @@
 @media (max-width: 480px) {
   .chat-view {
     --chat-sprite-rail-offset: 0px;
-    --content-column-width: 100%;
-    --composer-width: 100%;
   }
 
-  .chat-view .hero-stack,
-  .chat-view .chat-thread-column {
+  .chat-view .hero-stack {
     width: 100%;
     margin-inline-start: 0;
   }
@@ -251,7 +236,6 @@
 
 @media (min-width: 2000px) {
   :root {
-    --composer-width: min(920px, calc(100vw - var(--sidebar-current-width) - 240px));
     --context-panel-width: 360px;
     /* Ultra-wide card cap for NARROW mode only. At (0,1,0) this loses to
        :root[data-chat-width="standard"] in foundation.css, so Standard keeps 1100px. */

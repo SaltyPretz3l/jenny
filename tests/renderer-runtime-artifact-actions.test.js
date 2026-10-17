@@ -25,6 +25,29 @@ function makeController() {
 }
 
 describe('handleArtifactAction panel verb (WS3)', () => {
+  test('the retired viewer verb neither opens the viewer nor the panel; images open through the viewer controller', async () => {
+    const opened = [];
+    const panel = [];
+    const controller = createShellRuntimeController({
+      state: { currentSessionId: 'other-pane', sessions: [] },
+      windowRef: { rendererImageViewerController: { open: async (target) => opened.push(target) } },
+      callbacks: { openArtifactTarget: async (...args) => panel.push(args) },
+    });
+    await controller.handleArtifactAction({ action: 'viewer', artifactId: 'image-a', sessionId: 'source-pane', contextNode: {} });
+    assert.deepEqual([opened, panel], [[], []]);
+  });
+
+  test('a panel open that resolves false shows the unavailable toast', async () => {
+    const toasts = [];
+    const controller = createShellRuntimeController({
+      state: { currentSessionId: 'session-1', sessions: [] },
+      windowRef: {},
+      callbacks: { openArtifactTarget: async () => false, showToastMessage: (message, options) => toasts.push([message, options.title]) },
+    });
+    await controller.handleArtifactAction({ action: 'panel', artifactId: 'artifact-1' });
+    assert.deepEqual(toasts, [['This artifact action is unavailable for the selected entry.', 'Artifact Action Unavailable']]);
+  });
+
   test('panel routes to openArtifactTarget with the inline-open-panel source', async () => {
     const { controller, calls } = makeController();
     await controller.handleArtifactAction({ action: 'panel', artifactId: 'artifact-1' });

@@ -14,6 +14,7 @@ const { JSDOM } = require('jsdom');
 const { createArtifactReviewAutoOpen } = require('../renderer/features/renderer-artifact-review-autoopen');
 const { createArtifactManager } = require('../renderer/features/renderer-artifacts-utils');
 const { createArtifactPanelV2 } = require('../renderer/features/renderer-artifact-panel-v2-render');
+const { createTaskRail } = require('../renderer/features/renderer-task-rail');
 
 const RUN_STARTED_AT = Date.parse('2026-09-29T12:00:00.000Z');
 const BEFORE_RUN = '2026-09-28T09:00:00.000Z';
@@ -192,24 +193,26 @@ function makeApp(t, { messages = {}, current = 'A', prefs = { enabled: false, wi
     ui: { activeView: 'chat', artifactReview: {}, appearance: { artifactAutoOpen: true } },
     artifacts: { autoOpenedSessionIds: [], deletedArtifactIds: [] },
     messagesBySession: new Map(Object.entries(messages)),
-    features: { featureFlags: {} },
+    features: { featureFlags: { tools_task_board_enabled: true } },
   };
   const panelEl = doc.getElementById('artifactReviewPanel');
   const chrome = createArtifactPanelV2({ panelEl, state, windowRef: dom.window });
   chrome.installed();
   const nodes = Object.fromEntries([...doc.querySelectorAll('[id]')].map((node) => [node.id, node]));
   nodes.workspace.getBoundingClientRect = () => ({ width: 1600 });
+  const tasks = createTaskRail({ state, windowRef: dom.window, dom: nodes });
   const manager = createArtifactManager({ state, dom: nodes, callbacks: {
     getActiveSession: () => (state.currentSessionId ? { id: state.currentSessionId } : null),
     escapeHtml: (value) => String(value || '').replaceAll('<', '&lt;'),
     appendClientLog: () => {}, setActiveView: () => {}, renderAll: () => {}, updateComposerSafeOffset: () => {},
     ...(runStartedAt === undefined ? {} : { getRunStartedAt: () => runStartedAt }),
     panelV2: chrome,
+    renderTasksSurface: (surface) => tasks.renderRailContent(surface),
   } });
   chrome.connect({ getArtifacts: () => manager.getArtifactsForSession(state.currentSessionId), getSelectedArtifactSource: () => manager.getSelectedArtifactSource() });
   manager.bind();
   chrome.bind();
-  t.after(() => { manager.dispose(); chrome.dispose(); dom.window.close(); globalThis.window = previousWindow; globalThis.document = previousDocument; });
+  t.after(() => { manager.dispose(); tasks.dispose(); chrome.dispose(); dom.window.close(); globalThis.window = previousWindow; globalThis.document = previousDocument; });
   const render = () => manager.renderArtifactReviewPanel();
   return {
     state, manager, render,
@@ -227,6 +230,7 @@ describe('the rail through the real manager', () => {
     app.render();
     assert.equal(app.visible(), true, 'Tasks shows; the artifact waits');
     assert.equal(app.state.ui.artifactReview.mode, 'tasks');
+    assert.ok(globalThis.document.querySelector('.task-rail-surface'), 'the real Tasks owner painted the rail');
     app.clickClose();
     assert.equal(app.visible(), false);
     app.render();

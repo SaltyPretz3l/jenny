@@ -166,6 +166,9 @@
       }
     });
     rootEl.addEventListener('click', function (event) {
+      // A target removed while the click was dispatched was re-rendered by its owner (which keeps
+      // its own popover state); that is not a click away from the replacement.
+      if (event.target && event.target.isConnected === false) return;
       var openPopovers = rootEl.querySelectorAll('.inv-popover:not([hidden])');
       for (var i = 0; i < openPopovers.length; i += 1) {
         var popEl = openPopovers[i];

@@ -21,9 +21,11 @@
     // Section bindings and runtime.
     Object.freeze(['renderer/shell/renderer-settings-advanced-section.js', 'rendererSettingsAdvancedSection']),
     Object.freeze(['renderer/shell/renderer-settings-session-runtime.js', 'rendererSettingsSessionRuntime']),
+    Object.freeze(['renderer/shell/renderer-settings-subagents.js', 'rendererSettingsSubagents']),
     Object.freeze(['renderer/shell/renderer-settings-section-binders.js', 'rendererSettingsSectionBinders']),
     // Settings integrations.
     Object.freeze(['renderer/shell/renderer-settings-command-sandbox.js', 'rendererSettingsCommandSandboxUtils']),
+    Object.freeze(['renderer/shell/renderer-settings-conversation-transfer.js', 'rendererSettingsConversationTransfer']),
     Object.freeze(['renderer/shell/renderer-settings-cloud-models.js', 'rendererSettingsCloudModels']),
     Object.freeze(['renderer/shell/renderer-settings-pdf-addon.js', 'rendererSettingsPdfAddonUtils']),
   ]);

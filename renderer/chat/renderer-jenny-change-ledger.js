@@ -465,9 +465,31 @@
     };
   }
 
+  // The "Review changes" target of one tool call: its one change, a turn
+  // review when it made several, else null. The tool shell and the trace row
+  // both offer it, so a settled scripted or move row keeps the affordance.
+  function resolveReviewableChange(toolCall, context = {}) {
+    const turnId = normalizeId(context.turnId);
+    if (!turnId || !isPlainObject(toolCall)) return null;
+    const changes = normalizeJennyChangesFromToolCall(toolCall, { turnId }).changes;
+    if (changes.length > 1) {
+      return {
+        scope: 'turn',
+        turnId,
+        changeCount: changes.length,
+        toolCallId: normalizeId(toolCall.toolCallId),
+        toolName: normalizeId(toolCall.toolName),
+      };
+    }
+    if (changes.length === 1) return changes[0];
+    const result = normalizeJennyChangeFromToolCall(toolCall, { turnId });
+    return result && result.change ? result.change : null;
+  }
+
   return {
     buildJennyChangeLedgerFromTurnViewModels,
     normalizeJennyChangeFromToolCall,
     normalizeJennyChangesFromToolCall,
+    resolveReviewableChange,
   };
 });

@@ -343,7 +343,7 @@
       artifactCache.delete(key);
       state.artifacts.filter = 'all';
       if (state.artifacts.selectedSessionId === key && !preserveLoaded) resetLoadedState();
-      clearImageArtifactDataForSession(key);
+      clearImageArtifactDataForSession(key, { keepLoaded: true });
     }
     function rekeySessionArtifacts(oldSessionId, newSessionId) {
       const sourceSessionId = String(oldSessionId || '').trim();
@@ -537,10 +537,10 @@
         panelV2?.afterRender?.(null);
         return;
       }
-      if (mode === 'tasks' && typeof renderTasksSurface === 'function') {
-        renderTasksSurface(surfaces.split);
-        panelV2?.afterRender?.(null);
-        return;
+      if (mode === 'tasks') {
+        if (renderTasksSurface?.(surfaces.split) === true) { panelV2?.afterRender?.(null); return; }
+        getArtifactReviewState().mode = 'artifact';
+        syncArtifactReviewLayout();
       }
       if (mode === 'notes') {
         // Pull: the lazily loaded Notes rail paints the surface; with its module absent the mode resets (like subagents).

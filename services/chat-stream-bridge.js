@@ -31,6 +31,7 @@ function createChatStreamBridge({
   sendBridgeEvent = () => {},
   log = () => {},
   usageHistory = null,
+  takeInferencePerformance = () => null,
   now = () => Date.now(),
   setCoalesceTimer = (fn, ms) => setTimeout(fn, ms),
   clearCoalesceTimer = (handle) => clearTimeout(handle),
@@ -220,6 +221,7 @@ function createChatStreamBridge({
       && typeof usageHistory.recordTurnUsage === 'function'
     ) {
       const usageMetadata = buildUsageMetadata(payload, type, stats, timestampMs);
+      try { const perf = takeInferencePerformance(usageMetadata.streamId); if (perf) usageMetadata.inferencePerformance = perf; } catch (_error) { /* telemetry never blocks usage recording */ }
       const terminalUsage = payload.usage && typeof payload.usage === 'object'
         && !Array.isArray(payload.usage)
         ? payload.usage

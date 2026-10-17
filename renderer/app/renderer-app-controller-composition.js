@@ -42,14 +42,6 @@
       handlePersonalityReset: (...a) => handlePersonalityResetSafe(...a),
       handlePersonalityOpenFolder: (...a) => handlePersonalityOpenFolderSafe(...a),
       hasPersonalityUnsavedChanges: (...a) => hasPersonalityUnsavedChangesSafe(...a),
-      refreshMemoryContextFiles: (...a) => refreshMemoryContextFilesSafe(...a),
-      renderMemoryContextFiles: (...a) => renderMemoryContextFilesSafe(...a),
-      loadMemoryContextFile: (...a) => loadMemoryContextFileSafe(...a),
-      setMemoryContextDraft: (...a) => setMemoryContextDraftSafe(...a),
-      getMemoryContextActiveFile: (...a) => getMemoryContextActiveFileSafe(...a),
-      saveMemoryContextFile: (...a) => saveMemoryContextFileSafe(...a),
-      resetMemoryContextFile: (...a) => resetMemoryContextFileSafe(...a),
-      hasMemoryContextUnsavedChanges: (...a) => hasMemoryContextUnsavedChangesSafe(...a),
       showToastMessage,
       showShellErrorToast,
       toErrorMessage,
@@ -130,6 +122,9 @@
   settingsShellController?.whenSettingsPageReady(() => {
     window.rendererSettingsCommandSandboxUtils?.bindCommandSandboxSettings?.(window, registerRendererCleanup);
     window.rendererSettingsCloudModels?.bindCloudModelsSettings?.(window, registerRendererCleanup);
+    window.rendererSettingsConversationTransfer?.bindConversationTransferSettings?.(window, registerRendererCleanup, async (id) => {
+      await loadSessions(); await openSession(id); setActiveView('chat');
+    });
     window.rendererSettingsPdfAddonUtils?.bindPdfAddonSettings?.(window, registerRendererCleanup);
   });
   /* logRendererController */
@@ -142,7 +137,6 @@
   }) || null;
   const {
     dispose: disposeDiagnosticsView = noop,
-    getLogEntryById = () => null,
     ensureLogRowMounted = () => false,
   } = logRendererController || {};
   const scrollLogsToBottom = logRenderUtils.scrollLogsToBottom || noop;
@@ -297,14 +291,9 @@
   const renderPipelineController = buildRenderPipeline();
   /* observabilityController (Phase 6F-D) */
   const observabilityUtils = window.rendererObservabilityUtils || {};
-  let _pendingTraceFocus = '';
   function navigateToDiagnosticsTrace(target = {}) {
     const streamId = String(target.streamId || '').trim();
     if (!streamId) return;
-    _pendingTraceFocus = streamId;
-    state.ui.diagnosticsTargetStreamId = streamId;
-    state.ui.diagnosticsTargetSessionId = String(target.sessionId || '').trim();
-    state.ui.diagnosticsTargetTraceId = String(target.traceId || '').trim();
     // Traces come from the live runtime, so they focus the current run; the
     // previously selected run is kept in returnState.
     window.rendererDiagnosticsViewState.focusDiagnosticsTarget(state, { tab: 'activity', query: streamId, runId: '' });
@@ -317,22 +306,16 @@
     callbacks: {
       getCurrentSessionId: () => state.currentSessionId,
       isVisible: () => state.ui.activeView === 'logs',
-      peekPendingTraceFocus: () => state.ui.diagnosticsTargetStreamId || _pendingTraceFocus || '',
-      clearPendingTraceFocus: (streamId) => {
-        const target = String(streamId || '').trim();
-        if (!target || state.ui.diagnosticsTargetStreamId === target) {
-          state.ui.diagnosticsTargetStreamId = '';
-        }
-        if (!target || _pendingTraceFocus === target) {
-          _pendingTraceFocus = '';
-        }
+      // The Overview reads these three facets from the diagnostics status to decide which groups show.
+      onSnapshot: (snapshot) => {
+        if (!snapshot || typeof snapshot !== 'object') return;
+        const facets = {};
+        ['tool_observability', 'slow_operations', 'trace_timing'].forEach((key) => { facets[key] = snapshot[key]; });
+        state.diagnosticsStatus = { ...(state.diagnosticsStatus || {}), ...facets };
+        if (state.ui.activeView === 'logs') renderLogs();
       },
       onTraceLink: (streamId) => {
         navigateToDiagnosticsTrace({ streamId });
-      },
-      onSessionLink: (sessionId) => {
-        if (!sessionId) return;
-        try { openSession?.(sessionId); } catch (_error) { /* noop */ }
       },
     },
   }) || null;
@@ -344,12 +327,13 @@
     });
   }
   if (observabilityRefreshButton) {
+    // Busy stays focusable: aria-disabled, never the disabled property (focus would drop to body).
     const onRefreshClick = () => {
-      if (observabilityRefreshButton.disabled) return;
-      observabilityRefreshButton.disabled = true;
+      if (observabilityRefreshButton.getAttribute('aria-disabled') === 'true') return;
+      observabilityRefreshButton.setAttribute('aria-disabled', 'true');
       Promise.resolve(lifecycleController?.refreshDiagnosticsWorkspace?.())
         .catch(() => {})
-        .finally(() => { observabilityRefreshButton.disabled = false; });
+        .finally(() => { observabilityRefreshButton.removeAttribute('aria-disabled'); });
     };
     observabilityRefreshButton.addEventListener('click', onRefreshClick);
     registerRendererCleanup(() => observabilityRefreshButton.removeEventListener('click', onRefreshClick));
@@ -604,6 +588,7 @@
           ? scratchpadCaptureActions.captureToScratchpad(text, options)
           : Promise.resolve({ error: jt('app.controller.scratchpadUnavailable', 'Scratchpad is unavailable.') })
       ),
+      getMemoryApi: () => window.jennyShell?.memory || null, // /remember, /forget, /memory
       areInteractiveQuestionsAnswered,
       getInteractiveNextUnansweredIndex,
       getInteractiveQuestionOptions,
@@ -717,7 +702,6 @@
       refreshObservability: () => (settingsShellController?.notifyUsageTurnSettled?.(), observabilityController?.notifyTurnSettled?.(), Promise.resolve(null)),
       // A finishing chat clears its own and app-wide stream toasts, never another chat's.
       dismissStreamErrors: (sessionId) => toastStore.dismissBySource(TOAST_SOURCE.chatStream, { sessionId }),
-      maybeSuggestMemoryCapture: (...a) => maybeSuggestMemoryCaptureSafe(...a),
       mergeMessageReasoning: (...a) => mergeMessageReasoning(...a), publishFirstTokenImpulse: (...a) => (typeof publishFirstTokenImpulse === 'function' ? publishFirstTokenImpulse(...a) : undefined),
       publishToolStartImpulse: (...a) => (typeof publishToolStartImpulse === 'function' ? publishToolStartImpulse(...a) : undefined),
       updateContextUsage: (...a) => contextUsageModule?.updateUsage?.(...a),
@@ -733,7 +717,6 @@
       refreshApprovedMemories: (...a) => refreshApprovedMemoriesSafe(...a),
       refreshComposerToolToggles: (...a) => refreshComposerToolToggles(...a),
       resetArtifactsState: (...a) => resetArtifactsState(...a),
-      resetMemorySuggestionState: (...a) => resetMemorySuggestionStateSafe(...a),
       closeComposerPopover: (...a) => closeComposerPopover(...a),
       openComposerPopover: (...a) => openComposerPopover(...a),
       closeCommandPopover: (...a) => closeCommandPopover(...a),
@@ -870,7 +853,6 @@
       renderSettings, renderComposerCarriers, renderComposerPopover,
       renderCommandPopover,
       syncComposerInputHeight,
-      getLogEntryById,
       ensureLogRowMounted,
       scrollLogsToBottom,
       navigateToDiagnosticsTrace,

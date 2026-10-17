@@ -389,12 +389,6 @@ async function loadRendererApp({
   // harness boots run the plain curtain unless a test opts into the sky.
   window.__JENNY_STARTUP_ANIMATION = settings.startupAnimation || 'off';
   window.jennyShell = createShellStub(settings.shell);
-  if (settings.legacyMemoryCapturePreference !== undefined) {
-    window.localStorage.setItem(
-      'jenny.memory.captureSuggestions',
-      String(settings.legacyMemoryCapturePreference)
-    );
-  }
   if (settings.appearance) {
     window.localStorage.setItem('jenny.appearance.v2', JSON.stringify(settings.appearance));
   }

@@ -269,7 +269,7 @@
       const caption = `<div class="changes-detail-caption">${escape(detail.path || '')}</div>`;
       const diff = renderDiffBody ? renderDiffBody(detail.change) : '';
       const body = diff
-        ? `<div class="changes-detail-diff">${diff}</div>`
+        ? `<div class="changes-detail-diff file-diff-body">${diff}</div>`
         : `<p class="changes-view-empty">${escape(detail.emptyText || jt('changes.detail.noDiff', 'This change has no line-by-line view.'))}</p>`;
       return picker + caption + body;
     }
@@ -329,7 +329,7 @@
         + '</div>';
       const diff = renderDiffBody && detail.change ? renderDiffBody(detail.change) : '';
       const body = diff
-        ? `<div class="changes-detail-diff">${diff}</div>`
+        ? `<div class="changes-detail-diff file-diff-body">${diff}</div>`
         : `<p class="changes-view-empty">${escape(jt('changes.detail.noDiff', 'This change has no line-by-line view.'))}</p>`;
       return picker + '<div class="changes-suggestion-bar-host" data-changes-bar-host="true"></div>' + body;
     }

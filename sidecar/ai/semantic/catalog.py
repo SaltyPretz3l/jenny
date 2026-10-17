@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import math
 import os
-import re
 import sqlite3
 import time
 from array import array
@@ -26,7 +25,8 @@ from sidecar.ai.error_codes import (
     CMP_CATALOG_EMBEDDER_UNAVAILABLE,
     CMP_CATALOG_INDEX_UNAVAILABLE,
 )
-from sidecar.ai.semantic.chunker import chunk_sections
+from sidecar.ai.semantic.chunker import chunk_document
+from sidecar.ai.semantic.evidence import decode_evidence, root_key_for, with_index_truncation
 from sidecar.ai.semantic.extract import (
     CatalogRootGuard,
     ExtractResult,
@@ -37,6 +37,7 @@ from sidecar.ai.semantic.store import (
     MAX_CATALOG_CHUNKS,
     MAX_CATALOG_DOCUMENTS,
     MAX_CATALOG_ROOTS,
+    MAX_CHUNKS_PER_DOCUMENT,
     CatalogStore,
     CatalogStoreError,
     ChunkInput,
@@ -47,7 +48,7 @@ from sidecar.ai.semantic.store import (
     VectorRow,
     empty_root_counts,
 )
-from sidecar.ai.semantic.vectors import unpack_vector
+from sidecar.ai.semantic.vectors import render_template, unpack_vector
 
 MAX_SCAN_FILES_PER_ROOT_STEP = 5_000
 # Files one step may walk past before yielding. A root's walk resumes where the
@@ -57,6 +58,11 @@ MAX_SCAN_FILES_PER_ROOT_STEP = 5_000
 MAX_SCAN_VISITS_PER_ROOT_STEP = 50_000
 MAX_SIMILARITY_SCAN_ROWS = 20_000
 MAX_SEARCH_LIMIT = 20
+MAX_SOURCE_STATUSES = 8
+# Distinct sources one search may verify as current (per result list) before the
+# result/status caps apply; once spent, later candidates are dropped and the
+# search reports partial instead of letting stale entries fill the caps.
+MAX_ADMISSION_CHECKS = 32
 MAX_SNIPPET_CHARS = 280
 DEFAULT_PROVIDER_BATCH = 16
 # Embed requests start small and grow with success, halving on a failure, so a
@@ -74,9 +80,10 @@ MAX_CONSECUTIVE_POISONED = 3
 _PENDING_PAGE = 8
 _PYTHON_SCORE_DEADLINE_STRIDE = 256
 _SCORE_DECIMALS = 6
-_PLACEHOLDER_RE = re.compile(r"\{(text|title)\}")
 _CATALOG_CODE_PREFIX = CMP_CATALOG_EMBEDDER_UNAVAILABLE.rsplit("-", 1)[0] + "-"
 _STORE_ERRORS = (CatalogStoreError, sqlite3.Error, OSError)
+# ``admit(root_path, rel_path, source_hash, extraction)``: is this source current?
+AdmitSource = Callable[[str, str, str | None, dict[str, Any] | None], bool]
 
 
 class CatalogEmbeddingProvider(Protocol):
@@ -109,6 +116,8 @@ class SearchHit:
     locator: str
     snippet: str
     score: float
+    source_hash: str | None = None
+    extraction: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -116,12 +125,14 @@ class SearchResult:
     hits: list[SearchHit] = field(default_factory=list)
     partial: bool = False
     reason: str | None = None
+    source_statuses: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "hits": [asdict(hit) for hit in self.hits],
             "partial": self.partial,
             "reason": self.reason,
+            "source_statuses": self.source_statuses,
         }
 
 
@@ -145,21 +156,46 @@ class _Step:
         return max(self.deadline - self.clock(), 0.0)
 
 
-def root_key_for(path: str) -> str:
-    return os.path.normcase(os.path.realpath(path))
-
-
-def render_template(template: str, *, text: str, title: str) -> str:
-    values = {"text": text, "title": title}
-    return _PLACEHOLDER_RE.sub(lambda match: values[match.group(1)], template)
-
-
 def _load_numpy() -> Any | None:
     try:
         import numpy
     except Exception:  # noqa: BLE001 - numpy is an optional fast path only.
         return None
     return numpy
+
+
+class _Admission:
+    """Per-search current-source admission: one check per document version, bounded per list.
+
+    A verdict is keyed by the expected hash (or, for a hashless receipt, its
+    reason), so a document rewritten mid-search is checked again, not judged
+    by its previous version's verdict.
+    """
+
+    def __init__(self, admit: AdmitSource | None) -> None:
+        self._admit = admit
+        self._known: dict[tuple[str, str, str | None, object], bool] = {}
+        self._left = MAX_ADMISSION_CHECKS
+        self.exhausted = False
+
+    def new_list(self) -> None:
+        self._left = MAX_ADMISSION_CHECKS
+
+    def __call__(self, root: str, rel: str, expected: str | None,
+                 extraction: dict[str, Any] | None) -> bool:
+        if self._admit is None:
+            return True
+        reason = (extraction or {}).get("reason") if expected is None else None
+        key = (root, rel, expected, reason)
+        known = self._known.get(key)
+        if known is not None:
+            return known
+        if self._left <= 0:
+            self.exhausted = True
+            return False
+        self._left -= 1
+        known = self._known[key] = bool(self._admit(root, rel, expected, extraction))
+        return known
 
 
 def _snippet(text: str) -> str:
@@ -212,6 +248,23 @@ class SemanticCatalog:
     @property
     def model_key(self) -> str:
         return self._model_key
+
+    @property
+    def provider(self) -> CatalogEmbeddingProvider:
+        """The embedder (shared read-only with ``runtime.current_embedder``)."""
+        return self._provider
+
+    @property
+    def query_template(self) -> str:
+        return self._query_template
+
+    @property
+    def document_template(self) -> str:
+        return self._document_template
+
+    @property
+    def dims(self) -> int:
+        return self._dims
 
     def close(self) -> None:
         closer = getattr(self._provider, "close", None)
@@ -351,24 +404,32 @@ class SemanticCatalog:
         path = Path(guard.root, *PurePosixPath(document.rel_path).parts)
         try:
             result = extract_document(path, guard)
-            chunks = chunk_sections(result.sections) if result.status == "ok" else []
+            chunks, truncated = (chunk_document(result.sections) if result.status == "ok"
+                                 else ([], False))
         except Exception:  # noqa: BLE001 - one bad file fails only that document.
-            result, chunks = ExtractResult("failed", "extract_error"), []
+            result, chunks, truncated = ExtractResult("failed", "extract_error"), [], False
         if result.status != "ok":
             self._store.mark_document(
-                document.doc_id, result.status, result.reason, sha256=result.sha256
+                document.doc_id, result.status, result.reason,
+                sha256=result.sha256, extraction=result.extraction
             )
             return 0
+        extraction = result.extraction
+        if truncated:  # the receipt discloses the unsearchable tail past the chunk cap
+            extraction = with_index_truncation(extraction, max_chunks=MAX_CHUNKS_PER_DOCUMENT,
+                                               indexed_through=chunks[-1].locator)
         if result.sha256 == document.sha256 and document.chunk_count > 0:
-            self._store.mark_document(document.doc_id, "indexed", None)
+            self._store.mark_document(document.doc_id, "indexed", None, extraction=extraction)
             return 0
         if not chunks:
-            self._store.mark_document(document.doc_id, "skipped", "empty", sha256=result.sha256)
+            self._store.mark_document(
+                document.doc_id, "skipped", "empty",
+                sha256=result.sha256, extraction=extraction)
             return 0
         stored = self._store.replace_chunks(
             document.doc_id,
             [ChunkInput(chunk.ordinal, chunk.locator, chunk.text) for chunk in chunks],
-            result.sha256 or "",
+            result.sha256 or "", extraction=extraction,
         )
         return len(chunks) if stored else 0
 
@@ -460,42 +521,81 @@ class SemanticCatalog:
 
     # -- search --------------------------------------------------------------
 
-    def search(
+    def search(  # noqa: PLR0913 - keyword scope and admission hooks.
         self,
-        query: str,
+        query: str | None,
         *,
         root_paths: Sequence[str],
         limit: int = 8,
         timeout_seconds: float = 1.5,
         accept: Callable[[str, str], bool] | None = None,
+        admit: AdmitSource | None = None,
     ) -> SearchResult:
         """Rank stored chunks of ``root_paths`` by cosine similarity; never raises.
 
         ``accept(root_path, rel_path)`` narrows the candidates before ranking,
-        so a scoped search ranks only in-scope chunks.
+        so a scoped search ranks only in-scope chunks. ``admit(root_path,
+        rel_path, source_hash, extraction)`` verifies a source is current before
+        the result and status caps, once per document and bounded by
+        ``MAX_ADMISSION_CHECKS``. A None query reads only coverage notices and
+        never invokes the embedder. Admission runs after the query embedding
+        (which can wait on the embedder), so a source replaced meanwhile is
+        judged by its current bytes; ranking reuses those verdicts.
         """
         deadline = self._clock() + max(float(timeout_seconds), 0.0)
-        if not query.strip() or not root_paths:
+        if (query is not None and not query.strip()) or not root_paths:
             return SearchResult()
-        text = render_template(self._query_template, text=query, title="")
-        try:
-            query_vector = self._provider.embed_many([text], timeout_seconds=timeout_seconds)[0]
-        except Exception as error:  # noqa: BLE001 - search must fail soft.
-            return SearchResult(reason=_provider_error(error)["code"])
         keys = list(dict.fromkeys(root_key_for(path) for path in root_paths))
+        query_vector: list[float] | None = None
+        failure: str | None = None
+        if query is not None:
+            text = render_template(self._query_template, text=query, title="")
+            try:
+                query_vector = self._provider.embed_many([text], timeout_seconds=timeout_seconds)[0]
+            except Exception as error:  # noqa: BLE001 - search must fail soft.
+                failure = _provider_error(error)["code"]
+        admission = _Admission(admit)
+        statuses = self._coverage(keys, accept, admission)
+        if statuses is None:
+            return SearchResult(reason=CMP_CATALOG_INDEX_UNAVAILABLE)
+        if query_vector is None:
+            return SearchResult(partial=admission.exhausted, reason=failure,
+                                source_statuses=statuses)
         try:
-            return self._rank(query_vector, keys, max(1, min(int(limit), MAX_SEARCH_LIMIT)),
-                              lambda: self._clock() >= deadline, accept)
+            admission.new_list()
+            result = self._rank(query_vector, keys, max(1, min(int(limit), MAX_SEARCH_LIMIT)),
+                                lambda: self._clock() >= deadline, accept, admission)
+            return SearchResult(result.hits, result.partial or admission.exhausted,
+                                result.reason, statuses)
         except Exception:  # noqa: BLE001 - search must fail soft.
             return SearchResult(reason=CMP_CATALOG_INDEX_UNAVAILABLE)
 
-    def _rank(
+    def _coverage(
+        self, keys: list[str], accept: Callable[[str, str], bool] | None, admission: _Admission,
+    ) -> list[dict[str, Any]] | None:
+        """Admitted coverage notices up to ``MAX_SOURCE_STATUSES``; None if unreadable."""
+        statuses: list[dict[str, Any]] = []
+        try:
+            for root, rel, raw in self._store.incomplete_sources(keys):
+                if accept is not None and not accept(root, rel):
+                    continue
+                info = decode_evidence(raw)
+                if info is not None and admission(root, rel, info.get("source_hash"), info):
+                    statuses.append({"root_path": root, "rel_path": rel, "extraction": info})
+                if len(statuses) == MAX_SOURCE_STATUSES or admission.exhausted:
+                    break
+        except _STORE_ERRORS:
+            return None
+        return statuses
+
+    def _rank(  # noqa: PLR0913 - search's scope and admission hooks, passed through.
         self,
         query_vector: list[float],
         keys: list[str],
         limit: int,
         expired: Callable[[], bool],
         accept: Callable[[str, str], bool] | None = None,
+        admission: _Admission | None = None,
     ) -> SearchResult:
         query = array("f", query_vector)
         query_norm = math.sqrt(sum(value * value for value in query))
@@ -508,16 +608,20 @@ class SemanticCatalog:
             rows = [row for row in rows if accept(row.root_path, row.rel_path)]
         scores, scored_partial = _cosine_scores(query, query_norm, rows, expired)
         ranked = sorted(scores, key=lambda pair: (-pair[0], -rows[pair[1]].chunk_id))
-        hits = [
-            SearchHit(
-                root_path=rows[index].root_path,
-                rel_path=rows[index].rel_path,
-                locator=rows[index].locator,
-                snippet=_snippet(rows[index].text),
-                score=score,
-            )
-            for score, index in ranked[:limit]
-        ]
+        admit = admission or _Admission(None)
+        hits: list[SearchHit] = []
+        for score, index in ranked:
+            if len(hits) == limit:
+                break
+            row = rows[index]
+            extraction = decode_evidence(row.extraction_json)
+            if not admit(row.root_path, row.rel_path, row.source_hash, extraction):
+                continue
+            hits.append(SearchHit(
+                root_path=row.root_path, rel_path=row.rel_path, locator=row.locator,
+                snippet=_snippet(row.text), score=score, source_hash=row.source_hash,
+                extraction=extraction,
+            ))
         return SearchResult(hits=hits, partial=partial or scored_partial)
 
     # -- status / purge ------------------------------------------------------

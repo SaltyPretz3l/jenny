@@ -1,74 +1,65 @@
+/* Diagnostics > Activity: the record list, its scope line and the inspector beside it.
+   No boxes and no side bars: severity is a stroke icon, the selected row a soft tint, and the
+   inspector is set off by one hairline. The layout reads data-detail (layout) and data-scoped
+   (section), both set by the renderer. */
+
 .diagnostics-activity {
-  --diagnostics-log-columns: 7.5rem 4.5rem 5.5rem minmax(11rem, 0.8fr) minmax(14rem, 1.3fr);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 32%);
-  grid-template-rows: auto minmax(0, 1fr);
-  column-gap: var(--space-6);
-  row-gap: var(--space-5);
-}
-
-.diagnostics-activity:has(.logs-detail-panel[hidden]) {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.diagnostics-activity:has(.diagnostics-activity-scope:not([hidden])) {
-  grid-template-rows: auto auto minmax(0, 1fr);
-}
-
-.diagnostics-toolbar {
-  grid-column: 1;
-  grid-row: 1;
+  --diagnostics-log-columns: 6.5rem 1rem minmax(0, 1fr) minmax(0, 16rem) 6.5rem;
   display: flex;
-  align-items: end;
-  gap: var(--space-5);
-  min-width: 0;
+  flex-direction: column;
+  min-block-size: 0;
+  padding-block-end: var(--space-8);
+}
+
+.diagnostics-activity[hidden],
+.diagnostics-activity-scope[hidden],
+.logs-detail-panel[hidden] {
+  display: none;
+}
+
+/* Toolbar: search, severity, source; the count and Follow sit on the end side. */
+.diagnostics-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  padding-block: var(--space-6) var(--space-5);
+}
+
+.diagnostics-activity[data-scoped="true"] .diagnostics-toolbar {
+  padding-block-end: var(--space-3);
 }
 
 .diagnostics-toolbar > #diagnosticsSearchControl {
-  flex: 0 1 320px;
-  min-width: 220px;
-  max-width: 320px;
+  flex: 1 1 260px;
+  min-inline-size: 0;
 }
 
 .diagnostics-toolbar > #diagnosticsLevelControl,
 .diagnostics-toolbar > #diagnosticsSourceControl {
-  flex: 0 0 140px;
+  flex: 0 0 auto;
 }
 
 .diagnostics-toolbar .inv-text-field,
 .diagnostics-toolbar .inv-select-field {
   display: grid;
-  min-width: 0;
-  gap: var(--space-1);
+  min-inline-size: 0;
 }
 
-.diagnostics-toolbar .logs-search-shell {
-  position: relative;
-  min-width: 0;
-}
-
-.diagnostics-toolbar .logs-search-shell::before {
-  content: "";
+/* The select options say what they are ("All severities"); the label stays for assistive tech. */
+.diagnostics-toolbar .inv-select-field-label {
   position: absolute;
-  z-index: 1;
-  top: 50%;
-  inset-inline-start: var(--space-5);
-  width: 14px;
-  height: 14px;
-  transform: translateY(-50%);
-  background: var(--text-muted);
-  -webkit-mask: url("../renderer/inventory/assets/search.svg") center / contain no-repeat;
-  mask: url("../renderer/inventory/assets/search.svg") center / contain no-repeat;
-  pointer-events: none;
-}
-
-.diagnostics-toolbar .logs-search-shell .inv-text-field-control {
-  padding-inline-start: 32px;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .diagnostics-activity .diagnostics-toolbar .inv-select-field-control,
 .diagnostics-activity .diagnostics-toolbar .inv-text-field-control {
-  min-height: 32px;
+  min-block-size: 32px;
+  font-size: var(--font-size-footnote);
 }
 
 .diagnostics-toolbar .inv-text-field-control::placeholder {
@@ -79,94 +70,84 @@
 .diagnostics-toolbar-meta {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: var(--space-5);
   margin-inline-start: auto;
-  padding-bottom: 1px;
-  flex: 0 0 auto;
-}
-
-#logResultsLabel {
   color: var(--text-muted);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
-#logAutoScrollToggle.active {
-  border-color: var(--state-info-border);
-  background: var(--state-info-bg);
+.diagnostics-follow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.diagnostics-follow:hover,
+.diagnostics-follow.active,
+.diagnostics-follow[aria-pressed="true"] {
   color: var(--text-primary);
 }
 
+.diagnostics-follow.active,
+.diagnostics-follow[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.diagnostics-follow:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.diagnostics-follow:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Scope: one line above the list, no box. */
 .diagnostics-activity-scope {
-  grid-column: 1;
-  grid-row: 2;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-6);
-  padding: var(--space-5) var(--space-6);
-  border: 1px solid var(--state-info-border);
-  border-radius: var(--radius-sm);
-  background: var(--state-info-bg);
-}
-
-.diagnostics-activity-scope[hidden] {
-  display: none;
-}
-
-.diagnostics-activity-scope > div:first-child {
-  display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-5);
-  min-width: 0;
+  gap: var(--space-4);
+  margin-block-end: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
 }
 
-.diagnostics-activity-scope span {
+.diagnostics-scope-count {
   color: var(--text-muted);
   font-size: var(--font-size-caption);
-  font-weight: 500;
 }
 
-.diagnostics-activity-scope strong,
-.diagnostics-activity-scope small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.diagnostics-activity-scope strong {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-code);
-}
-
-.diagnostics-activity-scope small {
-  color: var(--text-muted);
-}
-
+/* Layout: the list, and the inspector beside it while a record is open. */
 .diagnostics-activity-layout {
-  display: contents;
+  flex: 1;
+  min-block-size: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--space-10);
+}
+
+.diagnostics-activity-layout[data-detail="open"] {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
 }
 
 .diagnostics-activity-console {
-  grid-column: 1;
-  grid-row: 2;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: var(--surface-input-background-strong);
-}
-
-@media (min-width: 1241px) {
-  .diagnostics-activity:has(.diagnostics-activity-scope:not([hidden])) .diagnostics-activity-console {
-    grid-row: 3;
-  }
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
 }
 
 .diagnostics-log-header,
@@ -175,46 +156,31 @@
   grid-template-columns: var(--diagnostics-log-columns);
   align-items: center;
   column-gap: var(--space-5);
+  padding: var(--space-2) var(--space-4);
 }
 
 .diagnostics-log-header {
-  min-height: 30px;
-  padding: 0 var(--space-5);
-  border-bottom: 1px solid var(--border-default);
-  background: var(--surface-toolbar-background);
+  padding-block: var(--space-3);
+  border-block-end: 1px solid var(--border-subtle);
+  overflow: hidden;
+  scrollbar-gutter: stable;
   color: var(--text-muted);
   font-size: var(--font-size-caption);
-  font-weight: 500;
 }
 
 .diagnostics-activity .log-list {
-  min-height: 0;
+  flex: 1;
+  min-block-size: 0;
   overflow: auto;
   scrollbar-gutter: stable;
-  background: transparent;
+  padding-block-start: var(--space-2);
 }
 
 .diagnostics-activity .log-entry {
-  position: relative;
-  min-height: 31px;
-  padding: var(--space-1) var(--space-5);
-  border: 0;
-  border-bottom: 1px solid var(--border-subtle);
-  border-inline-start: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-footnote);
   cursor: default;
-  font-size: var(--font-size-base);
-}
-
-.diagnostics-activity .log-entry:last-child {
-  border-bottom: 0;
-}
-
-.diagnostics-activity .log-entry[data-level="warn"] {
-  border-inline-start-color: var(--state-warning);
-}
-
-.diagnostics-activity .log-entry[data-level="error"] {
-  border-inline-start-color: var(--state-danger);
+  transition: background-color 120ms ease;
 }
 
 .diagnostics-activity .log-entry:hover {
@@ -222,371 +188,207 @@
 }
 
 .diagnostics-activity .log-entry[aria-selected="true"] {
-  background: var(--state-info-bg);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .diagnostics-activity .log-entry:focus-visible {
-  z-index: 1;
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-outline);
   outline-offset: -2px;
 }
 
-.diagnostics-activity .log-entry time,
-.log-entry-level,
-.log-entry-source,
+.log-entry time,
 .log-entry-event,
-.log-entry-message {
-  min-width: 0;
-}
-
-.diagnostics-activity .log-entry time,
-.log-entry-level,
-.log-entry-source,
-.log-entry-event {
+.log-entry-source {
   overflow: hidden;
-  font-family: var(--font-family-mono);
-  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.diagnostics-activity .log-entry time,
-.log-entry-source {
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
+.log-entry time,
+.log-entry-event {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .log-entry-level {
-  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
   font-size: var(--font-size-caption);
-  font-weight: 500;
-}
-
-.log-entry[data-level="warn"] .log-entry-level {
-  color: var(--state-warning);
-}
-
-.log-entry[data-level="error"] .log-entry-level {
-  color: var(--state-danger);
-}
-
-.log-entry-event {
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
 }
 
 .log-entry-message {
+  min-inline-size: 0;
   overflow: hidden;
-  color: var(--text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* A long event name keeps its tail, which is the part that tells records apart. */
+.log-entry-event {
+  direction: rtl;
+  text-align: start;
+}
+
+.log-entry-event bdi {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.log-entry-message-event {
+  display: none;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+}
+
+.log-entry-virtualized {
+  min-block-size: inherit;
+}
+
+/* Inspector */
 .logs-detail-panel {
-  grid-column: 2;
-  grid-row: 1 / -1;
-  min-width: 0;
-  min-height: 0;
+  min-block-size: 0;
+  min-inline-size: 0;
   overflow: auto;
-  padding: 0;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: var(--surface-input-background-strong);
+  padding-inline-start: var(--space-10);
+  border-inline-start: 1px solid var(--border-subtle);
   scrollbar-gutter: stable;
 }
 
-.logs-detail-panel[hidden] {
-  display: none;
+.diagnostics-detail-head {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: var(--space-4);
+  align-items: start;
 }
 
-.diagnostics-detail-header {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-5);
-  min-height: 36px;
-  padding: var(--space-3) var(--space-7);
-  border-bottom: 1px solid var(--border-default);
-  background: var(--surface-toolbar-background);
+.diagnostics-detail-icon {
+  display: grid;
+  place-items: center;
+  margin-block-start: 3px;
 }
 
-.diagnostics-detail-header > div {
-  display: flex;
-  align-items: center;
-  gap: var(--space-5);
-  min-width: 0;
-}
-
-.diagnostics-detail-header-level {
-  flex: 0 0 auto;
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
-}
-
-.diagnostics-detail-header-level[data-level="warn"] {
-  color: var(--state-warning);
-}
-
-.diagnostics-detail-header-level[data-level="error"] {
-  color: var(--state-danger);
-}
-
-.diagnostics-detail-header h3 {
-  min-width: 0;
+.diagnostics-detail-head h3 {
   margin: 0;
-  overflow: hidden;
   font-size: var(--font-size-heading);
-  font-weight: 500;
+  font-weight: 600;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
-.diagnostics-detail-header h3 code {
-  display: block;
-  overflow: hidden;
-  font-family: var(--font-family-mono);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.diagnostics-detail-meta {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
 }
 
 .diagnostics-detail-close-narrow {
   display: none;
 }
 
-.diagnostics-detail-section {
-  padding: var(--space-4) var(--space-7);
-  border-bottom: 1px solid var(--border-subtle);
+/* The shared fact list (diagnostics-page.css), with the Activity-only spacing under the head. */
+.logs-detail-panel .diagnostics-facts {
+  margin-block-start: var(--space-8);
 }
 
-.diagnostics-detail-section:last-child {
-  border-bottom: 0;
+.logs-detail-panel .diagnostics-detail-code {
+  max-inline-size: 100%;
+  margin-block-start: var(--space-6);
 }
 
-.diagnostics-detail-section h4 {
-  margin: 0 0 var(--space-2);
-  color: var(--text-muted);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
-}
-
-.diagnostics-detail-section > p {
-  margin: 0;
-  color: var(--text-secondary);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.diagnostics-detail-list {
-  display: grid;
-  gap: 0;
-  margin: 0;
-}
-
-.diagnostics-detail-list > div {
-  display: grid;
-  grid-template-columns: minmax(74px, 0.6fr) minmax(0, 1.8fr);
-  gap: var(--space-4);
-}
-
-@media (max-width: 1180px) and (min-width: 981px) {
-  .diagnostics-toolbar {
-    flex-wrap: wrap;
-  }
-
-  .diagnostics-toolbar > #diagnosticsSearchControl {
-    flex: 1 1 280px;
-    max-width: none;
-  }
-
-  .diagnostics-toolbar-meta {
-    flex: 1 1 100%;
-  }
-}
-
-.diagnostics-detail-list dt {
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-}
-
-.diagnostics-detail-list dd {
-  min-width: 0;
-  margin: 0;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
-
-.diagnostics-detail-list code {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-code);
-}
-
-.diagnostics-detail-code {
-  max-width: 100%;
-}
-
-.diagnostics-detail-code.inv-codeblock-wrap {
-  border-radius: var(--radius-xs);
-}
-
-.log-entry-virtualized {
-  min-height: inherit;
-}
-
-@media (max-width: 1120px) {
-  .diagnostics-activity {
-    --diagnostics-log-columns: 7rem 4.25rem 5rem minmax(10rem, 0.8fr) minmax(12rem, 1.2fr);
-  }
-}
-
+/* Narrower than the side-by-side layout: the inspector sits under the list. */
 @media (max-width: 1240px) {
-  .diagnostics-activity,
-  .diagnostics-activity:has(.logs-detail-panel[hidden]) {
+  .diagnostics-activity-layout[data-detail="open"] {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .diagnostics-activity:has(.diagnostics-activity-scope:not([hidden])) {
-    grid-template-rows: auto auto minmax(0, 1fr);
-  }
-
-  .diagnostics-toolbar {
-    flex-wrap: wrap;
-  }
-
-  .diagnostics-toolbar-meta {
-    flex: 1 1 100%;
-  }
-
-  .diagnostics-activity-layout {
-    display: grid;
-    grid-column: 1;
-    grid-row: 2;
-    grid-template-columns: 1fr;
     grid-template-rows: minmax(210px, 0.8fr) minmax(260px, 1.2fr);
-    gap: var(--space-5);
-    min-height: 0;
-  }
-
-  .diagnostics-activity:has(.diagnostics-activity-scope:not([hidden])) .diagnostics-activity-layout {
-    grid-row: 3;
-  }
-
-  .diagnostics-activity-layout:has(.logs-detail-panel[hidden]) {
-    grid-template-rows: minmax(0, 1fr);
-  }
-
-  .diagnostics-activity-console {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .diagnostics-activity-layout:has(.logs-detail-panel[hidden]) .diagnostics-activity-console {
-    grid-row: 1;
+    gap: var(--space-6);
   }
 
   .logs-detail-panel {
-    grid-column: 1;
-    grid-row: 1;
+    padding-inline-start: 0;
+    padding-block-start: var(--space-6);
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--border-subtle);
   }
 }
 
-@media (max-width: 720px) {
+/* Event and Source drop; the inspector still names them. */
+@media (max-width: 900px) {
   .diagnostics-activity {
-    --diagnostics-log-columns: minmax(5.5rem, 0.8fr) minmax(4rem, 0.5fr) minmax(6rem, 1fr);
+    --diagnostics-log-columns: 6.5rem 1rem minmax(0, 1fr);
   }
 
-  .diagnostics-toolbar > #diagnosticsSearchControl {
-    flex-basis: 100%;
-    max-width: none;
-  }
-
-  .diagnostics-toolbar > #diagnosticsLevelControl,
-  .diagnostics-toolbar > #diagnosticsSourceControl {
-    flex: 1 1 120px;
-  }
-
-  .diagnostics-activity-scope > div:first-child {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: var(--space-1);
-  }
-
-  .diagnostics-log-header {
+  .log-entry-event,
+  .log-entry-source,
+  .log-entry-no-message,
+  .diagnostics-log-header > :nth-child(n + 4) {
     display: none;
   }
 
-  .diagnostics-activity-console {
-    grid-template-rows: minmax(0, 1fr);
-  }
-
-  .diagnostics-activity .log-entry {
-    grid-template-columns: var(--diagnostics-log-columns);
-    row-gap: var(--space-5);
-    align-items: start;
-    padding-block: var(--space-6);
-  }
-
-  .diagnostics-activity .log-entry [data-label] {
-    display: grid;
-    gap: var(--space-1);
-  }
-
-  .diagnostics-activity .log-entry [data-label]::before {
-    content: attr(data-label);
-    color: var(--text-muted);
-    font-family: var(--font-family-body);
-    font-size: var(--font-size-caption);
-    font-weight: 500;
-  }
-
-  .log-entry-event {
-    grid-column: 1 / -1;
-  }
-
-  .log-entry-message {
-    grid-column: 1 / -1;
-    white-space: normal;
+  .log-entry-message-event {
+    display: inline;
   }
 }
 
+/* Phone width: an open inspector replaces the list, and its close control becomes Back to records. */
 @media (max-width: 620px) {
+  .diagnostics-activity-layout[data-detail="open"] {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .diagnostics-activity-layout[data-detail="open"] .diagnostics-activity-console {
+    display: none;
+  }
+
+  .logs-detail-panel {
+    padding-block-start: 0;
+    border-block-start: 0;
+  }
+
   .diagnostics-detail-close-wide {
     display: none;
   }
 
   .diagnostics-detail-close-narrow {
-    display: inline;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-footnote);
+    white-space: nowrap;
   }
 
-  .diagnostics-activity-layout:has(.logs-detail-panel:not([hidden])) {
-    grid-template-rows: minmax(0, 1fr);
+  .logs-detail-panel .diagnostics-icon-button {
+    inline-size: auto;
+    padding-inline: var(--space-4);
+    color: var(--text-secondary);
   }
+}
 
-  .diagnostics-activity-layout:has(.logs-detail-panel:not([hidden])) .diagnostics-activity-console {
-    display: none;
-  }
-
-  .diagnostics-activity-layout:has(.logs-detail-panel:not([hidden])) .logs-detail-panel {
-    grid-row: 1;
+@media (prefers-reduced-motion: reduce) {
+  .diagnostics-follow,
+  .diagnostics-activity .log-entry {
+    transition: none;
   }
 }
 
 @media (forced-colors: active) {
-  .diagnostics-activity .log-entry[data-level="warn"],
-  .diagnostics-activity .log-entry[data-level="error"] {
-    border-inline-start-color: CanvasText;
-  }
-
-  .diagnostics-activity .log-entry[aria-selected="true"],
-  .diagnostics-activity-scope {
-    border-color: Highlight;
+  .diagnostics-activity .log-entry[aria-selected="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
   }
 
   .diagnostics-activity .log-entry:focus-visible {
-    outline-color: Highlight;
+    outline: 3px double Highlight;
+  }
+
+  .diagnostics-follow[aria-pressed="true"] {
+    outline: 1px solid Highlight;
+  }
+
+  .diagnostics-activity .inv-state-icon {
+    color: CanvasText;
   }
 }

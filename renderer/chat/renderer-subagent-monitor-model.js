@@ -26,11 +26,12 @@
       if (Number.isSafeInteger(value[key]) && value[key] >= 0) usage[key] = value[key];
     }
     const provider = normalizeText(value.provider, 96);
-    const model = normalizeText(value.model, 96);
+    const model = normalizeText(value.model, 138);
     if (provider) usage.provider = provider;
     if (model) usage.model = model;
     if (!Object.keys(usage).length) return null;
     usage.estimated = value.estimated === true;
+    if (value.partial === true) usage.partial = true;
     return usage;
   }
 
@@ -46,6 +47,24 @@
       rejected: jt('chat.subagentMonitor.couldNotStart', 'Could not start'),
     };
     return copy[reason] || statusLabel(status);
+  }
+
+  const normalizedActivities = new WeakSet();
+  function normalizeChildActivity(value) {
+    if (value && normalizedActivities.has(value)) return value;
+    if (!value || typeof value !== 'object' || !Number.isSafeInteger(value.sequence) || value.sequence < 1) return null;
+    const count = Number.isSafeInteger(value.step_count) ? Math.max(0, value.step_count) : 0;
+    const estimate = value.visible_output_tokens_estimate;
+    const activity = {
+      sequence: value.sequence,
+      steps: normalizeSteps(value.steps),
+      step_count: Math.min(2147483647, count),
+      text: normalizeText(value.text, 4000),
+      text_truncated: value.text_truncated === true,
+      visible_output_tokens_estimate: Number.isSafeInteger(estimate) && estimate >= 0 ? Math.min(2147483647, estimate) : null,
+    };
+    normalizedActivities.add(activity);
+    return activity;
   }
 
   function toneForStatus(status) {
@@ -64,6 +83,7 @@
       const display = normalizeText(entry.display, 64) || tool;
       if (!display) return null;
       const step = { tool, display, ok: entry.ok !== false };
+      if (['running', 'completed', 'failed', 'interrupted'].includes(entry.status)) step.status = entry.status;
       const target = normalizeText(entry.target, 160);
       const detail = normalizeText(entry.detail, 160);
       if (target) step.target = target;
@@ -137,8 +157,9 @@
       usage,
       budget,
       elapsedMs: Math.max(0, Number(budget.elapsed_ms) || 0),
-      model: usage?.model || '',
-      provider: usage?.provider || '',
+      model: normalizeText(source.model, 138) || usage?.model || '',
+      provider: normalizeText(source.provider, 96) || usage?.provider || '',
+      reasoningEffort: normalizeText(source.reasoning_effort, 16),
       error: source.error && typeof source.error === 'object' ? { ...source.error } : null,
       terminalReason: reason,
       terminalCopy: terminalCopy(reason, status),
@@ -156,6 +177,7 @@
     const agentId = normalizeText(source.childAgentId || source.child_agent_id || source.agentId || source.agent_id, 200);
     const startedAt = Number.isFinite(Number(source.startedAt)) ? Number(source.startedAt) : 0;
     const updatedAt = Number.isFinite(Number(source.updatedAt)) ? Number(source.updatedAt) : startedAt;
+    const activity = normalizeChildActivity(source.childActivity);
     return {
       key: taskId || agentId || `child-${index + 1}`,
       toolCallId: normalizeText(source.toolCallId || source.tool_call_id, 200),
@@ -170,11 +192,13 @@
       terminal: source.childTerminal === true || source.terminal === true || TERMINAL.has(status),
       success: source.childSuccess === true || source.success === true,
       summary: normalizeText(source.summary, 240) || jt('chat.subagentMonitor.working', 'Working on it.'),
-      answer: '', steps: [], stepCount: 0,
+      answer: '', steps: activity?.steps || [], stepCount: activity?.step_count || 0,
+      activity,
+      reasoningEffort: normalizeText(source.reasoningEffort, 16),
       evidence: [], tools: [], uncertainties: [],
       usage: normalizeUsage(source.usage),
       budget: {}, error: null, elapsedMs: 0,
-      model: normalizeText(source.model, 96),
+      model: normalizeText(source.model, 138),
       provider: normalizeText(source.provider, 96),
       terminalReason: reason,
       terminalCopy: terminalCopy(reason, status),
@@ -285,7 +309,11 @@
     ), 0);
     const totalTokens = Number.isSafeInteger(usage?.total_tokens)
       ? usage.total_tokens
-      : (childUsageTotal > 0 ? childUsageTotal : null);
+      : (children.some((child) => Number.isSafeInteger(child.usage?.total_tokens)) ? childUsageTotal : null);
+    const partialUsage = totalTokens != null && (usage?.partial === true || children.some((child) => child.usage?.partial === true)
+      || (!Number.isSafeInteger(usage?.total_tokens)
+        && children.some((child) => !['queued', 'rejected', 'skipped_budget'].includes(child.status)
+          && !['rejected', 'capacity_unavailable'].includes(child.terminalReason) && !Number.isSafeInteger(child.usage?.total_tokens))));
     return {
       key: normalizeText(input.key, 200) || normalizeText(input.toolCallId, 200) || selected?.toolCallId || selected?.key || '',
       toolCallId: normalizeText(input.toolCallId, 200) || selected?.toolCallId || '',
@@ -295,6 +323,7 @@
       authoritative,
       children,
       childCount: children.length,
+      partialUsage,
       completedCount: completed,
       runningCount,
       parentStateKey,
@@ -375,6 +404,7 @@
     formatElapsed,
     formatTokens,
     normalizeUsage,
+    normalizeChildActivity,
     selectLiveDelegationSteps,
     terminalCopy,
     toneForStatus,

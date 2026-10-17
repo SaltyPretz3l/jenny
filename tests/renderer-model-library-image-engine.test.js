@@ -79,6 +79,7 @@ function createHarness(t, options = {}) {
     async removeModelSet(payload) { calls.push(['removeModelSet', payload]); return { ok: true }; },
     async setDefaultModelSet(payload) { calls.push(['setDefaultModelSet', payload]); return { ok: true }; },
     async reconcile() { calls.push(['reconcile']); return { ok: true }; },
+    async forceClear(payload) { calls.push(['forceClear', payload]); return options.forceClear ? options.forceClear(payload) : { ok: true, released: true, unresolved: 0 }; },
     onChanged(handler) { listener = handler; return () => { listener = null; }; },
   };
   dom.window.jennyShell = { imageEngine: bridge };
@@ -174,7 +175,7 @@ test('choose folder fills the three slots, detects the family from the diffusion
   await flush();
   assert.match(h.text(), /G:\\models\\image\\qwen/);
   const selects = [...h.document.querySelectorAll('select')];
-  assert.equal(selects.length, 4);
+  assert.equal(selects.length, 5);
   assert.equal(h.document.querySelector('select[data-image-engine-slot="diffusion"]').value, 'qwen-image-2.1-Q4_K_M.gguf');
   assert.match(h.text(), /Qwen-Image 2\.1 \(read from the model file\)/);
   assert.equal(h.document.getElementById('imageEngineSlot-family').disabled, true);
@@ -365,4 +366,104 @@ test('quantOf reads the quant token from a file name', () => {
   assert.equal(quantOf('qwen-image-2.1-Q4_K_M.gguf'), 'Q4_K_M');
   assert.equal(quantOf('model-bf16.safetensors'), 'BF16');
   assert.equal(quantOf('plain.safetensors'), '');
+});
+
+
+test('optional projector defaults to None and remains None on repeated scans',async(t)=>{
+  const scanned=scanResult();scanned.candidates.vision_projector=[{name:'mmproj.gguf',size_bytes:100}];
+  const h=createHarness(t,{state:{status:'installed'},chooseModelFolder:()=>scanned,scanModels:()=>scanned});
+  h.controller.bind();await flush();h.click('choose-folder');await flush();
+  assert.equal(h.document.querySelector('[data-image-engine-slot="vision_projector"]').value,'');
+  h.click('choose-folder');await flush();assert.equal(h.document.querySelector('[data-image-engine-slot="vision_projector"]').value,'');
+  h.click('save-set');await flush();assert.equal(h.calls.find(([name])=>name==='saveModelSet')[1].vision_projector,undefined);
+});
+
+// "Clear anyway" (owner decision 2026-10-12): offered only after a clean-up
+// attempt in this run came back unconfirmed, behind an inline confirm.
+const STARTED_AT = Date.UTC(2026, 9, 12, 15, 41);
+function stuckHandoff(cleanup = { attempts: 1, last_unconfirmed_at: 2, record: { started_at: STARTED_AT, unresolved: 2 } }, extra = {}) {
+  return { status: 'installed', source: 'managed', handoff: { active: false, retained: true, closing: false, cleanup, ...extra } };
+}
+function shortTime(ms) {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+function statusTone(h) {
+  return h.document.querySelector('.model-library-image-engine-status').getAttribute('data-status-tone');
+}
+
+test('Clear anyway… is absent before a clean-up attempt and offered after an unconfirmed one', async (t) => {
+  const h = createHarness(t, { state: stuckHandoff({ attempts: 0, last_unconfirmed_at: null, record: null }) });
+  h.controller.bind();
+  await flush();
+  assert.match(h.text(), /did not finish cleanly/);
+  assert.equal(h.button('reconcile').textContent, 'Clean up now');
+  assert.equal(h.button('force-clear-ask'), null);
+  h.setState(stuckHandoff());
+  h.click('reconcile');
+  await flush();
+  assert.equal(statusTone(h), 'danger');
+  assert.match(h.text(), /Installed · the last render may still be running\. Chat models stay paused\./);
+  assert.match(h.text(), new RegExp(`Jenny could not check 2 helper processes from ${shortTime(STARTED_AT)}\\.`));
+  assert.equal(h.button('reconcile').textContent, 'Try again');
+  assert.equal(h.button('force-clear-ask').textContent, 'Clear anyway…');
+  assert.match(h.button('force-clear-ask').className, /btn--ghost/);
+  assert.equal(h.button('remove'), null);
+  // Without unchecked helpers on the record the line says only what is known.
+  h.setState(stuckHandoff({ attempts: 2, last_unconfirmed_at: 3, record: null }));
+  await h.controller.refresh();
+  assert.match(h.text(), /Jenny could not confirm the last render ended\./);
+  // Never while a handoff is active.
+  h.setState(stuckHandoff(undefined, { active: true }));
+  await h.controller.refresh();
+  assert.equal(h.button('force-clear-ask'), null);
+});
+
+test('Clear anyway… asks inline, Keep waiting backs out, and a cleared record returns the normal section', async (t) => {
+  let finish;
+  const h = createHarness(t, { state: stuckHandoff(), forceClear: () => new Promise((resolve) => { finish = resolve; }) });
+  h.controller.bind();
+  await flush();
+  h.click('force-clear-ask');
+  const confirm = h.document.querySelector('.model-library-image-engine-confirm');
+  assert.equal(confirm.textContent, 'Clear without proof? Chat resumes now. A stray sd-cli helper would keep its GPU memory until it exits.');
+  assert.doesNotMatch(h.text(), /could not check/);
+  assert.match(h.button('force-clear').className, /btn--danger/);
+  assert.equal(h.button('force-clear').textContent, 'Clear anyway');
+  assert.equal(h.button('keep-waiting').textContent, 'Keep waiting');
+  h.click('keep-waiting');
+  assert.equal(h.document.querySelector('.model-library-image-engine-confirm'), null);
+  assert.ok(h.button('force-clear-ask'));
+  assert.equal(h.calls.some(([m]) => m === 'forceClear'), false);
+  h.click('force-clear-ask');
+  h.click('force-clear');
+  await flush();
+  assert.deepEqual(h.calls.find(([m]) => m === 'forceClear'), ['forceClear', { confirmed: true }]);
+  assert.equal(statusTone(h), 'pending');
+  assert.match(h.text(), /Clearing the render record…/);
+  assert.equal(h.button('force-clear').disabled, true);
+  assert.equal(h.button('keep-waiting').disabled, true);
+  h.setState({ status: 'installed', source: 'managed' });
+  finish({ ok: true, released: true, unresolved: 2 });
+  await flush();
+  assert.equal(statusTone(h), 'success');
+  assert.ok(h.button('remove'));
+  assert.equal(h.button('force-clear-ask'), null);
+  assert.equal(h.document.querySelector('.model-library-image-engine-confirm'), null);
+  assert.match(h.document.querySelector('.model-library-image-engine-note').textContent,
+    /^Record cleared without proof at .+\.$/);
+});
+
+test('a record that cannot be cleared keeps the stuck state and says to restart', async (t) => {
+  const h = createHarness(t, { state: stuckHandoff(), forceClear: () => ({ ok: false, reason: 'image_engine_record_locked' }) });
+  h.controller.bind();
+  await flush();
+  h.click('force-clear-ask');
+  h.click('force-clear');
+  await flush();
+  assert.equal(h.document.querySelector('.model-library-image-engine-note').textContent,
+    'The record could not be cleared. Restart Jenny to check again.');
+  assert.equal(statusTone(h), 'danger');
+  assert.equal(h.document.querySelector('.model-library-image-engine-confirm'), null);
+  assert.ok(h.button('force-clear-ask'));
+  assert.equal(h.button('reconcile').textContent, 'Try again');
 });

@@ -5,6 +5,15 @@ const {
 } = require('./managed-sidecar-lifecycle');
 const { AI_ERROR_CODES, SIDECAR_ERROR_CODES } = require('./error-codes');
 const { buildLoadFailure, classifyLoadFailure } = require('./load-failure-classifier');
+const { managedServerKindForFailure } = require('./ninfer-load-path');
+
+// Names the managed server (NInfer or llama-server) an openai-compatible
+// failure belonged to, once, at the time it happened.
+function stampManagedServer(service, failure) {
+  if (!failure || failure.managed) return failure;
+  const managed = managedServerKindForFailure(service, failure.engine);
+  return managed ? { ...failure, managed } : failure;
+}
 const { resolveManagedConfiguredModel, resolveOpenAICompatibleApiUrl } = require('./managed-sidecar-config');
 const { sameLocalOrigin } = require('../local-origin');
 const { clearManagedInitializeStall, markManagedInitializeStalled } = require('./managed-sidecar-chat-reconnect');
@@ -153,7 +162,7 @@ function setModelLifecycle(service, patch = {}, { emit = true } = {}) {
 
 function applyRuntimeLoadFailure(service, message) {
   if (message?.method !== 'runtime.load_failure') return;
-  const failure = buildLoadFailure(message.params);
+  const failure = stampManagedServer(service, buildLoadFailure(message.params));
   const flight = service._managedInitializeFlight;
   if (flight) {
     // Ollama refuses an oversized model within the init flight, often before
@@ -181,7 +190,7 @@ function initializeLoadFailure(service, payload, requestedModel) {
   if (!model) return null;
   const failure = buildLoadFailure(payload?.local_runtime?.load_failure)
     || buildLoadFailure(service._managedInitializeFlight?.loadFailure);
-  return failure && failure.model === model ? failure : null;
+  return failure && failure.model === model ? stampManagedServer(service, failure) : null;
 }
 
 // Remembers how long a pure model load took (loading -> ready in one flight)
@@ -582,10 +591,10 @@ async function initializeManagedSidecarWithTimeout(service, options = {}) {
           engine: requestedEngineType,
           status: 'Model unavailable',
           error_code: finalError?.error_code || AI_ERROR_CODES.ENGINE_CONNECTION,
-          failure: buildLoadFailure({
+          failure: stampManagedServer(service, buildLoadFailure({
             cause: classifyLoadFailure(finalError?.message, { timedOut: Boolean(timeoutError) }),
             message: String(finalError?.message || finalError), engine: requestedEngineType, model: requestedModel,
-          }),
+          })),
         });
         service.currentStatus = buildManagedStatusSnapshot(service, {
           model: '',

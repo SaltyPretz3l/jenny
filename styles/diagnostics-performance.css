@@ -1,0 +1,135 @@
+/* Diagnostics › Overview › Performance (row 57): chat timing, over target, tools and recent chats as
+ * label/value tables in the page's group tracks. Hairline rows, numbers right-aligned, no boxes. */
+
+.diagnostics-group h4 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-6);
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+
+.diagnostics-group h4 .diagnostics-group-count {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 400;
+}
+
+.diagnostics-table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-footnote);
+  font-variant-numeric: tabular-nums;
+}
+
+.diagnostics-table th {
+  padding: var(--space-3) var(--space-4);
+  border-block-end: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  text-align: start;
+  white-space: nowrap;
+}
+
+.diagnostics-table td {
+  padding: var(--space-3) var(--space-4);
+  border-block-end: 1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-table tr:last-child td {
+  border-block-end: 0;
+}
+
+.diagnostics-table th:first-child,
+.diagnostics-table td:first-child {
+  padding-inline-start: 0;
+}
+
+.diagnostics-table th:last-child,
+.diagnostics-table td:last-child {
+  padding-inline-end: 0;
+}
+
+/* Numbers read left to right whatever the page direction, and sit at the column's end. */
+.diagnostics-table .diagnostics-num {
+  text-align: end;
+  white-space: nowrap;
+  unicode-bidi: isolate;
+}
+
+.diagnostics-table .diagnostics-num--warn {
+  color: var(--state-warning);
+}
+
+.diagnostics-mono {
+  font-family: var(--font-family-mono);
+  font-size: 0.95em;
+}
+
+.diagnostics-table .diagnostics-muted {
+  color: var(--text-muted);
+}
+
+/* The verdict is a word, plus a 16 px state icon when it needs attention; on target stays quiet. */
+.diagnostics-verdict {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  white-space: nowrap;
+}
+
+.diagnostics-verdict[data-verdict="pass"],
+.diagnostics-verdict[data-verdict="completed"],
+.diagnostics-verdict[data-verdict="neutral"] {
+  color: var(--text-muted);
+}
+
+/* A recent chat's Result is a button that opens that chat's records in Activity. */
+.diagnostics-row-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.diagnostics-row-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.diagnostics-row-link:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* The low-value columns give way before the table would scroll. */
+@media (max-width: 900px) {
+  .diagnostics-table .diagnostics-col-wide {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .diagnostics-table th,
+  .diagnostics-table td {
+    border-block-end-color: CanvasText;
+  }
+
+  .diagnostics-table .diagnostics-num--warn,
+  .diagnostics-verdict[data-verdict] {
+    color: CanvasText;
+  }
+
+  .diagnostics-row-link:focus-visible {
+    outline-color: Highlight;
+  }
+}

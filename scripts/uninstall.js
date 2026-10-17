@@ -12,6 +12,7 @@ const { ElectronSessionStore } = require('../services/backend/electron-session-s
 const { cleanupJennyData } = require('../services/data-lifecycle/cleanup-service');
 const { DataLifecycleService } = require('../services/data-lifecycle/data-lifecycle-service');
 const { detectRunningJenny } = require('../services/data-lifecycle/profile-in-use');
+const { removeTreeSync } = require('../services/fs-remove-no-follow');
 const { UNINSTALL_EXIT_CODES } = require('../services/data-lifecycle/uninstall-contract');
 const { ShellConfigService } = require('../services/shell-config-service');
 
@@ -101,7 +102,11 @@ function inspectCloneRoot(rootPath, { execFileSync = childProcess.execFileSync }
   }
 }
 
-function removeGeneratedDependencies(rootPath) {
+// node_modules holds `npm link` and workspace packages as junctions to the user's own source folders,
+// and Node's rm empties a junction's target after a transient Windows EPERM, so the tree goes through
+// removeTreeSync, which unlinks every link without entering it; a CLI may sleep between lock retries.
+// `fsImpl` is a test seam only.
+function removeGeneratedDependencies(rootPath, { fsImpl = fs } = {}) {
   const root = resolveSafeDirectoryRoot(rootPath);
   if (!root) return [];
   const removed = [];
@@ -110,7 +115,7 @@ function removeGeneratedDependencies(rootPath) {
     if (path.dirname(target) !== root || !fs.existsSync(target)) continue;
     const stat = fs.lstatSync(target);
     if (stat.isSymbolicLink()) continue;
-    fs.rmSync(target, { recursive: true, force: true });
+    removeTreeSync(target, { fsImpl, retryDelayMs: 100 });
     removed.push(name);
   }
   return removed;
@@ -189,7 +194,8 @@ function deleteVerifiedClone(rootPath, typedDirectoryName, inspection = inspectC
     return { ok: false, reason: 'unsafe_clone_root' };
   }
   process.chdir(parent);
-  fs.rmSync(requestedRoot, { recursive: true, force: true });
+  // The clone contains node_modules and its link junctions: never Node's rm (see removeGeneratedDependencies).
+  removeTreeSync(requestedRoot, { retryDelayMs: 100 });
   return { ok: true, removed: requestedRoot };
 }
 

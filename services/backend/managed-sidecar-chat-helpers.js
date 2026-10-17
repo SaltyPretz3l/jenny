@@ -11,8 +11,16 @@ const {
   MANAGED_LOCAL_MAX_LOOP_WALL_SECONDS,
 } = require('./chat-stream-admission');
 const {
+  applyCompactionSnapshotForChatSend,
   fingerprintCompactionPrefix,
 } = require('./session-compaction-snapshot');
+const { buildPreparedMessages } = require('./chat-stream-reasoning');
+const { buildResumePayload } = require('../session-recovery-service');
+const { normalizeManagedToolPreferences } = require('./backend-service-utils');
+const { admitSessionHandoffForTurn } = require('./session-handoff-context');
+const { admitSessionMailForTurn } = require('./session-mail-admission');
+const { admitReportReservation } = require('./session-report-admission');
+const { supportsSessionHandoffContext, supportsSessionMessageContext } = require('../session-runtime/inference-protocol');
 
 // Electron-side stream ceilings, keyed by engine type to mirror the sidecar's
 // cloud loop profile (sidecar/ai/routing/iteration_limits.py). The sidecar
@@ -362,6 +370,74 @@ function prepareResumedHistory(service, resumePayload) {
     ? service.options.historyAttachmentHydrator(messages) : messages;
 }
 
+// The context kinds the live sidecar process acknowledged, in the option names the history builders take.
+function wireContextKinds(client) {
+  return { sessionMessages: supportsSessionMessageContext(client), sessionHandoff: supportsSessionHandoffContext(client) };
+}
+
+const sameWireKinds = (a, b) => a.sessionMessages === b.sessionMessages && a.sessionHandoff === b.sessionHandoff;
+
+// The tool-preference input of a turn. The handoff-only preparation turn (cp5a) is restricted to
+// complete_session_handoff by its own path: a stored or requested preference can neither widen nor
+// narrow it, and normalizeManagedToolPreferences (which drops enabled_tools) is not involved.
+function managedToolPreferenceInput(toolPreferences, { catalog, handoffPreparation = null } = {}) {
+  return handoffPreparation
+    ? { enabled_tools: ['complete_session_handoff'], disabled_tools: [], disabled_tool_families: [] }
+    : normalizeManagedToolPreferences(toolPreferences, { catalog });
+}
+
+// Context rows that join a model turn just before its user anchor: the first turn's handoff
+// (cp5a, fail-closed: throws a coded error, the turn never runs without it) then queued addressed
+// session mail (cp4, best-effort). Only a brand-new turn inserts; a retry or resume reuses the rows
+// already before its anchor. A linked child's terminal-report slot (cp5b, fail-closed too) is reserved
+// between the two for every new turn identity (also an edit or failure retry), never for a checkpoint
+// resume (`resumed`) or a handoff preparation turn. `rebuild` says the history must be derived again
+// (rows were placed or the negotiated kinds changed since `previousKinds`).
+function admitTurnContextRows(service, {
+  sessionHandoff = null, brandNew, sessionId, turnId, userMessageId, preparedMessages, lease, previousKinds,
+  handoffPreparation = null, resumed = false,
+}) {
+  const handoffRow = sessionHandoff
+    ? admitSessionHandoffForTurn({ service, sessionId, turnId, userMessageId, handoff: sessionHandoff, brandNew, lease }) : null;
+  admitReportReservation(service, { sessionId, turnId, lease, handoffPreparation, resumed });
+  const mail = brandNew ? admitSessionMailForTurn({
+    service, sessionId, turnId, userMessageId, preparedMessages, lease,
+  }) : null;
+  const kinds = wireContextKinds(service.sidecarClient);
+  return { kinds, rebuild: Boolean(handoffRow || mail?.rows.length) || !sameWireKinds(kinds, previousKinds) };
+}
+
+// Canonical history -> provider messages for one managed turn. Runs again after context rows
+// are published (they sit just before the user anchor) or after the sidecar's negotiated
+// context kinds change; a checkpoint resume reuses its captured history and only loses
+// context rows the sidecar did not negotiate. `wireKinds` ({sessionMessages, sessionHandoff})
+// wins over the legacy per-kind flags.
+function deriveManagedTurnHistory(service, {
+  sessionId, sessionMessages, userMessageId, sessionSummary, checkpointHistory, prompt,
+  textAttachments, skillInvocation, contextPreferences, sessionMessageContext, sessionHandoffContext, wireKinds,
+}) {
+  const kinds = wireKinds || { sessionMessages: sessionMessageContext === true, sessionHandoff: sessionHandoffContext === true };
+  const canonicalSessionMessages = checkpointHistory?.canonicalHistoryMessages || sessionMessages
+    .filter((message) => String(message?.id || '').trim() !== userMessageId);
+  // JCA-003: a valid manual-compaction snapshot replaces the summarized prefix in the PROMPT history only.
+  const compactedHistory = checkpointHistory?.compactedHistory
+    || applyCompactionSnapshotForChatSend(service, sessionId, canonicalSessionMessages);
+  const resumePayload = buildResumePayload({
+    ...sessionSummary,
+    messages: compactedHistory.messages,
+    // The actor already terminalized any orphan; never resume that generation.
+    active_turn: null,
+  });
+  const preparedHistoryMessages = prepareResumedHistory(service, resumePayload);
+  const preparedMessages = checkpointHistory?.preparedMessages
+    ? checkpointHistory.preparedMessages.filter((message) => message?.role !== 'context'
+      || (message.kind === 'session_handoff' ? kinds.sessionHandoff : kinds.sessionMessages))
+    : buildPreparedMessages(preparedHistoryMessages, prompt, {
+      attachments: textAttachments, skillInvocation, contextPreferences, ...kinds,
+    });
+  return { canonicalSessionMessages, compactedHistory, preparedHistoryMessages, preparedMessages };
+}
+
 function captureManagedExecutionAuthority(service, sessionId, options) {
   if (!service.sessionExecutionAuthority?.captureSession) {
     throw new Error('Session execution authority is unavailable.');
@@ -370,7 +446,9 @@ function captureManagedExecutionAuthority(service, sessionId, options) {
 }
 
 module.exports = {
+  admitTurnContextRows,
   captureManagedExecutionAuthority,
+  deriveManagedTurnHistory,
   prepareResumedHistory,
   CLOUD_ENGINE_TYPES,
   buildAutomaticCompactionSendContext,
@@ -379,8 +457,10 @@ module.exports = {
   createChatStreamWatchdog,
   emitManagedHistoryScopeNarrowing,
   emitManagedTurnPerformanceSummary,
+  managedToolPreferenceInput,
   normalizeDebugOptions,
   recordProviderDiagnosticPhases,
   resolveChatStreamCeilings,
   summarizePromptMessages,
+  wireContextKinds,
 };

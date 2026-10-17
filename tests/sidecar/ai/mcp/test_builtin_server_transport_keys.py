@@ -40,6 +40,14 @@ def _strict_manifest_tools() -> list[dict[str, object]]:
 STRICT_TOOLS = _strict_manifest_tools()
 
 
+# Fields whose schema carries a pattern/format the generic "value" cannot satisfy.
+_NAMED_STRING_VALUES = {
+    "name": "verification-specialist",
+    "proposal_id": "proposal_" + "0" * 64,
+    "attempt_id": "00000000-0000-4000-8000-000000000000",
+}
+
+
 def _minimal_value(schema: dict[str, object], *, field_name: str = "") -> object:
     enum = schema.get("enum")
     if isinstance(enum, list) and enum:
@@ -61,7 +69,7 @@ def _minimal_value(schema: dict[str, object], *, field_name: str = "") -> object
         return True
     if value_type in {"integer", "number"}:
         return 1
-    return "verification-specialist" if field_name == "name" else "value"
+    return _NAMED_STRING_VALUES.get(field_name, "value")
 
 
 def _minimal_arguments(tool: dict[str, object]) -> dict[str, object]:

@@ -8,6 +8,7 @@ const path = require('node:path');
 const { TextDecoder } = require('node:util');
 
 const { hostFailure } = require('../../server/api-contract');
+const { removeTree } = require('../fs-remove-no-follow');
 const { extractArchive, readManifest } = require('../data-lifecycle/archive-service');
 const { importSession, validateSessionImportPayload } = require('../backend/session-export-import');
 const { readJson, writeJson } = require('./durable-json');
@@ -331,7 +332,7 @@ async function cleanupStage(userDataPath, stagePath, backend, phase) {
       logCleanupFailure(backend, phase, 'invalid_stage');
       return false;
     }
-    await fs.promises.rm(candidate, { recursive: true, force: true });
+    await removeTree(candidate);
     return true;
   } catch (error) {
     if (error.code === 'ENOENT') return true;

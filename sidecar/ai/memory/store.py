@@ -8,6 +8,7 @@ import logging
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -32,8 +33,12 @@ from sidecar.ai.memory.store_bootstrap import (
     run_migrations,
     validate_memory_store_files,
 )
+from sidecar.ai.memory.store_lifecycle import _MemoryLifecycleMixin
+from sidecar.ai.memory.store_operations import project_scope_range
 from sidecar.ai.memory.store_pending import _PendingCandidatesMixin
-from sidecar.ai.memory.store_project_move import _ProjectMoveMixin
+from sidecar.ai.memory.store_reflection import _MemoryReflectionMixin
+from sidecar.ai.memory.store_restore_to import _MemoryRestoreToMixin
+from sidecar.ai.memory.store_session_transfer import _MemorySessionTransferMixin
 from sidecar.ai.memory.store_shared import (
     MEMORY_MAINTENANCE_MUTATION_INTERVAL,
     MEMORY_MAINTENANCE_SECONDS,
@@ -41,6 +46,7 @@ from sidecar.ai.memory.store_shared import (
     MEMORY_RETENTION_MAX_AGE_DAYS,
     MEMORY_RETENTION_MAX_DB_BYTES,
     MEMORY_RETENTION_MAX_ROWS_PER_TABLE,
+    NOT_RECAP_SQL,
     _locked,
     _project_scope,
     _transaction,
@@ -49,21 +55,48 @@ from sidecar.ai.memory.store_shared import (
     ApprovedMemory as ApprovedMemory,
 )
 from sidecar.ai.memory.store_shared import (
+    MemoryWriteResult as MemoryWriteResult,
+)
+from sidecar.ai.memory.store_shared import (
     PendingMemoryCandidate as PendingMemoryCandidate,
 )
+from sidecar.ai.memory.store_undo import _MemoryUndoMixin
+from sidecar.ai.memory.store_vectors import _MemoryVectorsMixin
 from sidecar.exceptions import MemoryStoreError
 
 logger = logging.getLogger(__name__)
 
-_RETENTION_TABLES = (
-    ("memory_extraction_runs", "created_at"),
-    ("pending_memory_candidates", "updated_at"),
-)
+_RETENTION_TABLES = (("pending_memory_candidates", "updated_at"),)
 
-class MemoryStore(_ProjectMoveMixin, _PendingCandidatesMixin, _ApprovedMemoriesMixin):
-    def __init__(self, db_path: Path) -> None:
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+# At most this many scope ids in the all-projects status's `forgotten_scopes`.
+MAX_FORGOTTEN_SCOPES = 64
+
+
+class MemoryStore(
+    _MemoryVectorsMixin,
+    _MemorySessionTransferMixin,
+    _MemoryReflectionMixin,
+    _MemoryLifecycleMixin,
+    _MemoryRestoreToMixin,
+    _MemoryUndoMixin,
+    _PendingCandidatesMixin,
+    _ApprovedMemoriesMixin,
+):
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self._db_path = db_path
         self._lock = threading.RLock()
+        # Wall clock for lifecycle timestamps (retry windows, archive, retention).
+        self._clock = clock or _utc_now
         self._successful_mutations = 0
         self._last_maintenance_monotonic = time.monotonic()
         try:
@@ -101,6 +134,10 @@ class MemoryStore(_ProjectMoveMixin, _PendingCandidatesMixin, _ApprovedMemoriesM
 
     def close(self) -> None:
         self._connection.close()
+
+    def _now(self) -> datetime:
+        moment = self._clock()
+        return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
 
     @contextmanager
     def _write_transaction(self) -> Iterator[None]:
@@ -186,6 +223,9 @@ class MemoryStore(_ProjectMoveMixin, _PendingCandidatesMixin, _ApprovedMemoriesM
         removed = {table: 0 for table, _timestamp in _RETENTION_TABLES}
         try:
             with _transaction(self._connection):
+                removed.update(
+                    self._lifecycle_retention(apply_age_retention=apply_age_retention)
+                )
                 if apply_age_retention:
                     for table, timestamp_column in _RETENTION_TABLES:
                         cursor = self._connection.execute(
@@ -465,23 +505,47 @@ class MemoryStore(_ProjectMoveMixin, _PendingCandidatesMixin, _ApprovedMemoriesM
         counts = {}
         # Management lists every project, so its totals must span every
         # project too; recall and capture keep the per-project scope.
-        for table, key in (
-            ("memories", "approved"),
-            ("pending_memory_candidates", "pending"),
-            ("memory_suppressions", "suppressions"),
+        project_filter = "1 = 1" if all_projects else "project_id = ?"
+        params: tuple[str, ...] = () if all_projects else (scope,)
+        for key, table, extra in (
+            # Reflection recap rows are hidden from listings, so from counts too.
+            ("active", "memories", f"status = 'active' AND {NOT_RECAP_SQL}"),
+            ("archived", "memories", f"status = 'archived' AND {NOT_RECAP_SQL}"),
+            ("always_on", "memories", "status = 'active' AND always_on = 1"),
+            ("pending", "pending_memory_candidates", "1 = 1"),
+            ("suppressions", "memory_suppressions", "1 = 1"),
         ):
             row = self._connection.execute(
-                f"SELECT COUNT(*) FROM {table}"
-                if all_projects
-                else f"SELECT COUNT(*) FROM {table} WHERE project_id = ?",
-                () if all_projects else (scope,),
+                f"SELECT COUNT(*) FROM {table} WHERE {project_filter} AND {extra}", params
             ).fetchone()
             counts[key] = int(row[0] if row else 0)
+        operations_row = self._connection.execute(
+            "SELECT COUNT(*) FROM memory_operations WHERE stub = 0"
+            if all_projects
+            else "SELECT COUNT(*) FROM memory_operations "
+            "WHERE stub = 0 AND scope_key >= ? AND scope_key < ?",
+            () if all_projects else project_scope_range(scope),
+        ).fetchone()
+        counts["operations"] = int(operations_row[0] if operations_row else 0)
+        # Alias kept for the existing renderer, which reads `approved`.
+        counts["approved"] = counts["active"]
         quarantine_row = self._connection.execute(
             "SELECT COUNT(*) FROM memory_quarantine"
         ).fetchone()
         physical_bytes = self._database_physical_bytes()
-        return {
+        snapshot: dict[str, object] = {}
+        if all_projects:
+            # The Memory page keeps a tab and its Forgotten fold for a scope
+            # whose rows are all forgotten.
+            snapshot["forgotten_scopes"] = [
+                str(row[0]) for row in self._connection.execute(
+                    "SELECT DISTINCT project_id FROM memories "
+                    f"WHERE status = 'archived' AND {NOT_RECAP_SQL} "
+                    "ORDER BY project_id LIMIT ?",
+                    (MAX_FORGOTTEN_SCOPES,),
+                ).fetchall()
+            ]
+        return snapshot | {
             "available": True,
             "schema_version": SCHEMA_VERSION,
             "recall_index": "fts5" if self._recall_index_available else "bounded_scan",

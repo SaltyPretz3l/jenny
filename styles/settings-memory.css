@@ -1,90 +1,241 @@
 .memory-settings-card { container-type: inline-size; }
 
-.memory-group-header,
-.memory-record,
-.memory-record-heading,
-.memory-record-actions,
-.memory-provenance-meta {
+/* Header: the export action sits after the badge without growing the header. */
+.memory-header-actions {
+  margin-inline-start: auto;
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
+  align-items: center;
 }
 
-.memory-group-header,
-.memory-record { justify-content: space-between; }
+/* Scope tabs: one underline marks the open scope; counts stay muted. */
+.memory-scope-tabs {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-subtle);
+  scrollbar-width: thin;
+}
 
-.memory-page-filters,
-.memory-record-actions,
-.memory-provenance-meta {
+.memory-scope-tab {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-body);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.memory-scope-tab:hover { color: var(--text-primary); }
+.memory-scope-tab.is-active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
+}
+
+.memory-scope-tab-count,
+.memory-count {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+/* Always-on meter: a thin bar between the label and the numbers. */
+.memory-meter {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-block-start: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
 }
 
-.memory-page-filters { align-items: flex-end; }
+.memory-meter[hidden] { display: none; }
+.memory-meter-bar { inline-size: 160px; }
+.memory-meter-over { color: var(--state-warning); }
+
+.memory-page-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+  margin-block: var(--space-3) var(--space-1);
+}
+
+.memory-page-filters > :first-child { flex: 1 1 260px; max-inline-size: 420px; }
+
 .memory-record-list { display: grid; }
 
+/* Records are flat rows: no border, radius or background of their own; a
+   hairline separates neighbours and a token tint marks hover. */
 .memory-record {
-  padding-block: var(--space-4);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding-block: var(--space-3);
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .memory-record + .memory-record { border-top: 1px solid var(--border-subtle); }
 .memory-record:hover { background-color: var(--surface-popover-row-hover); }
+.memory-record--editing { grid-template-columns: minmax(0, 1fr); }
 
 .memory-record-main {
-  flex: 1 1 auto;
   min-width: 0;
   display: grid;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
-.memory-record-actions {
-  flex: 0 0 auto;
-  flex-wrap: nowrap;
+.memory-text {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
-.memory-record-heading {
-  align-items: center;
+.memory-meta {
+  display: flex;
   flex-wrap: wrap;
-}
-
-.memory-record-title,
-.memory-record-main p,
-.memory-provenance p { margin: 0; }
-
-.memory-record-main p,
-.memory-provenance { overflow-wrap: anywhere; }
-
-.memory-provenance-trigger {
-  width: fit-content;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
   color: var(--text-muted);
   font-size: var(--font-size-caption);
 }
 
-.memory-provenance-panel {
-  display: grid;
+.memory-kind { color: var(--text-secondary); }
+.memory-meta-edited { font-style: italic; }
+
+.memory-record-side {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  white-space: nowrap;
+}
+
+.memory-always-on {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+/* Accent text links: navigation and quiet row actions. */
+.memory-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.memory-link:hover { text-decoration: underline; }
+.memory-link:disabled { color: var(--text-muted); cursor: default; text-decoration: none; }
+.memory-link--danger { color: var(--state-danger); }
+
+.memory-edit { display: grid; gap: var(--space-2); }
+
+.memory-edit-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.memory-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* The one tinted block: proposals waiting for the user's OK. */
+.memory-pending {
+  margin-block: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--accent-a-12);
+}
+
+.memory-pending[hidden],
+#pendingMemoryHost[hidden] { display: none; }
+
+.memory-pending-heading {
+  margin: 0;
+  font-size: var(--font-size-body);
+}
+
+/* Folds: Forgotten and History, closed by default. */
+.memory-fold {
+  border-top: 1px solid var(--border-subtle);
+  margin-block-start: var(--space-3);
+}
+
+.memory-fold-trigger {
+  display: flex;
+  align-items: baseline;
   gap: var(--space-2);
-  padding-block-start: var(--space-2);
+  inline-size: 100%;
+  padding-block: var(--space-3);
+  color: var(--text-secondary);
+}
+
+.memory-fold-title { color: var(--text-primary); }
+
+.memory-fold-note {
+  margin: 0 0 var(--space-2);
   color: var(--text-muted);
   font-size: var(--font-size-caption);
 }
 
-.memory-provenance--removed {
+.memory-history {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-history-row {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  padding-block: var(--space-1);
+}
+
+.memory-history-when,
+.memory-history-gone {
   color: var(--text-muted);
-  font-style: italic;
+  font-size: var(--font-size-caption);
+}
+
+.memory-history-gone { font-style: italic; }
+.memory-history-text { overflow-wrap: anywhere; }
+
+.memory-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  color: var(--text-secondary);
+}
+
+.memory-file {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
 }
 
 .memory-list-status:empty,
 .memory-more-host:empty,
 .memory-record-list[hidden],
 .memory-page-filters[hidden],
+.memory-settings-card [hidden].memory-fold,
 .memory-settings-card .settings-summary-row[hidden] { display: none; }
 .memory-more-host { margin-block-start: var(--space-3); }
-
-/* The notes placeholder already says what belongs there; the counter stays
-   right-aligned on its own. */
-.memory-notes-meta { justify-content: flex-end; }
 
 .memory-health-list {
   margin: 0;
@@ -92,14 +243,22 @@
 }
 
 @media (max-width: 760px) {
-  .memory-group-header,
-  .memory-record { flex-direction: column; }
+  .memory-record { grid-template-columns: minmax(0, 1fr); }
+  .memory-record-side { justify-content: flex-start; }
   .memory-page-filters {
-    width: 100%;
+    inline-size: 100%;
     flex-direction: column;
     align-items: stretch;
   }
-  .memory-record-actions { justify-content: flex-start; }
+  .memory-page-filters > :first-child { max-inline-size: none; }
+  .memory-history-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .memory-history-when { grid-column: 1 / -1; }
+}
+
+.memory-scope-tab:focus-visible,
+.memory-link:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -107,8 +266,13 @@
 }
 
 @media (forced-colors: active) {
-  .memory-record + .memory-record { border-top-color: CanvasText; }
-  .memory-provenance-trigger:focus-visible {
+  .memory-record + .memory-record,
+  .memory-fold,
+  .memory-scope-tabs { border-color: CanvasText; }
+  .memory-scope-tab.is-active { border-bottom-color: Highlight; }
+  .memory-pending { border: 1px solid CanvasText; }
+  .memory-scope-tab:focus-visible,
+  .memory-link:focus-visible {
     outline: 2px solid Highlight;
     outline-offset: 2px;
   }

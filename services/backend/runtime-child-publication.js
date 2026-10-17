@@ -5,6 +5,10 @@ const { stableJson } = require('../session-runtime/contracts');
 const { authorityFingerprint } = require('../session-runtime/root-run-start');
 const { fail } = require('../session-runtime/lineage-contracts');
 
+// Application-set purpose of a child's work record (the model cannot choose
+// it). Readers use it to pre-filter before confirming the record's kind.
+const CHILD_WORK_PURPOSE = 'Read-only child task';
+
 function executionSnapshot(service, context) {
   const { authority_revision: _revision, ...snapshot } = service.sessionExecutionAuthority.toExecutionContext(context.binding);
   return snapshot;
@@ -58,7 +62,7 @@ async function publishRuntimeChild(coordinator, { work, context, rootWork, root,
       parent_work_id: work.work_id, parent_turn_id: work.turn_id, spawn_call_id: child.call_id,
       args_sha256: child.args_sha256, authority_fingerprint: authorityFingerprint(service, prepared) } };
     submitted = runtime.store.submit({ idempotencyKey: child.work_id, workId: child.work_id, turnId: child.turn_id,
-      projectId: rootWork.project_id, sessionId: child.session_id, purpose: 'Read-only child task',
+      projectId: rootWork.project_id, sessionId: child.session_id, purpose: CHILD_WORK_PURPOSE,
       input: prepared.input, authority: prepared.authority });
     if (submitted.record.attempt) fail('runtime_child_uncommitted_attempt');
     assertCurrent();
@@ -81,4 +85,4 @@ async function publishRuntimeChild(coordinator, { work, context, rootWork, root,
   }
 }
 
-module.exports = { publishRuntimeChild };
+module.exports = { CHILD_WORK_PURPOSE, publishRuntimeChild };

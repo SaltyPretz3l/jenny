@@ -186,3 +186,27 @@
   45%, 80% { transform: scaleX(1); opacity: 1; }
   100% { transform: scaleX(1); opacity: 0.4; }
 }
+
+/* Measured prompt work: static cached arc followed by the evaluated arc. */
+.turn-activity-row[data-turn-activity-kind="prefill"] > .status-dot {
+  width: calc(var(--tl-activity-dot-size) * 2.2);
+  height: calc(var(--tl-activity-dot-size) * 2.2);
+  background: conic-gradient(var(--text-muted) 0deg calc(var(--prefill-cache) * 360deg), var(--tl-status-active) calc(var(--prefill-cache) * 360deg) calc(var(--prefill-done) * 360deg), var(--border-subtle) calc(var(--prefill-done) * 360deg) 360deg);
+  mask: radial-gradient(transparent 50%, black 53%);
+  animation: none;
+}
+[dir="rtl"] .turn-activity-row[data-turn-activity-kind="prefill"] > .status-dot { transform: scaleX(-1); }
+.turn-activity-row[data-turn-activity-kind="prefill"] .turn-activity-label { animation: none; }
+.turn-activity-reused { color: var(--text-muted); font-size: var(--tl-font-meta); white-space: nowrap; }
+@media (max-width: 719px) {
+  .turn-activity-row[data-turn-activity-kind="prefill"] { flex-wrap: wrap; }
+  .turn-activity-row[data-turn-activity-kind="prefill"] .turn-activity-name { white-space: normal; flex: 1; }
+  .turn-activity-row[data-turn-activity-kind="prefill"] .turn-activity-label { flex-basis: 100%; white-space: normal; }
+}
+
+.turn-activity-row[data-turn-activity-kind="prefill"][data-prefill-cached="true"] > .status-dot { display: none; }
+@property --prefill-done { syntax: "<number>"; inherits: true; initial-value: 0; }
+.turn-activity-row[data-turn-activity-kind="prefill"] > .status-dot { transition: --prefill-done 150ms linear; }
+@media (prefers-reduced-motion: reduce) {
+  .turn-activity-row[data-turn-activity-kind="prefill"] > .status-dot { transition: none; }
+}

@@ -577,7 +577,11 @@
         });
         rows.push(toolCallRow);
         if (emitApprovalGapRow) {
-          const approvalGapRow = buildApprovalGapRow(turnId, gapRowEvents, toolCallId, { toolUseEvent: event });
+          // The canonical request can precede the projected pending call; the card needs the event
+          // that carries the exact message presentation (its body never rides the canonical copy).
+          const approvalToolUse = sourceEvents.find((source) => source.kind === 'tool_use'
+            && source.payload && source.payload.session_message_approval) || event;
+          const approvalGapRow = buildApprovalGapRow(turnId, gapRowEvents, toolCallId, { toolUseEvent: approvalToolUse });
           if (keepsReceipt) {
             approvalBlock.applyApprovalReceipt(approvalGapRow.payload,
               approvalBlock.deriveApprovalReceipt(toolCallRow.payload) || { decision: 'closed' });

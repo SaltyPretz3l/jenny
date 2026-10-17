@@ -8,10 +8,18 @@ unchanged; that module re-imports them under its historical private names.
 from __future__ import annotations
 
 import math
+import re
 from array import array
 from collections.abc import Sequence
 
 MAX_EMBEDDING_DIM = 4096
+_PLACEHOLDER_RE = re.compile(r"\{(text|title)\}")
+
+
+def render_template(template: str, *, text: str, title: str) -> str:
+    """An embedder's ``{text}``/``{title}`` template, in one pass (inserted text stays literal)."""
+    values = {"text": text, "title": title}
+    return _PLACEHOLDER_RE.sub(lambda match: values[match.group(1)], template)
 
 
 def pack_vector(embedding: list[float]) -> tuple[bytes, int, float]:

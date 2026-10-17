@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
+import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +18,7 @@ import sidecar.ai.tools.distill as distill_module
 from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED, CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.builtins import shell as shell_module
 from sidecar.ai.tools.builtins import shell_background as shell_background_module
+from sidecar.ai.tools.builtins import shell_settings
 from sidecar.ai.tools.builtins.shell import (
     MAX_OUTPUT_CHARS,
     check_background_job_tool,
@@ -23,6 +27,118 @@ from sidecar.ai.tools.builtins.shell import (
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+
+_REAL_RUN_OWNED_PROCESS = shell_module._run_owned_process
+
+
+@pytest.fixture
+def harness_flags():
+    saved = dict(shell_settings._FEATURE_FLAGS)
+    def configure(**flags):
+        configure_shell_security(flags)
+    try:
+        yield configure
+    finally:
+        configure_shell_security(saved)
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_harness_environment_current_platform(monkeypatch, harness_flags, enabled):
+    harness_flags(shell_noninteractive_env=enabled)
+    monkeypatch.setenv("GIT_EDITOR", "code --wait")
+    monkeypatch.setattr(shell_module, "_powershell_directory", lambda: None)
+    env = shell_module._shell_environment()
+    if enabled:
+        assert env is not None
+        assert env["GIT_EDITOR"] == env["GIT_SEQUENCE_EDITOR"] == "false"
+        assert env["PAGER"] == env["GIT_PAGER"] == "cat"
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
+        assert env["GIT_EXTERNAL_DIFF"] == ""
+        assert env["GCM_INTERACTIVE"] == "never"
+    else:
+        assert env is None
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("outcome", [(0, True), (0, False), (1, True), (1, False)])
+def test_harness_stream_edges_and_persisted_marker(
+    monkeypatch, tmp_path, harness_flags, enabled, outcome,
+):
+    exit_code, persist = outcome
+    harness_flags(shell_head_tail_output=enabled)
+    text = "FIRST\n" + "x" * 30_000 + "\nLAST"
+    monkeypatch.setattr(shell_module, "_run_owned_process", lambda *a, **kw: SimpleNamespace(
+        returncode=exit_code, stdout=text, stderr=text,
+    ))
+    if not persist:
+        monkeypatch.setattr(shell_module, "_persist_large_output", lambda *a, **kw: None)
+    result = run_command_tool({"command": "fixture"}, _guard(tmp_path))
+    payload = json.loads(result.output)
+    for key in ("stdout", "stderr"):
+        if enabled:
+            path = payload.get("full_output_display_path")
+            marker = f"\n...[middle truncated; full output: {path}]\n" if persist else (
+                "\n...[middle truncated]\n"
+            )
+            head, tail = (14_000, 6_000) if exit_code == 0 else (6_000, 14_000)
+            assert payload[key] == text[:head] + marker + text[-tail:]
+        else:
+            assert payload[key] == text[:20_000] + "\n...[truncated]"
+    if persist:
+        assert Path(payload["full_output_path"]).read_text(encoding="utf-8") == text * 2
+        assert result.metadata["full_output_path"] == payload["full_output_path"]
+        assert payload["full_output_complete"] is True
+    else:
+        assert "full_output_path" not in payload
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_harness_failure_stream_edges(harness_flags, enabled):
+    harness_flags(shell_head_tail_output=enabled)
+    text = "FIRST" + "x" * 30_000 + "LAST"
+    result = shell_module._truncate_failure_stream(text)
+    if enabled:
+        assert result == text[:6_000] + "\n...[middle truncated]\n" + text[-14_000:]
+    else:
+        assert result == text[-6_000:] + "\n...[earlier output omitted]"
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_harness_real_command_keeps_output_edges(monkeypatch, tmp_path, harness_flags, enabled):
+    harness_flags(shell_head_tail_output=enabled)
+    monkeypatch.setattr(shell_module, "_run_owned_process", _REAL_RUN_OWNED_PROCESS)
+    command = f'"{sys.executable}" -c "for i in range(30000): print(\'line-%05d\' % i)"'
+    result = run_command_tool({"command": command}, _guard(tmp_path))
+    assert result.success, result.output
+    stdout = json.loads(result.output)["stdout"]
+    assert "line-00000" in stdout
+    assert ("line-29999" in stdout) is enabled
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not on PATH")
+def test_harness_git_commit_editor_fails_fast(monkeypatch, tmp_path, harness_flags):
+    monkeypatch.setattr(shell_module, "_run_owned_process", _REAL_RUN_OWNED_PROCESS)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    python = sys.executable.replace("\\", "/")
+    monkeypatch.setenv("GIT_EDITOR", f'{shlex.quote(python)} -c "import time; time.sleep(30)"')
+    for args in (["init", "-q"], ["config", "user.name", "Harness"],
+                 ["config", "user.email", "harness@example.invalid"]):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "change.txt").write_text("staged\n", encoding="utf-8")
+    subprocess.run(["git", "add", "change.txt"], cwd=tmp_path, check=True, capture_output=True)
+    for enabled in (False, True):
+        harness_flags(shell_noninteractive_env=enabled)
+        start = time.monotonic()
+        result = run_command_tool({"command": "git commit"}, _guard(tmp_path))
+        elapsed = time.monotonic() - start
+        payload = json.loads(result.output)
+        print(f"git commit flag={enabled}: {elapsed:.2f}s, timed_out={payload.get('timed_out')}")
+        if enabled:
+            assert elapsed < 5
+            assert not payload.get("timed_out")
+            assert payload["exit_code"] != 0
+            assert "false" in payload["stderr"]
 
 
 def _guard(tmp_path: Path) -> WorkspaceGuard:
@@ -491,7 +607,9 @@ def test_timeout_returns_bounded_partial_output(
 def test_large_output_persisted_to_disk(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    harness_flags,
 ) -> None:
+    harness_flags(shell_head_tail_output=False)
     big = "x" * (MAX_OUTPUT_CHARS + 100)
     monkeypatch.setattr(
         "sidecar.ai.tools.builtins.shell.subprocess.run",
@@ -639,7 +757,9 @@ def test_check_background_job_completed(tmp_path: Path) -> None:
 def test_check_background_job_truncates_large_output_to_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    harness_flags,
 ) -> None:
+    harness_flags(shell_head_tail_output=False)
     big_stdout = "x" * (MAX_OUTPUT_CHARS + 250)
 
     class FakePopen:
@@ -1260,12 +1380,14 @@ def test_unresolved_command_hint_points_at_an_absolute_path() -> None:
 @pytest.mark.skipif(os.name != "nt", reason="PowerShell PATH repair is Windows-only")
 def test_shell_environment_adds_powershell_directory_when_missing(
     monkeypatch: pytest.MonkeyPatch,
+    harness_flags,
 ) -> None:
     """PowerShell lives in a PATH entry separate from System32.
 
     A launcher that trims PATH can leave cmd.exe resolvable while powershell is
     not, which is exactly how the owner's turn failed.
     """
+    harness_flags(shell_noninteractive_env=False)
     directory = shell_module._powershell_directory()
     if directory is None:
         pytest.skip("no Windows PowerShell on this host")

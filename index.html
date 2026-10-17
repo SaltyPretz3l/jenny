@@ -369,7 +369,6 @@
                 <path d="M3.5 2h6l3 3v9h-9z"></path>
                 <path d="m7 8.5-1.5 1.5L7 11.5M9 8.5l1.5 1.5L9 11.5"></path>
               </svg>
-              <span class="chat-timeline-utility-text" data-i18n="artifacts.review.toggleTitle">Artifacts</span>
             </button>
             <div class="composer-wayfinder-host chat-timeline-wayfinder-host" id="composerWayfinderHost" data-chat-node="composerWayfinderHost" hidden></div>
           </div>
@@ -381,6 +380,7 @@
             <div class="send-outbox" id="sendOutbox" aria-live="polite" hidden></div>
             <div class="runtime-queue" id="runtimeQueue" hidden></div>
             <div class="background-jobs-strip hidden" id="backgroundJobsStrip" role="group" aria-label="Background jobs" data-i18n-aria-label="composer.backgroundJobsLabel" aria-hidden="true"></div>
+            <div class="composer-message-strip hidden" id="composerMessageStrip"></div>
             <div class="composer-status-notice hidden" id="composerStatusNotice" role="status" aria-live="polite"></div>
             <div class="composer-failed-send-notice hidden" id="composerV2FailedSendNotice" data-composer-v2="off" role="alert" aria-live="assertive"></div>
             <div class="composer" data-send-lifecycle="idle" data-composer-active="false">
@@ -498,25 +498,18 @@
             <div class="context-panel-scroll">
               <section class="context-section" id="contextArtifactSection">
                 <div class="context-section-header">
-                  <span class="context-section-label" data-i18n="chat.context.artifacts">Artifacts</span>
-                  <span class="orbit-section-count" id="contextArtifactCount" aria-label="Artifact count" data-i18n-aria-label="chat.context.artifactCountLabel">0</span>
                   <span class="context-section-rule" aria-hidden="true"></span>
-                  <button class="context-section-action" id="contextArtifactExpand"
-                          type="button" aria-label="Open artifact panel" data-i18n-aria-label="chat.context.openArtifactPanelLabel" title="Open artifact panel" data-i18n-title="chat.context.openArtifactPanelLabel">
-                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M9.5 2.5v11"/></svg><span class="context-section-action-text" data-i18n="chat.context.openShort">Open</span>
-                  </button>
                   <button class="context-section-action context-panel-collapse" id="contextPanelToggle"
                           type="button" aria-label="Hide context panel" data-i18n-aria-label="chat.context.collapseLabel" title="Collapse panel" data-i18n-title="chat.context.collapseTitle">
                     <span class="context-section-action-text" data-i18n="chat.context.hideShort">Hide</span><svg class="icon-mirror-rtl" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
                   </button>
                 </div>
-                <div class="context-artifact-list" id="contextArtifactList" role="list"></div>
               </section>
               <section class="context-section logs-collapsed" id="contextLogSection">
                 <button class="context-section-header context-section-disclosure" id="contextLogDisclosure"
                         type="button" aria-expanded="false" aria-controls="contextSessionLogs">
                   <svg class="context-disclosure-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
-                  <span class="context-section-label" data-i18n="chat.context.activity">Activity</span>
+                  <span class="context-section-label" data-i18n="activity.diagnosticLog">Diagnostic log</span>
                   <span class="orbit-section-count" id="contextLogCount">0</span>
                   <span class="context-section-rule" aria-hidden="true"></span>
                 </button>
@@ -563,6 +556,7 @@
               <div class="composer-wrap" data-chat-node="composerWrap" data-dock-anchor="composer" data-send-lifecycle="idle">
                 <div class="attachment-preview-pill hidden" data-chat-node="composerAttachmentPreviewPill" data-composer-v2="off" role="status" aria-live="polite"></div>
                 <div class="attachment-tray hidden" data-chat-node="attachmentTray" data-composer-v2="off" aria-live="polite"></div>
+                <div class="composer-message-strip hidden" data-chat-node="composerMessageStrip"></div>
                 <div class="composer-status-notice hidden" data-chat-node="composerStatusNotice" role="status" aria-live="polite"></div>
                 <div class="composer-failed-send-notice hidden" data-chat-node="composerV2FailedSendNotice" data-composer-v2="off" role="alert" aria-live="assertive"></div>
                 <div class="composer" data-send-lifecycle="idle" data-composer-active="false">
@@ -631,51 +625,45 @@
         <section class="main-view logs-view view-offscreen" id="logsView" role="tabpanel" aria-labelledby="logsTopRailTab" data-surface-effect-surface inert aria-hidden="true">
           <div class="page-shell logs-shell diagnostics-shell">
             <header class="diagnostics-header" id="logsMasthead">
-              <div class="diagnostics-header-copy">
-                <span class="diagnostics-eyebrow" data-i18n="diagnostics.ownerWorkspace">Owner workspace</span>
-                <h2 id="logsTitle" data-i18n="diagnostics.heading">Diagnostics</h2>
-                <p data-i18n="diagnostics.description">Understand runtime health, find failures, and collect trustworthy redacted evidence.</p>
+              <div class="diagnostics-header-row">
+                <div class="diagnostics-header-copy">
+                  <h2 id="logsTitle" data-i18n="diagnostics.heading">Diagnostics</h2>
+                  <p data-i18n="diagnostics.pageDescription">Whether Jenny is working, what needs attention, and the records behind it.</p>
+                </div>
+                <div class="diagnostics-header-actions"><div id="diagnosticsRunControl"></div><div id="diagnosticsCopyControl"></div></div>
               </div>
-              <div class="diagnostics-header-actions"><div id="diagnosticsRunControl"></div><div id="diagnosticsCopyControl"></div></div>
+              <nav class="diagnostics-tabs" id="diagnosticsTabs" role="tablist" aria-label="Diagnostics views" data-i18n-aria-label="diagnostics.viewsLabel"></nav>
             </header>
-            <nav class="diagnostics-tabs" id="diagnosticsTabs" role="tablist" aria-label="Diagnostics views" data-i18n-aria-label="diagnostics.viewsLabel"></nav>
             <div class="sr-only" id="diagnosticsStatusAnnouncer" role="status" aria-live="polite" aria-atomic="true"></div>
             <section id="diagnosticsOverview" class="diagnostics-overview" role="tabpanel" aria-labelledby="diagnosticsOverviewTab">
-              <div class="diagnostics-overall" id="diagnosticsOverall"></div>
-              <div class="diagnostics-overview-layout">
-                <section class="diagnostics-section diagnostics-issues-section" aria-labelledby="diagnosticsIssuesHeading">
-                  <div class="diagnostics-section-heading"><div><h3 id="diagnosticsIssuesHeading" data-i18n="diagnostics.issues.heading">Recent issues</h3><p data-i18n="diagnostics.issues.descriptionLaunch">What needs attention in this app launch, newest first.</p></div></div>
-                  <div class="diagnostics-issue-list" id="diagnosticsIssueList" role="list"></div>
-                </section>
-                <div class="diagnostics-overview-sidebar">
-                  <section class="diagnostics-section" aria-labelledby="diagnosticsIntegrityHeading">
-                    <div class="diagnostics-section-heading"><div><h3 id="diagnosticsIntegrityHeading" data-i18n="diagnostics.integrity.heading">Source integrity</h3><p data-i18n="diagnostics.integrity.description">Coverage and capture quality for this evidence window.</p></div></div>
-                    <div class="diagnostics-source-grid" id="diagnosticsSourceCoverage"></div>
-                  </section>
-                  <section class="diagnostics-section diagnostics-health" aria-labelledby="runtimeHealthHeading">
-                    <div class="diagnostics-section-heading"><div><h3 id="runtimeHealthHeading" data-i18n="diagnostics.runtimeHealth.heading">Runtime health</h3><p data-i18n="diagnostics.runtimeHealth.description">Current engine, model, and backend readiness.</p></div><div class="diagnostics-health-actions"><div id="diagnosticsRefreshControl"></div></div></div>
-                    <div class="diagnostics-runtime-summary">
-                      <span class="settings-badge" id="diagnosticsBadge" data-i18n="diagnostics.runtimeHealth.pending">Pending</span>
-                      <div class="settings-summary-row" id="diagnosticsSummary" data-i18n="diagnostics.runtimeHealth.loadingStatus">Loading runtime status…</div>
-                      <div class="settings-note" id="diagnosticsStatus"></div>
-                    </div>
-                  </section>
-                  <section class="diagnostics-section diagnostics-runtime-inventory" aria-labelledby="runtimeInventoryHeading">
-                    <div class="diagnostics-section-heading"><div><h3 id="runtimeInventoryHeading" data-i18n="diagnostics.runtimeInventory.heading">Runtime inventory</h3><p data-i18n="diagnostics.runtimeInventory.description">Bounded live configuration from the active harness bridge.</p></div></div>
-                    <div id="diagnosticsRuntimeInventory" aria-live="polite"></div>
+              <section class="diagnostics-status" aria-label="Status" data-i18n-aria-label="diagnostics.status.label">
+                <div class="diagnostics-status-body" id="diagnosticsOverall"></div>
+                <div class="diagnostics-status-side"><span id="diagnosticsUpdatedAt"></span><div id="diagnosticsRefreshControl"></div></div>
+              </section>
+              <div class="diagnostics-overview-body" id="diagnosticsOverviewBody">
+                <div class="diagnostics-metrics" id="diagnosticsMetrics">
+                  <section class="diagnostics-section diagnostics-runtime" aria-labelledby="runtimeInventoryHeading">
+                    <div class="diagnostics-section-head"><h3 id="runtimeInventoryHeading" data-i18n="diagnostics.runtime.heading">Runtime</h3></div>
+                    <div class="diagnostics-metric-scroll" tabindex="0" role="region" aria-labelledby="runtimeInventoryHeading"><div class="diagnostics-groups" id="diagnosticsRuntimeInventory"></div></div>
                   </section>
                   <section class="diagnostics-section diagnostics-performance" aria-labelledby="diagnosticsPerformanceHeading">
-                    <div class="diagnostics-section-heading"><div><h3 id="diagnosticsPerformanceHeading" data-i18n="diagnostics.performance.heading">Performance</h3><p data-i18n="diagnostics.performance.description">Latency, resource budgets, and recent traces.</p></div><div class="diagnostics-health-actions"><div id="diagnosticsResetControl"></div></div></div>
-                    <div id="performanceAnomaliesContainer" data-renders="performance-anomalies"></div>
-                    <div id="resourceBudgetsContainer" data-renders="resource-budgets"></div>
-                    <div class="phase-percentiles-table-shell" id="phasePercentilesTable"></div>
-                    <div class="diagnostics-health-grid">
-                      <section aria-labelledby="diagnosticsToolLatencyHeading"><h4 id="diagnosticsToolLatencyHeading" data-i18n="diagnostics.performance.toolLatency">Tool latency</h4><div class="observability-pane" id="toolLatencyTable"></div></section>
-                      <section aria-labelledby="diagnosticsSlowOperationsHeading"><h4 id="diagnosticsSlowOperationsHeading" data-i18n="diagnostics.performance.slowOperations">Slow operations</h4><div class="observability-pane" id="slowOperationsList"></div></section>
-                      <section aria-labelledby="diagnosticsRecentTracesHeading"><h4 id="diagnosticsRecentTracesHeading" data-i18n="diagnostics.performance.recentTraces">Recent traces</h4><div class="observability-pane" id="recentTracesList"></div></section>
+                    <div class="diagnostics-section-head"><h3 id="diagnosticsPerformanceHeading" data-i18n="diagnostics.performance.heading">Performance</h3><div id="diagnosticsResetControl"></div></div>
+                    <div class="diagnostics-metric-scroll" tabindex="0" role="region" aria-labelledby="diagnosticsPerformanceHeading">
+                      <div id="diagnosticsPerformanceEmpty" hidden></div>
+                      <div class="diagnostics-groups" id="diagnosticsPerformanceGroups">
+                        <section class="diagnostics-group" id="diagnosticsChatTiming" aria-labelledby="diagnosticsChatTimingHeading"><h4 id="diagnosticsChatTimingHeading" data-i18n="diagnostics.performance.chatTiming">Chat timing</h4><div id="phasePercentilesTable"></div></section>
+                        <section class="diagnostics-group" id="diagnosticsOverTarget" aria-labelledby="diagnosticsSlowOperationsHeading" hidden><h4 id="diagnosticsSlowOperationsHeading" data-i18n="diagnostics.performance.overTarget">Over target</h4><div id="slowOperationsList"></div></section>
+                        <section class="diagnostics-group" id="diagnosticsTools" aria-labelledby="diagnosticsToolLatencyHeading"><h4 id="diagnosticsToolLatencyHeading" data-i18n="diagnostics.performance.tools">Tools</h4><div id="toolLatencyTable"></div></section>
+                        <section class="diagnostics-group" id="diagnosticsRecentChats" aria-labelledby="diagnosticsRecentTracesHeading"><h4 id="diagnosticsRecentTracesHeading" data-i18n="diagnostics.performance.recentChats">Recent chats</h4><div id="recentTracesList"></div></section>
+                      </div>
                     </div>
                   </section>
                 </div>
+                <div id="diagnosticsOverviewDivider" class="diagnostics-overview-divider" hidden></div>
+                <section class="diagnostics-section diagnostics-attention" id="diagnosticsAttention" aria-labelledby="diagnosticsIssuesHeading" hidden>
+                  <div class="diagnostics-section-head"><h3 id="diagnosticsIssuesHeading" data-i18n="diagnostics.attention.heading">Needs attention</h3><span class="diagnostics-section-meta" data-i18n="diagnostics.attention.order">Newest first</span></div>
+                  <ul class="diagnostics-issue-list" id="diagnosticsIssueList" tabindex="0" aria-labelledby="diagnosticsIssuesHeading"></ul>
+                </section>
               </div>
             </section>
             <section id="diagnosticsActivity" class="diagnostics-activity" role="tabpanel" aria-labelledby="diagnosticsActivityTab" hidden>
@@ -684,18 +672,18 @@
                 <div class="diagnostics-toolbar-meta"><span id="logResultsLabel"></span><div id="diagnosticsFollowControl"></div></div>
               </div>
               <div class="diagnostics-activity-scope" id="diagnosticsActivityScope" hidden></div>
-              <div class="diagnostics-activity-layout">
+              <div class="diagnostics-activity-layout" id="diagnosticsActivityLayout">
                 <div class="diagnostics-activity-console">
-                  <div class="diagnostics-log-header" aria-hidden="true"><span data-i18n="diagnostics.activity.time">Time</span><span data-i18n="diagnostics.activity.level">Level</span><span data-i18n="diagnostics.activity.source">Source</span><span data-i18n="diagnostics.activity.event">Event</span><span data-i18n="diagnostics.activity.message">Message</span></div>
+                  <div class="diagnostics-log-header" aria-hidden="true"><span data-i18n="diagnostics.activity.time">Time</span><span></span><span data-i18n="diagnostics.activity.message">Message</span><span data-i18n="diagnostics.activity.event">Event</span><span data-i18n="diagnostics.activity.source">Source</span></div>
                   <div class="log-list" id="logList" role="listbox" aria-label="Diagnostic activity, oldest to newest" data-i18n-aria-label="diagnostics.activity.listLabel" aria-live="off"></div>
                 </div>
                 <!-- Not a view-panel-registry panel: the logs view declares `panel: null`
                      (renderer-view-panel-registry.js), so `.view-shell.panel-none .view-panel`
                      would display:none this inspector. Do not re-add the `view-panel` class. -->
-                <aside class="logs-detail-panel" id="logDetailPanel" role="complementary" aria-label="Selected event detail" data-i18n-aria-label="diagnostics.activity.detailLabel" hidden></aside>
+                <aside class="logs-detail-panel" id="logDetailPanel" role="complementary" aria-label="Selected record" data-i18n-aria-label="diagnostics.activity.detailLabel" hidden></aside>
               </div>
             </section>
-            <section id="diagnosticsRuns" class="diagnostics-runs" role="tabpanel" aria-labelledby="diagnosticsRunsTab" hidden><div class="diagnostics-section diagnostics-runs-board" id="diagnosticsRunsMount"></div></section>
+            <section id="diagnosticsRuns" class="diagnostics-runs" role="tabpanel" aria-labelledby="diagnosticsRunsTab" hidden><div id="diagnosticsRunsState" hidden></div><div class="diagnostics-runs-board" id="diagnosticsRunsMount"></div></section>
           </div>
         </section>
 
@@ -743,9 +731,9 @@
                   <h4 class="settings-group-heading" id="cloudModelsHeading" data-i18n="settings.cloudModels.heading">Cloud models</h4>
                   <p class="settings-group-copy" data-i18n="settings.cloudModels.description">Optional models that run on a provider's servers. Local models work without them, and Force local inference blocks them all.</p>
                   <div class="settings-toggle-list" id="cloudModelsHost" aria-live="polite"></div>
+                  <div class="settings-toggle-list" id="conversationTransferHost" aria-label="Conversation transfer" data-i18n-aria-label="settings.transfer.title"></div>
                 </div>
               </section>
-
               <section class="settings-card" data-settings-section="appearance">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.appearance.heading">Appearance</h3>
@@ -785,6 +773,12 @@
                   <div data-setting-mount="appearanceSurfaceEffectSelect"></div>
                   <p class="settings-field-note" id="appearanceSurfaceEffectMeta"></p>
                   <div class="surface-effect-preview" id="appearanceSurfaceEffectPreview" data-surface-input-block aria-hidden="true"></div>
+                </div>
+
+                <div class="settings-group" role="group" id="appearancePerformanceGroup" aria-labelledby="appearancePerformanceHeading" hidden>
+                  <h4 class="settings-group-heading" id="appearancePerformanceHeading" data-i18n="settings.appearance.performance.heading">Performance</h4>
+                  <div data-setting-mount="performanceShowCounterToggle"></div>
+                  <div data-setting-mount="performanceGpuWarningsToggle"></div>
                 </div>
 
                 <details class="settings-fold appearance-advanced">
@@ -1020,55 +1014,32 @@
                 <div class="settings-card-header">
                   <h3 id="memoryPageHeading" tabindex="-1" data-i18n="settings.memories.heading">Memory</h3>
                   <span class="settings-badge" id="memoryBadge" data-badge-state="loading" data-i18n="settings.memories.loading">Loading</span>
+                  <div class="memory-header-actions" id="memoryHeaderActions"></div>
                 </div>
-                <p class="settings-copy" data-i18n="settings.memories.description">Review what Jenny can recall. Nothing becomes durable until you choose Remember or Approve.</p>
+                <p class="settings-copy" data-i18n="settings.memories.lede">What Jenny remembers about you and your projects. Jenny saves notes as you chat; you can edit, pin or forget any of them.</p>
                 <div class="settings-summary-row" id="memorySummary" aria-live="polite" data-i18n="settings.memories.loadingStatus">Loading memory status...</div>
                 <div class="settings-note" id="memoryHealthNote" aria-live="polite" hidden></div>
 
-                <div class="settings-group settings-group--wide" role="group" aria-labelledby="memoryNotesHeading">
-                  <h4 class="settings-group-heading" id="memoryNotesHeading" data-i18n="settings.memories.notes.heading">Long-term notes</h4>
-                  <p class="settings-group-copy" data-i18n="settings.memories.notes.description">Sent with your messages in the General project, except on the ChatGPT engine. Approved memories are separate and live below.</p>
-                  <div id="memoryNotesFieldHost"></div>
-                  <div class="personality-row-meta memory-notes-meta">
-                    <span class="personality-counter" id="memoryNotesCounter" aria-live="polite"></span>
-                  </div>
-                  <p class="personality-lint" id="memoryNotesLint" hidden></p>
-                  <div class="personality-footer">
-                    <span class="personality-status" id="memoryContextStatus" aria-live="polite" data-i18n="settings.memories.notes.openPrompt">Open Memory to load your notes.</span>
-                    <div class="personality-footer-actions" id="memoryNotesActions"></div>
-                  </div>
-                </div>
-
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="memoryCapturePreferencesHeading">
-                  <h4 class="settings-group-heading" id="memoryCapturePreferencesHeading" data-i18n="settings.memories.capture.heading">Capture preferences</h4>
-                  <p class="settings-group-copy" data-i18n="settings.memories.capture.description">Jenny can offer one deterministic local suggestion after a turn. Suggestions never write durable memory on their own.</p>
-                  <div class="settings-toggle-list" id="memoryCapturePreferenceHost" data-settings-field="memoryCaptureSuggestions"></div>
-                </div>
-
-                <div class="settings-group settings-group--wide" role="group" aria-labelledby="pendingMemoryHeading">
-                  <div class="memory-group-header">
-                    <div>
-                      <h4 class="settings-group-heading" id="pendingMemoryHeading"><span data-i18n="settings.memories.pending.heading">Pending review</span> <span class="inv-badge inv-badge--muted inv-badge--sm" id="pendingMemoryCount">0</span></h4>
-                      <p class="settings-group-copy" data-i18n="settings.memories.pending.description">Approve or dismiss local candidates, with bounded source context.</p>
-                    </div>
-                    <div id="pendingMemorySortHost"></div>
-                  </div>
-                  <div class="settings-note memory-list-status" id="pendingMemoryStatus" role="status" aria-live="polite"></div>
-                  <div class="memory-record-list" id="pendingMemoryList" role="list"></div>
-                  <div class="memory-more-host" id="pendingMemoryMoreHost"></div>
-                </div>
-
-                <div class="settings-group settings-group--wide" role="group" aria-labelledby="approvedMemoryHeading">
-                  <div class="memory-group-header">
-                    <div>
-                      <h4 class="settings-group-heading" id="approvedMemoryHeading"><span data-i18n="settings.memories.approved.heading">Approved memories</span> <span class="inv-badge inv-badge--muted inv-badge--sm" id="approvedMemoryCount">0</span></h4>
-                      <p class="settings-group-copy" data-i18n="settings.memories.approved.description">Edit, remove provenance, or delete saved memories.</p>
-                    </div>
-                    <div class="memory-page-filters"><div id="memoryProjectFilterHost"></div><div id="memoryKindFilterHost"></div><div id="memorySearchHost"></div></div>
-                  </div>
+                <div class="settings-group settings-group--wide memory-list-group" role="group" aria-labelledby="memoryPageHeading">
+                  <div id="memoryTabsHost"></div>
+                  <div class="memory-meter" id="memoryMeter" hidden></div>
+                  <div class="memory-page-filters"><div id="memorySearchHost"></div><div id="memoryKindFilterHost"></div></div>
+                  <div id="pendingMemoryHost" hidden></div>
                   <div class="settings-note memory-list-status" id="approvedMemoryStatus" role="status" aria-live="polite"></div>
                   <div class="memory-record-list" id="approvedMemoryList" role="list"></div>
                   <div class="memory-more-host" id="approvedMemoryMoreHost"></div>
+                  <div id="memoryForgottenHost"></div>
+                  <div id="memoryHistoryHost"></div>
+                </div>
+
+                <div class="settings-group settings-group--flush" role="group" aria-labelledby="memoryPolicyHeading">
+                  <h4 class="settings-group-heading" id="memoryPolicyHeading" data-i18n="settings.memories.policy.howHeading">How Jenny remembers</h4>
+                  <div class="settings-toggle-list" id="memoryPolicyHost" data-settings-field="memoryAskBeforeSaving"></div>
+                </div>
+
+                <div class="settings-group settings-group--flush" role="group" aria-labelledby="memoryFilesHeading">
+                  <h4 class="settings-group-heading" id="memoryFilesHeading" data-i18n="settings.memories.files.heading">Your notes files</h4>
+                  <div id="memoryFilesHost"></div>
                 </div>
               </section>
 
@@ -1254,6 +1225,8 @@
   <script defer src="renderer/chat/tool-call-utils.js"></script>
   <script defer src="renderer/inventory/badge.js"></script>
   <script defer src="renderer/inventory/spinner.js"></script>
+  <script defer src="renderer/inventory/state-icon.js"></script>
+  <script defer src="renderer/inventory/empty-note.js"></script>
   <script defer src="renderer/inventory/collapsible.js"></script>
   <script defer src="renderer/inventory/codeblock.js"></script>
   <script defer src="renderer/inventory/favicon-badge.js"></script>
@@ -1288,6 +1261,7 @@
   <script defer src="renderer/features/personality-form.js"></script>
   <script defer src="renderer/inventory/settings-field.js"></script>
   <script defer src="renderer/inventory/checkbox.js"></script>
+  <script defer src="renderer/inventory/resizable-divider.js"></script>
   <script defer src="renderer/inventory/index.js"></script>
   <script defer src="renderer/features/renderer-data-lifecycle-utils.js"></script>
   <script defer src="renderer/features/renderer-data-lifecycle.js"></script>
@@ -1315,6 +1289,10 @@
   <script defer src="renderer/shared/error-intake.js"></script>
   <script defer src="renderer/features/renderer-artifact-presentation.js"></script>
   <script defer src="renderer/inventory/artifact-figure.js"></script>
+  <script defer src="renderer/chat/renderer-artifact-image-references.js"></script>
+  <script defer src="renderer/features/renderer-image-selection.js"></script>
+  <script defer src="renderer/inventory/image-edit-draft.js"></script>
+  <script defer src="renderer/features/renderer-image-edit-draft.js"></script>
   <script defer src="renderer/chat/renderer-artifact-card-utils.js"></script>
   <script defer src="renderer/chat/renderer-approval-block.js"></script>
   <script defer src="renderer/chat/renderer-user-questions-block.js"></script>
@@ -1326,7 +1304,19 @@
   <script defer src="renderer/chat/renderer-file-diff-bindings.js"></script>
   <script defer src="renderer/chat/renderer-jenny-change-ledger.js"></script>
   <script defer src="renderer/chat/renderer-code-review-affordance.js"></script>
-  <script defer src="renderer/chat/renderer-task-spawn-chip.js"></script>
+  <!-- Session proposal cards (row 59 checkpoint 3): store and markup are resolved per render, the actions bind per pane. -->
+  <script defer src="renderer/chat/renderer-proposal-card-store.js"></script>
+  <script defer src="renderer/chat/renderer-proposal-suggestion-group.js"></script>
+  <script defer src="renderer/chat/renderer-proposal-session-cards.js"></script>
+  <script defer src="renderer/chat/renderer-proposal-cards.js"></script>
+  <script defer src="renderer/chat/renderer-proposal-card-actions.js"></script>
+  <script defer src="renderer/chat/renderer-session-message-rows.js"></script>
+  <script defer src="renderer/chat/renderer-chat-messages-copy.js"></script>
+  <script defer src="renderer/chat/renderer-chat-messages-store.js"></script>
+  <script defer src="renderer/chat/renderer-chat-messages-dialog.js"></script>
+  <script defer src="renderer/chat/renderer-chat-send-modal.js"></script>
+  <script defer src="renderer/chat/renderer-chat-messages-review.js"></script>
+  <script defer src="renderer/chat/renderer-composer-message-strip.js"></script>
   <!-- Chat calendar block (home tool results); must precede renderer-transcript-tool-calls.js and renderer-turn-row-tool-render-utils.js, which resolve it. -->
   <script defer src="renderer/chat/renderer-calendar-chat-block.js"></script>
   <script defer src="renderer/chat/renderer-calendar-chat-bindings.js"></script>
@@ -1348,6 +1338,7 @@
   <script defer src="renderer/chat/renderer-transcript-actions.js"></script>
   <script defer src="renderer/chat/renderer-transcript-utils.js"></script>
   <script defer src="renderer/chat/renderer-context-usage-model.js"></script>
+  <script defer src="renderer/chat/renderer-context-preview.js"></script>
 <script defer src="renderer/chat/renderer-context-usage-utils.js"></script>
 <script defer src="renderer/chat/renderer-context-meter-details.js"></script>
 <script defer src="renderer/chat/renderer-plan-usage-meter.js"></script>
@@ -1397,6 +1388,7 @@
 <script defer src="renderer/chat/renderer-send-receipts.js"></script>
 <script defer src="renderer/chat/renderer-send-completion.js"></script>
 <script defer src="renderer/chat/renderer-skill-slash-commands.js"></script>
+<script defer src="renderer/chat/renderer-mcp-prompt-slash-commands.js"></script>
 <script defer src="renderer/chat/renderer-runtime-refusals.js"></script>
 <script defer src="renderer/chat/renderer-runtime-queue-view.js"></script>
 <script defer src="renderer/chat/renderer-admission-wait-line.js"></script>
@@ -1409,7 +1401,6 @@
   <script defer src="renderer/features/renderer-plan-proposal-card.js"></script>
   <script defer src="renderer/features/renderer-plan-document.js"></script>
   <script defer src="renderer/features/renderer-personality-counters.js"></script>
-  <script defer src="renderer/features/renderer-memory-notes-utils.js"></script>
   <script defer src="renderer/features/renderer-personality-utils.js"></script>
   <script defer src="renderer/shell/renderer-status-chip-utils.js"></script>
   <script defer src="renderer/features/renderer-offline-utils.js"></script>
@@ -1461,6 +1452,7 @@
   <script defer src="renderer/features/setup-scenes/scene-model-library.js"></script>
   <script defer src="renderer/features/setup-scenes/scene-capabilities.js"></script>
   <script defer src="renderer/features/setup-scenes/scene-acknowledgement.js"></script>
+  <script defer src="renderer/features/setup-scenes/ollama-daemon-view.js"></script>
   <script defer src="renderer/features/setup-scenes/ollama-engine-gate.js"></script>
   <script defer src="renderer/features/setup-scenes/scene-setup-hub.js"></script>
   <script defer src="renderer/features/renderer-setup-hub.js"></script>
@@ -1481,6 +1473,7 @@
 <script defer src="renderer/shell/renderer-usage-controller.js"></script>
 <script defer src="renderer/shell/renderer-runtime-health-utils.js"></script>
 <script defer src="renderer/shell/renderer-health-pill-markup-utils.js"></script>
+<script defer src="renderer/shell/renderer-health-pill-gpu.js"></script>
 <script defer src="renderer/shell/renderer-health-pill-utils.js"></script>
 <script defer src="renderer/shell/renderer-settings-section-registry.js"></script>
 <script defer src="renderer/shell/renderer-settings-refresh-utils.js"></script>
@@ -1489,6 +1482,11 @@
 <script defer src="renderer/shell/renderer-diagnostics-performance-utils.js"></script>
 <script defer src="renderer/shared/diagnostics-issue-explanations.js"></script>
 <script defer src="renderer/shell/renderer-diagnostics-issue-card.js"></script>
+<script defer src="renderer/shell/renderer-diagnostics-page.js"></script>
+<script defer src="renderer/shell/renderer-diagnostics-format.js"></script>
+<script defer src="renderer/shell/renderer-diagnostics-runtime-facts.js"></script>
+<script defer src="renderer/shell/renderer-diagnostics-overview.js"></script>
+<script defer src="renderer/shell/renderer-diagnostics-activity.js"></script>
 <script defer src="renderer/shell/renderer-diagnostics-render-utils.js"></script>
 <!-- Settings scripts load together on first use, in manifest dependency order. -->
 <script defer src="renderer/shell/renderer-settings-chrome.js"></script>
@@ -1497,11 +1495,15 @@
 <script defer src="renderer/shell/model-library/model-library-recovery-actions.js"></script>
 <script defer src="renderer/shell/renderer-model-library-folders.js"></script>
 <script defer src="renderer/shell/model-library/model-library-image-engine.js"></script>
+<script defer src="renderer/shell/model-library/model-library-ninfer.js"></script>
+<script defer src="renderer/shell/model-library/model-library-engine-blocks.js"></script>
 <script defer src="renderer/shell/renderer-settings-model-library-section.js"></script>
 <script defer src="renderer/shell/renderer-plugin-session-controller.js"></script>
 <script defer src="renderer/inventory/drawer.js"></script>
 <script defer src="renderer/shell/renderer-model-tuning-engine-utils.js"></script>
+<script defer src="renderer/shell/renderer-model-tuning-ninfer.js"></script>
 <script defer src="renderer/shell/renderer-model-tuning-drawer.js"></script>
+<script defer src="renderer/shell/renderer-mcp-servers-rea.js"></script>
 <script defer src="renderer/shell/renderer-mcp-servers.js"></script>
 <script defer src="renderer/shell/renderer-knowledge-scope.js"></script>
 <script defer src="renderer/shell/renderer-knowledge-catalog.js"></script>
@@ -1520,6 +1522,8 @@
   <script defer src="renderer/shell/renderer-shell-event-utils.js"></script>
   <script defer src="renderer/features/renderer-attachment-event-utils.js"></script>
   <script defer src="renderer/features/renderer-display-media-picker.js"></script>
+  <script defer src="renderer/shell/renderer-session-unread.js"></script>
+  <script defer src="renderer/shell/renderer-chats-panel-tree.js"></script>
   <script defer src="renderer/shell/renderer-chats-panel.js"></script>
   <script defer src="renderer/shell/renderer-sidebar-utils.js"></script>
   <script defer src="renderer/shell/renderer-view-panel-registry.js"></script>
@@ -1611,6 +1615,8 @@
   <script defer src="renderer/chat/renderer-turn-row-error-dedupe-utils.js"></script>
   <!-- Resume-turn affordance; must precede renderer-turn-row-render-utils.js, which resolves it. -->
   <script defer src="renderer/chat/renderer-resume-turn-affordance.js"></script>
+  <!-- Interactive tool-row cards (ask_user, proposals); must precede renderer-turn-row-render-utils.js, which resolves it. -->
+  <script defer src="renderer/chat/renderer-turn-row-interactive-cards.js"></script>
   <script defer src="renderer/chat/renderer-turn-row-render-utils.js"></script>
   <script defer src="renderer/chat/renderer-plan-document-controller.js"></script>
   <script defer src="renderer/chat/renderer-sprite-activity.js"></script>
@@ -1644,9 +1650,11 @@
   <script defer src="renderer/chat/renderer-render-pipeline-utils.js"></script>
   <script defer src="renderer/shell/renderer-shell-status-controller.js"></script>
   <script defer src="renderer/features/renderer-memory-shared-utils.js"></script>
+  <script defer src="renderer/features/renderer-memory-page-view-utils.js"></script>
   <script defer src="renderer/features/renderer-memory-settings-utils.js"></script>
   <script defer src="renderer/features/renderer-destructive-undo-utils.js"></script>
   <script defer src="renderer/features/renderer-memory-actions-v2-utils.js"></script>
+  <script defer src="renderer/features/renderer-memory-page-actions-utils.js"></script>
   <script defer src="renderer/features/renderer-memory-actions-utils.js"></script>
   <script defer src="renderer/features/renderer-memory-utils.js"></script>
 <!-- monaco-editor/min/vs/loader.js (+ editor.main) is lazy-loaded on first artifact-editor or Workspace-editor use via renderer-monaco-editor-utils.js (ensureMonacoLoader). -->
@@ -1684,6 +1692,7 @@
 <script defer src="renderer/features/renderer-artifact-draft-store.js"></script>
 <script defer src="renderer/features/renderer-artifact-async-ops.js"></script>
 <script defer src="renderer/features/renderer-artifacts-surface-controller.js"></script>
+<script defer src="renderer/features/renderer-side-panel-motion.js"></script>
 <!-- WS3 auto-open controller (workspace_artifact_panel); must precede renderer-artifacts-utils.js, which wires it. -->
 <script defer src="renderer/features/renderer-artifact-review-autoopen.js"></script>
 <!-- Artifact-review preference helpers (incl. artifact_panel_v2 widthBySession); must precede renderer-artifacts-utils.js, which delegates to it. -->
@@ -1701,6 +1710,8 @@
 <script defer src="renderer/features/renderer-artifact-delete-confirm.js"></script>
 <script defer src="renderer/features/renderer-artifacts-utils.js"></script>
 <script defer src="renderer/features/renderer-code-review-rail.js"></script>
+<!-- Session rail detail entry points (row 59 checkpoint 2, contract C3); configured by renderer-shell-artifact-bridge.js and the lifecycle composition. -->
+<script defer src="renderer/features/renderer-chat-workspace-detail.js"></script>
 <!-- Read-only chat-rail file preview (file_preview rail mode); the pure render module must precede its controller, and both must precede renderer-shell-artifact-bridge.js, which builds the controller. -->
 <script defer src="renderer/features/renderer-artifact-file-preview-render.js"></script>
 <script defer src="renderer/features/renderer-artifact-file-preview.js"></script>
@@ -1709,13 +1720,22 @@
 <script defer src="renderer/features/renderer-task-rail.js"></script>
 <!-- Project notes entry (toggle, chat rows, lazy loader of the notes rail); must precede renderer-shell-artifact-bridge.js, which builds it. -->
 <script defer src="renderer/features/renderer-project-notes-entry.js"></script>
+<script defer src="renderer/features/renderer-memory-chat-entry.js"></script>
 <!-- Subagent Monitor rail (`subagents` rail mode of the artifact panel): must precede renderer-shell-artifact-bridge.js, which builds it. -->
 <script defer src="renderer/features/renderer-subagent-rail.js"></script>
+  <script defer src="renderer/inventory/activity-list.js"></script>
+  <script defer src="renderer/features/renderer-activity-view.js"></script>
+  <script defer src="renderer/features/renderer-chat-activity.js"></script>
   <script defer src="renderer/features/renderer-context-panel-utils.js"></script>
   <!-- Leaf Enter/IME keydown guard: must precede renderer-user-questions-actions.js and renderer-chat-event-utils.js, which both consume it. -->
   <script defer src="renderer/chat/renderer-enter-keydown-utils.js"></script>
   <script defer src="renderer/chat/renderer-user-questions-actions.js"></script>
   <script defer src="renderer/chat/renderer-approval-focus-restore.js"></script>
+  <!-- Session rail (row 59 checkpoint 2): model, markup, controller; mounted per pane by the transcript bindings below. -->
+  <script defer src="renderer/chat/renderer-session-rail-model.js"></script>
+  <script defer src="renderer/chat/renderer-session-rail-render.js"></script>
+  <script defer src="renderer/chat/renderer-session-rail-performance.js"></script>
+  <script defer src="renderer/chat/renderer-session-rail.js"></script>
   <script defer src="renderer/chat/renderer-chat-event-transcript-bindings.js"></script>
   <script defer src="renderer/chat/renderer-chat-event-settings-bindings.js"></script>
   <script defer src="renderer/chat/renderer-chat-event-interactive-bindings.js"></script>
@@ -1740,6 +1760,7 @@
   <!-- Tier C per-field reset + two-step section reset (JENNY_UIUX_OVERHAUL_PLAN.md item 10); consumes renderer-settings-persistence-adapters.js, mounted from renderer-settings-shell-controller.js. -->
   <script defer src="renderer/shell/renderer-settings-field-reset.js"></script>
   <script defer src="renderer/shell/renderer-settings-field-binding.js"></script>
+  <script defer src="renderer/shell/renderer-performance-settings.js"></script>
   <script defer src="renderer/shell/renderer-settings-event-utils.js"></script>
   <!-- UIUX-009: coalesced snapshot-poll scheduler + section patch guard (signature-diffed, focus/dirty-draft aware) consumed by renderer-settings-shell-controller.js and renderer-app-shell-bindings.js. Must precede both. -->
   <script defer src="renderer/shell/renderer-settings-snapshot-poll.js"></script>
@@ -1758,6 +1779,8 @@
   <script defer src="renderer/shell/renderer-slash-command-registry.js"></script>
   <script defer src="renderer/shell/renderer-slash-command-context.js"></script>
   <script defer src="renderer/chat/renderer-slash-note-command.js"></script>
+  <script defer src="renderer/chat/renderer-slash-linked-command.js"></script>
+  <script defer src="renderer/chat/renderer-slash-memory-commands.js"></script>
   <script defer src="renderer/chat/renderer-subagent-monitor-controller.js"></script>
   <script defer src="renderer/chat/renderer-resume-turn-interaction.js"></script>
   <script defer src="renderer/chat/renderer-chat-shell-controller.js"></script>
@@ -1799,6 +1822,7 @@
   <script defer src="renderer/app/renderer-app-pane-composition.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-mcp.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-display-media.js"></script>
+  <script defer src="renderer/app/renderer-app-image-viewer-binding.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-overlay-manager.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-quick-settings.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-controllers.js"></script>

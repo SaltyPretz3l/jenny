@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sidecar.ai.config import resolve_effective_max_tokens
-from sidecar.ai.context.compaction import compact_context
+from sidecar.ai.context.compaction import MICRO_FIRST_CODE, compact_context, compaction_policy
 from sidecar.ai.context.compaction_diagnostics import compaction_window_shape
 from sidecar.ai.context.compaction_prompts import resolve_compaction_prompt
 from sidecar.ai.context.token_budget import estimate_messages_tokens
@@ -19,6 +20,58 @@ from sidecar.ai.routing.loop_events import ContextCompactedEvent, ContextCompact
 from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger("sidecar.ai.routing.tool_loop")
+
+
+@dataclass(frozen=True)
+class RequestMeasurement:
+    """The provider's whole-prompt count for the last model request, with the
+    messages that request carried (by identity) and their estimate then."""
+
+    provider_tokens: int
+    messages: tuple[Any, ...]
+    estimate: int
+
+
+def note_request_measurement(loop: Any, usage: Any) -> None:
+    """Remember the provider's prompt count for the request just made.
+
+    The char estimator carries 30% headroom, which compacted a 32k llama-server
+    window at ~11k estimated tokens (gate 2026-10-14 F16); the provider's own
+    count needs none. Cleared when the engine reports no count.
+    """
+    tracker = getattr(loop, "budget_tracker", None)
+    try:
+        provider_tokens = int(getattr(usage, "last_request_input_tokens", 0) or 0)
+    except (TypeError, ValueError):
+        provider_tokens = 0
+    if tracker is None or provider_tokens <= 0:
+        loop.request_measurement = None
+        return
+    loop.request_measurement = RequestMeasurement(
+        provider_tokens=provider_tokens,
+        messages=tuple(loop.working_messages),
+        estimate=estimate_messages_tokens(loop.working_messages, getattr(tracker, "backend", None)),
+    )
+
+
+def _measured_context(loop: Any, tokens_now: int, num_tools: int) -> tuple[int, int] | None:
+    """(whole-prompt tokens now, whole-prompt compaction threshold) from the
+    provider's count, or None when it cannot be trusted for this history."""
+    measurement = getattr(loop, "request_measurement", None)
+    tracker = loop.budget_tracker
+    budget = getattr(tracker, "budget", None)
+    raw_window = int(getattr(tracker, "raw_context_window", 0) or 0)
+    if not isinstance(measurement, RequestMeasurement) or budget is None or raw_window <= 0:
+        return None
+    sent = measurement.messages
+    current = loop.working_messages
+    # Only an append-only history keeps the count meaningful: any rewrite
+    # (compaction, a re-pinned row, trimming) falls back to the estimate.
+    if len(current) < len(sent) or any(a is not b for a, b in zip(sent, current, strict=False)):
+        return None
+    total = measurement.provider_tokens + max(0, int(tokens_now) - measurement.estimate)
+    threshold = replace(budget, context_window=raw_window).meter_compact_threshold(num_tools)
+    return (total, threshold) if threshold > 0 else None
 
 
 def compact_tool_loop_context(
@@ -40,13 +93,23 @@ def compact_tool_loop_context(
         FEATURE_CONTEXT_COMPACTION,
     ):
         return tokens_before
-    if not force and tokens_before <= budget.auto_compact_threshold(num_tools):
+    measured = None if force else _measured_context(loop, tokens_before, num_tools)
+    # The figure the loop's stop rule reads, in the estimate's units.
+    current_tokens = tokens_before
+    if measured is not None:
+        measured_total, measured_threshold = measured
+        current_tokens = int(
+            measured_total * budget.auto_compact_threshold(num_tools) / measured_threshold
+        )
+        if measured_total <= measured_threshold:
+            return current_tokens
+    elif not force and tokens_before <= budget.auto_compact_threshold(num_tools):
         return tokens_before
     if getattr(loop, "compaction_stalled", False):
-        if tokens_before < budget.error_threshold(num_tools):
-            return tokens_before
-        if getattr(loop, "compaction_last_ditch_used", False):
-            return tokens_before
+        if current_tokens < budget.error_threshold(num_tools) or getattr(
+            loop, "compaction_last_ditch_used", False
+        ):
+            return current_tokens
         loop.compaction_last_ditch_used = True
 
     log_event(
@@ -81,7 +144,11 @@ def compact_tool_loop_context(
         system_context=str(loop.system_prompt),
         base_prompt=resolve_compaction_prompt(loop.kernel._config),
         circuit_breaker=loop.kernel._compaction_breakers.for_key(loop.session_id),
-        force=force,
+        policy=compaction_policy(getattr(loop.kernel._config, "feature_flags", None)),
+        # Request-local: the router keeps no per-session state (row 60 S6).
+        micro_passes_used=int(getattr(loop, "micro_first_passes", 0)),
+        # The provider's count is over the line even if the padded estimate is not.
+        force=force or measured is not None,
         mode="mid_turn",
         task_content=str(getattr(loop, "latest_user_content", "") or "") or None,
         plan_approved_in_turn=bool(
@@ -125,10 +192,13 @@ def compact_tool_loop_context(
         )
         return tokens_before
 
+    if result.summary_failure_code == MICRO_FIRST_CODE:
+        loop.micro_first_passes = int(getattr(loop, "micro_first_passes", 0)) + 1
     # A compaction that freed tokens ends the stall so the turn may compact again.
     loop.compaction_stalled = False
     loop.compaction_last_ditch_used = False
     loop.working_messages[:] = list(result.messages)
+    loop.request_measurement = None
     after_compaction = getattr(loop, "_after_context_compaction", None)
     if callable(after_compaction):
         after_compaction()  # re-pins per-turn instructions the window dropped

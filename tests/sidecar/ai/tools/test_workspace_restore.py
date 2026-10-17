@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from sidecar.ai.tools.workspace_mutation_journal_contract import (
     workspace_identity,
 )
 from sidecar.ai.tools.workspace_mutation_journal_store import WorkspaceMutationJournalStore
+from sidecar.ai.tools.workspace_mutation_live_owner import owned_mutation_attribution
 from sidecar.ai.tools.workspace_restore import (
     WorkspaceRestoreError,
     preflight_undo,
@@ -544,9 +546,19 @@ def test_directory_restore_preserves_relative_symlink(tmp_path: Path) -> None:
     assert result.success
     _commit(lifecycle)
 
+    restored_link = root / "linked-dir" / "relative-link.txt"
+    if sys.platform == "win32":
+        # A Windows parent holds no handle a link could be created relative to,
+        # so the directory restore fails closed instead of writing by pathname
+        # (w2f5-R1, 2026-10-12); nothing lands at the link's path.
+        with pytest.raises(WorkspaceRestoreError) as raised:
+            undo_change_set(store, root, CHANGE_SET_ID, [])
+        assert raised.value.reason == "restore_path_unsafe"
+        assert not restored_link.exists() and not restored_link.is_symlink()
+        return
+
     undo_change_set(store, root, CHANGE_SET_ID, [])
 
-    restored_link = root / "linked-dir" / "relative-link.txt"
     assert restored_link.is_symlink()
     assert os.readlink(restored_link) == "target.txt"
 
@@ -555,21 +567,20 @@ def test_preflight_refuses_while_another_change_set_is_in_progress(tmp_path: Pat
     root, store = _edited_set(tmp_path)
     lifecycle = MutationChangeSetLifecycle(store, root)
     guard = WorkspaceGuard(str(root), mutation_journal=lifecycle)
-    result = filesystem.write_file_tool(
-        {
-            **_args("other-write", path="other.txt", content="other\n"),
-            "_jenny_change_set_id": OTHER_CHANGE_SET_ID,
-        },
-        guard,
-    )
-    assert result.success
-
-    with pytest.raises(WorkspaceRestoreError) as raised:
-        preflight_undo(store, root, CHANGE_SET_ID)
-
-    assert raised.value.reason == "restore_workspace_busy"
-    assert raised.value.details == {"status": "busy"}
-    assert lifecycle.finalize(OTHER_CHANGE_SET_ID).ok
+    with owned_mutation_attribution(
+        store, root, change_set_id=OTHER_CHANGE_SET_ID,
+        session_id="session-restore", turn_id="turn-restore",
+    ) as attribution:
+        result = filesystem.write_file_tool(
+            {**_args("other-write", path="other.txt", content="other\n"), **attribution},
+            guard,
+        )
+        assert result.success
+        with pytest.raises(WorkspaceRestoreError) as raised:
+            preflight_undo(store, root, CHANGE_SET_ID)
+        assert raised.value.reason == "restore_workspace_busy"
+        assert raised.value.details == {"status": "busy"}
+        assert lifecycle.finalize(OTHER_CHANGE_SET_ID).ok
     assert preflight_undo(store, root, CHANGE_SET_ID)["status"] == "preflight"
 
 

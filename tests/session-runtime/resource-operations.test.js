@@ -74,7 +74,7 @@ function createHarness(t, { limits, sandboxCommands = false, onSettled = null } 
 
 function admit(trusted, overrides = {}) {
   return {
-    api_version: '2026-08-17', schema_version: 1, kind: 'tool', phase: 'admit',
+    api_version: '2026-10-15', schema_version: 1, kind: 'tool', phase: 'admit',
     request_id: trusted.requestId, session_id: trusted.sessionId,
     authority_revision: trusted.authorityRevision, operation_id: 'operation-1',
     tool_name: 'read_file', arguments: { path: 'README.md' }, ...overrides,
@@ -83,7 +83,7 @@ function admit(trusted, overrides = {}) {
 
 function settle(trusted, overrides = {}) {
   return {
-    api_version: '2026-08-17', schema_version: 1, kind: 'tool', phase: 'settle',
+    api_version: '2026-10-15', schema_version: 1, kind: 'tool', phase: 'settle',
     request_id: trusted.requestId, session_id: trusted.sessionId,
     authority_revision: trusted.authorityRevision, operation_id: 'operation-1',
     status: 'succeeded', cleanup: 'confirmed', ...overrides,

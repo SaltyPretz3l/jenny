@@ -16,6 +16,10 @@
  *
  * app.quit()-driven shutdown is sequenced elsewhere (main lifecycle); when
  * `isAppQuitting()` is true we allow the close immediately and never prompt.
+ * Before it starts, the lifecycle's before-quit asks requestQuitPreflight(),
+ * which reuses the same request/ack/fail-open machinery but only resolves a
+ * boolean: the quit itself ends in app.exit(), so the window is never closed
+ * here and no bypass is armed.
  */
 const { getBridgeChannel } = require('../ipc-contract');
 
@@ -32,8 +36,14 @@ function createWindowExitGuard({
   // renderer proceed:true reply, by authorizeNextClose() (custom Close button),
   // and by every fail-open path. `pending` holds the single in-flight request.
   let bypass = false;
-  let pending = null; // { requestId, win, timer }
+  let pending = null; // { requestId, win, timer, resolveQuit? }
   let requestSeq = 0;
+  // One-shot "this next app quit is already preflighted" flag (update restart).
+  // It also arms `bypass`: on macOS the native updater closes the window BEFORE
+  // emitting before-quit, and that close must not prompt a second time.
+  let quitAuthorized = false;
+  let bypassArmedByQuit = false;
+  let attachedWindow = null;
 
   function logEvent(level, event, details) {
     try {
@@ -88,6 +98,7 @@ function createWindowExitGuard({
     // fail-open) passes straight through, consuming the one-shot flag.
     if (bypass) {
       bypass = false;
+      bypassArmedByQuit = false;
       return;
     }
     // Shutdown is already sequenced by the main lifecycle; never prompt.
@@ -133,16 +144,74 @@ function createWindowExitGuard({
     }
   }
 
+  // App-quit preflight (before-quit). Resolves true to proceed with the quit.
+  // Fails open exactly like a close; a pending close or quit owns the decision,
+  // so a second request resolves false instead of stacking a second prompt.
+  function requestQuitPreflight() {
+    if (quitAuthorized) {
+      // The quit is now in progress: isAppQuitting() covers the window close
+      // from here on, so the quit-armed close bypass is released too.
+      revokeQuitAuthorization();
+      return Promise.resolve(true);
+    }
+    if (pending) {
+      logEvent('DEBUG', 'window.exit_preflight_in_flight', { requestId: pending.requestId });
+      return Promise.resolve(false);
+    }
+    const win = attachedWindow;
+    if (!isWindowUsable(win)) {
+      return Promise.resolve(true);
+    }
+    const webContents = win.webContents;
+    if (!webContents || typeof webContents.send !== 'function') {
+      logEvent('WARN', 'window.exit_preflight_fail_open', { reason: 'no_webcontents' });
+      return Promise.resolve(true);
+    }
+    return new Promise((resolveQuit) => {
+      requestSeq += 1;
+      const requestId = `win-exit-${requestSeq}`;
+      const timer = setTimeoutFn(() => {
+        if (pending && pending.requestId === requestId) {
+          pending = null;
+          logEvent('WARN', 'window.exit_preflight_timeout', { requestId, timeoutMs });
+          logEvent('WARN', 'window.exit_preflight_fail_open', { reason: 'timeout' });
+          resolveQuit(true);
+        }
+      }, timeoutMs);
+      pending = { requestId, win, timer, resolveQuit };
+      try {
+        webContents.send(requestChannel, { requestId });
+      } catch (error) {
+        clearPending();
+        logEvent('WARN', 'window.exit_preflight_send_failed', {
+          requestId,
+          message: String((error && error.message) || error || ''),
+        });
+        logEvent('WARN', 'window.exit_preflight_fail_open', { reason: 'send_failed' });
+        resolveQuit(true);
+      }
+    });
+  }
+
   function attach(mainWindow) {
     if (!mainWindow || typeof mainWindow.on !== 'function') {
       return false;
     }
+    attachedWindow = mainWindow;
     mainWindow.on('close', (event) => handleClose(event, mainWindow));
     // A window destroyed mid-preflight (crash, external kill) must not leave a
-    // dangling pending entry — and its live timeout timer — behind.
+    // dangling pending entry — and its live timeout timer — behind. A pending
+    // quit proceeds: with the window gone there is nothing left to save.
     mainWindow.on('closed', () => {
+      if (attachedWindow === mainWindow) {
+        attachedWindow = null;
+      }
       if (pending && pending.win === mainWindow) {
+        const { resolveQuit } = pending;
         clearPending();
+        if (resolveQuit) {
+          resolveQuit(true);
+        }
       }
     });
     return true;
@@ -176,8 +245,12 @@ function createWindowExitGuard({
     if (!pending || pending.requestId !== requestId) {
       return { ok: false, code: 'no_pending' };
     }
-    const win = pending.win;
+    const { win, resolveQuit } = pending;
     clearPending();
+    if (resolveQuit) {
+      resolveQuit(proceed);
+      return { ok: true, proceed };
+    }
     if (proceed) {
       bypass = true;
       try {
@@ -204,11 +277,40 @@ function createWindowExitGuard({
     bypass = true;
   }
 
+  // Update restart path: the renderer ALREADY ran its 'update-restart'
+  // preflight, so the before-quit that quitAndInstall() triggers must not
+  // re-prompt. Called immediately before quitAndInstall().
+  function authorizeNextQuit() {
+    quitAuthorized = true;
+    if (!bypass) {
+      bypass = true;
+      bypassArmedByQuit = true;
+    }
+  }
+
+  // A failed install never quits: drop the authorization so the next ordinary
+  // quit (and the next close) prompts again. Only undoes what authorizeNextQuit armed.
+  function revokeQuitAuthorization() {
+    quitAuthorized = false;
+    if (bypassArmedByQuit) {
+      bypass = false;
+      bypassArmedByQuit = false;
+    }
+  }
+
   function isPreflightPending() {
     return Boolean(pending);
   }
 
-  return { attach, resolvePreflight, authorizeNextClose, isPreflightPending };
+  return {
+    attach,
+    resolvePreflight,
+    authorizeNextClose,
+    authorizeNextQuit,
+    revokeQuitAuthorization,
+    requestQuitPreflight,
+    isPreflightPending,
+  };
 }
 
 module.exports = { createWindowExitGuard };

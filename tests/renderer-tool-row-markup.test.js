@@ -250,3 +250,54 @@ test('non-verify result rows keep an empty meta slot', () => {
   });
   assert.doesNotMatch(markup, /tool-call-meta/);
 });
+
+test('a settled propose_change row offers Review suggestion; a refused one does not', () => {
+  // Row 35: settled suggestion rows render through this trace row, not the tool
+  // shell, so without the affordance a suggestion was unreachable from Chat.
+  const suggested = { suggested_change: { schema_version: 1, kind: 'replace', path: 'a.py' } };
+  const call = { ...buildCallRow('completed', { tool_name: 'propose_change', input_json: '{"path":"a.py"}' }), turn_id: 'turn-1' };
+  const ok = utils.buildToolCallRowMarkup(call, [], {
+    pairedToolResultRow: buildResultRow({ tool_name: 'propose_change', metadata: suggested }),
+  });
+  assert.match(ok, /data-jenny-code-review/);
+  assert.match(ok, /data-scope="suggested"/);
+  assert.match(ok, /data-tool-call-id="call-1"/);
+  const refused = utils.buildToolCallRowMarkup(call, [], {
+    pairedToolResultRow: buildResultRow({ tool_name: 'propose_change', is_error: true, metadata: suggested }),
+  });
+  assert.doesNotMatch(refused, /data-jenny-code-review/);
+  const plain = utils.buildToolCallRowMarkup({ ...buildCallRow('completed'), turn_id: 'turn-1' }, [], {
+    pairedToolResultRow: buildResultRow(),
+  });
+  assert.doesNotMatch(plain, /data-jenny-code-review/);
+});
+
+test('a settled scripted or move row keeps Review changes in the trace row', () => {
+  // Gate 2026-10-14: run_temp_script and move_file settle into this trace row,
+  // which only offered the affordance for propose_change.
+  const diff = (index, file) => ({
+    diff_id: `scripted:call-1:${index}`, operation_index: index, path: file, status: 'modified', review_state: 'full',
+    body_kind: 'inline_hunks', additions: 1, deletions: 1, truncated: false, truncation_reason: null,
+    hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-a', '+b'] }],
+  });
+  const scripted = utils.buildToolCallRowMarkup(
+    { ...buildCallRow('completed', { tool_name: 'run_temp_script', input_json: '{"code":"x"}' }), turn_id: 'turn-1' }, [], {
+      pairedToolResultRow: buildResultRow({ tool_name: 'run_temp_script', metadata: {
+        diffs: [diff(0, 'a.txt'), diff(1, 'b.txt')],
+        scripted_change_review: { schema_version: 1, state: 'observed', certainty: 'observed_during_call', call_outcome: 'succeeded',
+          changed_paths: ['a.txt', 'b.txt'], changed_path_count: 2, diff_count: 2, summary_only_count: 0, omitted_count: 0,
+          coverage: 'git_status_paths' },
+      } }),
+    });
+  assert.match(scripted, /data-jenny-code-review/);
+  assert.match(scripted, /data-scope="turn"/);
+  const moved = utils.buildToolCallRowMarkup(
+    { ...buildCallRow('completed', { tool_name: 'move_file', input_json: '{"source":"a.txt","destination":"b.txt"}' }), turn_id: 'turn-1' }, [], {
+      pairedToolResultRow: buildResultRow({ tool_name: 'move_file', metadata: { diffs: [diff(0, 'b.txt')] } }),
+    });
+  assert.match(moved, /data-jenny-code-review/);
+  const noTurn = utils.buildToolCallRowMarkup(buildCallRow('completed', { tool_name: 'move_file' }), [], {
+    pairedToolResultRow: buildResultRow({ tool_name: 'move_file', metadata: { diffs: [diff(0, 'b.txt')] } }),
+  });
+  assert.doesNotMatch(noTurn, /data-jenny-code-review/);
+});

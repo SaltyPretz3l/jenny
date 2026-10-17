@@ -222,6 +222,28 @@ function normalizeListResult(result) {
   return { workspace_id: workspaceId, change_sets: changeSets, outside_undo_set: outside };
 }
 
+// The resumable preflight of a restore left in progress: which steps already
+// ran, and both ends of each completed move (Redo needs the source the resumed
+// plan no longer names). Its plan may be empty when only the finalization is left.
+function normalizeResume(value) {
+  if (!isPlainObject(value) || value.restore_status !== 'in_progress') return null;
+  const completed = normalizeArray(value.completed_inverse_step_ids, (id) => normalizeStepId(id) || null);
+  if (!completed) return null;
+  const resume = { restore_status: 'in_progress', completed_inverse_step_ids: completed };
+  if (value.completed_moves === undefined) return resume; // an older sidecar
+  const moves = normalizeArray(value.completed_moves, (move) => normalizeCompletedMove(move, completed));
+  return moves ? { ...resume, completed_moves: moves } : null;
+}
+
+function normalizeCompletedMove(value, completed) {
+  if (!isPlainObject(value)) return null;
+  const inverseStepId = normalizeStepId(value.inverse_step_id);
+  const fromPath = boundedText(value.from_relative_path, MAX_PATH_LENGTH, { required: true });
+  const toPath = boundedText(value.to_relative_path, MAX_PATH_LENGTH, { required: true });
+  if (!inverseStepId || !completed.includes(inverseStepId) || !fromPath || !toPath) return null;
+  return { inverse_step_id: inverseStepId, from_relative_path: fromPath, to_relative_path: toPath };
+}
+
 function normalizePreflightResult(result) {
   if (!isPlainObject(result) || result.status !== 'preflight') return null;
   const changeSetId = normalizeChangeSetId(result.change_set_id);
@@ -235,7 +257,9 @@ function normalizePreflightResult(result) {
   const planIds = new Set(plan.map((step) => step.inverse_step_id));
   if (conflicts.some((conflict) => !planIds.has(conflict.inverse_step_id))
     || staging.some((entry) => !planIds.has(entry.inverse_step_id))) return null;
-  return {
+  const resume = result.resume === undefined ? undefined : normalizeResume(result.resume);
+  if (resume === null) return null;
+  const review = {
     change_set_id: changeSetId,
     status: 'preflight',
     conflicts,
@@ -243,6 +267,8 @@ function normalizePreflightResult(result) {
     staging_entries: staging,
     outside_undo_set: outside,
   };
+  if (resume) review.resume = resume;
+  return review;
 }
 
 function normalizeReceiptRow(value) {

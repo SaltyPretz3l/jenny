@@ -384,19 +384,21 @@ describe('manager wiring — per-session width apply (renderer-artifacts-utils.j
     assert.equal(appliedWidth(workspace), '505px', 'the legacy global width seeds the fallback');
   });
 
-  test('clamp: stored per-session 9999 is bounded by the resolved window max', (t) => {
-    const store = {
-      [STORAGE_KEY]: JSON.stringify({
-        enabled: true, collapsed: false, width: 420, userDismissed: false,
-        widthBySession: { 'session-a': 9999 },
-      }),
-    };
-    withWindowShim(t, store, { innerWidth: 900 });
-    const state = makeState();
-    const workspace = makeWorkspaceFake(900);
-    makeManager(state, { id: 'session-a' }, workspace).syncArtifactReviewLayout();
-    assert.equal(appliedWidth(workspace), '810px', 'an overlay reserves no shared chat column: floor(900*0.9) = 810');
-  });
+  for (const [stageWidth, expected] of [[900, '540px'], [760, '684px']]) {
+    test(`clamp: stored per-session 9999 is bounded by the resolved ${stageWidth}px stage max`, (t) => {
+      const store = {
+        [STORAGE_KEY]: JSON.stringify({
+          enabled: true, collapsed: false, width: 420, userDismissed: false,
+          widthBySession: { 'session-a': 9999 },
+        }),
+      };
+      withWindowShim(t, store, { innerWidth: stageWidth });
+      const state = makeState();
+      const workspace = makeWorkspaceFake(stageWidth);
+      makeManager(state, { id: 'session-a' }, workspace).syncArtifactReviewLayout();
+      assert.equal(appliedWidth(workspace), expected, 'docked rails reserve the chat column; drawers use 90% of the stage');
+    });
+  }
 
   test('a wide persisted width applies verbatim on a wide window (the 560 cap is gone)', (t) => {
     const store = {

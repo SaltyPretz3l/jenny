@@ -60,7 +60,9 @@ function matchesActiveTurnUserMessage(message, activeTurn) {
 
 function detectInterruptionState(messages, activeTurn = null) {
   const normalized = normalizeMessages(messages);
-  const lastMessage = normalized[normalized.length - 1];
+  // Addressed-message rows (role context: included mail, discard receipts) are
+  // not turn steps; judge the interruption by the last conversational row.
+  const lastMessage = normalized.findLast((message) => String(message?.role || '').trim() !== 'context');
   if (!lastMessage) {
     return 'clean';
   }

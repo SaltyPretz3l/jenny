@@ -217,3 +217,17 @@ test('mounted-row changes recompute select-all and scope changes update restore 
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(h.state.sessions[0].archived_at, null);
 });
+
+test('in selection mode a chevron click selects its row and never reaches the collapse handler; DOM order is selection order', t => {
+  const h = harness(t);
+  const row = h.groups.querySelector('[data-session-id="a"]');
+  row.querySelector('.session-row__open').insertAdjacentHTML('afterend', '<span class="session-row__branch"><button type="button" class="session-row__chevron" tabindex="-1" data-session-toggle="a" aria-expanded="true">v</button></span>');
+  let toggled = 0;
+  h.groups.addEventListener('click', event => { if (event.target.closest('[data-session-toggle]')) toggled += 1; });
+  h.controller.act('select');
+  h.groups.querySelector('[data-session-toggle]').click();
+  assert.equal(toggled, 0, 'the capture-phase selection handler swallows the click');
+  assert.deepEqual([...h.controller.selected], ['a']);
+  h.controller.act('all');
+  assert.deepEqual([...h.controller.selected], ['a', 'b'], 'select-all walks the rows in DOM order and ignores toggle controls');
+});

@@ -111,3 +111,54 @@
 .mcp-trust-review p {
   margin: 0;
 }
+
+/* Add-connection presets: one line above the form (row 53 S4). */
+.mcp-presets {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  font-size: var(--font-size-footnote);
+  color: var(--text-muted);
+}
+
+/* A server-reported read-only claim, tagged next to the tool name at review. */
+.mcp-tool-claim {
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--text-muted);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-2);
+  vertical-align: 1px;
+}
+
+/* Details drawer sections (Trust review, Approval) and the per-row
+   read-only auto-allow switch row. */
+.mcp-server-details section > h3 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+
+.mcp-approval-row {
+  gap: var(--space-5);
+  padding-inline: 0;
+}
+
+.mcp-approval-row .settings-field-row-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.mcp-approval-row .settings-field-row-text small {
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+  max-width: 60ch;
+}

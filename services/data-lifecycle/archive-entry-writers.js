@@ -8,6 +8,7 @@ const path = require('path');
 const { pipeline } = require('stream/promises');
 const { Transform } = require('stream');
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
+const { removeFile, removeTree } = require('../fs-remove-no-follow');
 const { archiveError, encryptBuffer, encryptFile } = require('./archive-format');
 
 function sourceSnapshot(sourcePath) {
@@ -52,7 +53,7 @@ async function copyFileWithDigest(sourcePath, destinationPath, signal) {
 async function writeSourceEntry({ entry, destinationPath, encrypt, masterKey, salt, entryId, signal }) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const before = sourceSnapshot(entry.sourcePath);
-    await fs.promises.rm(destinationPath, { force: true });
+    await removeFile(destinationPath);
     const result = encrypt
       ? await encryptFile({ sourcePath: entry.sourcePath, destinationPath, masterKey, salt, entryId, signal })
       : { sha256: await copyFileWithDigest(entry.sourcePath, destinationPath, signal) };
@@ -92,7 +93,7 @@ async function writeBufferEntry({ entry, destinationPath, encrypt, masterKey, sa
 
 async function removeEntryStaging(stagingDir, entryFailed) {
   try {
-    await fs.promises.rm(stagingDir, { recursive: true, force: true });
+    await removeTree(stagingDir);
   } catch (error) {
     // Preserve the entry failure; outer partial cleanup retries removal.
     if (!entryFailed) throw error;

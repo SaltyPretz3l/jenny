@@ -5,10 +5,12 @@ const os = require('os');
 const path = require('path');
 
 const {
+  KNOWN_USER_DATA_CHILDREN,
   buildCleanupTargets,
   cleanupJennyData,
   validateCleanupTarget,
 } = require('../services/data-lifecycle/cleanup-service');
+const { DERIVED_INDEX_CHILDREN } = require('../services/data-lifecycle/derived-indexes');
 const { WORKSPACE_PORTABLE_NAMES } = require('../services/data-lifecycle/data-inventory');
 const { HomeAiJournalStore } = require('../services/home-ai-journal-store');
 
@@ -379,6 +381,45 @@ describe('cleanupJennyData', () => {
     assert.equal(validateCleanupTarget({ ...valid, name: 'sessions.json', path: path.join(root, 'sessions.json') }), false);
   });
 
+  it('removes the derived semantic catalog and chat index with WAL siblings and set-aside copies', async () => {
+    const root = makeTempRoot();
+    try {
+      const userDataPath = path.join(root, 'profile');
+      fs.mkdirSync(userDataPath, { recursive: true });
+      for (const name of DERIVED_INDEX_CHILDREN) assert.equal(KNOWN_USER_DATA_CHILDREN.includes(name), true, name);
+      const owned = [
+        'semantic-catalog.db', 'semantic-catalog.db-wal', 'semantic-catalog.db-shm',
+        'conversation-index.db', 'conversation-index.db-wal', 'conversation-index.db-shm',
+        // sidecar/ai/semantic/store.py set-aside naming: `<name>.corrupt-<%Y%m%dT%H%M%S%fZ>[-wal|-shm]`.
+        'semantic-catalog.db.corrupt-20261015T120000123456Z',
+        'conversation-index.db.corrupt-20261015T120000123456Z',
+        'conversation-index.db.corrupt-20261015T120000123456Z-wal',
+        'conversation-index.db.corrupt-20261015T120000123456Z-shm',
+      ];
+      for (const name of owned) fs.writeFileSync(path.join(userDataPath, name), 'derived');
+      const lookAlikes = [
+        'other-index.db.corrupt-20261015T120000123456Z',
+        'conversation-index.db.corrupt-20261015T1200Z',
+        'conversation-index.db.corrupt-20261015T120000123456Z-journal',
+      ];
+      for (const name of lookAlikes) fs.writeFileSync(path.join(userDataPath, name), 'keep');
+
+      const targets = buildCleanupTargets({ userDataPath });
+      assert.equal(targets.every(validateCleanupTarget), true);
+      const result = await cleanupJennyData({ userDataPath });
+
+      assert.equal(result.status, 'complete');
+      assert.deepEqual(result.unknownUserDataChildren, [...lookAlikes].sort());
+      assert.equal(owned.some((name) => fs.existsSync(path.join(userDataPath, name))), false);
+      for (const name of lookAlikes) assert.equal(fs.readFileSync(path.join(userDataPath, name), 'utf8'), 'keep');
+      assert.equal(validateCleanupTarget({
+        kind: 'user_data_derived_child', root: userDataPath, name: lookAlikes[0], path: path.join(userDataPath, lookAlikes[0]),
+      }), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('removes an empty known-only profile root and remains idempotent', async () => {
     const root = makeTempRoot();
     try {
@@ -448,6 +489,67 @@ describe('cleanupJennyData', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('never enters a junction that appears after the link scan, even when unlinking it fails transiently', async (t) => {
+    const root = makeTempRoot();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const userDataPath = path.join(root, 'profile');
+    const sessionsPath = path.join(userDataPath, 'sessions');
+    const outside = path.join(root, 'outside');
+    const link = path.join(sessionsPath, 'linked');
+    fs.mkdirSync(sessionsPath, { recursive: true });
+    fs.writeFileSync(path.join(sessionsPath, 'one.json'), '{}');
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'keep'), 'keep');
+    try {
+      fs.symlinkSync(outside, path.join(root, 'probe-junction'), 'junction');
+      fs.unlinkSync(path.join(root, 'probe-junction'));
+    } catch (error) {
+      t.skip(`junction creation unavailable: ${error.code || 'unknown'}`);
+      return;
+    }
+    // A concurrent writer plants the junction after validation scanned the tree and found no link.
+    const originalLstat = fs.promises.lstat;
+    let planted = false;
+    t.mock.method(fs.promises, 'lstat', async function plantAfterScan(target, ...args) {
+      if (!planted && path.resolve(target) === path.resolve(sessionsPath)) {
+        planted = true;
+        fs.symlinkSync(outside, link, 'junction');
+      }
+      return originalLstat.call(fs.promises, target, ...args);
+    });
+    // The first unlink of a link fails with EPERM: the transient lock under which Node's rm followed it.
+    const originalUnlink = fs.promises.unlink;
+    const denied = new Set();
+    t.mock.method(fs.promises, 'unlink', async function unlinkLockedOnce(target, ...args) {
+      let isLink = false;
+      try { isLink = fs.lstatSync(target).isSymbolicLink(); } catch { /* missing: unlink reports it */ }
+      if (isLink && !denied.has(path.resolve(target))) {
+        denied.add(path.resolve(target));
+        throw Object.assign(new Error('locked'), { code: 'EPERM' });
+      }
+      return originalUnlink.call(fs.promises, target, ...args);
+    });
+    const rmCalls = [];
+    const originalRm = fs.promises.rm;
+    t.mock.method(fs.promises, 'rm', async function recordRm(target, ...args) {
+      rmCalls.push(path.resolve(target));
+      return originalRm.call(fs.promises, target, ...args);
+    });
+
+    const result = await cleanupJennyData({ userDataPath });
+
+    assert.deepEqual(rmCalls, [], 'cleanup must not use Node rm');
+    assert.equal(planted, true);
+    assert.equal(denied.has(path.resolve(link)), true, 'the junction unlink was locked once');
+    assert.equal(fs.readFileSync(path.join(outside, 'keep'), 'utf8'), 'keep');
+    assert.equal(fs.existsSync(link), false);
+    assert.equal(fs.existsSync(sessionsPath), false);
+    assert.deepEqual(
+      result.results.find((entry) => entry.name === 'sessions'),
+      { kind: 'user_data_child', name: 'sessions', status: 'removed' }
+    );
   });
 
   it('isolates inspection failures and continues removing later fixed targets', async () => {

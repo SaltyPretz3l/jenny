@@ -31,7 +31,7 @@ The desktop application uses two cooperating processes:
 
 The host and sidecar communicate through JSON-RPC 2.0 over stdio with
 `Content-Length` framing. `sidecar/protocol.py` owns the vocabulary and
-`API_VERSION = "2026-08-17"`; `services/backend/sidecar-client.js` pins the
+`API_VERSION = "2026-10-15"`; `services/backend/sidecar-client.js` pins the
 paired version and adds `accept_version` to versioned requests.
 `sidecar/runtime/framing.py` bounds frames before dispatch.
 

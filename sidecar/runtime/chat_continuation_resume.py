@@ -42,16 +42,12 @@ _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _TOOL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _CHECKPOINT_ID = re.compile(r"checkpoint_[0-9a-f]{64}\Z")
-_CHECKPOINT_REF_KEYS = frozenset(
-    {"schema_version", "checkpoint_id", "sha256", "bytes", "source_attempt"}
-)
+_CHECKPOINT_REF_KEYS = frozenset({
+    "schema_version", "checkpoint_id", "sha256", "bytes", "source_attempt"})
 _ATTEMPT_KEYS = frozenset({"attempt_id", "stream_id", "incarnation", "authority_revision"})
-_CALL_KEYS = frozenset(
-    {
-        "call_id", "tool_id", "arguments", "idempotency_key", "coerced",
-        "malformed_arguments", "argument_repairs",
-    }
-)
+_CALL_KEYS = frozenset({
+    "call_id", "tool_id", "arguments", "idempotency_key", "coerced",
+    "malformed_arguments", "argument_repairs"})
 class ContinuationResumeError(ValueError):
     """A hydrated artifact or its fresh request binding is invalid."""
 
@@ -499,9 +495,6 @@ def resume_before_tool_dispatch(  # noqa: PLR0913
 
     if approvals_pre_granted is not False:
         _fail("continuation_approval_grant_forbidden")
-    # The source attempt already emitted its initial status. The fresh worker
-    # resumes after that point and must not duplicate the observation.
-    _ = initial_thinking_text
     checkpoint = _bind_fresh_request(
         hydrated, runtime=runtime, request_context=request_context,
         request_id=request_id, session_id=session_id,
@@ -516,24 +509,29 @@ def resume_before_tool_dispatch(  # noqa: PLR0913
     change_set_id = claim_mutation_checkpoint(
         checkpoint, config=getattr(kernel, "_config", None), request_context=request_context
     )
-    run = _ToolLoopRun(
-        initial_change_set_id=change_set_id,
-        runtime=runtime, kernel=kernel, request_context=request_context,
-        working_messages=working_messages, tool_contract=tool_contract,
-        tool_payload=tool_payload, tool_resolution_context=tool_resolution_context,
-        tool_preferences=tool_preferences, mode_policy=mode_policy,
-        plan_mode=plan_mode, read_only=read_only, approvals_pre_granted=False,
-        request_id=request_id, session_id=session_id,
-        latest_user_content=latest_user_content, reasoning_effort=reasoning_effort,
-        prompt_cache_enabled=prompt_cache_enabled, cache_source_key=cache_source_key,
-        system_prompt=system_prompt, cache_break_detector=cache_break_detector,
-        budget_tracker=budget_tracker, read_snapshot_cache=read_snapshot_cache,
-        tool_statuses=tool_statuses, initial_thinking_text=None,
-        request_messages_hash=request_messages_hash, initial_outcomes=hydrated.completed_outcomes(),
-    )
-    calls = hydrated.tool_calls()
-    result = GenerationResult(content="", tool_calls=calls)
+    from types import SimpleNamespace
+    run: _ToolLoopRun | SimpleNamespace = SimpleNamespace(
+        _jenny_change_set_id=change_set_id, runtime=runtime,
+        kernel=kernel, request_context=request_context, session_id=session_id,
+        request_id=request_id, outcomes=[])
     try:
+        run = _ToolLoopRun(
+            initial_change_set_id=change_set_id,
+            runtime=runtime, kernel=kernel, request_context=request_context,
+            working_messages=working_messages, tool_contract=tool_contract,
+            tool_payload=tool_payload, tool_resolution_context=tool_resolution_context,
+            tool_preferences=tool_preferences, mode_policy=mode_policy,
+            plan_mode=plan_mode, read_only=read_only, approvals_pre_granted=False,
+            request_id=request_id, session_id=session_id,
+            latest_user_content=latest_user_content, reasoning_effort=reasoning_effort,
+            prompt_cache_enabled=prompt_cache_enabled, cache_source_key=cache_source_key,
+            system_prompt=system_prompt, cache_break_detector=cache_break_detector,
+            budget_tracker=budget_tracker, read_snapshot_cache=read_snapshot_cache,
+            tool_statuses=tool_statuses, initial_thinking_text=None,
+            request_messages_hash=request_messages_hash,
+            initial_outcomes=hydrated.completed_outcomes(),
+        )
+        result = GenerationResult(content="", tool_calls=hydrated.tool_calls())
         approvals: list[Any] | None = ([] if checkpoint["kind"] == "before_decision_wait"
                      and checkpoint["decision"]["kind"] == "approval" else None)
         remaining, audit_metadata, scan_mode = (
@@ -547,9 +545,9 @@ def resume_before_tool_dispatch(  # noqa: PLR0913
         from sidecar.ai.routing.auto_checkpoint import maybe_create_auto_checkpoint
         from sidecar.ai.routing.tool_resource_progress import resource_deferral_callback
         iteration_calls: list[Any] = []
-        run.outcome_index = len(calls)
+        run.outcome_index = len(result.tool_calls)
         maybe_create_auto_checkpoint(run, remaining)  # row 34 S5: the batch's restore point
-        execute_tool_calls_sequentially(
+        boundary = execute_tool_calls_sequentially(
             indexed_calls=remaining, runtime=runtime, kernel=kernel, result=result,
             request_id=request_id, session_id=session_id,
             tool_resolution_context=tool_resolution_context,
@@ -565,6 +563,9 @@ def resume_before_tool_dispatch(  # noqa: PLR0913
                 run, checkpoint["position"]["current_iteration"]),
         )
         run.completed_generations = checkpoint["position"]["completed_iterations"]
+        if boundary is not None:  # a session proposal ended the turn: no further generation
+            from sidecar.ai.routing.turn_boundary import finish_loop_at_boundary
+            return finish_loop_at_boundary(run, boundary)
         early_result = _finish_pending_batch(run, result, iteration_calls)
         if early_result is not None:
             return run._finish(early_result, reason="continuation_budget_exhausted")
@@ -575,10 +576,7 @@ def resume_before_tool_dispatch(  # noqa: PLR0913
             terminal = _terminal_loop_result(budget_result.terminal_decision, run.outcomes)
             return run._finish(terminal, reason="continuation_context_budget_terminal")
         if runtime.streaming:
-            # Same boundary the in-band tool round emits after its tools
-            # (tool_loop_calls._run_tool_phase): Electron closes the pre-approval
-            # commentary slice before the next generation restarts its token
-            # sequence at 1, so the continuation stops painting into that row.
+            # Close pre-approval commentary before the next generation restarts at token 1.
             loop_event_emit.emit_stream_reset_for_retry(
                 runtime, run.streamed_event_types, reason="tool_continuation",
             )
@@ -586,7 +584,8 @@ def resume_before_tool_dispatch(  # noqa: PLR0913
     except Exception as error:
         mutation_change_set_lifecycle.finish_run_change_set(
             run, approval_paused=isinstance(error, ToolLoopSuspended),
-            reason=f"exception:{type(error).__name__}"
+            reason=("construction_interrupt" if isinstance(run, SimpleNamespace)
+                    else f"exception:{type(error).__name__}")
         )
         raise
     finally:

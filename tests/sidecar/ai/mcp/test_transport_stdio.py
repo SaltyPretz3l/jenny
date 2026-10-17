@@ -522,7 +522,7 @@ def test_transport_uses_configured_request_timeout() -> None:
         request_timeout_seconds=999,
     )
 
-    assert transport_stdio._request_timeout_from_config(config) == 600.0
+    assert transport_stdio._request_timeout_from_config(config) == 999.0
 
 
 def test_stdio_line_reader_rejects_never_newline_record_at_limit() -> None:
@@ -995,10 +995,10 @@ def test_process_containment_discovers_visual_studio_git_when_parent_path_lacks_
     )
     git_dir.mkdir(parents=True)
     (git_dir / "git.exe").write_text("", encoding="utf-8")
+    # No SYSTEMROOT/SystemDrive: their fallback must not discover the host's Git.
     env_values = {
         "PATH": str(tmp_path / "minimal-bin"),
         "ProgramFiles": str(program_files),
-        "SYSTEMROOT": r"C:\Windows",
     }
     monkeypatch.setattr(process_containment, "_is_windows", lambda: True)
     monkeypatch.setattr(process_containment, "_is_posix", lambda: False)

@@ -117,8 +117,6 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   // external_scripts?, external_stylesheets? }). Main accepts it only for
   // request ids it issued, behind the trusted-sender authorizer.
   'workspacePresentation.reportOutcome': invokeMethod('workspace-presentation:report-outcome'),
-  'logs.list': invokeMethod('logs:list'),
-  'logs.onAppend': subscribeMethod('logs:append'),
   // Fire-and-forget renderer→main log batches mirrored into shell.log.
   'logs.clientAppend': sendMethod('logs:client-append'),
   'diagnostics.logs.getSnapshot': invokeMethod('diagnostics:logs:snapshot'),
@@ -145,6 +143,12 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'cloudModels.chatgptExtendPending': invokeMethod('cloud-models:chatgpt-extend-pending'),
   'cloudModels.chatgptPendingLink': invokeMethod('cloud-models:chatgpt-pending-link'),
   'cloudModels.onChanged': subscribeMethod('cloud-models:changed'),
+  // Desktop-only settled-history copy; main owns receipts and assets.
+  'conversationTransfer.list': invokeMethod('conversation-transfer:list'),
+  'conversationTransfer.preview': invokeMethod('conversation-transfer:preview'),
+  'conversationTransfer.copy': invokeMethod('conversation-transfer:copy'),
+  'conversationTransfer.open': invokeMethod('conversation-transfer:open'),
+  'conversationTransfer.attachments': invokeMethod('conversation-transfer:attachments'),
   'codexCli.getState': invokeMethod('codex-cli:get-state'),
   'codexCli.refresh': invokeMethod('codex-cli:refresh'),
   'workspace.getState': invokeMethod('workspace:get-state'),
@@ -246,6 +250,12 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'workspaceRunTask.onExit': subscribeMethod('workspace-run-task:exit'),
   'workspaceFileMap.getGraph': invokeMethod('workspace-file-map:get-graph'),
   'workspaceFileMap.refresh': invokeMethod('workspace-file-map:refresh'),
+  'activity.getSnapshot': invokeMethod('activity:get-snapshot'),
+  'activity.getDetail': invokeMethod('activity:get-detail'),
+  'activity.subscribe': invokeMethod('activity:subscribe'),
+  'activity.onChanged': subscribeMethod('activity:changed'),
+  'workspaceTestRunner.abortRun': invokeMethod('workspace-test-runner:abort-run'),
+  'workspaceTestRunner.getRunOutput': invokeMethod('workspace-test-runner:get-run-output'),
   'workspaceTestRunner.run': invokeMethod('workspace-test-runner:run'),
   'workspaceTestRunner.abort': invokeMethod('workspace-test-runner:abort'),
   'workspaceTestRunner.saveConfigs': invokeMethod('workspace-test-runner:save-configs'),
@@ -272,6 +282,12 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'mcpDiscovery.updateServer': invokeMethod('mcp-discovery:update-server'),
   'mcpDiscovery.removeServer': invokeMethod('mcp-discovery:remove-server'),
   'mcpDiscovery.testServer': invokeMethod('mcp-discovery:test-server'),
+  'mcpDiscovery.checkReadiness': invokeMethod('mcp-discovery:check-readiness'),
+  'mcpDiscovery.getPrompt': invokeMethod('mcp-discovery:get-prompt'),
+  'mcpDiscovery.getReaInstallPlan': invokeMethod('mcp-discovery:rea-install-plan'),
+  'mcpDiscovery.installRea': invokeMethod('mcp-discovery:install-rea'),
+  'mcpDiscovery.uninstallRea': invokeMethod('mcp-discovery:uninstall-rea'),
+  'mcpDiscovery.onReaInstallProgress': subscribeMethod('mcp-discovery:rea-install-progress'),
   'mcpDiscovery.approveServer': invokeMethod('mcp-discovery:approve-server'),
   'mcpDiscovery.setServerEnabled': invokeMethod('mcp-discovery:set-server-enabled'),
   // mcpAuth.* namespace: presence-booleans-only auth status + save/clear for
@@ -343,11 +359,18 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'artifacts.save': invokeMethod('artifacts:save'),
   'artifacts.saveAs': invokeMethod('artifacts:save-as'),
   'artifacts.copyImage': invokeMethod('artifacts:copy-image'),
+  // Desktop image actions accept session/artifact identifiers only; never paths.
+  'artifacts.capabilities': invokeMethod('artifacts:capabilities'),
+  'artifacts.openWith': invokeMethod('artifacts:open-with'),
   'artifacts.reveal': invokeMethod('artifacts:reveal'),
   'artifacts.openExternal': invokeMethod('artifacts:open-external'),
   'artifacts.delete': invokeMethod('artifacts:delete'),
   'artifacts.deleteSession': invokeMethod('artifacts:delete-session'),
-  'memory.suggestForSession': invokeMethod('memory:suggest-for-session'),
+  // Non-artifact chat images (attachments, tool output): session ID plus
+  // { kind: 'attachment' | 'tool', id } only; never paths.
+  'chatImages.copyImage': invokeMethod('chat-images:copy-image'),
+  'chatImages.saveAs': invokeMethod('chat-images:save-as'),
+  'chatImages.reveal': invokeMethod('chat-images:reveal'),
   'memory.status': invokeMethod('memory:status'),
   'memory.save': invokeMethod('memory:save'),
   'memory.listApproved': invokeMethod('memory:list-approved'),
@@ -355,7 +378,22 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'memory.update': invokeMethod('memory:update'),
   'memory.delete': invokeMethod('memory:delete'),
   'memory.deletePending': invokeMethod('memory:delete-pending'),
-  'memory.dismiss': invokeMethod('memory:dismiss'),
+  // The chat chip's Undo: { sessionId, operationId } only; the project comes from the session.
+  'memory.undo': invokeMethod('memory:undo'),
+  'memory.acceptPending': invokeMethod('memory:accept-pending'),
+  // The Settings Undo names the listed row's project (the chat chip's memory.undo takes a session).
+  'memory.undoChange': invokeMethod('memory:undo-change'),
+  // Settings > Memory page (row 58 W4): one `{ projectId, ... }` request each;
+  // the project is the listed row's or tab's (null = every project where allowed).
+  'memory.listArchived': invokeMethod('memory:list-archived'),
+  'memory.restore': invokeMethod('memory:restore'),
+  'memory.erase': invokeMethod('memory:erase'),
+  'memory.clearForgotten': invokeMethod('memory:clear-forgotten'),
+  'memory.listOperations': invokeMethod('memory:list-operations'),
+  'memory.setAlwaysOn': invokeMethod('memory:set-always-on'),
+  'memory.exportMarkdown': invokeMethod('memory:export-markdown'),
+  // `{ name: 'USER.md' | 'MEMORY.md' }` only; opens in the OS default app.
+  'memory.openContextFile': invokeMethod('memory:open-context-file'),
   'harness.inspect': invokeMethod('harness:inspect'),
   'proactive.getState': invokeMethod('proactive:get-state'),
   'proactive.chooseWorkspaceRoot': invokeMethod('proactive:choose-workspace-root'),
@@ -381,6 +419,7 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   // ollamaTray.* namespace: owner-triggered remediation for the Ollama
   // tray-app conflict (detection lives in ollama-tray-conflict.js). Explicit-
   // click actions only — never automatic.
+  'ollamaDaemon.stopUserProcess': invokeMethod('ollama-daemon:stop-user-process'),
   'ollamaTray.status': invokeMethod('ollama-tray:status'),
   'ollamaTray.quitTrayApp': invokeMethod('ollama-tray:quit'),
   'ollamaTray.disableStartupShortcut': invokeMethod('ollama-tray:disable-startup'),
@@ -453,6 +492,65 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'suggestedChanges.discardPending': invokeMethod('suggested-changes:discard-pending'),
   'suggestedChanges.accept': invokeMethod('suggested-changes:accept'),
   'suggestedChanges.onChanged': subscribeMethod('suggested-changes:changed'),
+  // chatWorkspace.*: per-chat session summary, rail view state and working-tree
+  // Changes reads (row 59 checkpoint 2). Closed `{schema_version:1,...}` requests
+  // answered with `{schema_version:1, ok, ...}`; trusted-sender authorized in
+  // services/main/chat-workspace-ipc-registration.js. onChanged carries only
+  // invalidations `{schema_version:1, session_id, revision}`, at most four a
+  // second per session; the renderer refetches. Desktop only (no hosted route).
+  'chatWorkspace.getSummary': invokeMethod('chat-workspace:get-summary'),
+  'chatWorkspace.setView': invokeMethod('chat-workspace:set-view'),
+  'chatWorkspace.listChanges': invokeMethod('chat-workspace:list-changes'),
+  'chatWorkspace.getChangeDiff': invokeMethod('chat-workspace:get-change-diff'),
+  'chatWorkspace.onChanged': subscribeMethod('chat-workspace:changed'),
+  // sessionProposals.*: inline Git / command proposals (row 59 checkpoint 3).
+  // Closed `{schema_version:1, session_id, ...}` requests answered with
+  // `{schema_version:1, ok, ...}`; trusted-sender authorized in
+  // services/main/chat-proposal-ipc-registration.js. getCapabilities, setOptions,
+  // startAll, confirmRestored and authorizeLaunch answer unsupported_capability
+  // until checkpoint 5. onChanged carries only `{schema_version:1, session_id,
+  // revision}` invalidations. Desktop only (no hosted route).
+  'sessionProposals.get': invokeMethod('session-proposals:get'),
+  'sessionProposals.list': invokeMethod('session-proposals:list'),
+  'sessionProposals.decide': invokeMethod('session-proposals:decide'),
+  'sessionProposals.cancel': invokeMethod('session-proposals:cancel'),
+  'sessionProposals.retry': invokeMethod('session-proposals:retry'),
+  'sessionProposals.getCapabilities': invokeMethod('session-proposals:get-capabilities'),
+  'sessionProposals.setOptions': invokeMethod('session-proposals:set-options'),
+  'sessionProposals.startAll': invokeMethod('session-proposals:start-all'),
+  'sessionProposals.confirmRestored': invokeMethod('session-proposals:confirm-restored'),
+  'sessionProposals.authorizeLaunch': invokeMethod('session-proposals:authorize-launch'),
+  'sessionProposals.onChanged': subscribeMethod('session-proposals:changed'),
+  // chatMessages.*: addressed session messaging (row 59 checkpoint 4). Closed
+  // `{schema_version:1, ...}` requests answered with `{schema_version:1, ok, ...}`;
+  // trusted-sender authorized in services/main/chat-messaging-ipc-registration.js.
+  // confirmRestored, createGrant, revokeGrant and setReporting answer unsupported
+  // until checkpoint 5. onChanged carries only `{schema_version:1, session_id,
+  // revision}` invalidations. Desktop only (no hosted route).
+  'chatMessages.listRecipients': invokeMethod('chat-messages:list-recipients'),
+  'chatMessages.prepare': invokeMethod('chat-messages:prepare'),
+  'chatMessages.send': invokeMethod('chat-messages:send'),
+  'chatMessages.retry': invokeMethod('chat-messages:retry'),
+  'chatMessages.cancel': invokeMethod('chat-messages:cancel'),
+  'chatMessages.list': invokeMethod('chat-messages:list'),
+  'chatMessages.markRead': invokeMethod('chat-messages:mark-read'),
+  'chatMessages.setContextDisposition': invokeMethod('chat-messages:set-context-disposition'),
+  'chatMessages.discard': invokeMethod('chat-messages:discard'),
+  'chatMessages.confirmRestored': invokeMethod('chat-messages:confirm-restored'),
+  'chatMessages.createGrant': invokeMethod('chat-messages:create-grant'),
+  'chatMessages.revokeGrant': invokeMethod('chat-messages:revoke-grant'),
+  'chatMessages.setReporting': invokeMethod('chat-messages:set-reporting'),
+  'chatMessages.onChanged': subscribeMethod('chat-messages:changed'),
+  // performance.*: live inference metrics, GPU-pressure warnings and their two
+  // settings (row 59 checkpoint 6). Closed `{schema_version:1, ...}` requests answered
+  // with `{ok, ...}` or `{ok:false, code, reason}`; trusted-sender authorized in
+  // services/main/performance-ipc-registration.js. onChanged carries only invalidations
+  // `{session_id: null|string, terminal, scope}`, at most four a second per session;
+  // the renderer refetches. Desktop only (no hosted route).
+  'performance.getSnapshot': invokeMethod('performance:get-snapshot'),
+  'performance.updateSettings': invokeMethod('performance:update-settings'),
+  'performance.dismissWarning': invokeMethod('performance:dismiss-warning'),
+  'performance.onChanged': subscribeMethod('performance:changed'),
   'commandSandbox.getState': invokeMethod('command-sandbox:get-state'),
   'commandSandbox.setEnabled': invokeMethod('command-sandbox:set-enabled'),
   'commandSandbox.retry': invokeMethod('command-sandbox:retry'),
@@ -483,7 +581,22 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'imageEngine.removeModelSet': invokeMethod('image-engine:remove-model-set'),
   'imageEngine.setDefaultModelSet': invokeMethod('image-engine:set-default-model-set'),
   'imageEngine.reconcile': invokeMethod('image-engine:reconcile'),
+  'imageEngine.forceClear': invokeMethod('image-engine:force-clear'),
   'imageEngine.onChanged': subscribeMethod('image-engine:changed'),
+  // ninfer.*: the managed NInfer runtime (row 54, RTX 5090 only). Flag off or an
+  // ineligible GPU answers getState with { eligible: false, reason } and every
+  // action with ninfer_unavailable. Trusted-sender-authorized in
+  // services/main/ninfer-ipc-registration.js; onChanged says only what moved.
+  'ninfer.getState': invokeMethod('ninfer:get-state'),
+  'ninfer.setup': invokeMethod('ninfer:setup'),
+  'ninfer.cancelSetup': invokeMethod('ninfer:cancel-setup'),
+  'ninfer.remove': invokeMethod('ninfer:remove'),
+  'ninfer.start': invokeMethod('ninfer:start'),
+  'ninfer.stop': invokeMethod('ninfer:stop'),
+  'ninfer.restart': invokeMethod('ninfer:restart'),
+  'ninfer.dismissSuggestion': invokeMethod('ninfer:dismiss-suggestion'),
+  'ninfer.updateSettings': invokeMethod('ninfer:update-settings'),
+  'ninfer.onChanged': subscribeMethod('ninfer:changed'),
   'tools.list': invokeMethod('tools:list'),
   'tools.approve': invokeMethod('tools:approve'),
   'tools.buildAcceptedPlan': invokeMethod('tools:build-accepted-plan'),

@@ -31,6 +31,7 @@
   // Resolved lazily, never at module load: this file's script tag precedes
   // renderer-resume-turn-affordance.js in index.html, so a load-time read would
   // capture undefined in the app and silently disable the live stamp forever.
+  const TURN_COMPLETION_REASONS = new Set(['awaiting_proposal', 'session_handoff_completed']);
   let _resumableStopKinds = null;
   function resumableStopKinds() {
     if (!_resumableStopKinds) {
@@ -110,7 +111,6 @@
       refreshSnapshots = async () => {},
       refreshObservability = async () => {},
       dismissStreamErrors = () => {},
-      maybeSuggestMemoryCapture = async () => {},
       getInteractiveComposerStatusNotice = () => '',
       persistInteractiveFallbackRequest = async () => {},
       requestInteractiveGuardrailAnswer = async () => {},
@@ -634,6 +634,9 @@
       const draftCount = Number.isInteger(payload.discardedDrafts?.count) ? payload.discardedDrafts.count : 0;
       const liveStamps = {
         ...(resumableStopKinds()?.includes(payload.resumableStop) ? { resumable_stop: payload.resumableStop } : {}),
+        // Row 59 cp5a: a turn that ended at a proposal boundary, stamped as the store persists it.
+        ...(TURN_COMPLETION_REASONS.has(payload.completionReason) && /^proposal_[0-9a-f]{64}$/.test(String(payload.proposalId || ''))
+          ? { completion_reason: payload.completionReason, completion_proposal_id: payload.proposalId } : {}),
         ...(draftCount > 0 ? { discarded_drafts: { count: draftCount, latest_reason: String(payload.discardedDrafts.latest_reason || '').slice(0, 64) } } : {}),
       };
       appendClientLog('DEBUG', 'stream.handle_complete', {
@@ -771,9 +774,6 @@
               sessions: true,
               settings: true,
             });
-            await runDeadlineStage('maybeSuggestMemoryCapture', payload.sessionId, payload.streamId,
-              ({ signal, guard }) => maybeSuggestMemoryCapture(payload, { signal, guard }),
-              MEMORY_CAPTURE_DEADLINE_MS, { continuationGuard });
           }
           reportSlowPostwork(payload, Date.now() - terminalPostworkStartedAt);
           if (continuationGuard.isCurrent()) {

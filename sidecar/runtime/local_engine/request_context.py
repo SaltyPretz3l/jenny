@@ -315,6 +315,8 @@ def bind_chat_request_context(
         agent_depth=getattr(request_context, "agent_depth", 0),
         app_profile_behavior=build_app_profile_behavior(runtime_config),
     )
+    if (context := current_request_context(engine)) is not None:
+        context.update(getattr(request_context, "performance_request_fields", lambda: {})())
 
 
 def clear_chat_request_context(engine: Any, *, request_id: str) -> None:

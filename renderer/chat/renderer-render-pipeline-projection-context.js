@@ -605,6 +605,7 @@
           && kind !== 'proactive_suggestion'
           && kind !== 'question_batch'
           && kind !== 'slash_command_output'
+          && kind !== 'memory_note'
           && status === 'complete') {
           latestReplyId = String(candidate.id || '').trim();
           break;
@@ -767,6 +768,7 @@
           && kind !== 'question_batch'
           && kind !== 'interactive_round_recap'
           && kind !== 'slash_command_output'
+          && kind !== 'memory_note'
         ) {
           return String(message.id || '').trim();
         }

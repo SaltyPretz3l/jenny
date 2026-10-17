@@ -1,0 +1,35 @@
+{
+  "wrong_model": {
+    "status": 404,
+    "body": {
+      "error": {
+        "code": "model_not_found",
+        "message": "model 'not-the-model' not found",
+        "param": "model",
+        "type": "invalid_request_error"
+      }
+    }
+  },
+  "top_k_40": {
+    "status": 400,
+    "body": {
+      "error": {
+        "code": null,
+        "message": "top_k must be in [0,20]",
+        "param": "top_k",
+        "type": "invalid_request_error"
+      }
+    }
+  },
+  "five_stops": {
+    "status": 400,
+    "body": {
+      "error": {
+        "code": null,
+        "message": "stop supports at most four strings",
+        "param": "stop",
+        "type": "invalid_request_error"
+      }
+    }
+  }
+}

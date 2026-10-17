@@ -41,6 +41,7 @@
     terminal: icon('<rect x="2" y="3" width="12" height="10" rx="1"/><path d="M4.5 6.5l2 1.5-2 1.5M8 10h3"/>'),
     problems: icon('<path d="M8 2.5l6 10.5H2z"/><path d="M8 6.5v3M8 11.2v.1"/>'),
     run: icon('<path d="M5 3.5l7 4.5-7 4.5z"/>'),
+    activity: icon('<path d="M1 8h3l2-5 4 10 2-5h3"/>'),
     'test-runner': icon('<path d="M6 2.5h4M7 2.5v4l-3.5 6a1 1 0 0 0 .9 1.5h7.2a1 1 0 0 0 .9-1.5L9 6.5v-4"/>'),
     'test-output': icon('<path d="M4 2.5h5.5L12 5v8.5H4z"/><path d="M6 8h4M6 10.5h4"/>'),
     chat: icon('<path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8.5L5.5 14v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z"/>'),
@@ -60,6 +61,7 @@
     terminal: () => jt('ide.workbench.view.terminal', 'Terminal'),
     problems: () => jt('ide.workbench.view.problems', 'Problems'),
     run: () => jt('ide.workbench.view.run', 'Run'),
+    activity: () => jt('activity.title', 'Activity'),
     'test-runner': () => jt('ide.workbench.view.tests', 'Tests'),
     'test-output': () => jt('ide.workbench.view.testOutput', 'Test output'),
     // Extra terminals (F3): instances of the terminal view.

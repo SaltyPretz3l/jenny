@@ -33,7 +33,7 @@ function createToolTestRunnerService({ service, executionAuthority, binding, cal
   if (!operationId) throw new Error('Test runner operation identity is unavailable.');
   const argumentsSnapshot = cloneInput(input);
   const request = Object.freeze({
-    api_version: '2026-08-17',
+    api_version: '2026-10-15',
     schema_version: 1,
     request_id: trusted.requestId,
     session_id: trusted.sessionId,

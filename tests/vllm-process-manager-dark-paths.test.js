@@ -9,6 +9,10 @@
 'use strict';
 
 const test = require('node:test');
+const { holdEventLoopUntilTestsFinish } = require('./helpers/event-loop-hold');
+
+// Service wait timers are unref'd on purpose; Node 22's runner would drain the loop under them.
+holdEventLoopUntilTestsFinish(test);
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('events');
 

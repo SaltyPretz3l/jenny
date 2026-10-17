@@ -19,20 +19,26 @@ const fixture = require('./fixtures/resumed-paused-turn-session.json');
 const BUDGET_STOP = "Stopped: this turn's context budget is used up. Reply 'resume' to continue.";
 const BUSY = /Wait for the current response to finish/;
 
-// The gate's memory suggestion call outlived a frame; this one does too.
-function makeSlowMemorySuggestion(tracker) {
-  return async function slowMemorySuggestion() {
-    await new Promise((resolve) => { setTimeout(resolve, 200); });
-    tracker.settled += 1;
-    return { suggestions: [] };
+// The gate's terminal postwork outlived a frame; the postwork session-list
+// refresh is slowed so this one does too.
+function slowSessionList(list, tracker) {
+  return async function slowList(...args) {
+    tracker.pending += 1;
+    try {
+      const result = await list(...args);
+      await new Promise((resolve) => { setTimeout(resolve, 200); });
+      return result;
+    } finally {
+      tracker.pending -= 1;
+      tracker.settled += 1;
+    }
   };
 }
 
 async function loadApp(t, { sessionId, streamId, turnId, flags }) {
-  const memoryTracker = { settled: 0 };
+  const postworkTracker = { pending: 0, settled: 0 };
   const app = await loadRendererApp({ shell: {
     ...(flags ? { features: { state: { featureFlags: flags } } } : {}),
-    memory: { suggestForSession: makeSlowMemorySuggestion(memoryTracker) },
     chat: {
       async startStream(_payload, { state }) {
         state.sessions = [{ id: sessionId, title: sessionId, conversation_mode: 'chat', preferred_model: 'gpt-test',
@@ -44,16 +50,17 @@ async function loadApp(t, { sessionId, streamId, turnId, flags }) {
     },
   } });
   t.after(() => app.dispose());
-  app.memoryTracker = memoryTracker;
+  app.shell.sessions.list = slowSessionList(app.shell.sessions.list, postworkTracker);
+  app.postworkTracker = postworkTracker;
   return app;
 }
 
-// The regression lives in the window AFTER terminal postwork (the slow memory
-// suggestion round-trip) closes, so wait for that round-trip to return and for
+// The regression lives in the window AFTER terminal postwork (the slow session
+// list round-trip) closes, so wait for that round-trip to return and for
 // Resume to enable before asserting, rather than sleeping a fixed time.
 async function waitForPostworkSettled(app, window) {
-  await waitForUiState(window, () => app.memoryTracker.settled >= 1, {
-    timeoutMs: 5000, message: 'terminal postwork (memory suggestion round-trip) never returned.',
+  await waitForUiState(window, () => app.postworkTracker.settled >= 1 && app.postworkTracker.pending === 0, {
+    timeoutMs: 5000, message: 'terminal postwork (session list round-trip) never returned.',
   });
   await waitForUiState(window, () => {
     const resume = window.document.querySelector('#chatTimeline .resume-turn-action');

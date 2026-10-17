@@ -85,6 +85,23 @@ test('the boundary does not flip-flop: the verify frame re-collapses when a labe
   assert.deepEqual(applied, [true, false, true]);
 });
 
+test('space reclaimed by compact mode cannot repeatedly trigger expansion', () => {
+  const { fit, env, frames, applied, observers, flush } = createRig({ available: 640, needed: 680 });
+  frames.shift()();
+  assert.equal(fit.isCompact(), true);
+  env.available = 710; // hiding the sprite gives the composer 70px back
+  flush();
+  for (let index = 0; index < 10; index += 1) { observers[0].fire(); flush(); }
+  assert.deepEqual(applied, [true]);
+  env.available = 750; // enough room even after restoring the sprite gutter
+  observers[0].fire();
+  frames.shift()();
+  assert.equal(fit.isCompact(), false);
+  env.available = 680;
+  flush();
+  assert.deepEqual(applied, [true, false]);
+});
+
 test('a burst of resizes and rechecks measures once per frame', () => {
   const { fit, env, flush, observers } = createRig({ available: 800, needed: 600 });
   flush();
@@ -112,7 +129,7 @@ test('a toolbar in the dock collapses like the chat view', () => {
   flush();
   assert.equal(fit.isCompact(), true);
   assert.deepEqual(applied, [true]);
-  assert.equal(env.measures, 1);
+  assert.equal(env.measures, 2, 'one expanded read and one reclaimed-space read');
 });
 
 test('a host change forgets the remembered width', () => {
@@ -126,6 +143,7 @@ test('a host change forgets the remembered width', () => {
   assert.deepEqual(applied, [true, false]);
   frames.shift()();
   assert.equal(fit.isCompact(), true, 'the verify frame decides using the new host');
+  flush(); // settle the new host's compact width before the next resize
   env.available = env.needed = 550;
   fit.recheck();
   flush();

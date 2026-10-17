@@ -11,6 +11,8 @@ so a model advertised an indexed skill has no tool that can actually reach
 its SKILL.md. This module is the dedicated, workspace-guard-free read path
 for exactly that file: it resolves strictly against the configured skill
 scope roots, never against the tools workspace root or an arbitrary path.
+An optional ``reference`` reads one ``references/<file>.md`` beside that
+SKILL.md, bounded the same way and confined to the skill's own directory.
 """
 
 from __future__ import annotations
@@ -51,6 +53,9 @@ SCOPE_PRECEDENCE: tuple[str, ...] = ("bundled", "user", "project")
 _SAFE_NAME_RE = re.compile(
     rf"^[A-Za-z0-9_][A-Za-z0-9._-]*(?:/[A-Za-z0-9_][A-Za-z0-9._-]*){{0,{MAX_SKILL_DEPTH - 1}}}$"
 )
+# Exactly one file segment under the skill's ``references/`` directory; matched
+# with ``fullmatch`` so a trailing newline cannot slip past the anchor.
+_REFERENCE_RE = re.compile(r"references/[A-Za-z0-9_][A-Za-z0-9._-]{0,63}\.md")
 
 
 @dataclass(frozen=True)
@@ -205,6 +210,57 @@ def _resolve_skill_path(scope_root: _SkillScopeRoot, name: str) -> Path | None:
     return skill_path if skill_path.is_file() else None
 
 
+def _validated_reference(raw_reference: object) -> str | None:
+    """Check the optional ``reference`` argument before any filesystem access."""
+    if raw_reference is None or raw_reference == "":
+        return None
+    if not isinstance(raw_reference, str) or not _REFERENCE_RE.fullmatch(raw_reference):
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_INVALID_PATH,
+            message=(
+                f"invalid skill reference {raw_reference!r}: expected references/<file>.md "
+                "(one file name of letters, digits, '.', '_' or '-' under the skill's "
+                "references/ directory; no '..', subdirectory, backslash or absolute path)"
+            ),
+            retryable=False,
+        )
+    return raw_reference
+
+
+def _resolve_reference_path(
+    scope_root: _SkillScopeRoot, name: str, skill_path: Path, reference: str
+) -> Path:
+    """Resolve ``<skill dir>/<reference>`` and keep it inside the skill directory."""
+    skill_dir = skill_path.parent  # already resolved by _resolve_skill_path
+    missing = ToolExecutionFailure(
+        code=CMP_TOOL_SKILL_NOT_FOUND,
+        message=(
+            f"unknown skill reference {reference!r} for {scope_root.scope}/{name}. "
+            "Load only the references/<file>.md paths named in that skill's SKILL.md."
+        ),
+        retryable=False,
+    )
+    # The directory is checked before the file so a link pointing outside
+    # the skill is refused without probing what exists at its target.
+    for candidate in ((skill_dir / reference).parent, skill_dir / reference):
+        try:
+            resolved = candidate.resolve(strict=True)
+        except (OSError, RuntimeError):
+            raise missing from None
+        if not resolved.is_relative_to(skill_dir):
+            raise ToolExecutionFailure(
+                code=CMP_TOOL_INVALID_PATH,
+                message=(
+                    f"skill reference {reference!r} for {scope_root.scope}/{name} "
+                    "resolves outside the skill directory"
+                ),
+                retryable=False,
+            )
+    if not resolved.is_file():
+        raise missing
+    return resolved
+
+
 def load_skill_tool(
     arguments: dict[str, object],
     workspace: WorkspaceGuard,
@@ -234,6 +290,7 @@ def load_skill_tool(
             message=f"invalid scope {requested_scope!r}: expected one of {SCOPE_PRECEDENCE}",
             retryable=False,
         )
+    reference = _validated_reference(arguments.get("reference"))
 
     _scope_roots_for_call, disabled_ids = _active_skill_state()
     for scope_root in _candidate_scopes(requested_scope):
@@ -242,6 +299,15 @@ def load_skill_tool(
         skill_path = _resolve_skill_path(scope_root, name)
         if skill_path is None:
             continue
+        if reference is not None:
+            reference_path = _resolve_reference_path(scope_root, name, skill_path, reference)
+            # The read re-checks containment against the skill directory, not the
+            # whole scope, so a link swapped in after validation cannot reach a
+            # sibling skill (Astra W2 F2).
+            return _read_skill(
+                scope_root, name, reference_path, reference=reference,
+                authorized_root=skill_path.parent,
+            )
         return _read_skill(scope_root, name, skill_path)
 
     available = _available_skill_labels()
@@ -257,27 +323,37 @@ def load_skill_tool(
     )
 
 
-def _read_skill(scope_root: _SkillScopeRoot, name: str, skill_path: Path) -> ToolHandlerResult:
+def _read_skill(
+    scope_root: _SkillScopeRoot,
+    name: str,
+    skill_path: Path,
+    *,
+    reference: str | None = None,
+    authorized_root: Path | None = None,
+) -> ToolHandlerResult:
     read_result = read_bounded_context_text(
         skill_path,
-        authorized_root=scope_root.root,
+        authorized_root=scope_root.root if authorized_root is None else authorized_root,
         max_bytes=MAX_SKILL_FILE_BYTES,
         truncate=True,
     )
     if read_result.text is None:
+        target = f"skill {name!r}"
+        if reference is not None:
+            target = f"skill reference {reference!r} of {name!r}"
         raise ToolExecutionFailure(
             code=CMP_TOOL_IO_FAILED,
-            message=f"failed to read skill {name!r}: {read_result.reason or 'unknown error'}",
+            message=f"failed to read {target}: {read_result.reason or 'unknown error'}",
             retryable=True,
         )
     output = read_result.text
     if read_result.truncated:
         output += f"\n\n[skill content truncated at {MAX_SKILL_FILE_BYTES} bytes]"
-    return ToolHandlerResult(
-        output=output,
-        metadata={
-            "scope": scope_root.scope,
-            "name": name,
-            "truncated": read_result.truncated,
-        },
-    )
+    metadata: dict[str, object] = {
+        "scope": scope_root.scope,
+        "name": name,
+        "truncated": read_result.truncated,
+    }
+    if reference is not None:
+        metadata["reference"] = reference
+    return ToolHandlerResult(output=output, metadata=metadata)

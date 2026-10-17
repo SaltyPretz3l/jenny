@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Callable
 from dataclasses import replace
+from typing import Any
 
 from sidecar.ai.error_codes import CMP_LOOP_INVALID_TOOL_CALL
 from sidecar.ai.routing.provider_tool_limits import (
@@ -15,7 +18,7 @@ from sidecar.ai.routing.provider_tool_limits import (
     tool_call_id_diagnostic_label,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure, canonicalize_tool_arguments
-from sidecar.ai.tools.models import ToolCallRequest
+from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
 from sidecar.ai.tools.plan_artifact_policy import strip_plan_artifact_write_arg
 
 MODEL_TOOL_ID_ALIASES: dict[str, str] = {
@@ -251,3 +254,37 @@ __all__ = [
     "repair_web_search_query_arguments",
     "validate_provider_tool_call_limits",
 ]
+
+
+def canonicalize_generation_result(
+    result: GenerationResult, *, request_id: str,
+    log_event: Callable[..., Any], logger: logging.Logger,
+) -> GenerationResult:
+    """Normalize a completed stream's calls and retain the existing diagnostic record."""
+    if result.tool_calls:
+        canonical_calls, coerced_aliases, coalesced_count = (
+            canonicalize_tool_calls(
+                result.tool_calls
+            )
+        )
+        if canonical_calls != result.tool_calls:
+            result = replace(
+                result,
+                tool_calls=canonical_calls,
+            )
+        if coerced_aliases or coalesced_count:
+            log_event(
+                logger,
+                logging.INFO,
+                component="ai.router",
+                event="ai.router.tool_calls_canonicalized",
+                message="Canonicalized model tool calls before dispatch.",
+                status="recovered",
+                data={
+                    "aliases": coerced_aliases,
+                    "coalesced_count": coalesced_count,
+                    "remaining_count": len(result.tool_calls),
+                },
+                request_id=request_id,
+            )
+    return result

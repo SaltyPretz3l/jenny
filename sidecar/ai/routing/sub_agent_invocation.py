@@ -354,13 +354,14 @@ def _format_delegation_contract_message(contract: dict[str, Any]) -> dict[str, o
     }
 
 
-def _child_loop_runtime(
+def _child_loop_runtime(  # noqa: PLR0913 - explicit isolated child runtime dependencies.
     *,
     parent_runtime: Any | None,
     child_context: ChatRequestContext,
     child_cancel: TurnCancellationHandle,
     max_runtime_ms: int | None,
     absolute_deadline: float | None = None,
+    event_sink: Any | None = None,
 ) -> _loop_runtime.LoopRuntime:
     try:
         max_iterations = int(child_context.sub_agent_iteration_budget or 10)
@@ -394,6 +395,7 @@ def _child_loop_runtime(
 
             child_inference_admission = _refuse_unbound_child
     return _loop_runtime.LoopRuntime(
+        **({'emit': event_sink, 'streaming': True} if event_sink is not None else {}),
         request_id=child_context.request_id,
         trace_id=child_context.trace_id or "",
         session_id=child_context.session_id or "",
@@ -656,6 +658,7 @@ def invoke_sub_agent(  # noqa: PLR0913
     slot_lease: SubAgentSlotLease | None = None,
     report_mode: str = SUB_AGENT_REPORT_MODE_STRUCTURED,
     absolute_deadline: float | None = None,
+    event_sink: Any | None = None,
 ) -> SubAgentInvocationResult:
     if int(parent_context.agent_depth or 0) >= 1:
         return SubAgentInvocationResult(
@@ -709,6 +712,7 @@ def invoke_sub_agent(  # noqa: PLR0913
         child_cancel=child_cancel,
         max_runtime_ms=max_runtime_ms,
         absolute_deadline=absolute_deadline,
+        event_sink=event_sink,
     )
     child_messages = [_format_delegation_contract_message(delegation_contract), *messages]
     try:

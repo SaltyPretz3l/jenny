@@ -564,6 +564,9 @@ test('electron session store round-trips subagent steps and answer and drops unk
       call_id: 'call-steps', tool_name: 'subagent_run', output_text: '{}',
       metadata: { subagent_report: {
         task_id: 'child-steps', label: 'Inspect persistence', status: 'completed', summary: 'Done.',
+        model: 'codex-cli/gpt-test', provider: 'codex-cli', reasoning_effort: 'low',
+        child_activity: { sequence: 8, text: 'ephemeral commentary' },
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
         evidence: [], tools_used: [], uncertainties: [], budget: { elapsed_ms: 900 },
         answer: '## Findings\n\nThe store persists reports.',
         steps: [
@@ -577,6 +580,10 @@ test('electron session store round-trips subagent steps and answer and drops unk
   const reloaded = new ElectronSessionStore(storePath);
   const report = reloaded.getSessionMessages(created.id)[0].tool_result.metadata.subagent_report;
   assert.equal(report.answer, '## Findings\n\nThe store persists reports.');
+  assert.equal(report.model, 'codex-cli/gpt-test');
+  assert.equal(report.reasoning_effort, 'low');
+  assert.equal(report.usage.total_tokens, 15);
+  assert.equal(report.child_activity, undefined);
   assert.deepEqual(report.steps, [
     { tool: 'read_file', display: 'Read File', ok: true, target: 'services/store.js' },
     { tool: 'read_file', display: 'Read File', ok: false, error_code: 'CMP-TOOL-0001', detail: 'Denied' },

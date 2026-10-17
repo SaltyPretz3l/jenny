@@ -12,6 +12,10 @@
 
 const path = require('path');
 const test = require('node:test');
+const { holdEventLoopUntilTestsFinish } = require('./helpers/event-loop-hold');
+
+// Service wait timers are unref'd on purpose; Node 22's runner would drain the loop under them.
+holdEventLoopUntilTestsFinish(test);
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('events');
 
@@ -181,6 +185,8 @@ test('resolveExtraEnv is read at every spawn; an empty value drops an inherited 
   const { manager, spawnCalls } = buildManager({
     ctor: { resolveExtraEnv: () => extra, gracefulStopTimeoutMs: 1, forcedStopTimeoutMs: 1 },
   });
+  const realKill = process.kill; t.after(() => { process.kill = realKill; }); // pid 4242 can alias a live host pid (Windows rounds pids to 4): pin the probe
+  process.kill = (pid, sig) => { if (pid === 4242 && sig === 0) throw Object.assign(new Error('gone'), { code: 'ESRCH' }); return realKill.call(process, pid, sig); };
 
   await manager.start();
   assert.equal(spawnCalls[0].options.env.JENNY_SIDECAR_PDF_ADDON_DIR, undefined);

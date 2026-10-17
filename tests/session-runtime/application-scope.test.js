@@ -173,12 +173,12 @@ test('session memory writes use canonical project metadata and ignore candidate 
       calls.push({ method, params });
       if (method === 'memory.save') return { created: true, memory: { id: 1 } };
       if (method === 'memory.pending.delete') return { deleted: true };
-      return { suggestions: [] };
+      if (method === 'memory.pending.accept') return { accepted: true, status: 'saved', memory: { id: 2 } };
+      return {};
     },
     dispose() {},
   };
 
-  await service.suggestMemoriesForSession(session.id);
   await service.saveMemoryForSession(session.id, {
     title: 'Scoped',
     lesson_text: 'Keep this project local.',
@@ -187,20 +187,21 @@ test('session memory writes use canonical project metadata and ignore candidate 
     project_id: 'project_attacker',
   });
   await service.deletePendingMemory(session.id, 'same-fingerprint');
+  await service.acceptPendingMemory(session.id, 'same-fingerprint');
 
   assert.deepEqual(calls.map((entry) => [entry.method, entry.params.project_id]), [
-    ['memory.suggest', project.id],
     ['memory.save', project.id],
     ['memory.pending.delete', project.id],
+    ['memory.pending.accept', project.id],
   ]);
-  assert.equal(Object.hasOwn(calls[1].params.candidate, 'project_id'), false);
+  assert.equal(Object.hasOwn(calls[0].params.candidate, 'project_id'), false);
 });
 
-test('global memory inspection spans every project and dismissed fingerprints stay project-local', async (t) => {
+test('global memory inspection spans every project', async (t) => {
   const { service } = createService();
   t.after(() => service.dispose());
-  const alpha = await createProjectSession(service, 'Alpha');
-  const beta = await createProjectSession(service, 'Beta');
+  await createProjectSession(service, 'Alpha');
+  await createProjectSession(service, 'Beta');
   const calls = [];
   service.sidecarClient = {
     async request(method, params) {
@@ -216,13 +217,6 @@ test('global memory inspection spans every project and dismissed fingerprints st
     ['memory.list', 'all', undefined],
     ['memory.pending.list', 'all', undefined],
   ]);
-
-  service.dismissMemorySuggestion(alpha.session.id, 'shared-fingerprint');
-  assert.equal(service.isMemorySuggestionDismissed(alpha.session.id, 'shared-fingerprint'), true);
-  assert.equal(service.isMemorySuggestionDismissed(beta.session.id, 'shared-fingerprint'), false);
-  service.dismissMemorySuggestion('shared-fingerprint');
-  assert.equal(service.isMemorySuggestionDismissed('shared-fingerprint'), true);
-  assert.equal(service.isMemorySuggestionDismissed(beta.session.id, 'shared-fingerprint'), false);
 });
 
 test('malformed current session scope remains inspectable and cannot authorize General', async (t) => {
@@ -250,7 +244,7 @@ test('malformed current session scope remains inspectable and cannot authorize G
 
   assert.equal(reopened.sessionStore.getSessionSummary(sessionId).project_id, '../malformed');
   await assert.rejects(
-    reopened.suggestMemoriesForSession(sessionId),
+    reopened.saveMemoryForSession(sessionId, { title: 'Probe', lesson_text: 'Probe.', lesson_kind: 'preference' }),
     (error) => error.code === PROJECT_ERROR_CODES.INVALID && error.reason === 'invalid_project_id'
   );
 });

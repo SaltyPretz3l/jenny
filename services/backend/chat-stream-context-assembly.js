@@ -1,4 +1,7 @@
 const path = require('node:path');
+const { buildMemoryPolicy } = require('./backend-memory');
+const { visibleChatPredicate } = require('./memory-reflection-eligibility');
+const { GENERAL_PROJECT_ID, normalizeProjectId } = require('../projects/project-schema');
 
 const {
   buildLinkedSessionContext,
@@ -47,6 +50,22 @@ function scopeAutomaticFileContext(activeFileContext, mentionContents, authority
   return { activeFileContext: active, mentionContents: mentions };
 }
 
+function recentChatCandidates(service, sessionId, projectId) {
+  const project = normalizeProjectId(projectId) || GENERAL_PROJECT_ID;
+  const candidates = [];
+  let visibleChat = null;
+  for (const summary of service.sessionStore?.listSessions?.() || []) {
+    if (typeof summary?.id !== 'string' || !summary.id.trim() || summary.id === sessionId
+      || !(summary.message_count > 0)
+      || (normalizeProjectId(summary.project_id) || GENERAL_PROJECT_ID) !== project) continue;
+    visibleChat ??= visibleChatPredicate(service);
+    if (!visibleChat(summary)) continue;
+    candidates.push({ session_id: summary.id, title: typeof summary.title === 'string' ? summary.title.slice(0, 200) : '' });
+    if (candidates.length === 6) break;
+  }
+  return candidates;
+}
+
 function summarizeTextBlock(text) {
   const normalized = String(text || '');
   if (!normalized) {
@@ -68,7 +87,6 @@ async function assembleContextForChat(service, options) {
     sessionSummary,
     prompt,
     recentUserTurns,
-    promptHasExplicitStyleInstruction,
     preparedMessages,
     recallQuery,
     logTiming,
@@ -95,7 +113,18 @@ async function assembleContextForChat(service, options) {
     && contextPreferences.include_personality !== false
     && service.personalityWorkspace
     && typeof service.personalityWorkspace.getCompiledContext === 'function';
-  const shouldIncludeMemory = contextPreferences.include_memory !== false;
+  const memoryPolicy = buildMemoryPolicy(service, {
+    includeMemory: contextPreferences.include_memory !== false,
+    memoryOptOut: contextPreferences.memory_opt_out === true,
+    projectId: projectAuthority.project_id,
+  });
+  // Row 58 W3 recap lines; the memory_v2 kill switch turns them off with the rest.
+  if (memoryPolicy.recall && contextPreferences.history_scope !== 'fresh'
+    && service.featureFlags?.memory_v2_enabled === true) {
+    const candidates = recentChatCandidates(service, resolvedSessionId, memoryPolicy.project_id);
+    if (candidates.length) memoryPolicy.recent_chats = candidates;
+  }
+  const shouldIncludeMemory = memoryPolicy.recall;
   const shouldIncludeGitContext =
     contextPreferences.include_git_context !== false && Boolean(projectRoot);
   // Codebase grounding ("local RAG-lite") is opt-in: gated behind the
@@ -241,11 +270,8 @@ async function assembleContextForChat(service, options) {
   // Summary marker: when the parallel block settled, plus a breakdown
   // of each task's elapsed time. This single DEBUG line makes it trivial
   // to see which of the four was the critical-path task for this turn.
-  // memoryMs is the wall-clock elapsed of the whole memory block; because
-  // memory.recall and memory.recall_recent now run in parallel, memoryMs
-  // ≈ max(recallMs, recentMs) + small overhead. memoryRecallMs and
-  // memoryRecentMs are extracted from the memory block's payload so we
-  // can attribute remaining variance to one RPC vs the other.
+  // The memory fields stay 0: memory recall runs inside the sidecar from the
+  // memory_policy this function returns, not in this parallel block.
   const contextAssemblyBreakdown = {
     parallelElapsedMs: Math.max(Date.now() - parallelStartedAt, 0),
     personalityMs: elapsedFor(personalityResult),
@@ -307,7 +333,8 @@ async function assembleContextForChat(service, options) {
   const candidateBlocks = [
     { kind: 'active_file', content: activeFileContextBlock, priority: 100, shrinkable: true },
     { kind: 'git', content: gitContext, priority: 80, shrinkable: true },
-    { kind: 'personality', content: personalityContext, priority: 70, shrinkable: true },
+    // Never tail-shrunk: the trimmer drops whole `### ` sections (Notes first).
+    { kind: 'personality', content: personalityContext, priority: 70, shrinkable: false },
     { kind: 'codebase', content: codebaseContext, priority: 60, shrinkable: true },
     {
       kind: 'linked_session',
@@ -327,7 +354,7 @@ async function assembleContextForChat(service, options) {
     candidateBlocks,
     availableForBlocks
   );
-  if (trimDecisions.some((d) => d.action === 'drop' || d.action === 'shrink')) {
+  if (trimDecisions.some((d) => d.action !== 'keep')) {
     service._emitServiceLog('INFO', 'chat.context_budget_trimmed', {
       sessionId: resolvedSessionId,
       streamId,
@@ -411,16 +438,14 @@ async function assembleContextForChat(service, options) {
     service._emitServiceLog('INFO', 'memory.recall_skipped', {
       sessionId: resolvedSessionId,
       streamId,
-      reason: 'context_preferences_include_memory_disabled',
+      reason: contextPreferences.include_memory === false
+        ? 'context_preferences_include_memory_disabled'
+        : 'memory_settings_use_in_chats_disabled',
     });
   }
 
   return {
-    memoryPolicy: {
-      enabled: shouldIncludeMemory,
-      include_response_style: !promptHasExplicitStyleInstruction,
-      project_id: projectAuthority.project_id,
-    },
+    memoryPolicy,
     promptContributions,
     contextAssemblyBreakdown,
     contextBlocks: normalizedContextBlocks,

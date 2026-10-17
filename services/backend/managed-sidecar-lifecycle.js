@@ -1,5 +1,6 @@
 const { HOST_ERROR_CODES, TOOL_ERROR_CODES } = require('./error-codes');
 const { SidecarClient } = require('./sidecar-client');
+const { REQUESTED_CHAT_WORKSPACE_CAPABILITIES } = require('./chat-workspace-capabilities');
 const {
   handleMonitorNotification,
 } = require('./monitor-event-service');
@@ -127,6 +128,7 @@ async function initializeManagedSidecar(
     config: buildManagedSidecarConfig(service, { telemetrySettings }),
     secrets: buildManagedSidecarSecrets(service, { telemetrySettings }),
     clientVersion: service.appVersion,
+    chatWorkspaceCapabilities: REQUESTED_CHAT_WORKSPACE_CAPABILITIES,
   }, {
     signal,
     timeoutMs,
@@ -178,13 +180,13 @@ async function initializeManagedSidecar(
     void service.sessionRuntime?.recoverPausedCancellations?.().then(result => {
       if (result.requested) service._emitServiceLog('INFO', 'session_runtime.paused_cancellation_recovery', result);
     }).catch(() => service._emitServiceLog('ERROR', 'session_runtime.paused_cancellation_recovery_failed', {}));
-    // A project delete whose memory move was never answered is finished now
+    // A project delete whose memory archive was never answered is finished now
     // that a sidecar can answer (project-delete-operation.js).
     void Promise.resolve(service.projectApplicationService?.reconcilePendingProjectDeletes?.()).then(result => {
       if (result?.settled || result?.discarded || result?.pending) {
-        service._emitServiceLog('INFO', 'projects.delete_memory_move_recovery', result);
+        service._emitServiceLog('INFO', 'projects.delete_memory_archive_recovery', result);
       }
-    }).catch(() => service._emitServiceLog('ERROR', 'projects.delete_memory_move_recovery_failed', {}));
+    }).catch(() => service._emitServiceLog('ERROR', 'projects.delete_memory_archive_recovery_failed', {}));
   }
   return applyResult ? applyManagedInitializePayload(service, payload) : payload;
 }

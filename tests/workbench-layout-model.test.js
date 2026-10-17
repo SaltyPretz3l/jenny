@@ -36,7 +36,7 @@ test('createDefaultLayout builds the mockup tree', () => {
   assertValid(layout);
   assert.equal(
     shape(layout.root),
-    'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output!),chat+changes!)',
+    'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output+activity!),chat+changes!)',
   );
   const [left, mid, dock] = layout.root.children;
   assert.equal(left.size, 300);
@@ -151,7 +151,7 @@ test('fromLegacy (b) secondary open sits between the editor column and the dock'
   assertValid(layout);
   assert.equal(
     shape(layout.root),
-    'row(explorer+search,col(E,terminal+problems+run+test-runner+test-output),source-control,chat+changes)',
+    'row(explorer+search,col(E,terminal+problems+run+test-runner+test-output+activity),source-control,chat+changes)',
   );
   assert.deepEqual(
     layout.root.children.map((c) => c.size),
@@ -170,7 +170,7 @@ test('fromLegacy (b2) rail right puts the secondary on the opposite edge', () =>
   assertValid(layout);
   assert.equal(
     shape(layout.root),
-    'row(source-control,col(E,terminal+problems+run+test-runner+test-output!),explorer+search,chat+changes)',
+    'row(source-control,col(E,terminal+problems+run+test-runner+test-output+activity!),explorer+search,chat+changes)',
   );
 });
 
@@ -184,7 +184,7 @@ test('fromLegacy (c) dock left with rail left keeps the dock outermost', () => {
   assertValid(layout);
   assert.equal(
     shape(layout.root),
-    'row(chat+changes,explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output!))',
+    'row(chat+changes,explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output+activity!))',
   );
   assert.equal(layout.root.children[0].size, 400);
 });
@@ -200,7 +200,7 @@ test('fromLegacy dock left with rail right and open secondary orders every colum
   assertValid(layout);
   assert.equal(
     shape(layout.root),
-    'row(chat+changes!,search+source-control,col(E,terminal+problems+run+test-runner+test-output!),explorer)',
+    'row(chat+changes!,search+source-control,col(E,terminal+problems+run+test-runner+test-output+activity!),explorer)',
   );
   assert.equal(findStack(layout, findView(layout, 'search').stackId).active, 'source-control');
 });
@@ -213,7 +213,7 @@ test('fromLegacy (d) everything secondary forces explorer back into the rail', (
   assertValid(open);
   assert.equal(
     shape(open.root),
-    'row(explorer,col(E,terminal+problems+run+test-runner+test-output!),search+source-control,chat+changes!)',
+    'row(explorer,col(E,terminal+problems+run+test-runner+test-output+activity!),search+source-control,chat+changes!)',
   );
   assert.equal(stackOf(open, 'search').active, 'search');
 
@@ -221,7 +221,7 @@ test('fromLegacy (d) everything secondary forces explorer back into the rail', (
   assertValid(closed);
   assert.equal(
     shape(closed.root),
-    'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output!),chat+changes!)',
+    'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output+activity!),chat+changes!)',
   );
 });
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from sidecar.ai.error_codes import CMP_TSRCH_DEFERRED_TOOL
 from sidecar.ai.mode_policy import MODE_ASSIST
 from sidecar.ai.tools.assembly import (
@@ -32,6 +34,27 @@ from sidecar.ai.tools.catalog import (
     manifest_descriptors,
 )
 from sidecar.ai.tools.tool_search import ToolResolutionContext, build_search_index
+
+
+@pytest.mark.parametrize("config, available", [
+    (SimpleNamespace(), True),
+    ({}, True),
+    (SimpleNamespace(feature_flags={"compaction_recall_tool": False}), False),
+    ({"feature_flags": {"compaction_recall_tool": False}}, False),
+])
+def test_recall_availability_is_default_on_and_never_deferred(config, available) -> None:
+    recall = next(item for item in manifest_descriptors() if item.name == "recall_tool_output")
+    resolution = ToolResolutionContext(
+        deferred_names=frozenset({recall.name}), budget_filtered_names=frozenset({recall.name}),
+    )
+    contract = assemble_tool_contract((recall,), ToolAssemblyContext(
+        surface=MANAGED_SIDECAR_SURFACE, config=config, resolution_context=resolution, mode="assist",
+    ))
+    entry = contract.entry(recall.name)
+    assert entry is not None
+    assert entry.available is available
+    assert entry.deferred is False
+    assert bool(entry.prompt_schema) is available
 
 
 def test_runtime_status_preserves_connection_and_side_effect_metadata() -> None:

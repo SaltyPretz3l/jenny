@@ -6,21 +6,18 @@ const { createLogRenderer } = require('../renderer/shell/renderer-diagnostics-re
 const { buildTraceTimingMarkup } = require('../renderer/shell/renderer-observability-markup-utils');
 
 function paintInventory(t, render = createLogRenderer) {
-  const dom = new JSDOM(['diagnosticsRuntimeInventory', 'diagnosticsOverall', 'diagnosticsSourceCoverage',
-    'performanceAnomaliesContainer'].map((id) => `<div id="${id}"></div>`).join(''));
+  const dom = new JSDOM(['diagnosticsRuntimeInventory', 'diagnosticsOverall'].map((id) => `<div id="${id}"></div>`).join(''));
   const previous = { document: global.document, window: global.window };
   Object.assign(global, { document: dom.window.document, window: dom.window });
   let paint;
   dom.window.requestAnimationFrame = (callback) => { paint = callback; return 1; };
   const state = {
     ui: { activeView: 'logs', logs: { activeTab: 'overview' } }, logs: [],
-    diagnosticsStatus: { backend: { phase: 'ready' }, slow_operations: { available: true, items: [
-      { id: 'read_file', observed_ms: 20, threshold_ms: 10 },
-    ] } },
-    diagnosticsSnapshot: { active_run: { run_id: 'current' }, sources: {
+    diagnosticsStatus: { backend: { phase: 'ready' } },
+    diagnosticsSnapshot: { active_run: { run_id: 'current', sources: {
       electron: { state: 'observed', count: 1, dropped: 2 },
       renderer: { state: 'observed', count: 1 }, sidecar: { state: 'observed', count: 1 },
-    }, integrity: { complete: true } },
+    }, integrity: { complete: true } } },
     harness: { snapshot: { shell: { companion: { mode: 'planner' } } } },
   };
   const renderer = render({ state });
@@ -34,24 +31,28 @@ function valueFor(host, label) {
   return Array.from(host.querySelectorAll('dt')).find((node) => node.textContent === label)?.nextElementSibling;
 }
 
-test('Inventory uses product wording, retains technical identifiers in titles and has no plugin rows', (t) => {
+test('Runtime facts use product wording, keep technical identifiers in titles and have no shell or plugin rows', (t) => {
   const host = paintInventory(t);
-  assert.doesNotMatch(host.textContent, /Companion/);
-  assert.equal(valueFor(host, 'Shell').textContent, 'Planner');
-  assert.match(valueFor(host, 'Shell').title, /planner/);
+  assert.doesNotMatch(host.textContent, /Companion|Planner/);
+  assert.equal(valueFor(host, 'Shell'), undefined, 'the shell row restated settings and is gone');
+  assert.equal(valueFor(host, 'App').title, 'electron');
+  assert.equal(valueFor(host, 'Local engine').title, 'sidecar');
   for (const label of ['Plugins', 'Recovery', 'Distribution']) assert.equal(valueFor(host, label), undefined);
 });
 
-test('Overview inventory, source counts, and performance copy use translation keys', (t) => {
+test('Overview status line, runtime facts and record counts use translation keys', (t) => {
+  // Every module that captures the translator at load time is loaded again under the stub.
   const paths = ['../renderer/shell/renderer-diagnostics-render-utils',
+    '../renderer/shell/renderer-diagnostics-overview', '../renderer/shell/renderer-diagnostics-runtime-facts',
+    '../renderer/shell/renderer-diagnostics-activity', '../renderer/shell/renderer-diagnostics-format',
     '../renderer/shell/renderer-diagnostics-performance-utils'].map(require.resolve);
   const cached = paths.map((path) => require.cache[path]);
   const previous = global.jennyI18n;
   const translations = {
     'diagnostics.inventory.workspace': 'Espace',
-    'diagnostics.source.events': 'Evenements',
+    'diagnostics.facts.recordsThisLaunch': 'Enregistrements de ce lancement',
     'diagnostics.source.droppedCount': '{count} perdus',
-    'diagnostics.performance.observedAndTarget': '{observed} mesure / {target} cible',
+    'diagnostics.status.working': 'Jenny fonctionne',
   };
   global.jennyI18n = { t: (key, fallback, params = {}) => (translations[key] || fallback)
     .replace(/\{(\w+)\}/g, (match, name) => params[name] ?? match) };
@@ -64,9 +65,9 @@ test('Overview inventory, source counts, and performance copy use translation ke
   const host = paintInventory(t, localized.createLogRenderer);
   assert.ok(valueFor(host, 'Espace'));
   const doc = host.ownerDocument;
-  assert.match(doc.getElementById('diagnosticsSourceCoverage').textContent, /Evenements/);
-  assert.match(doc.querySelector('.diagnostics-source-drop').textContent, /2 perdus/);
-  assert.match(doc.getElementById('performanceAnomaliesContainer').textContent, /20ms mesure \/ 10ms cible/);
+  assert.equal(doc.querySelectorAll('.diagnostics-group h4')[2].textContent, 'Enregistrements de ce lancement');
+  assert.match(valueFor(host, 'App').textContent, /2 perdus/);
+  assert.equal(doc.querySelector('#diagnosticsOverall h3').textContent, 'Jenny fonctionne');
 });
 
 test('trace timing preserves explicit null durations as unavailable while real zero stays zero', (t) => {
@@ -74,15 +75,13 @@ test('trace timing preserves explicit null durations as unavailable while real z
     { stream_id: 'unknown', duration_ms: null, provider_timing: {
       time_to_first_chunk_ms: null, time_to_first_visible_token_ms: null, request_duration_ms: null,
     } },
-    { stream_id: 'zero', duration_ms: 0, provider_timing: { time_to_first_chunk_ms: 0 } },
-  ] }, new Set(['unknown'])));
+    { stream_id: 'zero', duration_ms: 0, provider_timing: { time_to_first_visible_token_ms: 0 } },
+  ] }));
   t.after(() => dom.window.close());
-  const unknown = dom.window.document.querySelector('[data-trace-stream="unknown"]');
-  assert.equal(unknown.querySelector('.observability-trace-duration').textContent, '\u2014');
-  assert.doesNotMatch(unknown.textContent, /\b0ms\b/);
-  assert.match(unknown.querySelector('.observability-trace-meta').textContent, /\u2014/);
-  const total = Array.from(unknown.querySelectorAll('.observability-trace-detail-row'))
-    .find((row) => row.firstElementChild.textContent === 'Total request');
-  assert.equal(total.lastElementChild.textContent, '\u2014');
-  assert.equal(dom.window.document.querySelector('[data-trace-stream="zero"] .observability-trace-duration').textContent, '0ms');
+  const rows = new Map(Array.from(dom.window.document.querySelectorAll('tbody tr'))
+    .map((row) => [row.querySelector('[data-observability-trace]').getAttribute('data-observability-trace'), row]));
+  const durations = (id) => Array.from(rows.get(id).cells).slice(2, 4).map((cell) => cell.textContent);
+  assert.deepEqual(durations('unknown'), ['\u2014', '\u2014']);
+  assert.doesNotMatch(rows.get('unknown').textContent, /\b0 ?ms\b/);
+  assert.deepEqual(durations('zero'), ['0 ms', '0 ms']);
 });

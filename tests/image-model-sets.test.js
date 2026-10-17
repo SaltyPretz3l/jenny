@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const {
-  SLOTS, loadFamilies, familyForArchitecture, scanModelFolder, saveModelSet,
+  REQUIRED_SLOTS, loadFamilies, familyForArchitecture, scanModelFolder, saveModelSet,
   listModelSets, resolveModelSet, removeModelSet, setDefaultModelSet,
 } = require('../services/image-model-sets');
 
@@ -50,8 +50,8 @@ function fixture(t) {
 test('families load, flags and resolutions match the preset contract', () => {
   const { version, families } = loadFamilies();
   assert.equal(version, 1);
-  assert.deepEqual(SLOTS, ['diffusion', 'text_encoder', 'vae']);
-  assert.equal(Object.isFrozen(SLOTS), true);
+  assert.deepEqual(REQUIRED_SLOTS, ['diffusion', 'text_encoder', 'vae']);
+  assert.equal(Object.isFrozen(REQUIRED_SLOTS), true);
   assert.deepEqual(Object.keys(families).sort(), ['qwen_image', 'qwen_image21']);
   for (const [id, family] of Object.entries(families)) {
     assert.equal(familyForArchitecture(id, families), id);
@@ -184,7 +184,7 @@ test('save persists atomically, stable IDs replace entries, and first set is def
   const saved = saveModelSet(input, { fsImpl, now: () => 1234 });
   assert.equal(saved.ok, true);
   assert.equal(saved.set.created_at, 1234);
-  const paths = SLOTS.map((slot) => fs.realpathSync(path.join(input.root, input[slot])));
+  const paths = REQUIRED_SLOTS.map((slot) => fs.realpathSync(path.join(input.root, input[slot])));
   const sizes = paths.map((file) => fs.statSync(file).size);
   const expectedId = crypto.createHash('sha256').update([...paths, ...sizes].join('\n')).digest('hex').slice(0, 12);
   assert.equal(saved.set.id, expectedId);
@@ -232,7 +232,7 @@ test('resolve returns paths and rejects changed sizes or missing files', (t) => 
   const saved = saveModelSet(input);
   const resolved = resolveModelSet(saved.set.id, { storePath });
   assert.equal(resolved.ok, true);
-  for (const slot of SLOTS) assert.equal(resolved.paths[slot], path.join(input.root, ...input[slot].split('/')));
+  for (const slot of REQUIRED_SLOTS) assert.equal(resolved.paths[slot], path.join(input.root, ...input[slot].split('/')));
   write(input.vae, 'changed size');
   assert.deepEqual(resolveModelSet(saved.set.id, { storePath }), { ok: false, reason: 'image_model_set_stale' });
   fs.unlinkSync(path.join(input.root, input.vae));
@@ -245,7 +245,7 @@ test('default and removal mutate only the store; missing store is empty', (t) =>
   const first = saveModelSet(input).set;
   write('vae/second.safetensors');
   const second = saveModelSet({ ...input, vae: 'vae/second.safetensors' }).set;
-  const files = [...SLOTS.map((slot) => path.join(input.root, input[slot])), path.join(input.root, 'vae/second.safetensors')];
+  const files = [...REQUIRED_SLOTS.map((slot) => path.join(input.root, input[slot])), path.join(input.root, 'vae/second.safetensors')];
   const before = files.map((file) => fs.statSync(file).mtimeMs);
   assert.deepEqual(setDefaultModelSet(second.id, { storePath }), { ok: true });
   assert.equal(listModelSets({ storePath }).default_id, second.id);
@@ -272,4 +272,32 @@ test('corrupt stores fail without changing their bytes', (t) => {
     assert.equal(fs.readFileSync(storePath, 'utf8'), bytes);
     assert.equal(fs.existsSync(`${storePath}.part`), false);
   }
+});
+
+test('optional projector is a separate slot and participates in identity and stale checks', (t) => {
+  const { input, write, storePath } = fixture(t);
+  const vision = 'text_encoders/mmproj-Qwen3VL-8B-Instruct-F16.gguf';
+  write(vision, gguf('clip'));
+  const scan = scanModelFolder(input.root);
+  assert.equal(scan.candidates.vision_projector[0].name, vision);
+  assert.equal(scan.candidates.text_encoder.some((entry) => entry.name === vision), false);
+  const base = saveModelSet(input);
+  const edit = saveModelSet({ ...input, vision_projector: vision });
+  assert.equal(edit.ok, true);
+  assert.notEqual(base.set.id, edit.set.id);
+  assert.equal(resolveModelSet(edit.set.id, { storePath }).paths.vision_projector, path.join(input.root, ...vision.split('/')));
+  write(vision, 'changed');
+  assert.equal(resolveModelSet(edit.set.id, { storePath }).reason, 'image_model_set_stale');
+  assert.equal(resolveModelSet(base.set.id, { storePath }).ok, true);
+  assert.equal(saveModelSet({ ...input, vision_projector: '../escape.gguf' }).ok, false);
+});
+
+
+test('projector header and family rejection does not prevent generation-only sets',t=>{
+  const {input,write}=fixture(t);const name='text_encoders/mmproj.gguf';write(name,gguf('llama'));
+  assert.equal(saveModelSet({...input,vision_projector:name}).reason,'image_projector_unsupported');
+  assert.equal(saveModelSet(input).ok,true);
+  write(name,gguf('clip'));
+  const families=loadFamilies().families;families.qwen_image21.vision_flag=undefined;
+  assert.equal(saveModelSet({...input,vision_projector:name},{families}).reason,'image_projector_unsupported');
 });

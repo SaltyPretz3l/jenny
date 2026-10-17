@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 
 const PROPER_NOUNS = new Set([
   'Jenny', 'Ollama', 'vLLM', 'MCP', 'GGUF', 'Monaco', 'Mermaid', 'KaTeX',
-  'GitHub', 'Codex', 'ChatGPT', 'llama-server', 'Python', 'PowerShell',
+  'GitHub', 'Codex', 'ChatGPT', 'llama-server', 'NInfer', 'Python', 'PowerShell',
 ]);
 const DOMAIN_ORDER = [
   'index.html',

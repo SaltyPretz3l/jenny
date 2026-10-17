@@ -328,10 +328,6 @@ test('managed sidecar startChatStream returns before slow model, personality, an
     await preflightGate;
     return { memories: [] };
   };
-  service.recallRecentApprovedMemories = async () => {
-    await preflightGate;
-    return { memories: [] };
-  };
 
   let startedFired = false;
   service.on('chat-stream', (event) => {

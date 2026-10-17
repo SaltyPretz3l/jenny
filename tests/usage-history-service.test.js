@@ -464,3 +464,62 @@ test('legacy retirement failure is warned without making usage unavailable', () 
     assert.equal(events.find((entry) => entry.event === 'usage_history.legacy_cost_retire_failed').details.errorCode, 'EPERM');
   });
 });
+
+function terminalSummary(index, over = {}) {
+  return {
+    turn_id: 'turn-a', provider_call_id: null, attempt_id: String(index).padStart(32, 'c'), sampled_at: 1_700_000_000_000 + index,
+    phase: 'finished', provider_kind: 'ninfer', generated_tokens: 8, decode_interval_tokens: 7, decode_elapsed_ms: 56.3681,
+    prompt_tokens: 18, cached_prompt_tokens: 0, processed_prompt_tokens: 18, prefill_elapsed_ms: 96.035,
+    time_to_first_generated_token_ms: 120, terminal_decode_tps: 124.18, terminal_prefill_tps: 187.4, ...over,
+  };
+}
+
+test('a turn row carries bounded terminal inference summaries: latest 32, omitted_count, 16 KiB, persisted across restarts', () => {
+  withTempDir((userDataPath) => {
+    const nowMs = Date.parse('2026-10-15T12:00:00.000Z');
+    const service = new UsageHistoryService({ userDataPath, now: () => nowMs });
+    const summaries = Array.from({ length: 40 }, (_, i) => terminalSummary(i));
+    service.recordTurnUsage('session-a', usage(), {
+      streamId: 'stream-a', requestId: 'request-a', terminalType: 'complete',
+      inferencePerformance: { schema_version: 1, summaries, omitted_count: 2 },
+    });
+    service.recordTurnUsage('session-a', usage(), { streamId: 'stream-b', requestId: 'request-b', terminalType: 'complete' });
+    const onDisk = JSON.parse(fs.readFileSync(path.join(userDataPath, 'usage-history.json'), 'utf8'));
+    const withSummaries = onDisk.turns.find((row) => row.stream_id === 'stream-a');
+    assert.equal(withSummaries.inference_performance.summaries.length, 32);
+    assert.equal(withSummaries.inference_performance.omitted_count, 2 + 8);
+    assert.equal(withSummaries.inference_performance.summaries[0].attempt_id, terminalSummary(8).attempt_id);
+    assert.ok(Buffer.byteLength(JSON.stringify(withSummaries.inference_performance), 'utf8') <= 16 * 1024);
+    assert.equal(Object.hasOwn(onDisk.turns.find((row) => row.stream_id === 'stream-b'), 'inference_performance'), false);
+
+    // Restart: the bounded record is reloaded unchanged.
+    const restarted = new UsageHistoryService({ userDataPath, now: () => nowMs });
+    assert.deepEqual(restarted._rows.find((row) => row.stream_id === 'stream-a').inference_performance, withSummaries.inference_performance);
+    // Snapshot and export surfaces stay free of the diagnostic detail.
+    const snapshot = restarted.getSnapshot({ sessionId: 'session-a' });
+    assert.equal(snapshot.recent_turns.some((row) => Object.hasOwn(row, 'inference_performance')), false);
+    assert.equal(snapshot.cumulative.turn_count, 2);
+    assert.equal(restarted.getExportRows({ sessionId: 'session-a' }).rows.some((row) => Object.hasOwn(row, 'inference_performance')), false);
+  });
+});
+
+test('hostile or oversized inference summaries are bounded, sanitized or dropped without losing the usage row', () => {
+  withTempDir((userDataPath) => {
+    const service = new UsageHistoryService({ userDataPath, now: () => Date.parse('2026-10-15T12:00:00.000Z') });
+    const fat = Array.from({ length: 32 }, (_, i) => terminalSummary(i, { turn_id: 'x'.repeat(128), provider_call_id: 'y'.repeat(128) }));
+    service.recordTurnUsage('session-a', usage(), { streamId: 'fat', requestId: 'fat', inferencePerformance: { summaries: fat } });
+    service.recordTurnUsage('session-a', usage(), {
+      streamId: 'junk', requestId: 'junk', inferencePerformance: { summaries: [terminalSummary(1, { leaked: 'secret', phase: 'decode' }), 'x', null] },
+    });
+    service.recordTurnUsage('session-a', usage(), { streamId: 'junk2', requestId: 'junk2', inferencePerformance: 'not an object' });
+    const rows = JSON.parse(fs.readFileSync(path.join(userDataPath, 'usage-history.json'), 'utf8')).turns;
+    const fatRecord = rows.find((row) => row.stream_id === 'fat').inference_performance;
+    assert.ok(Buffer.byteLength(JSON.stringify(fatRecord), 'utf8') <= 16 * 1024);
+    assert.equal(fatRecord.summaries.length + fatRecord.omitted_count, 32);
+    assert.equal(Object.hasOwn(rows.find((row) => row.stream_id === 'junk'), 'inference_performance'), false, 'no terminal summary survived');
+    assert.equal(Object.hasOwn(rows.find((row) => row.stream_id === 'junk2'), 'inference_performance'), false);
+    assert.equal(rows.length, 3, 'every usage row was still recorded');
+    assert.equal(normalizeTurnRow({ stream_id: 's', recorded_at: '2026-10-15T12:00:00.000Z', inference_performance: { summaries: [terminalSummary(1)] } })
+      .inference_performance.summaries.length, 1);
+  });
+});

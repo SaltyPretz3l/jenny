@@ -29,6 +29,7 @@ class ShellLogStore {
     this.limit = Math.max(50, Number(limit) || LOG_RETENTION.mainStoreLimit);
     this.maxBytes = Number.isFinite(maxBytes) && maxBytes > 0 ? Math.floor(maxBytes) : Infinity;
     this.entries = [];
+    this.entrySizes = new WeakMap();
     this.nextEntryId = 1;
     this.totalBytes = 0;
     this.droppedByLevel = { DEBUG: 0, INFO: 0, WARN: 0, ERROR: 0 };
@@ -49,8 +50,10 @@ class ShellLogStore {
     }
 
     const stored = cloneLogEntry(normalized);
+    const bytes = this._entryBytes(stored);
+    this.entrySizes.set(stored, bytes);
     this.entries.push(stored);
-    this.totalBytes += this._entryBytes(stored);
+    this.totalBytes += bytes;
     while (this.entries.length > this.limit || this.totalBytes > this.maxBytes) {
       this._evictOne();
     }
@@ -65,10 +68,12 @@ class ShellLogStore {
     if (this.entries.length === 0) return;
     let index = this.entries.findIndex((entry) => String(entry.level).toUpperCase() === 'DEBUG');
     if (index < 0) index = this.entries.findIndex((entry) => String(entry.level).toUpperCase() === 'INFO');
+    if (index < 0) index = this.entries.findIndex((entry) => String(entry.level).toUpperCase() === 'WARN');
     if (index < 0) index = 0;
     const [removed] = this.entries.splice(index, 1);
     if (!removed) return;
-    this.totalBytes = Math.max(0, this.totalBytes - this._entryBytes(removed));
+    this.totalBytes = Math.max(0, this.totalBytes - this.entrySizes.get(removed));
+    this.entrySizes.delete(removed);
     const level = String(removed.level || 'INFO').toUpperCase();
     this.droppedByLevel[level] = (this.droppedByLevel[level] || 0) + 1;
     const source = String(removed.layer || removed.source || 'electron').trim().toLowerCase() || 'electron';

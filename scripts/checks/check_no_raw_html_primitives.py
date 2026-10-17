@@ -66,7 +66,6 @@ LEGACY_RAW_PRIMITIVE_ALLOWLIST = {
     # The remaining 1 is the per-phase `reasoning-row-header` toggle <button>;
     # revisit when an inventory `button` primitive ships.
     "renderer/chat/renderer-transcript-reasoning-v2.js": {"html_tag": 1},
-    "renderer/shell/renderer-observability-markup-utils.js": {"html_tag": 1},
 }
 EXCLUDED_TOP_LEVEL_DIRS = {
     ".git",

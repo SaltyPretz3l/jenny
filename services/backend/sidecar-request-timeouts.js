@@ -12,17 +12,36 @@ const REQUEST_TIMEOUT_MS_BY_METHOD = Object.freeze({
   // Sidecar _UNLOAD_TIMEOUT = 30s (ollama_shared.py) plus 5s headroom keeps
   // the sidecar first to return a typed failure.
   'models.unload': 35_000,
-  'memory.suggest': 5_000,
   'memory.status': 5_000,
   'memory.save': 10_000,
   'memory.list': 10_000,
   'memory.pending.list': 10_000,
   'memory.pending.delete': 10_000,
+  'memory.pending.accept': 10_000,
   'memory.update': 10_000,
   'memory.delete': 10_000,
-  'memory.move_project': 10_000,
+  'memory.undo': 10_000,
+  'memory.restore': 10_000,
+  'memory.archive_project': 10_000,
+  'memory.purge_session': 10_000,
+  'memory.export_session': 10_000,
+  'memory.import_session': 10_000,
+  'memory.chat_sessions': 10_000,
+  'memory.clear_suppressions': 10_000,
+  // Settings > Memory page (row 58 W4).
+  'memory.erase': 10_000,
+  'memory.operations': 10_000,
   'memory.recall': 1_500,
-  'memory.recall_recent': 1_500,
+  // Background reflection: one bounded local generation (max_tokens 700).
+  'memory.reflect': 120_000,
+  // Row 58 W4: the conversation index (derived, sidecar-owned) and embed steps.
+  'memory.embed_step': 8_000,
+  'conversations.index_state': 10_000,
+  'conversations.index_session': 15_000,
+  'conversations.purge': 10_000,
+  'conversations.search': 5_000,
+  // One embed request started inside the 1.5 s step budget may run 30 s on a CPU embedder.
+  'conversations.embed_step': 35_000,
   'suggestions.generate': 8_000,
   'commit.generate_message': 30_000,
   'hardware.profile': 10_000,
@@ -32,6 +51,7 @@ const REQUEST_TIMEOUT_MS_BY_METHOD = Object.freeze({
   'harness.inspect': 10_000,
   'harness.turn_diagnostic': 10_000,
   'mcp.inspect': 20_000,
+  'mcp.prompt_get': 30_000,
   'workspace.list_change_sets': 60_000,
   'workspace.preflight_undo': 300_000,
   'workspace.undo_change_set': 300_000,
@@ -41,6 +61,8 @@ const REQUEST_TIMEOUT_MS_BY_METHOD = Object.freeze({
   // Plan Plus C4: up to 20 journaled edits, plus a full undo on a mid-call failure.
   'workspace.apply_suggested_changes': 120_000,
   'chat.send': 360_000,
+  // A bounded command (<= 300 s) plus its approval wait, which the transport timer is suspended for.
+  'command.execute_proposal': 360_000,
   shutdown: SHUTDOWN_TIMEOUT_MS,
 });
 

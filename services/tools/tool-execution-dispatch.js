@@ -38,6 +38,7 @@ async function executeResolvedTool(executor, call, context, {
     let producerStarted = false;
     let producerReturned = false;
     let resourceStatus = 'failed';
+    const handoffCompletion = toolName === 'complete_session_handoff' && trustedExecution?.handoffPreparation != null;
     const deferredVerify = toolName === 'verify' && input.action !== 'list' && typeof context.beforeProducer === 'function';
     const startProducer = async () => {
       await context.beforeProducer?.();
@@ -106,7 +107,7 @@ async function executeResolvedTool(executor, call, context, {
       // Decisions retain their live waiter; verify acquires its complete resource
       // set at the test runner. Child coordination owns bounded publication and
       // idempotence; child inference acquires its own lane and budget.
-      if (!['ask_user', 'exit_plan_mode', 'verify', 'session_spawn', 'session_wait', 'session_result'].includes(toolName)) {
+      if (!handoffCompletion && !['ask_user', 'exit_plan_mode', 'verify', 'session_spawn', 'session_wait', 'session_result'].includes(toolName)) {
         resourceClaim = createToolResourceClaim({ binding: context.executionAuthority,
           operationId: callId, toolName, input, required: !!context.backendService?.sessionRuntime });
         await resourceClaim?.admit();

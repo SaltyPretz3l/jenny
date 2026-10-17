@@ -62,8 +62,10 @@
       childLabel: normalizeString(next?.childLabel || next?.child_label).slice(0, 80),
       childTerminal: next?.childTerminal === true || next?.child_terminal === true,
       childSuccess: next?.childSuccess === true || next?.child_success === true,
-      model: normalizeString(next?.model).slice(0, 96),
+      model: normalizeString(next?.model).slice(0, 138),
       provider: normalizeString(next?.provider).slice(0, 96),
+      reasoningEffort: normalizeString(next?.reasoningEffort).slice(0, 16),
+      childActivity: subagentModel.normalizeChildActivity?.(next?.childActivity) || null,
       usage: typeof subagentModel.normalizeUsage === 'function' ? subagentModel.normalizeUsage(next?.usage) : null,
       terminalReason: normalizeString(next?.terminalReason || next?.terminal_reason).slice(0, 64),
       taskType: normalizeString(next?.taskType),
@@ -77,12 +79,28 @@
     };
   }
 
+  const isSettled = (step) => step.terminal === true || step.childTerminal === true;
+
+  // Never the just-appended row. A superseded non-child progress row goes
+  // first, then the oldest settled row; a live child is current work and is
+  // dropped only when every retained row is one.
+  function evictionIndex(rows) {
+    const candidates = rows.slice(0, -1);
+    const stale = candidates.findIndex((step) => !step || (!isSettled(step) && !step.childTaskId && !step.childAgentId));
+    if (stale !== -1) return stale;
+    const settled = candidates.findIndex(isSettled);
+    return settled !== -1 ? settled : 0;
+  }
+
   function appendAgentStatusStep(existing, next) {
     const incoming = normalizeAgentStatusStep(next);
     const prior = Array.isArray(existing) ? existing.slice() : [];
     const idx = prior.findIndex((step) => step && step.key === incoming.key);
     if (idx !== -1) {
       const current = prior[idx];
+      if (incoming.childActivity && current.childActivity
+        && incoming.childActivity.sequence <= current.childActivity.sequence
+        && incoming.childTerminal !== true && incoming.terminal !== true) return prior;
       // Terminal steps are not overwritten by later non-terminal events (defensive).
       if ((current.terminal === true && incoming.terminal !== true)
         || (current.childTerminal === true && incoming.childTerminal !== true)) {
@@ -103,6 +121,8 @@
         childSuccess: incoming.childSuccess,
         model: incoming.model || current.model,
         provider: incoming.provider || current.provider,
+        reasoningEffort: incoming.reasoningEffort || current.reasoningEffort,
+        childActivity: incoming.childActivity || current.childActivity,
         usage: incoming.usage || current.usage,
         terminalReason: incoming.terminalReason || current.terminalReason,
         source: incoming.source || current.source,
@@ -121,12 +141,7 @@
     const startedAt = incoming.updatedAt;
     prior.push({ ...incoming, startedAt });
     if (prior.length > AGENT_STATUS_STEPS_MAX) {
-      const dropIdx = prior.findIndex((step) => step && step.terminal !== true);
-      if (dropIdx !== -1) {
-        prior.splice(dropIdx, 1);
-      } else {
-        prior.shift();
-      }
+      prior.splice(evictionIndex(prior), 1);
     }
     return prior;
   }

@@ -289,6 +289,10 @@ test('buildThemeConfig meets the WS1 contrast gates on every registered palette 
     const theme = themeUtils.buildThemeConfig();
     const vars = theme.config.themeVariables;
 
+    assert.equal(theme.config.layout, 'dagre');
+    assert.equal(theme.config.look, 'classic');
+    assert.equal(theme.config.theme, 'base');
+
     assert.equal(
       theme.config.darkMode,
       fixture.mode === 'dark',

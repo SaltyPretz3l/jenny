@@ -139,6 +139,37 @@ def current_catalog() -> SemanticCatalog | None:
         return _state.catalog
 
 
+@dataclass(frozen=True)
+class EmbedderHandle:
+    """The live catalog's embedder and its settings, for other derived indexes."""
+
+    provider: Any
+    model_key: str
+    query_template: str
+    document_template: str
+    dims: int
+
+
+def current_embedder() -> EmbedderHandle | None:
+    """The current catalog's embedder, or ``None`` while the catalog is off.
+
+    Read-only: it never builds or syncs the catalog. The provider stays owned
+    by the catalog and is closed with it, so a caller holding a handle across
+    a rebuild sees an embed failure, never a leak.
+    """
+    with _lock:
+        catalog = _state.catalog
+        if catalog is None:
+            return None
+        return EmbedderHandle(
+            provider=catalog.provider,
+            model_key=catalog.model_key,
+            query_template=catalog.query_template,
+            document_template=catalog.document_template,
+            dims=catalog.dims,
+        )
+
+
 def unavailable_reason() -> str:
     """The CMP-CAT code explaining why ``current_catalog()`` is ``None``."""
     with _lock:

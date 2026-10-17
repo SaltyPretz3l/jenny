@@ -23,7 +23,7 @@ function createToolResourceClaim({ binding, operationId, toolName, input, requir
   const trusted = getTrustedExecutionBinding(binding);
   if (!gateway || !trusted) throw resourceError('runtime_tool_resources_unavailable');
   const identity = Object.freeze({
-    api_version: '2026-08-17', schema_version: 1, kind: 'tool',
+    api_version: '2026-10-15', schema_version: 1, kind: 'tool',
     request_id: trusted.requestId, session_id: trusted.sessionId,
     authority_revision: trusted.authorityRevision, operation_id: operationId,
   });

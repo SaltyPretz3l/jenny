@@ -104,6 +104,7 @@ def test_initialize_response_exposes_active_model_reasoning_capabilities() -> No
     assert response["result"]["runtime_inference_budget_version"] == 1
     assert response["result"]["runtime_tool_resource_admission_version"] == 1
     assert response["result"]["runtime_continuation_version"] == 1
+    assert response["result"]["command_proposal_version"] == 1
     assert response["result"]["active_model_capabilities"] == {"text": True, "thinking": True}
     assert response["result"]["active_model_reasoning_support"] == "supported"
     assert response["result"]["active_app_profile"] == {
@@ -173,6 +174,7 @@ def test_initialize_response_exposes_web_tools_when_enabled() -> None:
             "source_kind": None,
             "tool_family": None,
             "server_name": None,
+            "side_effecting": True,
         },
         "fetch_url": {
             "available": True,
@@ -181,6 +183,7 @@ def test_initialize_response_exposes_web_tools_when_enabled() -> None:
             "source_kind": None,
             "tool_family": None,
             "server_name": None,
+            "side_effecting": False,
         },
         "read_file": {
             "available": True,
@@ -189,6 +192,7 @@ def test_initialize_response_exposes_web_tools_when_enabled() -> None:
             "source_kind": None,
             "tool_family": None,
             "server_name": None,
+            "side_effecting": False,
         },
         "web_search": {
             "available": True,
@@ -197,6 +201,7 @@ def test_initialize_response_exposes_web_tools_when_enabled() -> None:
             "source_kind": None,
             "tool_family": None,
             "server_name": None,
+            "side_effecting": False,
         },
     }
     stack = SimpleNamespace(
@@ -261,6 +266,7 @@ def test_initialize_response_omits_web_tools_when_disabled() -> None:
             "source_kind": None,
             "tool_family": None,
             "server_name": None,
+            "side_effecting": True,
         },
         "read_file": {
             "available": True,
@@ -269,6 +275,7 @@ def test_initialize_response_omits_web_tools_when_disabled() -> None:
             "source_kind": None,
             "tool_family": None,
             "server_name": None,
+            "side_effecting": False,
         },
         "fetch_url": {
             "available": False,
@@ -277,6 +284,7 @@ def test_initialize_response_omits_web_tools_when_disabled() -> None:
             "source_kind": None,
             "tool_family": None,
             "server_name": None,
+            "side_effecting": False,
         },
         "web_search": {
             "available": False,
@@ -285,6 +293,7 @@ def test_initialize_response_omits_web_tools_when_disabled() -> None:
             "source_kind": None,
             "tool_family": None,
             "server_name": None,
+            "side_effecting": False,
         },
     }
     stack = SimpleNamespace(
@@ -1012,3 +1021,249 @@ def test_retired_plugin_host_engine_is_not_a_provider_capability() -> None:
     assert "plugin_host" not in build_provider_capabilities(
         RuntimeConfig(engine_type="plugin_host", model="plugin:publisher/plugin/engine")
     )
+
+
+def _minimal_initialize_stack(config: RuntimeConfig) -> SimpleNamespace:
+    return SimpleNamespace(
+        config=config,
+        engine=SimpleNamespace(capabilities={"text": True}, get_model_context_length=lambda: None),
+        router=SimpleNamespace(available_tools=[], tools_status={}),
+        mcp_client=SimpleNamespace(diagnostics=lambda: SimpleNamespace(connected=(), failures=())),
+        context_builder=SimpleNamespace(
+            workspace_status=lambda: WorkspaceStatus(
+                root=None, exists=False, skills_loaded=0, bootstrap_loaded=0,
+                instruction_file_name=None, instruction_file_present=False,
+            )
+        ),
+        memory_store=SimpleNamespace(db_path=":memory:", journal_mode="wal"),
+        engine_fallback_from=None,
+        engine_fallback_reason=None,
+    )
+
+
+def _initialize_with(raw_config: dict[str, object]) -> dict[str, object]:
+    stack = _minimal_initialize_stack(parse_runtime_config(raw_config))
+    return initialize_response(
+        1, {"config": raw_config}, api_version="2026-03-06",
+        brain_container=SimpleNamespace(configure=lambda _raw, **_kwargs: stack),
+    )["result"]
+
+
+def test_initialize_advertises_command_proposal_version_on_desktop() -> None:
+    assert _initialize_with({"engine_type": "mock"})["command_proposal_version"] == 1
+    assert _initialize_with({"engine_type": "mock"})["inference_performance_version"] == 1
+
+
+def test_initialize_omits_command_proposal_version_when_hosted() -> None:
+    from sidecar.ai.host_policy import HOST_EXECUTION_POLICY_VERSION
+
+    result = _initialize_with({
+        "engine_type": "mock", "host_mode": "server",
+        "host_execution_policy_version": HOST_EXECUTION_POLICY_VERSION,
+    })
+    assert "command_proposal_version" not in result
+    assert "inference_performance_version" not in result
+
+
+# --- chat-workspace capability negotiation (row 59 cp4) ---------------------------------
+
+_CHAT_WORKSPACE_REQUEST = {
+    "schema_version": 1,
+    "producer_tools": ["propose_session", "complete_session_handoff"],
+    "context_kinds": ["session_message", "session_handoff"],
+    "session_messages": True,
+}
+# What a checkpoint-4 Electron asks for: no producer tools, no handoff context kind.
+_CHAT_WORKSPACE_MESSAGES_ONLY = {
+    "schema_version": 1,
+    "producer_tools": [],
+    "context_kinds": ["session_message"],
+    "session_messages": True,
+}
+_CHAT_WORKSPACE_EMPTY = {
+    "schema_version": 1,
+    "producer_tools": [],
+    "context_kinds": [],
+    "session_messages": False,
+}
+
+
+def _initialize_requesting(
+    requested: object,
+    raw_config: dict[str, object] | None = None,
+    *,
+    container: object | None = None,
+) -> dict[str, object]:
+    config = raw_config or {"engine_type": "mock"}
+    stack = _minimal_initialize_stack(parse_runtime_config(config))
+    params: dict[str, object] = {"config": config}
+    if requested is not None:
+        params["chat_workspace_capabilities"] = requested
+    brain_container = container or SimpleNamespace(configure=lambda _raw, **_kwargs: stack)
+    return initialize_response(
+        1, params, api_version="2026-03-06", brain_container=brain_container
+    )["result"]
+
+
+def test_initialize_echoes_the_negotiated_chat_workspace_intersection_on_desktop() -> None:
+    result = _initialize_requesting(_CHAT_WORKSPACE_REQUEST)
+
+    assert result["chat_workspace_version"] == 1
+    assert result["chat_workspace_capabilities"] == _CHAT_WORKSPACE_REQUEST
+
+
+def test_initialize_drops_unsupported_chat_workspace_requests() -> None:
+    result = _initialize_requesting(
+        {
+            "schema_version": 1,
+            "producer_tools": ["session_message", "unknown_tool", "propose_session"],
+            "context_kinds": ["session_message", "session_handoff", "session_message_receipt"],
+            "session_messages": True,
+        }
+    )
+
+    assert result["chat_workspace_capabilities"] == {
+        **_CHAT_WORKSPACE_REQUEST,
+        "producer_tools": ["propose_session"],
+    }
+
+
+def test_initialize_negotiates_each_producer_tool_and_context_kind_independently() -> None:
+    older = _initialize_requesting(_CHAT_WORKSPACE_MESSAGES_ONLY)
+    assert older["chat_workspace_capabilities"] == _CHAT_WORKSPACE_MESSAGES_ONLY
+
+    handoff_only = _initialize_requesting(
+        {
+            "schema_version": 1,
+            "producer_tools": ["complete_session_handoff"],
+            "context_kinds": ["session_handoff"],
+            "session_messages": False,
+        }
+    )
+    assert handoff_only["chat_workspace_capabilities"] == {
+        "schema_version": 1,
+        "producer_tools": ["complete_session_handoff"],
+        "context_kinds": ["session_handoff"],
+        "session_messages": False,
+    }
+
+
+def test_initialize_requires_session_message_kind_for_the_session_messages_flag() -> None:
+    result = _initialize_requesting(
+        {**_CHAT_WORKSPACE_REQUEST, "producer_tools": [], "context_kinds": []}
+    )
+
+    assert result["chat_workspace_capabilities"] == _CHAT_WORKSPACE_EMPTY
+
+
+def test_initialize_answers_the_empty_form_when_the_request_is_absent_or_malformed() -> None:
+    assert _initialize_requesting(None)["chat_workspace_capabilities"] == _CHAT_WORKSPACE_EMPTY
+    for malformed in (
+        "yes",
+        [],
+        {},
+        {**_CHAT_WORKSPACE_REQUEST, "schema_version": 2},
+        {**_CHAT_WORKSPACE_REQUEST, "schema_version": True},
+        {**_CHAT_WORKSPACE_REQUEST, "session_messages": "true"},
+        {**_CHAT_WORKSPACE_REQUEST, "context_kinds": "session_message"},
+        {**_CHAT_WORKSPACE_REQUEST, "producer_tools": [1]},
+        {**_CHAT_WORKSPACE_REQUEST, "extra": 1},
+    ):
+        result = _initialize_requesting(malformed)
+        assert result["chat_workspace_version"] == 1
+        assert result["chat_workspace_capabilities"] == _CHAT_WORKSPACE_EMPTY
+
+
+def test_initialize_answers_the_empty_form_with_the_key_present_when_hosted() -> None:
+    from sidecar.ai.host_policy import HOST_EXECUTION_POLICY_VERSION
+
+    result = _initialize_requesting(
+        _CHAT_WORKSPACE_REQUEST,
+        {
+            "engine_type": "mock",
+            "host_mode": "server",
+            "host_execution_policy_version": HOST_EXECUTION_POLICY_VERSION,
+        },
+    )
+
+    assert result["chat_workspace_capabilities"] == _CHAT_WORKSPACE_EMPTY
+
+
+def test_initialize_latches_session_messages_on_the_container_and_resets_on_reinitialize() -> None:
+    from sidecar.ai.container import BrainContainer
+
+    class _Container(BrainContainer):
+        def __init__(self, stack: object) -> None:
+            super().__init__()
+            self._test_stack = stack
+
+        def configure(self, _raw: object, **_kwargs: object) -> object:  # type: ignore[override]
+            return self._test_stack
+
+    stack = _minimal_initialize_stack(parse_runtime_config({"engine_type": "mock"}))
+    container = _Container(stack)
+    assert container.chat_workspace_session_messages is False
+
+    _initialize_requesting(_CHAT_WORKSPACE_REQUEST, container=container)
+    assert container.chat_workspace_session_messages is True
+
+    _initialize_requesting(None, container=container)
+    assert container.chat_workspace_session_messages is False
+
+    _initialize_requesting(_CHAT_WORKSPACE_REQUEST, container=container)
+    container.latch_chat_workspace_session_messages(False)
+    assert container.chat_workspace_session_messages is False
+
+
+def test_initialize_latches_session_handoff_separately_and_resets_on_reinitialize() -> None:
+    from sidecar.ai.container import BrainContainer
+
+    class _Container(BrainContainer):
+        def __init__(self, stack: object) -> None:
+            super().__init__()
+            self._test_stack = stack
+
+        def configure(self, _raw: object, **_kwargs: object) -> object:  # type: ignore[override]
+            return self._test_stack
+
+    stack = _minimal_initialize_stack(parse_runtime_config({"engine_type": "mock"}))
+    container = _Container(stack)
+    assert container.chat_workspace_session_handoff is False
+
+    _initialize_requesting(_CHAT_WORKSPACE_REQUEST, container=container)
+    assert container.chat_workspace_session_handoff is True
+    assert container.chat_workspace_session_messages is True
+
+    # The checkpoint-4 request opens messages only: the handoff latch closes.
+    _initialize_requesting(_CHAT_WORKSPACE_MESSAGES_ONLY, container=container)
+    assert container.chat_workspace_session_messages is True
+    assert container.chat_workspace_session_handoff is False
+
+    _initialize_requesting(_CHAT_WORKSPACE_REQUEST, container=container)
+    _initialize_requesting(None, container=container)
+    assert container.chat_workspace_session_handoff is False
+    assert container.chat_workspace_session_messages is False
+
+
+def test_failed_reinitialize_leaves_session_messages_closed() -> None:
+    from sidecar.ai.container import BrainContainer
+
+    container = BrainContainer()
+    container.latch_chat_workspace_session_messages(True)
+    container.latch_chat_workspace_session_handoff(True)
+
+    def _boom(_raw: object, **_kwargs: object) -> object:
+        raise RuntimeError("configure failed")
+
+    container.configure = _boom  # type: ignore[method-assign]
+    try:
+        initialize_response(
+            1,
+            {"config": {"engine_type": "mock"}, "chat_workspace_capabilities": _CHAT_WORKSPACE_REQUEST},
+            api_version="2026-03-06",
+            brain_container=container,
+        )
+    except RuntimeError:
+        pass
+    assert container.chat_workspace_session_messages is False
+    assert container.chat_workspace_session_handoff is False

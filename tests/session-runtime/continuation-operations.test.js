@@ -10,7 +10,7 @@ function fixture() {
   const context = { schema_version: 1, work_id: 'work_1', turn_id: 'turn_1', source_attempt: attempt,
     authority: { project_id: 'project_1', root_id: null, root_revision: 0, sha256: 'a'.repeat(64) },
     route: { route_id: 'route_1', route_revision: 'config:1', sha256: 'b'.repeat(64) } };
-  const params = { api_version: '2026-08-17', schema_version: 1, kind: 'continuation', phase: 'checkpoint',
+  const params = { api_version: '2026-10-15', schema_version: 1, kind: 'continuation', phase: 'checkpoint',
     request_id: 'stream_1', session_id: 'session_1', authority_revision: 'authority_1', operation_id: 'call_1',
     continuation_context: context, position: {}, eligibility: {}, tool_calls: [{ call_id: 'call_1', tool_id: 'view_file' }],
     tool_batch_bytes: 'e30=', tool_batch_sha256: 'c'.repeat(64),

@@ -18,7 +18,16 @@ test.afterEach(async () => {
   await cleanupTrackedResources();
 });
 
-test('managed sidecar runtime suggests and saves approved memories through JSON-RPC', async () => {
+const TEA_PREFERENCE = Object.freeze({
+  title: 'Preference: tea over coffee',
+  lesson_text: 'The user prefers tea over coffee.',
+  lesson_kind: 'preference',
+  confidence: 0.95,
+  source_excerpt: 'I prefer tea over coffee',
+  content_fingerprint: 'preference:the-user-prefers-tea-over-coffee',
+});
+
+test('managed sidecar runtime saves approved memories through JSON-RPC and recalls them on later sends', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-memory-'));
   trackDirectory(userDataPath);
 
@@ -39,12 +48,8 @@ test('managed sidecar runtime suggests and saves approved memories through JSON-
   });
   await completed;
 
-  const suggestions = await service.suggestMemoriesForSession(stream.sessionId);
-  assert.equal(suggestions.suggestions.length, 1);
-  assert.equal(suggestions.suggestions[0].lesson_kind, 'preference');
-
-  const firstSave = await service.saveMemoryForSession(stream.sessionId, suggestions.suggestions[0]);
-  const secondSave = await service.saveMemoryForSession(stream.sessionId, suggestions.suggestions[0]);
+  const firstSave = await service.saveMemoryForSession(stream.sessionId, TEA_PREFERENCE);
+  const secondSave = await service.saveMemoryForSession(stream.sessionId, TEA_PREFERENCE);
 
   assert.equal(firstSave.created, true);
   assert.equal(secondSave.created, false);
@@ -64,225 +69,6 @@ test('managed sidecar runtime suggests and saves approved memories through JSON-
   await service.stop();
 });
 
-test('managed sidecar runtime suggests response-style memories and recalls them on later sends', async () => {
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-memory-style-'));
-  trackDirectory(userDataPath);
-
-  const service = createManagedService(userDataPath);
-  await service.start();
-
-  const created = await service.createSession({
-    title: 'Memory Style Session',
-  });
-  const firstCompleted = waitForChatStreamEvent(
-    service,
-    (event) => event.type === 'complete'
-  );
-
-  const firstStream = await service.startChatStream({
-    sessionId: created.data.id,
-    prompt: 'Please be concise when you answer.',
-  });
-  await firstCompleted;
-
-  const suggestions = await service.suggestMemoriesForSession(firstStream.sessionId);
-  assert.equal(suggestions.suggestions.length, 1);
-  assert.equal(suggestions.suggestions[0].lesson_kind, 'response_style');
-
-  const saveResult = await service.saveMemoryForSession(firstStream.sessionId, suggestions.suggestions[0]);
-  assert.equal(saveResult.created, true);
-
-  const recallCompleted = waitForChatStreamEvent(
-    service,
-    (event) => event.type === 'complete' && event.sessionId === firstStream.sessionId
-  );
-  await service.startChatStream({
-    sessionId: firstStream.sessionId,
-    prompt: 'Should I have that this afternoon?',
-  });
-  const recalled = await recallCompleted;
-  assert.match(recalled.content, /learning context/i);
-
-  await service.stop();
-});
-
-test('managed sidecar runtime suggests tool-strategy memories and recalls them on later sends', async () => {
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-memory-tool-strategy-'));
-  trackDirectory(userDataPath);
-
-  const service = createManagedService(userDataPath);
-  try {
-    await service.start();
-
-    const created = await service.createSession({
-      title: 'Memory Tool Strategy Session',
-    });
-    service.sessionStore.appendMessage(created.data.id, {
-      id: 'user_memory_tool_strategy_1',
-      role: 'user',
-      content: 'Prefer apply_patch for small edits.',
-      timestamp: new Date().toISOString(),
-      client_message_id: 'user_memory_tool_strategy_1',
-    });
-
-    const suggestions = await service.suggestMemoriesForSession(created.data.id);
-    assert.equal(suggestions.suggestions.length, 1);
-    assert.equal(suggestions.suggestions[0].lesson_kind, 'tool_strategy');
-
-    const saveResult = await service.saveMemoryForSession(created.data.id, suggestions.suggestions[0]);
-    assert.equal(saveResult.created, true);
-
-    const recalled = await service.recallApprovedMemories('apply_patch small edits', 3);
-    assert.equal(recalled.memories.length, 1);
-    assert.equal(recalled.memories[0].lesson_kind, 'tool_strategy');
-  } finally {
-    await service.stop();
-  }
-});
-
-test('managed sidecar runtime suggests working-preference memories and recalls them on later sends', async () => {
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-memory-working-preference-'));
-  trackDirectory(userDataPath);
-
-  const service = createManagedService(userDataPath);
-  try {
-    await service.start();
-
-    const created = await service.createSession({
-      title: 'Memory Working Preference Session',
-    });
-    service.sessionStore.appendMessage(created.data.id, {
-      id: 'user_memory_working_preference_1',
-      role: 'user',
-      content: 'Please diagnose the root cause before proposing fixes.',
-      timestamp: new Date().toISOString(),
-    });
-
-    const suggestions = await service.suggestMemoriesForSession(created.data.id);
-    assert.equal(suggestions.suggestions.length, 1);
-    assert.equal(suggestions.suggestions[0].lesson_kind, 'working_preference');
-
-    const saveResult = await service.saveMemoryForSession(created.data.id, suggestions.suggestions[0]);
-    assert.equal(saveResult.created, true);
-
-    const recalled = await service.recallApprovedMemories('debug this issue and find the root cause', 3);
-    assert.equal(recalled.memories.length, 1);
-    assert.equal(recalled.memories[0].lesson_kind, 'working_preference');
-  } finally {
-    await service.stop();
-  }
-});
-
-test('managed sidecar runtime suggests project-context memories and recalls them on later sends', async () => {
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-memory-project-context-'));
-  trackDirectory(userDataPath);
-
-  const service = createManagedService(userDataPath);
-  try {
-    await service.start();
-
-    const created = await service.createSession({
-      title: 'Memory Project Context Session',
-    });
-    service.sessionStore.appendMessage(created.data.id, {
-      id: 'user_memory_project_context_1',
-      role: 'user',
-      content: 'This workspace has no .git metadata.',
-      timestamp: new Date().toISOString(),
-    });
-
-    const suggestions = await service.suggestMemoriesForSession(created.data.id);
-    assert.equal(suggestions.suggestions.length, 1);
-    assert.equal(suggestions.suggestions[0].lesson_kind, 'project_context');
-
-    const saveResult = await service.saveMemoryForSession(created.data.id, suggestions.suggestions[0]);
-    assert.equal(saveResult.created, true);
-
-    const recalled = await service.recallApprovedMemories('what branch am I on in git?', 3);
-    assert.equal(recalled.memories.length, 1);
-    assert.equal(recalled.memories[0].lesson_kind, 'project_context');
-  } finally {
-    await service.stop();
-  }
-});
-
-test('managed sidecar fake sidecar ranks the best memory suggestion across multiple user messages', async () => {
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-memory-ranking-'));
-  trackDirectory(userDataPath);
-
-  const service = createManagedService(userDataPath);
-  try {
-    await service.start();
-
-    const created = await service.createSession({
-      title: 'Memory Ranking Session',
-    });
-    service.sessionStore.appendMessage(created.data.id, {
-      id: 'user_memory_rank_1',
-      role: 'user',
-      content: 'I love jazz.',
-      timestamp: new Date().toISOString(),
-    });
-    service.sessionStore.appendMessage(created.data.id, {
-      id: 'user_memory_rank_2',
-      role: 'user',
-      content: 'Please be direct when you answer.',
-      timestamp: new Date().toISOString(),
-    });
-    service.sessionStore.appendMessage(created.data.id, {
-      id: 'user_memory_rank_3',
-      role: 'user',
-      content: 'Keep diffs small.',
-      timestamp: new Date().toISOString(),
-    });
-
-    const suggestions = await service.suggestMemoriesForSession(created.data.id);
-
-    assert.equal(suggestions.suggestions.length, 1);
-    assert.equal(suggestions.suggestions[0].lesson_kind, 'response_style');
-    assert.equal(suggestions.suggestions[0].title, 'Response style: direct');
-  } finally {
-    await service.stop();
-  }
-});
-
-test('managed sidecar fake sidecar does not recall generic tool-strategy overlap', async () => {
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-memory-tool-gating-'));
-  trackDirectory(userDataPath);
-
-  const service = createManagedService(userDataPath);
-  try {
-    await service.start();
-
-    const created = await service.createSession({
-      title: 'Memory Tool Gating Session',
-    });
-    service.sessionStore.appendMessage(created.data.id, {
-      id: 'user_memory_tool_gating_1',
-      role: 'user',
-      content: 'Plan before implementation.',
-      timestamp: new Date().toISOString(),
-    });
-
-    const suggestions = await service.suggestMemoriesForSession(created.data.id);
-    assert.equal(suggestions.suggestions.length, 1);
-
-    await service.saveMemoryForSession(created.data.id, suggestions.suggestions[0]);
-
-    const genericRecall = await service.recallApprovedMemories('plan the release work', 3);
-    const relevantRecall = await service.recallApprovedMemories(
-      'How should we plan the implementation for this feature?',
-      3
-    );
-
-    assert.equal(genericRecall.memories.length, 0);
-    assert.equal(relevantRecall.memories.length, 1);
-    assert.equal(relevantRecall.memories[0].lesson_kind, 'tool_strategy');
-  } finally {
-    await service.stop();
-  }
-});
-
 test('managed sidecar runtime lists, updates, and deletes approved memories', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-memory-management-'));
   trackDirectory(userDataPath);
@@ -294,15 +80,7 @@ test('managed sidecar runtime lists, updates, and deletes approved memories', as
     const created = await service.createSession({
       title: 'Memory Management Session',
     });
-    service.sessionStore.appendMessage(created.data.id, {
-      id: 'user_memory_management_1',
-      role: 'user',
-      content: 'I prefer tea over coffee.',
-      timestamp: new Date().toISOString(),
-    });
-
-    const suggestions = await service.suggestMemoriesForSession(created.data.id);
-    const saved = await service.saveMemoryForSession(created.data.id, suggestions.suggestions[0]);
+    const saved = await service.saveMemoryForSession(created.data.id, TEA_PREFERENCE);
     const listed = await service.listApprovedMemories();
     const updated = await service.updateApprovedMemory(saved.memory.id, {
       title: 'Preference: green tea',
@@ -316,6 +94,67 @@ test('managed sidecar runtime lists, updates, and deletes approved memories', as
     assert.equal(updated.memory.title, 'Preference: green tea');
     assert.equal(deleted.deleted, true);
     assert.equal(listedAfterDelete.memories.length, 0);
+  } finally {
+    await service.stop();
+  }
+});
+
+test('managed sidecar runtime serves the v9 ledger: revisions, conflicts, delete tombstones and undo', async () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-memory-ledger-'));
+  trackDirectory(userDataPath);
+
+  const service = createManagedService(userDataPath);
+  try {
+    await service.start();
+    const created = await service.createSession({ title: 'Memory Ledger Session' });
+    const saved = await service.saveMemoryForSession(created.data.id, TEA_PREFERENCE);
+    assert.equal(saved.memory.revision, 1);
+    assert.equal(saved.memory.status, 'active');
+    assert.equal(saved.memory.project_id, 'project_general');
+    assert.equal(saved.undoable, true);
+
+    const patch = { title: 'Preference: green tea', lesson_text: 'The user prefers green tea.' };
+    const stale = await service.updateApprovedMemory(saved.memory.id, patch, undefined, { expectedRevision: 5 });
+    assert.equal(stale.updated, false);
+    assert.equal(stale.status, 'conflict');
+    assert.equal(stale.reason, 'stale_revision');
+    assert.equal(stale.memory.revision, 1);
+
+    const updated = await service.updateApprovedMemory(saved.memory.id, patch, undefined, { expectedRevision: 1 });
+    assert.equal(updated.updated, true);
+    assert.equal(updated.memory.revision, 2);
+
+    const conflict = await service.deleteApprovedMemory(saved.memory.id, undefined, { expectedRevision: 1 });
+    assert.equal(conflict.deleted, false);
+    assert.equal(conflict.status, 'conflict');
+    assert.equal((await service.listApprovedMemories()).memories.length, 1);
+
+    const deleted = await service.deleteApprovedMemory(saved.memory.id, undefined, { expectedRevision: 2 });
+    assert.equal(deleted.deleted, true);
+    assert.equal(deleted.undoable, true);
+    assert.equal(deleted.memory.status, 'archived');
+    assert.equal((await service.listApprovedMemories()).memories.length, 0);
+
+    // Undo is a compare-and-set on the revision an operation produced: the
+    // delete moved the row on, so undoing the earlier edit is a conflict.
+    const staleUndo = await service.undoApprovedMemoryChange(updated.operation_id, 'project_general');
+    assert.equal(staleUndo.status, 'conflict');
+
+    const wrongProject = await service.undoApprovedMemoryChange(deleted.operation_id, 'project_other');
+    assert.equal(wrongProject.status, 'refused');
+    assert.equal(wrongProject.reason, 'not_found');
+    const undone = await service.undoApprovedMemoryChange(deleted.operation_id, 'project_general');
+    assert.equal(undone.status, 'saved');
+    const relisted = (await service.listApprovedMemories()).memories;
+    assert.equal(relisted.length, 1);
+    assert.equal(relisted[0].id, saved.memory.id);
+    assert.equal(relisted[0].revision, 4);
+
+    // A well-formed digest that is not queued (production rejects a malformed one as invalid params).
+    const accepted = await service.acceptPendingMemory(created.data.id, `sha256:${'0'.repeat(64)}`);
+    assert.equal(accepted.accepted, false);
+    assert.equal(accepted.status, 'refused');
+    assert.equal(accepted.reason, 'not_found');
   } finally {
     await service.stop();
   }

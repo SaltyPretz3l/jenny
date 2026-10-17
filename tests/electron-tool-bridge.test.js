@@ -274,3 +274,145 @@ describe('Electron tool bridge: retired restricted plugin tools', () => {
     assert.equal(calls, 0);
   });
 });
+
+describe('Electron tool bridge: proposal producer tools and turn identity (row 59 cp3)', () => {
+  test('allowlists both proposal tools and forwards logicalTurnId and sessionIncarnation', async () => {
+    assert.equal(ELECTRON_BRIDGE_TOOL_NAMES.has('propose_git_action'), true);
+    assert.equal(ELECTRON_BRIDGE_TOOL_NAMES.has('propose_command'), true);
+    let observed = null;
+    const result = await executeElectronToolRequest({
+      toolExecutor: {
+        async executePreApproved(call, context) {
+          observed = { call, context };
+          return { content: 'ok', isError: false, metadata: {} };
+        },
+      },
+    }, {
+      params: { tool_name: 'propose_git_action', tool_call_id: 'call_1', arguments: { summary: 's' } },
+      sessionId: 'sess_1',
+      streamId: 'stream_1',
+      logicalTurnId: 'turn_1',
+      sessionIncarnation: 'inc_1',
+    });
+    assert.equal(result.success, true);
+    assert.equal(observed.call.toolName, 'propose_git_action');
+    assert.equal(observed.context.logicalTurnId, 'turn_1');
+    assert.equal(observed.context.sessionIncarnation, 'inc_1');
+  });
+
+  test('the generic managed-chat Electron path threads the lease identity into the executor', async () => {
+    const { buildManagedSidecarChatSendOptions } = require('../services/backend/electron-tool-bridge');
+    let observed = null;
+    const service = {
+      toolExecutor: {
+        async executePreApproved(_call, context) {
+          observed = context;
+          return { content: 'ok', isError: false, metadata: {} };
+        },
+      },
+    };
+    const options = buildManagedSidecarChatSendOptions({
+      service,
+      controller: new AbortController(),
+      streamId: 'stream_1',
+      resolvedSessionId: 'sess_1',
+      requestId: 'stream_1',
+      requestTraceId: 'trace_1',
+      runtime: { handleNotification() {} },
+      toolContext: {},
+      handleToolNotification() {},
+      waitForToolApproval() {},
+      turnEventCollector: { turnId: 'collector_turn' },
+      normalizedPreferences: {},
+      timeoutMs: 1_000,
+      turnIdentity: { turnId: 'turn_lease', sessionIncarnation: 'inc_lease' },
+    });
+    await options.onElectronToolRequest({ tool_name: 'propose_command', tool_call_id: 'c1', arguments: {} });
+    assert.equal(observed.logicalTurnId, 'turn_lease');
+    assert.equal(observed.sessionIncarnation, 'inc_lease');
+    await options.onElectronToolRequest({ tool_name: 'jenny_status', tool_call_id: 'c2', arguments: {} });
+    assert.equal(observed.logicalTurnId, 'turn_lease');
+  });
+});
+
+describe('Electron tool bridge: session producer tools and the handoff preparation gate (row 59 cp5a)', () => {
+  const { TOOL_ERROR_CODES } = require('../services/backend/error-codes');
+
+  // The bridge destructures the trusted-binding reader at load, so a fresh copy is loaded while the
+  // reader is stubbed. The stub stands in for a binding that carries (or lacks) the preparation capability.
+  function loadBridgeWithTrusted(trusted) {
+    const authorityModule = require('../services/backend/session-execution-authority');
+    const bridgePath = require.resolve('../services/backend/electron-tool-bridge');
+    const real = authorityModule.getTrustedExecutionBinding;
+    const saved = require.cache[bridgePath];
+    authorityModule.getTrustedExecutionBinding = () => trusted;
+    delete require.cache[bridgePath];
+    try {
+      return require(bridgePath);
+    } finally {
+      authorityModule.getTrustedExecutionBinding = real;
+      if (saved) require.cache[bridgePath] = saved; else delete require.cache[bridgePath];
+    }
+  }
+
+  function trustedBinding(handoffPreparation) {
+    return {
+      sessionId: 'sess_1', requestId: 'stream_1', mode: 'assist', readOnly: false,
+      authority: { root_path: null }, services: {}, handoffPreparation, assertCurrent() {},
+    };
+  }
+
+  async function run(bridge, toolName) {
+    const calls = [];
+    const result = await bridge.executeElectronToolRequest({
+      toolExecutor: {
+        async executePreApproved(call) {
+          calls.push(call.toolName);
+          return { content: 'ok', isError: false, metadata: {} };
+        },
+      },
+    }, {
+      params: { tool_name: toolName, tool_call_id: 'call_1', arguments: {} },
+      sessionId: 'sess_1', streamId: 'stream_1', executionAuthority: {},
+    });
+    return { result, calls };
+  }
+
+  test('allowlists both session producer tools', () => {
+    assert.equal(ELECTRON_BRIDGE_TOOL_NAMES.has('propose_session'), true);
+    assert.equal(ELECTRON_BRIDGE_TOOL_NAMES.has('complete_session_handoff'), true);
+  });
+
+  test('an ordinary turn runs propose_session and refuses complete_session_handoff', async () => {
+    const bridge = loadBridgeWithTrusted(trustedBinding(null));
+    const offered = await run(bridge, 'propose_session');
+    assert.equal(offered.result.success, true);
+    assert.deepEqual(offered.calls, ['propose_session']);
+    const refused = await run(bridge, 'complete_session_handoff');
+    assert.equal(refused.result.success, false);
+    assert.equal(refused.result.error_code, TOOL_ERROR_CODES.DISABLED);
+    assert.deepEqual(refused.calls, []);
+  });
+
+  test('a preparation turn passes only complete_session_handoff', async () => {
+    const preparation = { proposalId: `proposal_${'a'.repeat(64)}`, attemptId: '11111111-1111-4111-8111-111111111111' };
+    const bridge = loadBridgeWithTrusted(trustedBinding(preparation));
+    const allowed = await run(bridge, 'complete_session_handoff');
+    assert.equal(allowed.result.success, true);
+    assert.deepEqual(allowed.calls, ['complete_session_handoff']);
+    for (const other of ['propose_session', 'propose_command', 'ask_user', 'task_board', 'session_spawn']) {
+      const refused = await run(bridge, other);
+      assert.equal(refused.result.success, false, other);
+      assert.equal(refused.result.error_code, TOOL_ERROR_CODES.DISABLED, other);
+      assert.deepEqual(refused.calls, [], other);
+    }
+  });
+
+  test('without an execution binding complete_session_handoff is refused', async () => {
+    const result = await executeElectronToolRequest({
+      toolExecutor: { async executePreApproved() { throw new Error('must not run'); } },
+    }, { params: { tool_name: 'complete_session_handoff', tool_call_id: 'c', arguments: {} }, sessionId: 's', streamId: 't' });
+    assert.equal(result.success, false);
+    assert.equal(result.error_code, TOOL_ERROR_CODES.DISABLED);
+  });
+});

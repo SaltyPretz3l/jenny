@@ -143,6 +143,7 @@ function ensureDesktopShortcut({
   }
 
   try {
+    if (!app.isPackaged && isLinkedWorktree(appRoot)) return { skipped: true, reason: 'linked-worktree' };
     const desktopPath = app.getPath('desktop');
     const appUserModelId =
       typeof app.getAppUserModelId === 'function' && app.getAppUserModelId()
@@ -189,6 +190,17 @@ function buildDevStartMenuShortcutDetails({
   };
 }
 
+// Linked Git worktrees have a .git file naming a worktrees/ gitdir. They are
+// disposable checkouts and must not redirect the shared development launchers.
+function isLinkedWorktree(appRoot) {
+  try {
+    const gitPath = path.join(appRoot, '.git');
+    return fs.statSync(gitPath).isFile() && /[\\/]worktrees[\\/]/.test(fs.readFileSync(gitPath, 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
 // Must run after app.setAppUserModelId and before the first Notification:
 // Electron creates its toast shortcut when the notification presenter starts.
 function ensureDevStartMenuShortcut({
@@ -205,6 +217,7 @@ function ensureDevStartMenuShortcut({
     if (typeof app.setToastActivatorCLSID === 'function') {
       app.setToastActivatorCLSID(DEV_TOAST_ACTIVATOR_CLSID);
     }
+    if (isLinkedWorktree(appRoot)) return { skipped: true, reason: 'linked-worktree' };
     const appUserModelId =
       typeof app.getAppUserModelId === 'function' && app.getAppUserModelId()
         ? app.getAppUserModelId()

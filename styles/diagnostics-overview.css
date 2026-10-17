@@ -1,0 +1,109 @@
+/* Metrics retain their viewport allocation regardless of issue count. */
+.diagnostics-overview {
+  display: flex;
+  flex-direction: column;
+  flex-basis: 0;
+  overflow: hidden;
+}
+
+.diagnostics-overview > .diagnostics-status { flex: 0 0 auto; }
+
+.diagnostics-overview-body {
+  flex: 1 1 0;
+  min-block-size: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.diagnostics-overview-body:has(.diagnostics-attention:not([hidden])) {
+  grid-template-rows: minmax(0, calc((100% - 12px) * var(--diagnostics-metrics-share, 0.6))) 12px minmax(0, 1fr);
+}
+
+.diagnostics-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-8);
+  min-block-size: 0;
+}
+
+.diagnostics-metrics > .diagnostics-section,
+.diagnostics-overview-body > .diagnostics-attention {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  padding-block: var(--space-5);
+}
+
+.diagnostics-overview-body > .diagnostics-attention[hidden],
+.diagnostics-overview-divider[hidden] { display: none; }
+
+.diagnostics-overview-body .diagnostics-section-head { flex: 0 0 auto; }
+
+.diagnostics-metric-scroll,
+.diagnostics-overview-body .diagnostics-issue-list {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  padding-inline-end: var(--space-3);
+}
+
+.diagnostics-overview-body .diagnostics-issue { flex: 0 0 auto; }
+
+.diagnostics-metric-scroll:focus-visible,
+.diagnostics-overview-body .diagnostics-issue-list:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.diagnostics-overview-divider { min-block-size: 0; }
+
+.inv-resizable-divider {
+  block-size: 100%;
+  min-block-size: 12px;
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+  display: grid;
+  place-items: center;
+}
+
+.inv-resizable-divider::after {
+  content: "";
+  inline-size: 48px;
+  border-block-start: 3px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+
+.inv-resizable-divider:hover::after,
+.inv-resizable-divider[data-resizing]::after { border-color: var(--text-primary); }
+
+.inv-resizable-divider:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+/* The event owner measures the space remaining below the status line. */
+.diagnostics-overview[data-stacked="true"] {
+  display: block;
+  overflow: auto;
+  overflow-anchor: none;
+}
+
+.diagnostics-overview[data-stacked="true"] .diagnostics-overview-body,
+.diagnostics-overview[data-stacked="true"] .diagnostics-metrics { display: block; }
+
+.diagnostics-overview[data-stacked="true"] .diagnostics-metric-scroll,
+.diagnostics-overview[data-stacked="true"] .diagnostics-issue-list {
+  overflow: visible;
+  scrollbar-gutter: auto;
+}
+
+.diagnostics-overview[hidden] { display: none; }
+
+@media (forced-colors: active) {
+  .inv-resizable-divider::after { border-color: ButtonText; }
+  .inv-resizable-divider:focus-visible { outline-color: Highlight; }
+}

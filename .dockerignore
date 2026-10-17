@@ -12,6 +12,7 @@
 !renderer/chat/**
 !renderer/features
 !renderer/features/renderer-plan-document.js
+!renderer/features/renderer-memory-chat-entry.js
 !renderer/inventory
 !renderer/inventory/**
 !renderer/shell

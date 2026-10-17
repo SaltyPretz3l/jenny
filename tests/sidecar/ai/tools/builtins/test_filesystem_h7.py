@@ -45,6 +45,18 @@ def _guard(tmp_path: Path) -> WorkspaceGuard:
     return WorkspaceGuard(str(tmp_path))
 
 
+def test_read_file_admits_persisted_shell_output_with_window(tmp_path: Path) -> None:
+    target = tmp_path / ".jenny" / "tool-results" / "x.txt"
+    target.parent.mkdir(parents=True)
+    target.write_text("first\nselected\nlast\n", encoding="utf-8", newline="\n")
+    result = read_file_tool({"path": str(target), "offset": 1, "limit": 1}, _guard(tmp_path))
+    assert result.success
+    assert result.output.split("\n\n", 1)[1] == "selected\n"
+    assert result.metadata["returned_line_count"] == 1
+    assert result.metadata["offset"] == 1
+    assert result.metadata["limit"] == 1
+
+
 def _snapshot(result: ToolHandlerResult) -> dict[str, object]:
     snapshot = result.metadata.get("read_snapshot")
     assert isinstance(snapshot, dict)

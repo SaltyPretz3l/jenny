@@ -1,0 +1,371 @@
+[
+  {
+    "name": "active-owner",
+    "entry": {
+      "id": "op_fixture",
+      "owner": {
+        "pid": 101,
+        "pgid": 101,
+        "uid": 1000,
+        "start": "boot:1",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "process": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "kind": "owned_process",
+      "created_at": 1,
+      "state": "active"
+    },
+    "owner": {
+      "state": "alive",
+      "identity": {
+        "pid": 101,
+        "pgid": 101,
+        "uid": 1000,
+        "start": "boot:1",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "process": {
+      "state": "alive",
+      "identity": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "uid": 1000,
+    "expected": "preserve"
+  },
+  {
+    "name": "unknown-owner",
+    "entry": {
+      "id": "op_fixture",
+      "owner": {
+        "pid": 101,
+        "pgid": 101,
+        "uid": 1000,
+        "start": "boot:1",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "process": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "kind": "owned_process",
+      "created_at": 1,
+      "state": "active"
+    },
+    "owner": {
+      "state": "unknown"
+    },
+    "process": {
+      "state": "alive",
+      "identity": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "uid": 1000,
+    "expected": "retain"
+  },
+  {
+    "name": "dead-owner",
+    "entry": {
+      "id": "op_fixture",
+      "owner": {
+        "pid": 101,
+        "pgid": 101,
+        "uid": 1000,
+        "start": "boot:1",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "process": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "kind": "owned_process",
+      "created_at": 1,
+      "state": "active"
+    },
+    "owner": {
+      "state": "missing"
+    },
+    "process": {
+      "state": "alive",
+      "identity": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "uid": 1000,
+    "expected": "reap"
+  },
+  {
+    "name": "reused-owner",
+    "entry": {
+      "id": "op_fixture",
+      "owner": {
+        "pid": 101,
+        "pgid": 101,
+        "uid": 1000,
+        "start": "boot:1",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "process": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "kind": "owned_process",
+      "created_at": 1,
+      "state": "active"
+    },
+    "owner": {
+      "state": "alive",
+      "identity": {
+        "pid": 101,
+        "pgid": 101,
+        "uid": 1000,
+        "start": "boot:9",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "process": {
+      "state": "alive",
+      "identity": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "uid": 1000,
+    "expected": "reap"
+  },
+  {
+    "name": "reused-target",
+    "entry": {
+      "id": "op_fixture",
+      "owner": {
+        "pid": 101,
+        "pgid": 101,
+        "uid": 1000,
+        "start": "boot:1",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "process": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "kind": "owned_process",
+      "created_at": 1,
+      "state": "active"
+    },
+    "owner": {
+      "state": "missing"
+    },
+    "process": {
+      "state": "alive",
+      "identity": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:9",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "uid": 1000,
+    "expected": "drop"
+  },
+  {
+    "name": "changed-pgid",
+    "entry": {
+      "id": "op_fixture",
+      "owner": {
+        "pid": 101,
+        "pgid": 101,
+        "uid": 1000,
+        "start": "boot:1",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "process": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "kind": "owned_process",
+      "created_at": 1,
+      "state": "active"
+    },
+    "owner": {
+      "state": "missing"
+    },
+    "process": {
+      "state": "alive",
+      "identity": {
+        "pid": 202,
+        "pgid": 303,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "uid": 1000,
+    "expected": "drop"
+  },
+  {
+    "name": "missing-target",
+    "entry": {
+      "id": "op_fixture",
+      "owner": {
+        "pid": 101,
+        "pgid": 101,
+        "uid": 1000,
+        "start": "boot:1",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "process": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "kind": "owned_process",
+      "created_at": 1,
+      "state": "active"
+    },
+    "owner": {
+      "state": "missing"
+    },
+    "process": {
+      "state": "missing"
+    },
+    "uid": 1000,
+    "expected": "retain"
+  },
+  {
+    "name": "unknown-target",
+    "entry": {
+      "id": "op_fixture",
+      "owner": {
+        "pid": 101,
+        "pgid": 101,
+        "uid": 1000,
+        "start": "boot:1",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "process": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "kind": "owned_process",
+      "created_at": 1,
+      "state": "active"
+    },
+    "owner": {
+      "state": "missing"
+    },
+    "process": {
+      "state": "unknown"
+    },
+    "uid": 1000,
+    "expected": "retain"
+  },
+  {
+    "name": "foreign-target",
+    "entry": {
+      "id": "op_fixture",
+      "owner": {
+        "pid": 101,
+        "pgid": 101,
+        "uid": 1000,
+        "start": "boot:1",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "process": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1000,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "kind": "owned_process",
+      "created_at": 1,
+      "state": "active"
+    },
+    "owner": {
+      "state": "missing"
+    },
+    "process": {
+      "state": "alive",
+      "identity": {
+        "pid": 202,
+        "pgid": 202,
+        "uid": 1001,
+        "start": "boot:2",
+        "exe": "/usr/bin/python",
+        "command_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "uid": 1000,
+    "expected": "drop"
+  }
+]

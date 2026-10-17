@@ -40,24 +40,33 @@ test('D10: the memory project label is a name, "General", or "Deleted project", 
   for (const text of labels) assert.doesNotMatch(text, /project_/);
 });
 
-// N5 (2026-09-27 gate): the source line named "Session sess_1790…". It names
-// the chat by its title instead, or plain "Chat" for one that is gone.
-test('N5: a memory\'s source names its chat by title, never a raw session id', () => {
-  const memory = (id, sessionId) => ({ id, session_id: sessionId, title: 'Tea', lesson_text: 'Prefers tea', lesson_kind: 'preference',
-    project_id: 'project_general', source_excerpt: 'I prefer tea.', updated_at: '2026-09-27T10:00:00.000Z', provenance: 'user_approved' });
+// N5 (2026-09-27 gate): the source line named "Session sess_1790…". A chat is
+// named by its title instead (row 58 W4 page: "This chat only" rows and the
+// pending "from" line), or not at all when the chat is gone.
+test('N5: a memory names its chat by title, never a raw session id', () => {
+  const memory = (id, sessionId) => ({ id, session_id: sessionId, scope_session_id: sessionId, title: 'Tea', lesson_text: 'Prefers tea',
+    lesson_kind: 'preference', project_id: 'project_general', updated_at: '2026-09-27T10:00:00.000Z', provenance: 'user_approved' });
   const state = {
     sessions: [{ id: 'sess_1790525892562_7893f165f918', title: 'Morning routine' }],
-    memoryManager: { memories: [memory(1, 'sess_1790525892562_7893f165f918'), memory(2, 'sess_gone_1')], pendingCandidates: [],
-      filter: 'all', projectFilter: 'all', searchQuery: '', pendingActionById: new Map(), pendingReviewActionByKey: new Map() },
+    memoryManager: {
+      memories: [memory(1, 'sess_1790525892562_7893f165f918'), memory(2, 'sess_gone_1')],
+      pendingCandidates: [{ session_id: 'sess_1790525892562_7893f165f918', content_fingerprint: 'sha256:1', lesson_text: 'Likes walks', lesson_kind: 'preference' }],
+      filter: 'all', searchQuery: '', pendingActionById: new Map(), pendingReviewActionByKey: new Map(),
+      archivedByScope: new Map(), operationsByScope: new Map(),
+    },
   };
-  const approvedMemoryList = { innerHTML: '' };
+  const node = () => ({ innerHTML: '', textContent: '', hidden: false });
+  const dom = { memorySection: {}, approvedMemoryList: node(), pendingMemoryHost: node() };
   const renderer = memorySettingsUtils.createMemorySettingsRenderer({
-    state, escapeHtml: (value) => String(value), getDom: () => ({ memorySection: {}, approvedMemoryList }),
+    state, escapeHtml: (value) => String(value), getDom: () => dom,
     getFieldValue: (entry, key) => entry[key], hasDraftChanges: () => false, searchText: () => '', sortPending: (list) => list,
     buildPendingKey: (sessionId, fingerprint) => `${sessionId}:${fingerprint}`, getKindLabel: (kind) => kind,
   });
   renderer.renderMemoryPage();
-  assert.match(approvedMemoryList.innerHTML, /<span>Chat: Morning routine<\/span>/);
-  assert.match(approvedMemoryList.innerHTML, /<span>Chat<\/span>/, 'a chat that is gone reads as plain "Chat"');
-  assert.doesNotMatch(approvedMemoryList.innerHTML, /sess_|Session /);
+  const list = dom.approvedMemoryList.innerHTML;
+  assert.match(list, /This chat only: “Morning routine”/);
+  assert.match(list, /<span class="memory-meta-item">This chat only<\/span>/, 'a chat that is gone reads as plain "This chat only"');
+  assert.match(dom.pendingMemoryHost.innerHTML, /Jenny · from “Morning routine”/);
+  const visibleText = (html) => html.replace(/<[^>]*>/g, ' ');
+  for (const html of [list, dom.pendingMemoryHost.innerHTML]) assert.doesNotMatch(visibleText(html), /sess_|Session /);
 });

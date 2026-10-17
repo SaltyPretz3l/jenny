@@ -60,7 +60,7 @@ function fixture({ separateSettlementFence = false, waitResources = null, decisi
         getWaitResources: id => { assert.equal(id, 'call_1'); return waitResources; } } },
     historySelector: { schema_version: 1, history_scope: 'session', compaction_ref: null,
       canonical_cutoff: { boundary_message_id: null, boundary_message_count: 0, sha256: 'a'.repeat(64) } } });
-  const params = { api_version: '2026-08-17', schema_version: 1, kind: 'continuation', phase: 'checkpoint',
+  const params = { api_version: '2026-10-15', schema_version: 1, kind: 'continuation', phase: 'checkpoint',
     request_id: 'stream_1', session_id: 'session_1', authority_revision: 'authority_1', operation_id: 'call_1',
     continuation_context: context, tool_calls: [{ call_id: 'call_1', tool_id: 'read_file' }],
     tool_batch_bytes: 'e30=', tool_batch_sha256: 'a'.repeat(64), frozen_input_bytes: 'e30=',
@@ -224,7 +224,7 @@ test('pause settlement accepts the standard Python API version and rejects chang
   const f = fixture();
   const reply = await f.publish();
   assert.throws(() => f.boundary.settlePause({ ...reply, api_version: 'future' }, f.releaseArgs), /pause_reply_invalid/);
-  assert.throws(() => f.boundary.settlePause({ ...reply, api_version: '2026-08-17', unexpected: true }, f.releaseArgs), /pause_reply_invalid/);
+  assert.throws(() => f.boundary.settlePause({ ...reply, api_version: '2026-10-15', unexpected: true }, f.releaseArgs), /pause_reply_invalid/);
   assert.equal(f.lease.released, false);
-  assert.equal(f.boundary.settlePause({ ...reply, api_version: '2026-08-17' }, f.releaseArgs).status, 'paused');
+  assert.equal(f.boundary.settlePause({ ...reply, api_version: '2026-10-15' }, f.releaseArgs).status, 'paused');
 });

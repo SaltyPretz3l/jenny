@@ -85,3 +85,49 @@ def test_resume_emits_tool_continuation_reset_before_next_generation(
     expected_reset = [("emit", StreamResetEvent.__name__, "tool_continuation")] if streaming else []
     assert events == [("dispatch", ("call_1", "call_2")), *expected_reset, ("generate", ("call_1", "call_2"))]
     assert ("chat.stream_reset" in fake_runs[0].streamed_event_types) is streaming
+
+
+def test_construction_failure_settles_already_claimed_owner(tmp_path, monkeypatch):
+    from sidecar.ai.tools import workspace_mutation_live_owner as live
+    from sidecar.ai.tools.workspace_mutation_journal_contract import workspace_identity
+    from sidecar.runtime import mutation_continuation
+    from tests.sidecar.runtime.test_mutation_terminal_cleanup import CHANGE_SET, _paused_edit
+    workspace, store, config, run, _plan = _paused_edit(tmp_path)
+    request, runtime = _fresh_request()
+    arguments = _arguments(request, runtime)
+    config.feature_flags = {"resource_discipline": False}
+    arguments["kernel"]._config = config
+    path = store.live_owner_path(workspace_identity(workspace).workspace_id, CHANGE_SET)
+    live.release_live_owner(path, session_id="session", turn_id="turn")
+    live.acquire_live_owner(path, session_id=arguments["session_id"], turn_id=request.logical_turn_id)
+    # A genuine owner was acquired by the prior turn; isolate the construction
+    # fault from checkpoint serialization already covered by the handoff test.
+    monkeypatch.setattr(mutation_continuation, "claim_mutation_checkpoint", lambda *_a, **_k: CHANGE_SET)
+    monkeypatch.setattr("sidecar.ai.routing.mutation_run_settlement.run_journal_owner",
+                        lambda _run: (store, str(workspace)))
+    def fail(**_kwargs):
+        raise RuntimeError("run construction failed")
+    monkeypatch.setattr(resume, "_ToolLoopRun", fail)
+    with pytest.raises(RuntimeError, match="construction failed"):
+        resume.resume_before_tool_dispatch(**arguments)
+    path = store.live_owner_path(workspace_identity(workspace).workspace_id, CHANGE_SET)
+    with live.recovery_ownership(path) as abandoned:
+        assert abandoned
+    assert store.load(workspace_identity(workspace).workspace_id, CHANGE_SET).record["state"] == "interrupted"
+
+
+
+def test_real_constructor_failure_does_not_publish_mutation_context(monkeypatch):
+    from sidecar.ai.routing import mutation_change_set_lifecycle as lifecycle
+    request, runtime = _fresh_request()
+    arguments = _arguments(request, runtime)
+    def fail(*_args):
+        raise RuntimeError("request tool set failed")
+    arguments["kernel"]._request_tool_set = fail
+    previous = lifecycle._CURRENT_RUN.get()
+    try:
+        with pytest.raises(RuntimeError, match="request tool set failed"):
+            resume.resume_before_tool_dispatch(**arguments)
+        assert lifecycle._CURRENT_RUN.get() is previous
+    finally:
+        lifecycle._CURRENT_RUN.set(previous)

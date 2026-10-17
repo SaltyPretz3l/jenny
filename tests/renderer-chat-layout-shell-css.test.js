@@ -313,18 +313,18 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   );
   assert.match(
     timelineOrientationCss,
-    /#chatThreadStage\s*\{[\s\S]*?container-type:\s*inline-size;[\s\S]*?container-name:\s*chatstage;/,
-    'the thread stage should expose its actual inline width to utility-cluster layout rules'
+    /\.chat-thread-stage\s*\{[\s\S]*?container-type:\s*inline-size;[\s\S]*?container-name:\s*chatstage;/,
+    'every pane thread stage exposes its actual inline width (the reading measure resolves its cqi against it)'
   );
   assert.match(
     timelineOrientationCss,
     /\.chat-timeline-utility-cluster\s*\{[^}]*flex-direction:\s*column;/,
     'the utility cluster is always a column (it is the stage\'s sibling, so no container rule can reach it)'
   );
-  assert.match(
+  assert.doesNotMatch(
     timelineOrientationCss,
-    /@container chatstage \(max-width:\s*880px\)\s*\{[\s\S]*?\.chat-thread-column\s*\{[\s\S]*?padding-inline-end:\s*44px;/,
-    'narrow thread stages reserve the transcript gutter for the button column'
+    /@container chatstage \(max-width:\s*880px\)/,
+    'the column no longer reserves 44px at narrow stages: that padding made the timeline narrower than the composer'
   );
   assert.match(
     taskRailCss,
@@ -569,16 +569,15 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     !/@media \(max-width:\s*700px\)\s*\{[\s\S]{0,6000}?\.chat-view > \.artifact-review-panel[^{]*\{[^}]*display:\s*none;/.test(chatMediaQueriesCss),
     '700px breakpoint must not display:none the artifact review panel (UIUX-004 route to hidden panels)'
   );
-  // Ultra-wide widens the COMPOSER only: 8df910a0 deliberately dropped
-  // --content-column-width from this block so the reading measure stays at its
-  // 760px foundation value, and paired that with an explicit guard in
-  // tests/markdown-css-contract.test.js ('the content column stays at 760px').
-  // Do not reinstate the 920px content column here without retiring that guard.
+  // Ultra-wide no longer widens the composer on its own (row 59 checkpoint 1):
+  // the composer shares the pane's measure at every viewport.
   assert.match(
     chatMediaQueriesCss,
-    /@media \(min-width:\s*2000px\)\s*\{[\s\S]*?--composer-width:\s*min\(920px,[\s\S]*?--context-panel-width:\s*360px;[\s\S]*?\.chat-view \.tool-call-block\s*\{[\s\S]*?width:\s*100%;/,
-    '2000px breakpoint should widen the composer and supporting blocks moderately'
+    /@media \(min-width:\s*2000px\)\s*\{[\s\S]*?--context-panel-width:\s*360px;[\s\S]*?\.chat-view \.tool-call-block\s*\{[\s\S]*?width:\s*100%;/,
+    '2000px breakpoint should keep the context panel width and the supporting blocks'
   );
+  const ultraWide = chatMediaQueriesCss.match(/@media \(min-width:\s*2000px\)\s*\{[\s\S]*?\n\}/)?.[0] || '';
+  assert.doesNotMatch(ultraWide, /--composer-width|--content-column-width/, 'no viewport-based measure in the ultra-wide block');
   assert.match(
     reasoningV2Css,
     /\.reasoning-row-stack\s*\{[\s\S]*?width:\s*100%;[\s\S]*?max-width:\s*100%;/,
@@ -672,45 +671,54 @@ test('expanded tool details use flat indentation, bounded clamps, and no nested 
 
 // Chat width (Appearance > Chat layout). Wide is an explicit, opt-in user
 // setting -- distinct from the AUTOMATIC ultra-wide widening that 8df910a0
-// deliberately reverted, whose guard lives further up this file and in
-// tests/markdown-css-contract.test.js. Both must keep passing.
-test('chat width tokens expose a Default/Wide reading measure without breaking the mobile or dock scopes', () => {
+// deliberately reverted. Row 59 checkpoint 1: the setting is a LINE LENGTH in
+// characters of the prose font (68 / 92), and the measure is pane-relative.
+test('chat width tokens are a line-length cap resolved once; the measure is pane-relative with a lock hook', () => {
   const rootDir = path.resolve(__dirname, '..');
   const foundationCss = fs.readFileSync(path.join(rootDir, 'styles', 'foundation.css'), 'utf8');
+  const panesCss = fs.readFileSync(path.join(rootDir, 'styles', 'chat-panes.css'), 'utf8');
   const mediaCss = fs.readFileSync(path.join(rootDir, 'styles', 'chat-media-queries.css'), 'utf8');
+  const strip = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
 
-  // The base measure is still 760px, expressed through the swappable cap.
-  assert.match(foundationCss, /--chat-measure-max:\s*760px;/);
-  assert.match(foundationCss, /--content-column-width:\s*min\(var\(--chat-measure-max\),\s*var\(--chat-measure-fit\)\);/);
-  assert.match(foundationCss, /--composer-width:\s*min\(var\(--chat-measure-max\),\s*var\(--chat-measure-fit\)\);/);
+  // Narrow = 68ch; the cap is registered as a <length> so `ch` and the prose-size
+  // ratio resolve once at the root, and the timeline and composer read the same px.
+  assert.match(foundationCss, /--chat-measure-cap-ch:\s*68;/);
+  assert.match(foundationCss, /--chat-measure-cap:\s*calc\(var\(--chat-measure-cap-ch\) \* 1ch \* \(var\(--font-size-prose\) \/ 1em\)\);/);
+  assert.match(foundationCss, /@property --chat-measure-cap\s*\{[^}]*syntax:\s*"<length>";[^}]*inherits:\s*true;/);
+  // The viewport-based measure math is retired.
+  assert.doesNotMatch(strip(foundationCss), /--chat-measure-max|--chat-measure-fit/);
 
   const wideRule = readCssRuleBlock(foundationCss, ':root[data-chat-width="standard"]');
-  assert.match(wideRule, /--chat-measure-max:\s*1100px;/);
+  assert.match(wideRule, /--chat-measure-cap-ch:\s*92;/);
   assert.match(wideRule, /--chat-card-max-width:\s*1100px;/);
-  // The transcript and the composer widen together (owner decision).
-  assert.match(wideRule, /--content-column-width:\s*min\(var\(--chat-measure-max\),\s*var\(--chat-measure-fit\)\);/);
-  assert.match(wideRule, /--composer-width:\s*min\(var\(--chat-measure-max\),\s*var\(--chat-measure-fit\)\);/);
   // User bubbles keep their proportion of the wider measure.
   assert.match(wideRule, /--chat-user-bubble-max-width:\s*clamp\(410px,\s*49vw,\s*810px\);/);
+  assert.doesNotMatch(strip(foundationCss), /:root\[data-chat-width="standard"\]\s+\.chat-view/);
 
-  // The width tokens are re-declared inside the wide block ON PURPOSE: at
-  // (0,2,0) that outranks the bare `:root` overrides in settings-responsive.css
-  // (<=1280px) and chat-media-queries.css (>=2000px), so Standard wins at every
-  // viewport. Inheriting from --chat-measure-max alone would silently lose.
-  assert.match(
-    fs.readFileSync(path.join(rootDir, 'styles', 'settings-responsive.css'), 'utf8'),
-    /@media \(max-width:\s*1280px\)[\s\S]*?:root\s*\{[\s\S]*?--content-column-width:/,
-    'the <=1280px :root override the wide block must outrank still exists'
-  );
+  // The per-pane measure: min(cap, pane - 2 * gutter), gutter = 3% of the pane (16..40px), never
+  // narrower than the avatar rail, and (one pane) wide enough to clear the floating utilities while
+  // the measure keeps the 320px reading floor; --chat-measure-lock replaces both tokens. The
+  // geometry itself is gated in headless Chromium by tests/renderer-chat-reading-layout.test.js.
+  // Scoped off the Workspace-hosted pane (.chat-pane.ide-chat-dock-body), whose dock tokens must keep applying.
+  const paneRule = readCssRuleBlock(panesCss, '.chat-pane:not(.ide-chat-dock-body)');
+  for (const [token, whole, share] of [['--content-column-width', '100cqi', '3cqi'], ['--composer-width', '100%', '3%']]) {
+    const value = (paneRule.match(new RegExp(`${token}:([^;]+);`))?.[1] || '').trim();
+    assert.match(value, /^var\(--chat-measure-lock,\s*min\(var\(--chat-measure-cap\),/, `${token} honours the lock and the cap`);
+    assert.ok(value.includes(`calc(${whole} - 2 * max(clamp(var(--chat-gutter-min), ${share}, 40px), var(--chat-sprite-rail-offset), min(var(--chat-utility-room), (${whole} - var(--chat-reading-floor)) / 2))`), `${token} is pane-relative in ${whole}: ${value}`);
+  }
+  assert.match(paneRule, /--chat-gutter-min:\s*16px;/);
+  assert.match(paneRule, /--chat-reading-floor:\s*320px;/);
+  assert.match(paneRule, /--chat-utility-room:\s*var\(--chat-utility-reserve,\s*0px\);/);
+  const splitPaneRule = readCssRuleBlock(panesCss, '.chat-view[data-pane-count="2"] .chat-pane');
+  assert.match(splitPaneRule, /--chat-gutter-min:\s*var\(--space-6\);/);
+  assert.match(splitPaneRule, /--chat-utility-room:\s*0px;/);
+  // The scroller reserves its scrollbar gutter on both edges, so the column centres like the composer.
+  assert.match(readCssRuleBlock(panesCss, '.chat-pane .chat-thread-scroll'), /scrollbar-gutter:\s*stable both-edges;/);
 
-  // Wide must NOT be scoped to .chat-view -- (0,2,1) would beat the mobile
-  // breakpoints, which set these tokens on .chat-view to neutralize wide mode.
-  // Comments are stripped first: the foundation.css block documents this very
-  // anti-pattern in prose, and a raw scan would match its own warning.
-  const foundationRules = foundationCss.replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.doesNotMatch(foundationRules, /:root\[data-chat-width="standard"\]\s+\.chat-view/);
-  assert.match(mediaCss, /@media \(max-width:\s*700px\)\s*\{\s*\.chat-view\s*\{[\s\S]*?--content-column-width:/);
-  assert.match(mediaCss, /@media \(max-width:\s*480px\)\s*\{\s*\.chat-view\s*\{[\s\S]*?--content-column-width:\s*100%;/);
+  // Nothing derives the measure from the viewport any more.
+  const settingsResponsive = fs.readFileSync(path.join(rootDir, 'styles', 'settings-responsive.css'), 'utf8');
+  assert.doesNotMatch(settingsResponsive, /--content-column-width|--composer-width/);
+  assert.doesNotMatch(strip(mediaCss), /--content-column-width:|--composer-width:|--_thread-col-content: min\(/);
 });
 
 test('card caps route through --chat-card-max-width and always keep their min(100%) clamp', () => {

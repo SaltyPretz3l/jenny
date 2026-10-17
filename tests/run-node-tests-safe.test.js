@@ -209,7 +209,7 @@ test('safe runner keeps scheduling files after a failure and summarizes both', (
 
 test('safe runner kills and names a hung test file via the per-file watchdog', (t) => {
   const { paths } = makeTempSuite(t, {
-    'hanging.test.js': "const test = require('node:test');\ntest('hang', () => new Promise(() => {}));\n",
+    'hanging.test.js': "const test = require('node:test');\ntest('hang', () => new Promise(() => { setInterval(() => {}, 1000); }));\n",
   });
 
   const { status, stdout, stderr } = runRunner(

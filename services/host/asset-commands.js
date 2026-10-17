@@ -1,6 +1,7 @@
 'use strict';
 
 const { hostFailure } = require('../../server/api-contract');
+const { removeTreeSync } = require('../fs-remove-no-follow');
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -185,7 +186,7 @@ function createTextAttachment(bytes, displayName) {
       },
     };
   } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTreeSync(tempDir);
   }
 }
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 from contextlib import suppress
 from pathlib import Path
@@ -92,6 +93,8 @@ _JENNY_STRUCTURED_TRANSPORT_INSTRUCTIONS = (
 _BATCH_SHIM_WARNED: set[str] = set()
 _MAX_EVENT_KINDS = 24
 _MAX_DIAGNOSTIC_ENTRIES = 8
+# A reply carrying either schema key is an envelope attempt, never legacy text.
+_ENVELOPE_KEY_RE = re.compile(r'"(?:message|tool_calls)"\s*:')
 # Character-level fixes only: a repair that strips or closes structure can
 # keep the first of several objects or a cut-off body, which is not the call.
 _SAFE_ARGUMENT_REPAIRS = frozenset(
@@ -202,6 +205,58 @@ def _read_structured_result(parts: list[str], tool_names: list[str]) -> Generati
         inband_tool_call_parse_failed=bool(failures),
         tool_call_parse_diagnostics=diagnostics,
     )
+
+
+def _looks_like_envelope(text: str) -> bool:
+    """Whether a reply is an envelope attempt: decoded keys first, spelling only when cut.
+
+    A decodable reply is classified by its decoded keys (escaped spellings such
+    as ``"\\u006dessage"`` decode to ``message``; an array root wrapping an
+    envelope object counts too). Only an undecodable, truncated reply falls back
+    to the literal key spelling (Astra w2b R1).
+    """
+
+    if not text.startswith(("{", "[")):
+        return False
+    try:
+        decoded = json.loads(text)
+    except ValueError:
+        return text.startswith("{") and _ENVELOPE_KEY_RE.search(text) is not None
+    candidates = decoded if isinstance(decoded, list) else [decoded]
+    return any(
+        isinstance(item, dict) and ("message" in item or "tool_calls" in item)
+        for item in candidates
+    )
+
+
+def _malformed_structured_result(
+    parts: list[str], out: list[GenerationResult] | None = None
+) -> GenerationResult | None:
+    """Fail a schema-shaped reply that is not a valid envelope as structured output.
+
+    It must never reach the in-band parser, which would turn ``message`` text
+    into calls; only a reply with no envelope shape at all is legacy plain text.
+    """
+
+    texts = [text.strip() for text in [*parts[-1:], "".join(parts)]]
+    text = next((item for item in texts if _looks_like_envelope(item)), None)
+    if text is None:
+        return None
+    message = ""
+    with suppress(ValueError):
+        decoded = json.loads(text)
+        if isinstance(decoded, dict) and isinstance(decoded.get("message"), str):
+            message = decoded["message"].strip()
+    entry = {"tool": "<unknown>", "arguments_length": 0, "reason": "malformed_envelope"}
+    result = GenerationResult(
+        content=message,
+        finish_reason="stop",
+        inband_tool_call_parse_failed=True,
+        tool_call_parse_diagnostics={"transport": "structured", "entries": [entry]},
+    )
+    if out is not None:
+        out.append(result)
+    return result
 
 
 def _schema_object(texts: list[str]) -> dict[str, Any] | None:
@@ -393,7 +448,9 @@ def _parse_jsonl_output(
 def _jsonl_event_counts(stdout: str) -> dict[str, int]:
     """Count the CLI's JSONL events by kind, for a stalled-turn diagnostic."""
     counts: dict[str, int] = {}
-    for line in stdout.splitlines():
+    # JSONL is LF-framed; splitlines() would also cut at U+2028/U+2029/U+0085
+    # inside JSON strings.
+    for line in stdout.split("\n"):
         try:
             event = json.loads(line)
         except ValueError:
@@ -415,7 +472,7 @@ def _agent_message_parts(
 ) -> list[str]:
     parts: list[str] = []
     saw_json = False
-    for raw_line in str(stdout or "").splitlines():
+    for raw_line in str(stdout or "").split("\n"):  # LF framing only, as above
         line = raw_line.strip()
         if not line:
             continue

@@ -31,6 +31,8 @@
     throw new Error('Ollama engine gate requires the renderer async-fence.');
   }
 
+  var daemonView = sceneUtils.resolveDependency('rendererOllamaDaemonView', './ollama-daemon-view');
+
   function generateRequestId(prefix) {
     if (typeof globalThis !== 'undefined'
       && globalThis.crypto
@@ -65,6 +67,7 @@
       ollama: { installed: false, running: false, version: '' },
       installPlan: { available: false, url: '', sizeBytes: 0, sha256: '', manualFallbackUrl: '', format: '', installDir: '' },
       trayStatus: null,
+      managedFallback: false, externalDaemon: null, stopping: false, stopFailed: false,
       optInInstall: false,
       progressPercent: 0,
       progressLabel: '',
@@ -81,9 +84,9 @@
     const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
       || (typeof require === 'function' ? require('../../shared/string-utils') : null)).escapeHtml;
 
-    function installOptInLabel(actionLabel, size) {
+    function installOptInLabel(actionLabel, size, disabled) {
       return '<label class="setup-hw-optin"><input type="checkbox" id="setup-hw-optin"'
-        + (view.optInInstall ? ' checked' : '') + ' /><span>' + actionLabel
+        + (view.optInInstall ? ' checked' : '') + (disabled ? ' disabled' : '') + ' /><span>' + actionLabel
         + size + '</span></label>';
     }
 
@@ -101,6 +104,18 @@
     }
 
     function engineStatusBody() {
+      if (view.managedFallback) {
+        return daemonView.fallback(view)
+          + installOptInLabel(jt('setup.ollamaGate.downloadInstall', 'Download &amp; install Ollama'),
+            ' (' + escapeHtml(formatBytesGb(view.installPlan.sizeBytes)) + ')', view.ollama.port?.state !== 'free')
+          + '<p class="setup-hw-provenance"><code>' + escapeHtml(view.installPlan.url) + '</code><br>'
+          + escapeHtml(jt('setup.ollamaGate.shaVerifiedUnpacking', 'SHA-256 verified before unpacking.')) + '</p>'
+          + '<a href="#" data-action="upgradeExisting">' + escapeHtml(jt('setup.ollamaGate.backToUpgrade', 'Back to upgrading the existing Ollama')) + '</a>';
+      }
+      if (view.phase === 'upgradeRequired' && view.ollama.daemon) {
+        view.downloadSize = formatBytesGb(view.installPlan.sizeBytes);
+        return daemonView.upgrade(view);
+      }
       if (view.phase === 'upgradeRequired') {
         var upgradeSize = view.installPlan.sizeBytes ? ' (' + escapeHtml(formatBytesGb(view.installPlan.sizeBytes)) + ')' : '';
         return '<div class="setup-hw-ollama setup-hw-ollama--missing">'
@@ -118,7 +133,7 @@
       }
       if (view.phase === 'running') {
         return '<p class="setup-hw-ollama setup-hw-ollama--ok">' + escapeHtml(jt('setup.ollamaGate.detected', 'Ollama detected'))
-          + (view.ollama.version ? ' (v' + escapeHtml(view.ollama.version) + ')' : '') + '.</p>';
+          + (view.ollama.version ? ' (v' + escapeHtml(view.ollama.version) + ')' : '') + '.</p>' + daemonView.facts(view.ollama.daemon);
       }
       if (view.phase === 'missingInstallable') {
         var size = view.installPlan.sizeBytes ? ' (' + escapeHtml(formatBytesGb(view.installPlan.sizeBytes)) + ')' : '';
@@ -165,7 +180,7 @@
         body = '<div class="setup-scene-body setup-hw-error"><p>'
           + escapeHtml(view.errorText || jt('setup.ollamaGate.checkFailed', 'Jenny could not check the local engine.')) + '</p></div>';
       } else {
-        body = '<div class="setup-scene-body setup-hw-scanned">' + engineStatusBody() + '</div>'
+        body = '<div class="setup-scene-body setup-hw-scanned' + (view.ollama.daemon || view.managedFallback ? ' setup-hw-daemon-body' : '') + '">' + engineStatusBody() + '</div>'
           + trayWarning();
       }
       return body;
@@ -175,6 +190,16 @@
       var close = { id: 'close', label: jt('common.close', 'Close'), variant: 'secondary' };
       if (view.phase === 'installing') {
         return [{ id: 'cancel', label: view.cancelFailed ? jt('setup.ollamaGate.retryCancel', 'Retry cancel') : jt('common.cancel', 'Cancel'), variant: 'primary' }];
+      }
+      if (view.managedFallback && view.phase !== 'checking' && view.phase !== 'error') {
+        return [close, { id: 'install', label: jt('setup.ollamaGate.installOllama', 'Install Ollama'),
+          variant: 'primary', disabled: view.ollama.port?.state !== 'free' || !view.optInInstall || !view.installPlan.available }];
+      }
+      if (view.phase === 'upgradeRequired' && view.ollama.daemon) {
+        return [close, { id: 'recheck', label: jt('setup.ollamaGate.recheck', 'Re-check'), variant: 'primary' }];
+      }
+      if (view.phase === 'running' && view.ollama.daemon) {
+        return [close, { id: 'continue', label: jt('common.continue', 'Continue'), variant: 'primary' }];
       }
       if ((view.phase === 'missingInstallable' || view.phase === 'upgradeRequired') && view.installPlan.available) {
         return [close, {
@@ -196,8 +221,9 @@
       rootEl.innerHTML = sceneUtils.renderStepModalHtml({
         id: 'ollama-engine',
         eyebrow: jt('setup.ollamaGate.eyebrow', 'Local setup'),
-        title: jt('setup.ollamaGate.title', 'Local engine'),
+        title: view.managedFallback ? jt('setup.ollamaGate.useManagedTitle', 'Use Jenny’s own Ollama') : jt('setup.ollamaGate.title', 'Local engine'),
         summary: jt('setup.ollamaGate.summary', 'Jenny uses Ollama to run local models on your machine.'),
+        status: view.phase === 'upgradeRequired' && !view.managedFallback ? jt('setup.ollamaGate.outdated', 'Outdated') : '',
         bodyHtml: buildBody(),
         actions: buildActions(),
       });
@@ -273,6 +299,8 @@
         return;
       }
       view.ollama = results[0].value || { installed: false, running: false, version: '' };
+      // A re-check may find a restarted or different holder; never act on the old identity.
+      if (view.managedFallback) view.externalDaemon = view.ollama.daemon || null;
       view.installPlan = results[1].value || view.installPlan;
       view.optInInstall = false;
       view.cancelFailed = false;
@@ -284,6 +312,7 @@
     function completeInstall() {
       if (!installCompletionPromise) {
         view.installRequestId = '';
+        view.managedFallback = false;
         teardownProgress();
         installCompletionPromise = Promise.resolve(detect());
       }
@@ -301,7 +330,8 @@
     }
 
     async function installOllama() {
-      if (!view.optInInstall || !view.installPlan.available || view.phase === 'installing') return;
+      if (!view.optInInstall || !view.installPlan.available || view.phase === 'installing'
+        || (view.managedFallback && view.ollama.port?.state !== 'free')) return;
       var myGeneration = lifecycleGate.capture();
       view.phase = 'installing';
       view.progressPercent = 0;
@@ -423,6 +453,25 @@
       }
     }
 
+    async function stopUserDaemon() {
+      if (view.stopping) return;
+      var daemon = view.externalDaemon;
+      var bridge = root && root.jennyShell && root.jennyShell.ollamaDaemon;
+      if (!daemon || !bridge || typeof bridge.stopUserProcess !== 'function') return;
+      var token = lifecycleGate.capture();
+      view.stopping = true; render();
+      try {
+        var result = await bridge.stopUserProcess({ pid: daemon.pid, startTime: daemon.startTime, program: daemon.program });
+        if (staleGeneration(token)) return;
+        view.stopFailed = !result || result.stopped !== true;
+      } catch (_error) {
+        if (staleGeneration(token)) return;
+        view.stopFailed = true;
+      } finally {
+        if (!staleGeneration(token)) { view.stopping = false; await detect(); }
+      }
+    }
+
     function handleRootChange(event) {
       var target = event && event.target;
       if (!target || target.id !== 'setup-hw-optin') return;
@@ -438,7 +487,14 @@
         render();
         unbindClicks = sceneUtils.bindActionDelegation(rootEl, {
           close: closeModal,
+          continue: closeModal,
           recheck: detect,
+          managedFallback: function () { view.externalDaemon = view.ollama.daemon; view.managedFallback = true; view.optInInstall = false; render(); },
+          upgradeExisting: function () { view.managedFallback = false; detect(); },
+          stopUserDaemon: stopUserDaemon,
+          copyDaemonCommand: async function (_event, target) {
+            await root.jennyShell?.clipboard?.writeText?.(target.dataset.command || '');
+          },
           install: installOllama,
           cancel: handleCancel,
           openManualUrl: handleOpenManualUrl,

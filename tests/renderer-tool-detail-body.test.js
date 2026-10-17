@@ -366,7 +366,8 @@ test('block and minimal Python details preserve trusted attachment image parity'
   const resultPayload = {
     call_id: 'python-call', tool_call_id: 'python-call', tool_name: 'python_execute',
     output_text: JSON.stringify({ images: [] }),
-    trusted_attachment_refs: [{ asset_path: 'C:\\tmp\\plot.png' }],
+    trusted_attachment_refs: [{ asset_path: 'C:\\tmp\\plot.png' },
+      { id: 'chart-1', kind: 'chart', asset_path: 'C:\\tmp\\chart.png' }, { id: 'page-1', kind: 'pdf_page', asset_path: 'C:\\tmp\\page.png' }],
   };
   const blockHtml = createTranscriptToolCallRenderer({ escapeHtml, toolCallUtils })
     .renderToolCallBlock(toolUse, [toolUse, { id: 'python-result', role: 'tool', kind: 'tool_result', tool_result: resultPayload }], {
@@ -384,6 +385,12 @@ test('block and minimal Python details preserve trusted attachment image parity'
   assert.deepEqual(captions(blockHtml), ['Input', 'Images']);
   assert.match(blockHtml, /file:\/\/\/C:\/tmp\/plot\.png/);
   assert.match(minimalHtml, /file:\/\/\/C:\/tmp\/plot\.png/);
+  for (const html of [blockHtml, minimalHtml]) {
+    // Only the image/chart ref with an id becomes an image-viewer button; the others stay plain images.
+    assert.equal((html.match(/data-image-viewer-open=/g) || []).length, 1);
+    assert.match(html, /<button type="button" class="inv-artifact-figure-frame" data-image-viewer-open="tool" data-image-id="chart-1" data-session-id="" aria-label="View Python output image 2 of 3" title="View Python output image 2 of 3"><img class="inv-artifact-figure-image" src="file:\/\/\/C:\/tmp\/chart\.png"/);
+    assert.equal((html.match(/class="inv-artifact-figure-image"/g) || []).length, 3);
+  }
 });
 
 test('missing input stays absent while an unusable recorded input is explicit', () => {

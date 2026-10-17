@@ -232,7 +232,7 @@ def run_lifecycle_probe(probe: ToolProbe, workspace: Path) -> None:
 
 
 def run_shutdown_probe(command: list[str]) -> None:
-    from sidecar.runtime.process_containment import process_exists  # noqa: PLC0415
+    from sidecar.runtime.process_containment import process_exists
 
     with tempfile.TemporaryDirectory(prefix="jenny-shutdown-probe-") as temporary:
         root = Path(temporary)
@@ -276,18 +276,16 @@ def run_shutdown_probe(command: list[str]) -> None:
         assert not process_exists(pid), "child survived packaged server shutdown"
 
 
-def run_router_background_probe(command: list[str], workspace: Path, duration: float) -> None:  # noqa: PLC0415
+def run_router_background_probe(command: list[str], workspace: Path, duration: float) -> None:
     """A completed production router turn must leave its packaged background job alive."""
-    from sidecar.ai.config import RuntimeConfig  # noqa: PLC0415 - optional long-run probe
-    from sidecar.ai.context.builder import ContextBuilder  # noqa: PLC0415
-    from sidecar.ai.engines.mock import MockEngine  # noqa: PLC0415
-    from sidecar.ai.mcp.client import MCPClient  # noqa: PLC0415
-    from sidecar.ai.routing.router import ChatRouter  # noqa: PLC0415
-    from sidecar.ai.tools.models import GenerationResult, ToolCallRequest  # noqa: PLC0415
+    from sidecar.ai.config import RuntimeConfig
+    from sidecar.ai.context.builder import ContextBuilder
+    from sidecar.ai.engines.mock import MockEngine
+    from sidecar.ai.mcp.client import MCPClient
+    from sidecar.ai.routing.router import ChatRouter
+    from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
 
-    old_path = os.environ.get("PATH", "")
     executable = Path(command[0]).resolve()
-    os.environ["PATH"] = str(executable.parent) + os.pathsep + old_path
     client = MCPClient()
     try:
         client.configure(
@@ -295,7 +293,7 @@ def run_router_background_probe(command: list[str], workspace: Path, duration: f
                 MCPServerConfig(
                     name="jenny_local_tools",
                     transport="stdio",
-                    command=executable.name,
+                    command=str(executable),
                     args=tuple(
                         [
                             *command[1:],
@@ -381,7 +379,6 @@ def run_router_background_probe(command: list[str], workspace: Path, duration: f
         raise RuntimeError("Background job did not settle")
     finally:
         client.close()
-        os.environ["PATH"] = old_path
 
 
 def main() -> int:

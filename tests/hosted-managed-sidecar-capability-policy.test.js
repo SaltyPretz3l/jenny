@@ -32,6 +32,7 @@ test('hosted managed config applies an explicit closed tool capability policy', 
       tools_preview_test_enabled: true,
       tools_task_board_enabled: true,
       tools_project_notes_enabled: true,
+      memory_v2_enabled: true,
       tools_verify_enabled: true,
       tools_image_generate_enabled: true,
       tools_workspace_present_enabled: true,
@@ -80,6 +81,9 @@ test('hosted managed config applies an explicit closed tool capability policy', 
   assert.equal(config.tools_verify_enabled, false);
   assert.equal(config.tools_image_generate_enabled, false);
   assert.equal(config.tools_project_notes_enabled, false, 'hosted forces project notes off whatever the desktop flag says');
+  assert.equal(config.tools_memory_enabled, false, 'hosted forces the memory tool off whatever the desktop flag says');
+  assert.equal(config.tools_conversations_enabled, false, 'hosted forces conversation tools off');
+  assert.equal(config.conversation_index, undefined, 'hosted never configures the conversation index');
   assert.equal(config.electron_tool_bridge_enabled, true);
   assert.equal(config.repo_delta_resume_enabled, false);
 });

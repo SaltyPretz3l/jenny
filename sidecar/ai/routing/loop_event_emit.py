@@ -220,13 +220,16 @@ def build_interrupted_tool_outcome(record: dict[str, Any], output: str) -> Any:
     tool_name = str(record.get("tool_name") or "tool").strip() or "tool"
     raw_arguments = record.get("arguments")
     arguments: dict[Any, Any] = raw_arguments if isinstance(raw_arguments, dict) else {}
+    # A tool may leave settled report metadata (delegate's finished children) on its record.
+    retained = record.get("result_metadata")
+    retained_metadata = dict(retained) if isinstance(retained, dict) else {}
     return ToolExecutionOutcome(
         tool_name=tool_name,
         output=output,
         success=False,
         tool_input={str(key): value for key, value in arguments.items()},
         error_code=CMP_LOOP_TOOL_INTERRUPTED,
-        metadata={"interrupted": True, "recovery": "orphaned_tool_call"},
+        metadata={**retained_metadata, "interrupted": True, "recovery": "orphaned_tool_call"},
         call_id=call_id,
     )
 

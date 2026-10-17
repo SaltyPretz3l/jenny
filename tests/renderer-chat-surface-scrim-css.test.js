@@ -43,11 +43,9 @@ test('threaded and new-session chat share the masked center-lane scrim', () => {
   );
 });
 
-test('new-session scrim retains narrow and no-blur fallbacks', () => {
-  assert.match(
-    chatMediaQueriesCss,
-    /\.chat-view\.chat-empty\s+\.hero-stage::before\s*\{[\s\S]*?calc\(100vw\s*-\s*48px\)/
-  );
+test('new-session scrim retains the no-blur and reduced-motion fallbacks', () => {
+  // Row 59 checkpoint 1 sized the hero scrim from the composer measure in
+  // chat-thread.css (pane-relative), so there is no 100vw narrow rule any more.
   assert.match(
     chatMediaQueriesCss,
     /@supports not \(backdrop-filter:\s*blur\(1px\)\)[\s\S]*?\.chat-thread-column::before,\s*\.chat-view\.chat-empty\s+\.hero-stage::before\s*\{[\s\S]*?var\(--bg-base\)\s*84%[\s\S]*?backdrop-filter:\s*none;[\s\S]*?-webkit-backdrop-filter:\s*none;/

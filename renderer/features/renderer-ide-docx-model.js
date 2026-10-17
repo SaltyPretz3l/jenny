@@ -254,6 +254,15 @@
       const xml = new Serializer().serializeToString(doc).replace(/^<\?xml[^>]*\?>/, '');
       return declaration + xml;
     };
+    // Per-part XML cache: every DOM mutation path invalidates its parts after the change.
+    const xmlCache = new Map();
+    const invalidate = (...parts) => {
+      for (const part of parts.length ? parts : ['document', 'numbering', 'rels']) xmlCache.delete(part);
+    };
+    const cachedXml = (part, doc, declaration) => {
+      if (doc && !xmlCache.has(part)) xmlCache.set(part, serializeDom(doc, declaration));
+      return doc ? xmlCache.get(part) : null;
+    };
     const parseDocument = (xml) => {
       const parsed = parser().parseFromString(String(xml || ''), 'application/xml');
       const body = Array.from(parsed.getElementsByTagNameNS(W_NS, 'body'))[0];
@@ -280,15 +289,15 @@
     const mediaRetention = imageUtils.createMediaRetention(media, resources);
 
     function relsXml() {
-      return relsDoc ? serializeDom(relsDoc, relsDeclaration) : null;
+      return cachedXml('rels', relsDoc, relsDeclaration);
     }
 
     function documentXml() {
-      return serializeDom(documentDoc, documentDeclaration);
+      return cachedXml('document', documentDoc, documentDeclaration);
     }
 
     function numberingXml() {
-      return numberingDoc ? serializeDom(numberingDoc, numberingDeclaration) : null;
+      return cachedXml('numbering', numberingDoc, numberingDeclaration);
     }
 
     const initialNumbering = numberingXml();
@@ -300,7 +309,12 @@
     const undoStack = [];
     const redoStack = [];
     resources.stacks.push(undoStack, redoStack);
-    mediaRetention.reclaim = () => mediaRetention.prune(documentDoc, relsDoc, [...undoStack, ...redoStack]);
+    const relationshipCount = () => relsDoc?.getElementsByTagNameNS('*', 'Relationship').length || 0;
+    mediaRetention.reclaim = () => {
+      const before = relationshipCount();
+      mediaRetention.prune(documentDoc, relsDoc, [...undoStack, ...redoStack]);
+      if (relationshipCount() !== before) invalidate('rels');
+    };
     mediaRetention.keptLength = () => mediaRetention.insertedLength(documentDoc, relsDoc, undoStack);
     let transactionDepth = 0;
     let transactionRecorded = false;
@@ -355,6 +369,7 @@
       numberingDoc = parseNumbering(state.numberingXml);
       relsDeclaration = declarationOf(state.relsXml);
       relsDoc = parseNumbering(state.relsXml);
+      invalidate();
     }
 
     function relationshipTarget(id) {
@@ -739,6 +754,7 @@
       }
       numberingDeclaration = XML_DECL;
       numberingDoc = parser().parseFromString(`<w:numbering xmlns:w="${W_NS}"/>`, 'application/xml');
+      invalidate('numbering');
     }
 
     function nextNumericId(elements, attribute, floor = -1) {
@@ -799,6 +815,7 @@
       abstractRef.setAttributeNS(W_NS, 'w:val', abstractId);
       num.appendChild(abstractRef);
       root.appendChild(num);
+      invalidate('numbering');
       return numId;
     }
 
@@ -895,6 +912,11 @@
       mediaPrefix: options.mediaPrefix,
       occupiedNames: options.occupiedNames,
     }) || { insertImage: () => false, resizeImage: () => false };
+    // recordMutation() runs before a mutator's DOM change, so invalidate once the public mutator returns.
+    const mutating = (method, ...parts) => (...args) => {
+      const version = mutationVersion;
+      try { return method(...args); } finally { if (mutationVersion !== version) invalidate(...parts); }
+    };
 
     return {
       getBlocks() {
@@ -904,14 +926,14 @@
         const paragraph = paragraphFor(blockId);
         return paragraph ? runPositions(paragraph).map((item) => item.text).join('') : '';
       },
-      insertText,
-      insertImage: imageOperations.insertImage,
-      resizeImage: imageOperations.resizeImage,
-      deleteRange,
-      splitParagraph,
-      mergeWithPrevious,
-      toggleRunProperty,
-      setList,
+      insertText: mutating(insertText, 'document'),
+      insertImage: mutating(imageOperations.insertImage, 'document', 'rels'),
+      resizeImage: mutating(imageOperations.resizeImage, 'document'),
+      deleteRange: mutating(deleteRange, 'document'),
+      splitParagraph: mutating(splitParagraph, 'document'),
+      mergeWithPrevious: mutating(mergeWithPrevious, 'document'),
+      toggleRunProperty: mutating(toggleRunProperty, 'document'),
+      setList: mutating(setList, 'document'),
       getListInfo(blockId) {
         const paragraph = paragraphFor(blockId);
         return paragraph ? listInfoFor(paragraph) : null;

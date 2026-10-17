@@ -63,6 +63,22 @@ test('chat.send omits the safety fields when the chatUi state is unavailable', a
   assert.equal(Object.hasOwn(nullState, 'auto_approve_streak_cap'), false);
 });
 
+test('each chat.send captures fresh subagent preferences without mutating active requests', async () => {
+  const service = createManagedChatServiceStub();
+  const getState = service.configService.getState.bind(service.configService);
+  let model = 'gpt-6.1-sol';
+  service.configService.getState = () => ({
+    ...getState(),
+    subagentRouting: { chatgpt: { defaultModel: model, defaultEffort: 'low', preferredModels: [model] } },
+  });
+  const first = await captureChatSendParams(service);
+  model = 'gpt-6-astra';
+  const second = await captureChatSendParams(service);
+  assert.equal(first.subagent_routing.chatgpt.defaultModel, 'gpt-6.1-sol');
+  assert.equal(second.subagent_routing.chatgpt.defaultModel, 'gpt-6-astra');
+  assert.equal(first.subagent_routing.chatgpt.defaultEffort, 'low');
+});
+
 test('a request carrying the policy captured with its turn wins over the live chatUi state', async () => {
   const service = createManagedChatServiceStub();
   service.configService.getChatUiState = () => ({ safetyMode: 'normal', autoApproveStreakCap: 0 });

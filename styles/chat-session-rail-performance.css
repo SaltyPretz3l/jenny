@@ -1,0 +1,93 @@
+/* styles/chat-session-rail-performance.css - row 59 checkpoint 6.
+   The rail's Performance section and the Session toggle's compact readout. Tokens only; logical
+   properties; the section reuses the rail's head/body/disclosure rules (chat-session-rail.css). */
+
+.session-rail-performance[hidden] {
+  display: none;
+}
+
+/* Labels never shrink below their text; a long value wraps under, end-aligned. */
+.session-rail-perf-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  box-sizing: border-box;
+  min-block-size: 28px;
+  padding-block: var(--space-1);
+  padding-inline: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.session-rail-perf-label {
+  flex: none;
+  white-space: nowrap;
+}
+
+.session-rail-perf-value {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  overflow-wrap: anywhere;
+}
+
+.session-rail-perf-row[data-tone="muted"] .session-rail-perf-value {
+  color: var(--text-muted);
+}
+
+.session-rail-perf-meta {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+/* Host scope, not this chat's: a dashed rule separates it from the per-request rows. */
+.session-rail-perf-scope {
+  display: grid;
+  gap: var(--space-1);
+  margin-block-start: var(--space-2);
+  padding-block-start: var(--space-3);
+  padding-inline: var(--space-2);
+  border-block-start: 1px dashed var(--line);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* ── Session toggle readout: "Session · 182 tok/s" (undocked only). tabular-nums keeps the width
+   from jittering; the value is in the button's accessible name, not announced as it changes. ── */
+.session-rail-readout {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.session-rail-readout-sep::before {
+  content: "\00b7";
+}
+
+.session-rail-readout[hidden] {
+  display: none;
+}
+
+/* Little room in the pane: the word goes, the icon and the rate stay. */
+.session-rail-toggle[data-readout-compact] .chat-timeline-utility-text,
+.session-rail-toggle[data-readout-compact] .session-rail-readout-sep {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

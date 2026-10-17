@@ -33,8 +33,9 @@ const {
 const {
   USAGE_HISTORY_SCHEMA_VERSION,
 } = require('../usage-history-service');
-
-const MCP_SERVERS_SCHEMA_VERSION = 1;
+const {
+  MCP_CONFIG_SCHEMA_VERSION: MCP_SERVERS_SCHEMA_VERSION,
+} = require('../mcp-config-store');
 
 function normalizeVersionValue(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {

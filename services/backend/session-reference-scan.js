@@ -21,8 +21,8 @@ function readSessionMessagesForReferenceScan(sessionStore, summary) {
   return readSessionRecordForReferenceScan(sessionStore, summary).messages;
 }
 
-// Same read, plus the persisted turn events (tool-result media refs live only
-// there: message normalization drops `tool_result.trusted_attachment_refs`).
+// Same read, plus the persisted turn events: tool-result media refs live on the
+// tool_result event payload and, when present, on `tool_result.trusted_attachment_refs`.
 function readSessionRecordForReferenceScan(sessionStore, summary) {
   const sessionId = summary?.id;
   const expectedCount = Number(summary?.message_count || 0);

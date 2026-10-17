@@ -65,7 +65,7 @@ test('a hidden .btn loses its box against every .btn display rule in buttons.css
 test('the checked radio row check mark beats the empty radio column', () => {
   const rules = parseRules('renderer/inventory/inventory.css');
   const column = rules.find((rule) => rule.selector === '.inv-context-menu-item[role="menuitemradio"]::before');
-  const checked = rules.filter((rule) => /inv-context-menu-item--checked/.test(rule.selector)
+  const checked = rules.filter((rule) => /inv-context-menu-item--checked\[role="menuitemradio"\]/.test(rule.selector)
     && /::before$/.test(rule.selector) && rule.style.getPropertyValue('content'));
   assert.ok(column, 'the radio column rule exists');
   assert.equal(checked.length, 1);

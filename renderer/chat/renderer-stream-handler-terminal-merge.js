@@ -40,7 +40,13 @@
       return !isSubagent || !callId || !terminalCalls.has(callId);
     });
     return snapshot.length
-      ? snapshot.map((step) => (step && typeof step === 'object' ? { ...step } : step))
+      ? snapshot.map((step) => {
+        if (!step || typeof step !== 'object') return step;
+        const copy = { ...step };
+        delete copy.childActivity;
+        delete copy.child_activity;
+        return copy;
+      })
       : null;
   }
 

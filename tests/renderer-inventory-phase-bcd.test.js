@@ -487,7 +487,7 @@ test('renderArtifactCards renders a trusted image as a figure with its local sou
   assert.ok(html.includes('<figure class="inv-artifact-figure"'), 'figure markup');
   assert.ok(html.includes('src="file:///tmp/chart.png"'), 'uses trusted file URL');
   assert.ok(html.includes('alt="Chart"'), 'title is the alt text');
-  assert.ok(html.includes('data-inv-artifact-action="save-as"'), 'has save-as action');
+  assert.ok(html.includes('data-image-action="save-as"'), 'has save-as action');
   assert.ok(!html.includes('inv-artifact-list'), 'image stays out of the collapsed list');
 });
 

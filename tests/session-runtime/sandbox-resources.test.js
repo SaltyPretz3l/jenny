@@ -155,7 +155,7 @@ test('sidecar settlement cannot release a command owned by the Node execution se
   setup.preparation.acquireWorker();
   setup.preparation.bindWorker(setup.workerBinding);
   await setup.claim.admit({ preparation: setup.preparation, workerBinding: setup.workerBinding });
-  const forged = setup.gateway.handle({ api_version: '2026-08-17', schema_version: 1, kind: 'tool',
+  const forged = setup.gateway.handle({ api_version: '2026-10-15', schema_version: 1, kind: 'tool',
     request_id: 'request_test', session_id: 'session_test',
     authority_revision: setup.context.authority_revision, operation_id: 'call_test',
     phase: 'settle', status: 'succeeded', cleanup: 'confirmed' });

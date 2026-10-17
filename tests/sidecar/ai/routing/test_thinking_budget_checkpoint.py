@@ -578,7 +578,10 @@ def test_length_at_context_window_uses_context_budget_terminal_when_not_compacta
         feature_flags={"token_budget": True, "context_compaction": False},
     )
 
-    assert "context budget is used up" in decision.response_text
+    # F24: the generation was cut off (finish_reason length) and the budget is
+    # used up; the copy says both and claims nothing about which filled the
+    # window (here the prompt did).
+    assert "the reply was cut off and this turn's context budget is used up" in decision.response_text
     assert decision.terminal_error_code is None
     assert run.thinking_budget_checkpoints == 0
     assert _checkpoint_messages(run) == []

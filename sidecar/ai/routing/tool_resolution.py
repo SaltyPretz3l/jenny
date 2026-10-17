@@ -279,7 +279,7 @@ def assemble_tool_contract(
             ELECTRON_TOOL_BRIDGE_SERVER_NAME,
         }
     )
-    return _assemble_tool_contract(
+    contract = _assemble_tool_contract(
         catalog,
         _context_from_request(
             kernel,
@@ -291,6 +291,8 @@ def assemble_tool_contract(
             lockdown_disabled_tools=lockdown_disabled_tools,
         ),
     )
+    # The handoff-only posture (offer exactly complete_session_handoff, or never offer it).
+    return contract if request_context is None else request_context.restrict_tool_contract(contract)
 
 
 def get_tool_schemas(kernel: Any) -> list[dict[str, Any]]:

@@ -201,10 +201,13 @@
   isolation: isolate;
   /* The masked pseudo-layer below feathers both the wash and backdrop blur;
      applying blur here would leave a hard filter boundary at the column edge. */
-  --_thread-col-content: min(var(--content-column-width), calc(100vw - 120px));
+  --_thread-col-content: var(--content-column-width);
   width: calc(var(--_thread-col-content) + var(--chat-sprite-rail-offset));
   max-width: 100%;
-  margin-inline-start: max(0px, calc((100% - var(--_thread-col-content)) / 2 - var(--chat-sprite-rail-offset)));
+  /* Centres the measure in the scroller. The pane's gutter is never narrower
+     than the avatar rail, so this is only negative by the scrollbar gutter
+     (the rail then sits over it). */
+  margin-inline-start: calc((100% - var(--_thread-col-content)) / 2 - var(--chat-sprite-rail-offset));
   margin-inline-end: auto;
   padding-block: var(--chat-thread-offset) var(--composer-safe-offset);
   padding-inline-start: var(--chat-sprite-rail-offset);
@@ -245,7 +248,9 @@
 }
 
 .chat-view.chat-empty .hero-stage::before {
-  --_thread-col-content: min(var(--content-column-width), calc(100vw - 120px));
+  /* The hero is not inside the thread stage's size container, so the
+     percentage form of the same measure (the composer's) applies here. */
+  --_thread-col-content: var(--composer-width);
   top: 0;
   bottom: 0;
   inset-inline-start: max(0px, calc((100% - var(--_thread-col-content)) / 2 - var(--chat-sprite-rail-offset)));

@@ -133,7 +133,7 @@ test('a running delegate shows one live trigger that opens the inspector, follow
   assert.ok(monitor().querySelector('[data-subagent-page="detail"]'), 'a single child lands on its drill-in');
   assert.match(monitor().textContent, /Task 1/, 'showing the running child');
   assert.match(monitor().textContent, /Task 1\/1 running\./);
-  assert.match(monitor().textContent, /Steps appear when this subagent finishes\./);
+  assert.match(monitor().textContent, /Tool steps appear here as they run\./);
 
   await emit(frames.settled);
   await waitForUi(window, 120);

@@ -41,8 +41,7 @@
       renderComposerState: (...a) => renderComposerState(...a),
       renderPersonalityEditor: (...a) => renderPersonalityEditorSafe(...a), syncBackendNotice: (...a) => syncBackendNotice(...a),
       renderSessions: (...a) => renderSessions(...a), refreshApprovedMemories: (...a) => refreshApprovedMemoriesSafe(...a),
-      refreshPendingMemories: (...a) => refreshPendingMemoriesSafe(...a), clearDismissedMemorySession: (...a) => clearDismissedMemorySessionSafe(...a),
-      resetMemorySuggestionState: (...a) => resetMemorySuggestionStateSafe(...a),
+      refreshPendingMemories: (...a) => refreshPendingMemoriesSafe(...a),
       refreshCompanionState: (...a) => refreshCompanionStateSafe(...a), refreshProactiveState: (...a) => refreshProactiveStateSafe(...a),
       refreshSkillsState: (...a) => refreshSkillsStateSafe(...a),
       refreshOfflineState: (...a) => refreshOfflineStateSafe(...a), refreshAwayDigest: (...a) => refreshAwayDigestSafe(...a),
@@ -90,6 +89,7 @@
         historyScope: 'session',
         includePersonality: true,
         includeMemory: true,
+        memoryOptOut: false,
       },
     }),
     getCurrentRuntimePreferences = () => ({
@@ -100,6 +100,7 @@
         historyScope: 'session',
         includePersonality: true,
         includeMemory: true,
+        memoryOptOut: false,
       },
     }),
     patchSessionSummary = noop,
@@ -232,6 +233,7 @@
       syncComposerInputHeight: (...a) => syncComposerInputHeight(...a),
       loadSessions: (...a) => loadSessions(...a),
       openSession: (...a) => openSession(...a),
+      scrollMessageIntoView: (...a) => scrollMessageIntoView(...a),
       getCurrentMessageById: (...a) => getCurrentMessageById(...a),
       setActiveView: (...a) => setActiveView(...a),
       openSettingsSection: (...a) => openSettingsSection(...a),
@@ -283,14 +285,6 @@
     handlePersonalityResetSafe = noopAsync,
     handlePersonalityOpenFolderSafe = noopAsync,
     hasPersonalityUnsavedChangesSafe = noopFalse,
-    refreshMemoryContextFilesSafe = noopAsync,
-    renderMemoryContextFilesSafe = noop,
-    loadMemoryContextFileSafe = noopAsync,
-    setMemoryContextDraftSafe = noop,
-    getMemoryContextActiveFileSafe = noopNull,
-    saveMemoryContextFileSafe = noopAsync,
-    resetMemoryContextFileSafe = noopAsync,
-    hasMemoryContextUnsavedChangesSafe = noopFalse,
     refreshProactiveStateSafe = noopAsync,
     handleUseProactiveSuggestionMessageSafe = noopAsync,
     refreshSkillsStateSafe = noopAsync,
@@ -306,21 +300,17 @@
     refreshPendingMemoriesSafe = noopAsync,
     refreshMemoryStatusSafe = noopAsync,
     renderApprovedMemoryManagerSafe = noop,
-    maybeSuggestMemoryCaptureSafe = noopAsync,
     handleApprovedMemorySaveSafe = noopAsync,
     handleApprovedMemoryDeleteSafe = noopAsync,
     upsertApprovedMemoryDraftSafe = noop,
     ensureIdeLoaded = noopAsync, renderIdeSafe = noop,
     activateIdeSafe = noop,
     layoutIdeEditorSafe = noop,
-    reconcileChatDockHostSafe = noopFalse, prepareChatDockSessionTransitionSafe = noopFalse, getIdeCommandItemsSafe = () => [], openIdeChangeDiffSafe = noopFalse, openIdeFileAtLineSafe = noopFalse, revealIdeChangesSafe = noopFalse,
+    reconcileChatDockHostSafe = noopFalse, prepareChatDockSessionTransitionSafe = noopFalse, getIdeCommandItemsSafe = () => [], openIdeChangeDiffSafe = noopFalse, openIdeFileAtLineSafe = noopFalse, openIdeTestOutputSafe = noopAsync, openIdeGitViewSafe = noopFalse, revealIdeChangesSafe = noopFalse,
     openIdeHelpOverlaySafe = noop,
     clearApprovedMemoryDraftSafe = noop,
     getApprovedMemoryByIdSafe = noopNull,
     hasApprovedMemoryDraftChangesSafe = noopFalse,
-    clearDismissedMemorySessionSafe = noop,
-    rekeyDismissedMemorySessionSafe = noopStr,
-    resetMemorySuggestionStateSafe = noop,
     refreshCompanionStateSafe = noopAsync,
     shouldRenderHomePanelSafe = noopFalse,
     renderHomePanelSafe = noop,
@@ -582,7 +572,7 @@
   const paneZeroSessionId = () => window.rendererPaneVisibilityUtils?.resolvePaneSessionId?.(state, 0) ?? state.currentSessionId;
   const buildPaneSurface = (pane = {}) => (window.rendererChatPaneSurfaceControllers || {}).createChatPaneSurfaceControllers?.({
     state, paneId: pane.paneId || 0, windowRef: window, constants: { MESSAGE_STATUS }, followState: pane.followState, getSessionId: pane.getSessionId || paneZeroSessionId,
-    dom: { chatView, chatSurfaceEffects, chatSurfaceEffectLeft, chatThreadStage, chatThreadColumn, composerWrap, chatTimeline, chatThreadScroll, ...pane.dom },
+    dom: { chatView, chatSurfaceEffects, chatSurfaceEffectLeft, chatThreadStage, chatThreadColumn, composerWrap, chatTimeline, chatThreadScroll, chatTimelineUtilityCluster: document.getElementById('chatTimelineUtilityCluster'), ...pane.dom },
     factories: { scrollCoordinatorUtils: window.rendererChatScrollCoordinator || {}, viewportUtils, pinToTopUtils: window.rendererPinToTopUtils || {} },
     controllers: { thinkingController, reducedMotionQuery, ...pane.controllers },
     callbacks: {
@@ -620,6 +610,8 @@
     if (!ctx || !(ctx.viewModelByTurnId instanceof Map)) return [];
     return Array.from(ctx.viewModelByTurnId.values());
   }
+  // Pane 0 then pane 1: the side-panel column motion brackets each reflow with their reader anchors.
+  const getScrollCoordinators = () => [chatScrollCoordinator, window.rendererAppPaneComposition?.getPaneComposition?.()?.getPane?.(1)?.surface?.scrollCoordinator].filter(Boolean);
   const shellArtifactBridge = (window.rendererShellArtifactBridgeUtils || {}).createShellArtifactBridge?.({
     state,
     windowRef: window,
@@ -657,6 +649,7 @@
       getChatTimelineRowModelEnabled: (...a) => getChatTimelineRowModelEnabled(...a),
       recordChatTimelineRolloutSignal: (...a) => recordChatTimelineRolloutSignal(...a),
       rollbackChatTimelineRowModel: (...a) => rollbackChatTimelineRowModel(...a),
+      getScrollCoordinators,
     },
     codeReview: {
       codeReviewRailFactory: codeReviewRailUtils.createCodeReviewRail,
@@ -693,12 +686,13 @@
     syncArtifactReviewLayout = noop,
     selectArtifact = noop,
   } = shellArtifactBridge;
+  window.rendererChatWorkspaceDetail?.configure?.({ openActivity: () => contextPanelController?.openActivity?.(), openInGit: async () => { setActiveView('ide'); return openIdeGitViewSafe(); } }); // session rail rows (row 59 cp2)
   /* contextPanelController */
   const contextPanelUtils = window.rendererContextPanelUtils || {};
   const contextPanelController = (typeof contextPanelUtils.createContextPanelController === 'function'
     ? contextPanelUtils.createContextPanelController : null)?.({
     state,
-    dom: { chatContextPanel, contextArtifactList, contextSessionLogs, contextPanelToggle, contextArtifactExpand },
+    dom: { chatContextPanel, contextSessionLogs, contextPanelToggle },
     callbacks: {
       escapeHtml,
       setActiveView: (...a) => setActiveView(...a),
@@ -707,7 +701,10 @@
       jumpToArtifactSource: (...a) => jumpToArtifactSource(...a),
       selectArtifact: (...a) => selectArtifact(...a),
       getArtifactsForSession: (...a) => getArtifactsForSession(...a),
+      closeArtifact: () => shellArtifactBridge.collapseSidePanel?.(),
+      openActivityOutput: async (output) => {setActiveView('ide');await openIdeTestOutputSafe(output);},
       sidePanel: shellArtifactBridge.sidePanel || null, // split view W3-2: the panel owner (renderer-shell-artifact-bridge.js)
+      getScrollCoordinators,
       getLogEntries: (sessionId = state.currentSessionId) => {
         const sid = String(sessionId || '').trim();
         if (!sid) return (state.logs || []).slice(-(10));
@@ -728,7 +725,6 @@
       isInteractiveOtherTrigger,
       getActiveSession,
       patchSessionSummary,
-      rekeyDismissedMemorySession: (...a) => rekeyDismissedMemorySessionSafe(...a),
       rekeySessionArtifacts: (...a) => rekeySessionArtifacts(...a),
       clearProjectionContextCacheForSession: (...a) => clearProjectionContextCacheForSession(...a),
       rekeyProjectionContextCache: (...a) => rekeyProjectionContextCache(...a),
@@ -953,15 +949,12 @@
       refreshWorkspaceRootState, refreshPhasePercentiles, resetPhasePercentiles, hydrateCachedLazyShellState, queueStartupLazyHydration, handleWorkspaceRootChoose, clearWorkspaceRoot, getProjectSwitcher,
       getPersonalityActiveFileSafe, setPersonalityDraftSafe, refreshPersonalityWorkspaceSafe, renderPersonalityEditorSafe, handlePersonalityTabChangeSafe, handlePersonalitySaveSafe, handlePersonalityResetSafe,
       handlePersonalityOpenFolderSafe, hasPersonalityUnsavedChangesSafe,
-      refreshMemoryContextFilesSafe, renderMemoryContextFilesSafe, loadMemoryContextFileSafe,
-      setMemoryContextDraftSafe, getMemoryContextActiveFileSafe, saveMemoryContextFileSafe,
-      resetMemoryContextFileSafe, hasMemoryContextUnsavedChangesSafe,
       refreshProactiveStateSafe, handleUseProactiveSuggestionMessageSafe, refreshSkillsStateSafe, renderSkillsManagerSafe, updateSkillsSettingsSafe,
       openSkillsScopeFolderSafe, bindSkillsShellEventsSafe, refreshOfflineStateSafe, renderOfflineManagerSafe,
       bindOfflineShellEventsSafe, handleOfflineModeChangeSafe, refreshApprovedMemoriesSafe, refreshPendingMemoriesSafe, refreshMemoryStatusSafe, renderApprovedMemoryManagerSafe,
-      maybeSuggestMemoryCaptureSafe, handleApprovedMemorySaveSafe, handleApprovedMemoryDeleteSafe, upsertApprovedMemoryDraftSafe, clearApprovedMemoryDraftSafe, renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe,
+      handleApprovedMemorySaveSafe, handleApprovedMemoryDeleteSafe, upsertApprovedMemoryDraftSafe, clearApprovedMemoryDraftSafe, renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe,
       reconcileChatDockHostSafe, getIdeCommandItemsSafe, openIdeHelpOverlaySafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe,
-      getApprovedMemoryByIdSafe, hasApprovedMemoryDraftChangesSafe, clearDismissedMemorySessionSafe, rekeyDismissedMemorySessionSafe, resetMemorySuggestionStateSafe, refreshCompanionStateSafe, shouldRenderHomePanelSafe, renderHomePanelSafe,
+      getApprovedMemoryByIdSafe, hasApprovedMemoryDraftChangesSafe, refreshCompanionStateSafe, shouldRenderHomePanelSafe, renderHomePanelSafe,
       applyCompanionPayload, getAvailableCompanionDeferPresets, initSetupControllerSafe, refreshSetupStateSafe, applySetupBackendStatusSafe, openSetupTileSafe, showSetupFromSettingsSafe,
       showSetupHelpSafe, showFactoryResetSafe, handleRunSetupAgain, buildAttachmentBudget, summarizeAttachmentPreparation, buildAttachmentToastMessage, setAttachmentNotice,
       clearAttachmentNotice, setComposerStatusNotice, clearComposerStatusNotice, getActiveSendPreflight, isSendPreflightPending, getActiveStreamSessionId, isAnySendBusy, isSessionStreaming,

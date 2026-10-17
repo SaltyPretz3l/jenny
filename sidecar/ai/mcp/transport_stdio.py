@@ -15,9 +15,19 @@ from itertools import count
 from typing import Any, NoReturn
 
 from sidecar.ai.config import MCPServerConfig
-from sidecar.ai.error_codes import CMP_MCP_PROTOCOL_FAILED, CMP_MCP_SERVER_FAILED
-from sidecar.ai.mcp.exceptions import OBSERVED_CHANGES_KEY, MCPError, mcp_error_data_detail
-from sidecar.ai.mcp.transport_base import MCPTransport, raise_cancelled_keeping_reply
+from sidecar.ai.mcp import transport_stdio_reader as _reader
+from sidecar.ai.mcp.exceptions import (
+    CMP_MCP_PROTOCOL_FAILED,
+    CMP_MCP_SERVER_FAILED,
+    OBSERVED_CHANGES_KEY,
+    MCPError,
+    mcp_error_data_detail,
+)
+from sidecar.ai.mcp.transport_base import (
+    MCPTransport,
+    StdioPromptsMixin,
+    raise_cancelled_keeping_reply,
+)
 from sidecar.ai.mcp.transport_base import raise_if_cancelled as _raise_if_cancelled
 from sidecar.ai.mcp.transport_lifecycle import (
     ProcessContainment as MCPProcessContainment,
@@ -30,18 +40,16 @@ from sidecar.ai.mcp.transport_lifecycle import (
     validate_stdio_command as _validate_stdio_command,
 )
 from sidecar.ai.tools.sanitization import redact_error_paths, sanitize_tool_output
+from sidecar.runtime import owned_process_tracking
 from sidecar.runtime.chat_models import TerminalChatStateError
 from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger(__name__)
 MCP_READER_QUEUE_MAXSIZE = 32
 MCP_STDERR_TAIL_MAX_CHARS = 4096
-# One JSON-RPC reply is one stdout line. The builtin server rides typed
-# attachments inline (up to TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES decoded, ~4/3
-# that once base64-encoded) next to the 16K-char model-visible output, so the
-# reader's cap must stay above that or a three-page PDF read kills the server
-# (2026-09-20: 3 x ~290KB page renders ended the transport with CMP-MCP-0004).
-MCP_MAX_STDOUT_LINE_CHARS = 4 * 1024 * 1024
+MCP_MAX_STDOUT_LINE_CHARS = _reader.MCP_MAX_STDOUT_LINE_CHARS_BUILTIN  # builtin cap, kept for importers
+MCP_READER_QUEUE_MAX_BYTES = _reader.MCP_READER_QUEUE_MAX_BYTES
+_read_bounded_text_line = _reader._read_bounded_text_line
 MCP_MAX_STDERR_LINE_CHARS = 64 * 1024
 MCP_QUEUE_PUT_TIMEOUT_SECONDS = 0.05
 MCP_REQUEST_LOCK_POLL_SECONDS = 0.05
@@ -188,7 +196,7 @@ atexit.register(_close_all_transports_atexit)
 
 
 def _request_timeout_from_config(config: MCPServerConfig) -> float:
-    return min(max(float(config.request_timeout_seconds), 1.0), 600.0)
+    return min(max(float(config.request_timeout_seconds), 1.0), 1800.0)
 
 
 def _sanitize_mcp_detail(text: object) -> str:
@@ -199,19 +207,7 @@ def _sanitize_mcp_detail(text: object) -> str:
     )
 
 
-def _read_bounded_text_line(stream: Any, *, max_chars: int) -> str:
-    """Read one text line without allowing ``TextIOWrapper`` to grow forever."""
-
-    limit = max(1, int(max_chars))
-    line = stream.readline(limit + 1)
-    if not isinstance(line, str):
-        raise RuntimeError("mcp stdio stream returned non-text data")
-    if len(line) > limit or (len(line) == limit and not line.endswith("\n")):
-        raise RuntimeError("mcp stdio line exceeded its configured limit")
-    return line
-
-
-class StdioMCPTransport(MCPTransport):
+class StdioMCPTransport(StdioPromptsMixin, MCPTransport):
     _SENTINEL = object()
 
     def __init__(
@@ -259,6 +255,7 @@ class StdioMCPTransport(MCPTransport):
                 message=f"failed to apply mcp containment for '{config.name}': {error}",
                 retryable=False,
             ) from error
+        self._owned_ledger_ticket = owned_process_tracking.record(self._process.pid, "mcp_stdio", handoff_host=config.name == "jenny_local_tools")
         _register_active_process(config.name, self._process, self._containment)
         self._request_timeout_seconds = (
             request_timeout_seconds
@@ -266,6 +263,7 @@ class StdioMCPTransport(MCPTransport):
             else _request_timeout_from_config(config)
         )
         self._reader_queue: queue.Queue[object] = queue.Queue(maxsize=MCP_READER_QUEUE_MAXSIZE)
+        self._reader_budget = _reader.ReaderBudget(MCP_READER_QUEUE_MAX_BYTES)
         self._reader_error: BaseException | None = None
         self._stderr_error: BaseException | None = None
         self._stderr_evidence = RequestScopedStderr()
@@ -430,9 +428,8 @@ class StdioMCPTransport(MCPTransport):
         result = response.get("result")
         if not isinstance(result, dict):
             raise MCPError(
-                code=CMP_MCP_PROTOCOL_FAILED,
+                code=CMP_MCP_PROTOCOL_FAILED, retryable=False,
                 message=f"mcp server '{self.server_name}' returned invalid {method} result",
-                retryable=False,
             )
         return result
 
@@ -445,23 +442,23 @@ class StdioMCPTransport(MCPTransport):
         self._closed.set()
         _unregister_active_transport(self)
         _unregister_active_process(process)
-        _terminate_process(self.server_name, process, self._containment)
+        handed_off = owned_process_tracking.close_transport(
+            getattr(self, "_owned_ledger_ticket", None),
+            lambda: _terminate_process(self.server_name, process, self._containment),
+        )
         self._containment.close()
-        if process.stdin is not None:
-            try:
-                process.stdin.close()
-            except OSError:
-                pass
-        if process.stdout is not None:
-            try:
-                process.stdout.close()
-            except OSError:
-                pass
-        if process.stderr is not None:
-            try:
-                process.stderr.close()
-            except OSError:
-                pass
+        # A handed-off host reads EOF, then drains its existing jobs. Closing
+        # TextIOWrapper stdout here can block on its reader lock until those
+        # jobs finish. The retiring process releases those descriptors at exit.
+        pipes = (process.stdin,) if handed_off else (process.stdin, process.stdout, process.stderr)
+        for pipe in pipes:
+            if pipe is not None:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
+        if handed_off:
+            return
         self._queue_reader_item(self._SENTINEL, retry_until_available=False)
         if self._reader_thread.is_alive():
             self._reader_thread.join(timeout=MCP_THREAD_JOIN_TIMEOUT_SECONDS)
@@ -832,7 +829,7 @@ class StdioMCPTransport(MCPTransport):
             try:
                 line = _read_bounded_text_line(
                     self._process.stdout,
-                    max_chars=MCP_MAX_STDOUT_LINE_CHARS,
+                    max_chars=_reader.max_stdout_line_chars(self.server_name),
                 )
             except BaseException as error:  # noqa: BLE001
                 self._set_reader_error(error)
@@ -842,7 +839,13 @@ class StdioMCPTransport(MCPTransport):
             if not line:
                 self._queue_reader_item(self._SENTINEL)
                 return
+            # Backpressure: wait for consumers to take queued text, never past close.
+            cost = self._reader_budget.cost(line)
+            while not self._reader_budget.reserve(cost, timeout=MCP_QUEUE_PUT_TIMEOUT_SECONDS):
+                if self._closed.is_set():
+                    return
             if not self._queue_reader_item(line, retry_until_available=False):
+                self._reader_budget.release(cost)
                 self._set_reader_error(
                     RuntimeError(
                         f"mcp server '{self.server_name}' stdout queue overflowed while reading responses"
@@ -889,6 +892,7 @@ class StdioMCPTransport(MCPTransport):
                 break
             except queue.Empty:
                 continue
+        self._reader_budget.release_item(item)
 
         if item is self._SENTINEL:
             message = f"mcp server '{self.server_name}' closed its pipe unexpectedly"
@@ -913,9 +917,8 @@ class StdioMCPTransport(MCPTransport):
             )
         if not isinstance(item, str):
             raise MCPError(
-                code=CMP_MCP_PROTOCOL_FAILED,
+                code=CMP_MCP_PROTOCOL_FAILED, retryable=False,
                 message=f"mcp server '{self.server_name}' returned non-text response",
-                retryable=False,
             )
 
         detail = "non-object response"

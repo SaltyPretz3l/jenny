@@ -49,6 +49,11 @@ def _tool_plan(*calls: ToolCallRequest) -> _ToolPlan:
 
 
 _TOOL_CAP_FOOTER = "Reached this turn's tool limit (1). Reply 'resume' to continue."
+# F25: a clean prose answer after the cap says it was written without more tools.
+_TOOL_CAP_CLEAN_FOOTER = (
+    "Reached this turn's tool limit (1); the reply above was written without further tool "
+    "calls. Reply 'resume' if you want it to keep going."
+)
 _DIMINISHING_RETURNS_FOOTER = (
     "Stopped after 3 tool calls in a row made no progress. Reply 'resume' to continue."
 )
@@ -258,8 +263,9 @@ def test_tool_cap_prose_final_is_kept_without_regeneration() -> None:
     )
 
     assert decision.response_text.startswith("The diagram is complete.")
-    assert decision.response_text.endswith(_TOOL_CAP_FOOTER)
-    assert decision.response_text.count(_TOOL_CAP_FOOTER) == 1
+    assert decision.response_text.endswith(_TOOL_CAP_CLEAN_FOOTER)
+    assert decision.response_text.count("Reached this turn's tool limit") == 1
+    assert decision.resumable_stop == "tool_cap"
     assert engine.call_count == 2
 
 
@@ -416,8 +422,8 @@ def test_tool_cap_overflow_then_prose_still_gets_footer() -> None:
     )
 
     assert decision.response_text.startswith("Done.")
-    assert decision.response_text.endswith(_TOOL_CAP_FOOTER)
-    assert decision.response_text.count(_TOOL_CAP_FOOTER) == 1
+    assert decision.response_text.endswith(_TOOL_CAP_CLEAN_FOOTER)
+    assert decision.response_text.count("Reached this turn's tool limit") == 1
     assert engine.call_count == 2
 
 

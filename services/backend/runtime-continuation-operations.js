@@ -6,7 +6,7 @@ const { normalizeContinuationContext } = require('../session-runtime/continuatio
 const { normalizeCheckpointRef, stableJson } = require('../session-runtime/contracts');
 const { normalizeHistorySelector } = require('./runtime-continuation-records');
 
-const API_VERSION = '2026-08-17';
+const API_VERSION = '2026-10-15';
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const KEYS = ['api_version', 'authority_revision', 'continuation_context', 'eligibility', 'frozen_input',
   'frozen_input_bytes', 'frozen_input_sha256', 'kind', 'operation_id', 'phase', 'position', 'request_id',

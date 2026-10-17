@@ -27,6 +27,13 @@ Each row in the per-domain tables below has the following columns:
 
 ---
 
+## CONFIG - `CMP-CONFIG-NNNN` (2 codes)
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `CONFIG_ERROR_CODES.INVALID` | `CMP-CONFIG-0001` | Invalid subagent routing settings | No | `ipc_result` | Subagent routing settings are invalid. | `services/subagent-routing-settings.js` |
+| `CONFIG_ERROR_CODES.PERSISTENCE` | `CMP-CONFIG-0002` | Feature settings were not durably saved | Conditional | `ipc_result` | Feature settings could not be saved. | `services/shell-config-service.js` |
+
 ## PROJECT - `CMP-PROJECT-NNNN` (4 codes)
 
 Application project authority uses canonical session summaries and revalidates
@@ -125,7 +132,7 @@ Tool-execution failures: approval denials, workspace policy violations, IO error
 | `CMP_TOOL_APPLY_PATCH_PARTIAL_ROLLBACK` | `CMP-TOOL-0027` | apply_patch rolled back partially; some files left in uncertain state | No | `runtime_error` | "Patch failed; some files could not be restored." | retired with `apply_patch` (replaced by `edit_file` in 1.0.0); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
 | `CMP_TOOL_APPLY_PATCH_TARGET_EXISTS` | `CMP-TOOL-0028` | apply_patch Add target already exists | No | `runtime_error` | "Cannot add file: target already exists." | retired with `apply_patch` (replaced by `edit_file` in 1.0.0); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
 | `CMP_TOOL_APPLY_PATCH_TARGET_MISSING` | `CMP-TOOL-0029` | apply_patch Update/Delete target missing | No | `runtime_error` | "Cannot modify file: target does not exist." | retired with `apply_patch` (replaced by `edit_file` in 1.0.0); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
-| `CMP_TOOL_SUBAGENT_INVALID_PROMPT` | `CMP-TOOL-0030` | A delegate task or hidden legacy prompt is blank, malformed, or exceeds its UTF-8 bound | No | `runtime_error` | "Sub-agent prompt invalid." | [sidecar/ai/routing/delegate_contracts.py](../../sidecar/ai/routing/delegate_contracts.py) |
+| `CMP_TOOL_SUBAGENT_INVALID_PROMPT` | `CMP-TOOL-0030` | A delegate prompt is blank, malformed or over its UTF-8 bound, or a requested model/effort violates catalog availability or owner routing limits | No | `runtime_error` | "Sub-agent prompt or model/effort routing choice invalid." | [sidecar/ai/routing/delegate_contracts.py](../../sidecar/ai/routing/delegate_contracts.py) |
 | `CMP_TOOL_SUBAGENT_INVALID_GRANTS` | `CMP-TOOL-0031` | Delegate arguments conflict, contain unknown fields, or use an ambiguous task-object shape; hidden legacy grant validation uses the same code | No | `runtime_error` | "Sub-agent grants invalid." | [sidecar/ai/routing/delegate_contracts.py](../../sidecar/ai/routing/delegate_contracts.py) |
 | `CMP_TOOL_SUBAGENT_DEPTH_LIMIT` | `CMP-TOOL-0032` | `delegate` or a hidden legacy executor was called from inside another sub-agent | No | `runtime_error` | "Sub-agents cannot nest." | [sidecar/ai/routing/delegate_contracts.py](../../sidecar/ai/routing/delegate_contracts.py) |
 | `CMP_TOOL_SUBAGENT_MUTATING_REQUIRES_WORKTREE` | `CMP-TOOL-0033` | A single-child or batch task requested a mutating family unavailable in the read-only MVP | No | `runtime_error` | "Mutating sub-agent requires a worktree." | retired with the V1 `subagent_run` executor (DLG-07, 2026-10-03); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
@@ -137,14 +144,14 @@ Tool-execution failures: approval denials, workspace policy violations, IO error
 | `CMP_TOOL_POLICY_DENIED` / `TOOL_ERROR_CODES.POLICY_DENIED` (Node) | `CMP-TOOL-0039` | Tool permission policy denied execution before approval/dispatch | No | `denied` | "Tool was denied by policy." | [sidecar/ai/routing/tool_loop.py](../../sidecar/ai/routing/tool_loop.py), [services/tools/tool-executor.js](../../services/tools/tool-executor.js) |
 | `CMP_TOOL_SKILL_NOT_FOUND` | `CMP-TOOL-0040` | `load_skill` was called with a name/scope that does not resolve to an indexed skill | No | `runtime_error` | "unknown skill '{name}'. Available skills: ..." | [sidecar/ai/tools/builtins/skills.py](../../sidecar/ai/tools/builtins/skills.py) |
 | `CMP_TOOL_COMMAND_ABORTED` | `CMP-TOOL-0041` | `run_command` subprocess tree was terminated because the user cancelled the turn (cooperative MCP `notifications/cancelled`) | No | `runtime_error` | "command aborted by user cancellation" | [sidecar/ai/tools/builtins/shell.py](../../sidecar/ai/tools/builtins/shell.py) |
-| `CMP_TOOL_APPROVAL_WINDOW_DROPPED` | `CMP-TOOL-0042` | Call was admitted into the turn's tool budget but fell outside the approval resume window, so it was never dispatched | No | `runtime_error` | "Tool was not executed: it was not part of the approved execution window for this turn." | [sidecar/runtime/chat_resume.py](../../sidecar/runtime/chat_resume.py) |
+| `CMP_TOOL_APPROVAL_WINDOW_DROPPED` | `CMP-TOOL-0042` | Call was admitted into the turn's tool budget but fell outside the approval resume window, or the turn ended at a session-proposal boundary before it ran, so it was never dispatched | No | `runtime_error` | "Tool was not executed: it was not part of the approved execution window for this turn." | [sidecar/runtime/chat_resume.py](../../sidecar/runtime/chat_resume.py) |
 | `CMP_TOOL_WORKTREE_BASELINE_NOT_FOUND` | `CMP-TOOL-0043` | Requested worktree baseline is missing, expired, evicted, or belongs to another session/repository | No | `runtime_error` | "Worktree baseline is missing or expired; capture a new workspace_change_baseline." | [sidecar/ai/tools/builtins/worktree_change_tracking.py](../../sidecar/ai/tools/builtins/worktree_change_tracking.py) |
 | `CMP_TOOL_PLACEHOLDER_ARGUMENTS_REJECTED` / `TOOL_ERROR_CODES.PLACEHOLDER_ARGUMENTS_REJECTED` (Node) | `CMP-TOOL-0044` | Model echoed the schema example instead of real arguments (the whole argument object is the generated minimal example and that example contains a `<string>`/`<value>` placeholder, or -- for a side-effecting or descriptor-less tool -- any argument value is such a placeholder); settled before dispatch so the call never reaches the pre-mutation auto-checkpoint | No | `runtime_error` | "Tool '{name}' was not executed: the arguments are the schema example placeholders, not real values. Supply real arguments, or if no tool is needed, answer the user directly." | [sidecar/ai/routing/tool_call_execution.py](../../sidecar/ai/routing/tool_call_execution.py) |
 | `CMP_TOOL_PRECONDITION_UNMET` | `CMP-TOOL-0045` | A declared tool precondition (e.g. `git_repo` for the git read tools and worktree change tracking) is unmet at call time; the tool stays listed but blocked until the precondition is satisfied | No | `runtime_error` | "'{cwd}' is not a git repository..." (git ops) / "worktree tracking requires a git repository within the workspace" | [sidecar/ai/tools/builtins/git_ops.py](../../sidecar/ai/tools/builtins/git_ops.py) |
 | `CMP_TOOL_PAUSED_UNATTENDED` | `CMP-TOOL-0046` | Auto run changed to prompt after the batch approval scan, so a side-effecting call was paused before dispatch | Yes | `runtime_error` | "Tool '{tool_id}' was not executed: auto run was paused because the user stepped away. Re-issue the call; it will ask for approval." | [sidecar/ai/routing/tool_call_execution.py](../../sidecar/ai/routing/tool_call_execution.py) |
 | `CMP_TOOL_PDF_ADDON_MISSING` | `CMP-TOOL-0047` | Optional PDF reading add-on is not installed or could not be loaded | No | `unavailable` | "PDF reading needs the optional PDF reading add-on, which is not installed. Tell the user they can install it in Settings › Tools › PDF reading add-on. Do not retry this PDF until they say it is installed." | [sidecar/ai/tools/builtins/filesystem_content.py](../../sidecar/ai/tools/builtins/filesystem_content.py) |
 
-## MEM — `CMP-MEM-NNNN` (9 codes, 0 dead)
+## MEM — `CMP-MEM-NNNN` (16 active codes, 1 retired number)
 
 Approved-memory store: persistence, validation, schema migration.
 
@@ -155,10 +162,18 @@ Approved-memory store: persistence, validation, schema migration.
 | `CMP_MEMORY_INVALID_KIND` | `CMP-MEM-0003` | Lesson kind not recognized | No | `runtime_error` | "Invalid memory kind: {kind}." | [sidecar/runtime/memory.py:113](../../sidecar/runtime/memory.py#L113) |
 | `CMP_MEMORY_NOT_FOUND` | `CMP-MEM-0004` | Memory id not found | No | `runtime_error` | "Memory entry not found." | [sidecar/ai/memory/store.py:482](../../sidecar/ai/memory/store.py#L482) |
 | `CMP_MEMORY_SCHEMA_MIGRATION` | `CMP-MEM-0005` | Schema migration failed | No | `runtime_error` | "Memory database upgrade failed." | [sidecar/ai/memory/store_migrations.py:65](../../sidecar/ai/memory/store_migrations.py#L65) |
-| `CMP_MEMORY_FAMILY_UNRESOLVED` | `CMP-MEM-0006` | Memory family lookup failed | No | `runtime_error` | "Memory family unresolved." | [sidecar/runtime/memory.py:126](../../sidecar/runtime/memory.py#L126) |
+| (retired) | `CMP&#8209;MEM&#8209;0006` | Retired with memory family keys (schema v9); number reserved | - | - | - | Retired |
 | `CMP_MEMORY_CAPACITY_EXCEEDED` | `CMP-MEM-0007` | Physical SQLite capacity is exhausted; existing approved rows are preserved | Yes | `runtime_error` | "Memory storage capacity exceeded." | [sidecar/ai/memory/store.py](../../sidecar/ai/memory/store.py) |
 | `CMP_MEMORY_ROW_QUARANTINED` | `CMP-MEM-0008` | One malformed legacy row was quarantined while the store remained available | No | `runtime_error` | "A malformed memory row was quarantined." | [sidecar/ai/memory/store.py](../../sidecar/ai/memory/store.py) |
 | `CMP_MEMORY_BACKGROUND_TIMEOUT` | `CMP-MEM-0009` | A bounded background memory worker exceeded its deadline | Yes | `runtime_error` | "A background memory task timed out." | [sidecar/runtime/subprocess_manager.py](../../sidecar/runtime/subprocess_manager.py) |
+| `CMP_MEMORY_OPERATION_MISMATCH` | `CMP-MEM-0010` | A memory write reused an operation id with a different action, scope or payload | No | `runtime_error` | "This memory change was already used for a different request." | [sidecar/ai/memory/store_writes.py](../../sidecar/ai/memory/store_writes.py) |
+| `CMP_MEMORY_OPERATION_EXPIRED` | `CMP-MEM-0011` | A memory write reused an operation id past its 24-hour retry window (or one whose content was erased) | No | `runtime_error` | "This memory change has expired; make it again." | [sidecar/ai/memory/store_writes.py](../../sidecar/ai/memory/store_writes.py) |
+| `CMP_MEMORY_STALE_REVISION` | `CMP-MEM-0012` | Compare-and-set failed: the memory changed since the caller read it (also an undo whose row moved) | Yes | `runtime_error` | "This memory changed since it was read; read it again first." | [sidecar/ai/memory/store_writes.py](../../sidecar/ai/memory/store_writes.py) |
+| `CMP_MEMORY_SUPPRESSED` | `CMP-MEM-0013` | The text was forgotten in this project; only the user can remember it again | No | `runtime_error` | "This was forgotten earlier, so Jenny will not save it again." | [sidecar/ai/memory/store_writes.py](../../sidecar/ai/memory/store_writes.py) |
+| `CMP_MEMORY_PROTECTED` | `CMP-MEM-0014` | The user edited this memory; Jenny cannot change or forget it | No | `runtime_error` | "You edited this memory, so Jenny will not change it." | [sidecar/ai/memory/store_writes.py](../../sidecar/ai/memory/store_writes.py) |
+| `CMP_MEMORY_PROJECT_ARCHIVED` | `CMP-MEM-0015` | The project was archived (deleted); its memory accepts no writes until it is unarchived | No | `runtime_error` | "This project was archived; its memories are read-only." | [sidecar/ai/memory/store_writes.py](../../sidecar/ai/memory/store_writes.py) |
+| `CMP_MEMORY_SESSION_PURGED` | `CMP-MEM-0016` | The chat was deleted; chat-scope memory for it can no longer be written | No | `runtime_error` | "This chat was deleted, so its notes cannot be saved." | [sidecar/ai/memory/store_writes.py](../../sidecar/ai/memory/store_writes.py) |
+| `CMP_MEMORY_ALWAYS_ON_FULL` | `CMP-MEM-0017` | The always-on memory budget (1,200 characters across General and the project) is full; the result lists the current lines | No | `runtime_error` | "Always-on memory is full; turn one off first." | [sidecar/ai/memory/store_writes.py](../../sidecar/ai/memory/store_writes.py) |
 
 ## MODE — `CMP-MODE-NNNN` (1 active code, 1 retired number)
 
@@ -521,6 +536,68 @@ Workspace IDE SCM foundation (`WorkspaceGitService`, the `workspaceGit.*` IPC na
 | `WORKSPACE_GIT_ERROR_CODES.COMMIT_MESSAGE_EMPTY` | `CMP-GIT-0020` | commit() called with a blank message | No | `runtime_error` | "Commit message cannot be empty." | [services/workspace-git-service.js](../../services/workspace-git-service.js) |
 | `WORKSPACE_GIT_ERROR_CODES.GIT_COMMAND_FAILED` | `CMP-GIT-0040` | git subprocess exited non-zero (message token-masked before surfacing) | Conditional | `runtime_error` | "Git command failed." | [services/workspace-git-service.js](../../services/workspace-git-service.js) |
 
+## CHATWS - `CMP-CHATWS-NNNN` (6 Node codes, 0 dead)
+
+Chat workspace summary and session-rail bridge (`chatWorkspace.*`, row 59 checkpoint 2). Responses are `{schema_version:1,ok:false,error_code,reason,retryable,current_revision}`; `reason` is a stable enum (never exception prose) and the code is the coarse class. A non-Git workspace, a disabled Git feature and an unmeasurable section are NOT errors: `listChanges` and `getSummary` degrade to `state` values with a reason.
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `CHATWS_ERROR_CODES.INVALID_REQUEST` | `CMP-CHATWS-0001` | Request failed the closed schema (unknown key, malformed id, bad patch) | No | `ipc_result` | internal-only (renderer never builds an invalid request) | [services/chat-workspace-contract.js](../../services/chat-workspace-contract.js) |
+| `CHATWS_ERROR_CODES.NOT_FOUND` | `CMP-CHATWS-0002` | Session does not exist | No | `ipc_result` | internal-only (the rail words it locally) | [services/chat-workspace-service.js](../../services/chat-workspace-service.js) |
+| `CHATWS_ERROR_CODES.REVISION_CONFLICT` | `CMP-CHATWS-0003` | `setView` expected_revision differs from the persisted coordination revision; `current_revision` carries the live value | Conditional (refetch, then retry) | `ipc_result` | internal-only | [services/chat-workspace-service.js](../../services/chat-workspace-service.js) |
+| `CHATWS_ERROR_CODES.UNAVAILABLE` | `CMP-CHATWS-0004` | Service, workspace or Git source unavailable (feature off, no workspace, newer store schema) | Conditional | `ipc_result` | internal-only | [services/chat-workspace-service.js](../../services/chat-workspace-service.js) |
+| `CHATWS_ERROR_CODES.IO_FAILED` | `CMP-CHATWS-0005` | The view write was not durably flushed; the in-memory record is unchanged | Yes | `ipc_result` | internal-only | [services/chat-workspace-service.js](../../services/chat-workspace-service.js) |
+| `CHATWS_ERROR_CODES.PATH_REFUSED` | `CMP-CHATWS-0006` | `getChangeDiff` path is not in the session workspace's current Git status list, or its real path escapes the workspace root (`path_not_changed`, `path_outside_workspace`) | No | `ipc_result` | internal-only | [services/workspace-git-change-summary.js](../../services/workspace-git-change-summary.js) |
+
+## PROPOSAL - `CMP-PROPOSAL-NNNN` (12 Node codes, 0 dead)
+
+Inline Git and command proposals (`sessionProposals.*`, row 59 checkpoint 3). Responses are `{schema_version:1,ok:false,error_code,reason,retryable,current_revision}`; `reason` is a stable enum (never exception prose) and the code is the class frozen in the plan. A proposal's `last_error` carries `{code, reason, retryable, cause_code}` and never any command text, summary or path.
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `PROPOSAL_ERROR_CODES.INVALID_REQUEST` | `CMP-PROPOSAL-0001` | Request failed the closed schema (unknown key, malformed id, bad choice) or a producer input failed its normalizer | No | `ipc_result` | internal-only (renderer never builds an invalid request) | [services/chat-proposal-contract.js](../../services/chat-proposal-contract.js) |
+| `PROPOSAL_ERROR_CODES.UNAVAILABLE` | `CMP-PROPOSAL-0002` | Proposal store, runtime or session unavailable (`unavailable`, `not_found`, `plan_mode`, `read_only`); a continuation refused for `runtime_unavailable`, `runtime_disabled` or `runtime_closing` leaves the proposal `needs_attention` | Conditional | `ipc_result` | internal-only (the proposal card words it locally) | [services/chat-proposal-service.js](../../services/chat-proposal-service.js) |
+| `PROPOSAL_ERROR_CODES.STALE_REVISION` | `CMP-PROPOSAL-0003` | `expected_revision` or a list cursor no longer matches the proposal or coordination revision (`stale_revision`, `stale_cursor`, `not_pending`); `current_revision` carries the live value | Conditional (refetch, then retry) | `ipc_result` | internal-only | [services/chat-proposal-service.js](../../services/chat-proposal-service.js) |
+| `PROPOSAL_ERROR_CODES.IDEMPOTENCY_CONFLICT` | `CMP-PROPOSAL-0004` | The same `decision_id` or proposal id arrived with a different payload | No | `ipc_result` | internal-only | [services/chat-proposal-service.js](../../services/chat-proposal-service.js) |
+| `PROPOSAL_ERROR_CODES.EXPIRED` | `CMP-PROPOSAL-0005` | The pending proposal passed its seven day expiry | No | `ipc_result` | internal-only (the proposal card words it locally) | [services/chat-proposal-service.js](../../services/chat-proposal-service.js) |
+| `PROPOSAL_ERROR_CODES.CAPACITY` | `CMP-PROPOSAL-0006` | 20 unresolved proposals for the source session or 256 for the profile; nothing is pruned to make room | No | `ipc_result` | internal-only (the proposal card words it locally) | [services/chat-proposal-service.js](../../services/chat-proposal-service.js) |
+| `PROPOSAL_ERROR_CODES.AUTHORITY_CHANGED` | `CMP-PROPOSAL-0007` | Root, authority revision, ref, HEAD or a selected-path fingerprint drifted since the proposal was made (`authority_changed` with a bounded `cause_code`); the record becomes `stale` | No | `ipc_result` | internal-only (the proposal card words it locally) | [services/chat-proposal-service.js](../../services/chat-proposal-service.js) |
+| `PROPOSAL_ERROR_CODES.AUTHORIZATION_REQUIRED` | `CMP-PROPOSAL-0008` | A session-kind New session cannot start without the user's launch authorization (an offer with no live matching grant, or a grant consumed, revoked or weaker than the current restrictions) and a handoff the turn does not own; also the handoff tool's refusal when the proposal is not in a state that may complete it | No | `ipc_result` | internal-only | [services/chat-proposal-contract.js](../../services/chat-proposal-contract.js) |
+| `PROPOSAL_ERROR_CODES.UNSUPPORTED_CAPABILITY` | `CMP-PROPOSAL-0009` | The method or choice is not available in this build (command Run before its adapter ships; the session handoff without a negotiated sidecar capability; `confirmRestored`) | No | `ipc_result` | internal-only (the proposal card words it locally) | [services/chat-proposal-service.js](../../services/chat-proposal-service.js) |
+| `PROPOSAL_ERROR_CODES.PREPARATION_FAILED` | `CMP-PROPOSAL-0010` | Child-session preparation failed (the linked child could not be created, or the handoff could not be recorded); retryable with the same proof | Conditional | `ipc_result` | internal-only | [services/chat-proposal-contract.js](../../services/chat-proposal-contract.js) |
+| `PROPOSAL_ERROR_CODES.DISPATCH_FAILED` | `CMP-PROPOSAL-0011` | The continuation turn was refused by durable admission for a reason other than runtime availability; the proposal is `needs_attention` and may be retried with the same dispatch key | Yes | `ipc_result` | internal-only (the proposal card words it locally) | [services/chat-proposal-continuation.js](../../services/chat-proposal-continuation.js) |
+| `PROPOSAL_ERROR_CODES.OUTCOME_UNKNOWN` | `CMP-PROPOSAL-0012` | Restart reconciliation could not prove how the continuation ended; it is never resumed or resubmitted | No | `ipc_result` | internal-only (the proposal card words it locally) | [services/chat-proposal-continuation.js](../../services/chat-proposal-continuation.js) |
+
+## MESSAGE - `CMP-MESSAGE-NNNN` (12 Node codes, 0 dead)
+
+Addressed session messaging (`chatMessages.*`, row 59 checkpoint 4). Responses are `{schema_version:1,ok:false,error_code,reason,retryable,current_revision}`; `reason` is a stable enum (never exception prose) and the code is the class frozen in the plan. An outbox `last_error` carries `{code, reason, retryable}` and never any message text.
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `MESSAGE_ERROR_CODES.INVALID_REQUEST` | `CMP-MESSAGE-0001` | Request failed the closed schema (unknown key, malformed id, bad body, self-send) or the recipient/source is not eligible (`invalid_request`, `not_found`, `self_send`, `source_ineligible`, `recipient_ineligible`) | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/chat-messaging-contract.js](../../services/chat-messaging-contract.js) |
+| `MESSAGE_ERROR_CODES.UNAVAILABLE` | `CMP-MESSAGE-0002` | Messaging store, session container or runtime unavailable (`unavailable`, `unsupported`: grants and restore confirmation arrive with checkpoint 5b-2/3) | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/chat-messaging-service.js](../../services/chat-messaging-service.js) |
+| `MESSAGE_ERROR_CODES.AUTHORIZATION_REQUIRED` | `CMP-MESSAGE-0003` | Reserved for the agent-authored send (checkpoint 5); the user Send is authorized by its own gesture | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/chat-messaging-contract.js](../../services/chat-messaging-contract.js) |
+| `MESSAGE_ERROR_CODES.AUTHORIZATION_REVOKED` | `CMP-MESSAGE-0004` | Reserved for revoked grants (checkpoint 5) | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/chat-messaging-contract.js](../../services/chat-messaging-contract.js) |
+| `MESSAGE_ERROR_CODES.IDEMPOTENCY_CONFLICT` | `CMP-MESSAGE-0005` | The same `gesture_id` or message id arrived with a different payload or envelope hash | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/chat-messaging-delivery.js](../../services/chat-messaging-delivery.js) |
+| `MESSAGE_ERROR_CODES.RECIPIENT_ARCHIVED` | `CMP-MESSAGE-0006` | The destination chat is archived; the send stays failed until the user retries (restoring the chat never delivers it automatically) | Yes | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/chat-messaging-delivery.js](../../services/chat-messaging-delivery.js) |
+| `MESSAGE_ERROR_CODES.RECIPIENT_DELETED` | `CMP-MESSAGE-0007` | The destination chat no longer exists; no chat is recreated by id | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/chat-messaging-delivery.js](../../services/chat-messaging-delivery.js) |
+| `MESSAGE_ERROR_CODES.SENDER_BACKPRESSURE` | `CMP-MESSAGE-0008` | 128 undelivered operations or 2 MiB of undelivered body text for the source chat; nothing is evicted | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/chat-messaging-service.js](../../services/chat-messaging-service.js) |
+| `MESSAGE_ERROR_CODES.RECIPIENT_BACKPRESSURE` | `CMP-MESSAGE-0009` | 256 outstanding messages or 2 MiB of body text in the destination inbox; nothing is evicted | Yes | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/chat-messaging-delivery.js](../../services/chat-messaging-delivery.js) |
+| `MESSAGE_ERROR_CODES.CONTEXT_BUDGET` | `CMP-MESSAGE-0010` | Reserved for admission deferral by the context budget (`context_budget`, `budget_unknown`) | Yes | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/chat-messaging-contract.js](../../services/chat-messaging-contract.js) |
+| `MESSAGE_ERROR_CODES.PERSISTENCE_FAILURE` | `CMP-MESSAGE-0011` | A coordination write was not durably flushed (`persistence_failure`, `io_failed`); the operation stays pending and Retry or restart reconciles it | Yes | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/chat-messaging-delivery.js](../../services/chat-messaging-delivery.js) |
+| `MESSAGE_ERROR_CODES.STALE_OPERATION` | `CMP-MESSAGE-0012` | Unknown, expired or cancelled operation, a changed chat identity or project, a stale cursor, or a destination busy with a running turn (`stale_operation`, `busy`, `expired`, `stale_cursor`) | Conditional (refetch, then retry) | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/chat-messaging-delivery.js](../../services/chat-messaging-delivery.js) |
+
+## PERFORMANCE - `CMP-PERFORMANCE-NNNN` (4 Node codes, 0 dead)
+
+Live inference metrics and GPU-pressure bridge (`performance.*`, row 59 checkpoint 6). Responses are `{ok:false,code,reason}`; `reason` is a stable enum (never exception prose). An unmeasurable GPU is an observable `gpu.state`, not an error.
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `PERFORMANCE_ERROR_CODES.INVALID_REQUEST` | `CMP-PERFORMANCE-0001` | Request failed the closed schema (unknown key, wrong `schema_version`, malformed id, no boolean in `updateSettings`) (`invalid_request`) | No | `ipc_result` | internal-only (the renderer never builds an invalid request) | [services/performance/performance-contract.js](../../services/performance/performance-contract.js) |
+| `PERFORMANCE_ERROR_CODES.UNSUPPORTED_CAPABILITY` | `CMP-PERFORMANCE-0002` | The stored `performanceTelemetry` block is from a newer build and is read-only here (`settings_read_only`) | No | `ipc_result` | internal-only | [services/performance/performance-service.js](../../services/performance/performance-service.js) |
+| `PERFORMANCE_ERROR_CODES.COLLECTION_UNAVAILABLE` | `CMP-PERFORMANCE-0003` | The service, settings store or sampler is not composed or threw (`collection_unavailable`) | Conditional | `ipc_result` | internal-only | [services/performance/performance-service.js](../../services/performance/performance-service.js) |
+| `PERFORMANCE_ERROR_CODES.STALE_WARNING` | `CMP-PERFORMANCE-0004` | `dismissWarning` named a `warning_id` that is not the current episode (`stale_warning`) | No | `ipc_result` | internal-only (the pill and toast re-read the snapshot) | [services/performance/performance-service.js](../../services/performance/performance-service.js) |
+
 ## TESTRUNNER - `CMP-TESTRUNNER-NNNN` (6 Node codes, 0 dead)
 
 Workspace IDE Test Runner (`WorkspaceTestRunnerService`, the `workspaceTestRunner.*` IPC namespace): default-off, renderer-initiated, root-scoped headless test-command execution feeding the Home trend widget. NOTE: a suite that ran and FAILED is NOT an error - it degrades to a structured run record (`status:'failed'`); a process that never started records `status:'error'` with `SPAWN_FAILED` on the record. Only the codes below are raised as a CMP envelope.
@@ -709,6 +786,10 @@ This test catches the drift classes that affect runtime contracts: undocumented 
 
 ## Change log
 
+- **2026-10-15** - Added the `PERFORMANCE` domain (`CMP-PERFORMANCE-0001` to `0004`) for the live inference metrics and GPU-pressure bridge (row 59 checkpoint 6).
+- **2026-10-15** - Added the `MESSAGE` domain (`CMP-MESSAGE-0001` to `0012`) for the addressed session messaging bridge (row 59 checkpoint 4).
+- **2026-10-15** - Added the `PROPOSAL` domain (`CMP-PROPOSAL-0001` to `0012`) for the inline Git/command proposal bridge (row 59 checkpoint 3).
+- **2026-10-15** - Added the `CHATWS` domain (`CMP-CHATWS-0001` to `0006`) for the chat workspace summary/rail bridge (row 59 checkpoint 2).
 - **2026-10-02** - Removed the `REMOTE` domain (12 Node codes) with the Remote Control feature (owner decision; code recoverable from the tag `archive/remote-control`). Its numbers are retired and not reused.
 - **2026-07-10** - Added versioned workspace-file root-generation, strict UTF-8, and bounded atomic-write seam codes (`CMP-WORKSPACEFS-0008`, `0009`, `0013`, and `0021`-`0023`).
 - **2026-07-01** - Wave-1 hygiene re-derivation: corrected the drift inventory (31 claimed dead → 4 actually dead; mermaid, python-runtime, cap, apply-patch, CHAT/SRV/CLOUD/SIDECAR codes were live via aliases), refreshed Example site links, and removed 7 confirmed-dead constants from `sidecar/ai/error_codes.py`.
@@ -728,3 +809,9 @@ The existing updates IPC state exposes these as camelCase `errorCode` with
 | UPDATER_ERROR_CODES.check | CMP-UPD-0001 | Release discovery failed | Conditional, manual | internal | Bounded connection or metadata explanation | services/update-service.js |
 | UPDATER_ERROR_CODES.download | CMP-UPD-0002 | Download or verification failed | Conditional, manual | internal | Retry download | services/update-service.js |
 | UPDATER_ERROR_CODES.install | CMP-UPD-0003 | Installer handoff failed | Conditional, manual | internal | Retry handoff or open Releases | services/update-service.js |
+
+## Conversation transfer
+
+| Code | User message | Meaning / recovery |
+| --- | --- | --- |
+| CMP-TRANSFER-0001 | Conversation transfer failed. Review the preview or retry the saved operation. | Desktop conversation-transfer IPC refusal or failure. The bounded reason distinguishes invalid/stale previews, busy sources, missing assets, unsupported Codex APIs, receipt/destination persistence failures and unknown import outcomes. Retry reconciles the saved operation; an unconfirmed native import is never resubmitted automatically. |

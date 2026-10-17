@@ -29,7 +29,6 @@ function createBinderHarness(t, options = {}) {
   const { document } = dom.window;
   const state = {
     personality: { dirty: true, saving: false, actionStatus: '', loadStatus: '' },
-    memoryContextFiles: { dirty: false, actionStatus: '' },
   };
   const calls = { save: 0, clear: 0, openFolder: 0, renders: 0 };
   const listeners = [];
@@ -38,15 +37,12 @@ function createBinderHarness(t, options = {}) {
     state,
     windowRef: dom.window,
     constants: {},
-    getLazySectionDom: (sectionId) => (sectionId === 'personality'
-      ? {
-        personalityFormHost: document.getElementById('personalityFormHost'),
-        personalityActions: document.getElementById('personalityActions'),
-      }
-      : { memoryNotesActions: document.getElementById('personalityActions') }),
+    getLazySectionDom: () => ({
+      personalityFormHost: document.getElementById('personalityFormHost'),
+      personalityActions: document.getElementById('personalityActions'),
+    }),
     callbacks: {
       renderPersonalityEditor: () => { calls.renders += 1; },
-      renderMemoryContextFiles: () => { calls.renders += 1; },
       handlePersonalitySave: async () => {
         calls.save += 1;
         state.personality.saving = true;
@@ -56,8 +52,6 @@ function createBinderHarness(t, options = {}) {
       },
       handlePersonalityReset: async () => { calls.clear += 1; },
       handlePersonalityOpenFolder: async () => { calls.openFolder += 1; },
-      saveMemoryContextFile: async () => {},
-      resetMemoryContextFile: async () => {},
       toErrorMessage: (error, fallback) => String((error && error.message) || fallback),
       ...options.callbacks,
     },

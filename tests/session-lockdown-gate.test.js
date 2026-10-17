@@ -25,10 +25,20 @@ test('lockdown classification covers every manifest tool exactly once', () => {
   const manifestNames = manifest.tools.map((tool) => tool.name).sort();
   const classifiedNames = Object.keys(TOOL_NETWORK_CLASSIFICATION).sort();
 
-  assert.equal(manifestNames.length, 57);
+  assert.equal(manifestNames.length, 67);
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.recall_tool_output, 'none');
   assert.deepEqual(classifiedNames, manifestNames);
   assert.equal(TOOL_NETWORK_CLASSIFICATION.task_board, 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.project_notes, 'none');
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.memory, 'none');
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.propose_git_action, 'none');
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.propose_command, 'none');
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.propose_session, 'none');
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.complete_session_handoff, 'none');
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.session_message, 'possible');
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.conversations_recent, 'none');
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.conversation_open, 'none');
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.conversations_search, 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.session_spawn, 'possible');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.session_wait, 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.session_result, 'none');
@@ -39,7 +49,7 @@ test('lockdown classification covers every manifest tool exactly once', () => {
 
 test('lockdown is fail-closed for unknown tools and shell-capable builtins', () => {
   for (const toolName of [
-    'future_unclassified_tool', 'run_command', 'python_execute', 'monitor', 'lsp',
+    'future_unclassified_tool', 'run_command', 'python_execute', 'monitor', 'lsp', 'session_message',
   ]) {
     assert.equal(isToolAvailableDuringSessionLockdown(toolName, true), false);
     assert.equal(isToolAvailableDuringSessionLockdown(toolName, false), true);

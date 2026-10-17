@@ -178,6 +178,70 @@ function shrinkBlockContent(content, maxTokens) {
   return `${kept}${closingDelimiter}${marker}`;
 }
 
+// The personality block's `### ` sections in their compiled order
+// (personality-workspace-compile.js SECTION_DEFINITIONS) and the order they
+// are dropped in when the block does not fit: last section first.
+const PERSONALITY_SECTION_HEADINGS = Object.freeze(['### Voice', '### About the user', '### Notes']);
+const PERSONALITY_DROP_ORDER = Object.freeze(['Notes', 'About the user', 'Voice']);
+const SECTION_JOIN = '\n\n';
+
+function findSectionStart(text, heading, from) {
+  if (from === 0 && text.startsWith(`${heading}${SECTION_JOIN}`)) return 0;
+  const index = text.indexOf(`${SECTION_JOIN}${heading}${SECTION_JOIN}`, from);
+  return index < 0 ? -1 : index + SECTION_JOIN.length;
+}
+
+// Split compiled personality content into its leading preamble (anything before
+// the first section; empty on the wire) and its known sections, located in
+// compiled order so a heading-like line inside an earlier body cannot reorder
+// them. Null when the content carries none of the known sections.
+function splitPersonalitySections(content) {
+  const text = String(content == null ? '' : content);
+  const starts = [];
+  let searchFrom = 0;
+  for (const heading of PERSONALITY_SECTION_HEADINGS) {
+    const start = findSectionStart(text, heading, searchFrom);
+    if (start < 0) continue;
+    starts.push({ name: heading.slice('### '.length), start });
+    searchFrom = start + heading.length;
+  }
+  if (!starts.length) return null;
+  const endBefore = (start) => Math.max(start - SECTION_JOIN.length, 0);
+  const sections = starts.map((entry, index) => ({
+    name: entry.name,
+    text: text.slice(entry.start, index + 1 < starts.length ? endBefore(starts[index + 1].start) : text.length),
+  }));
+  return { preamble: text.slice(0, endBefore(starts[0].start)), sections };
+}
+
+/**
+ * Fit a personality block by dropping WHOLE sections (Notes, then About the
+ * user, then Voice) instead of cutting its tail: the block leads the
+ * prefix-cached system run, so its bytes may change only when a section goes,
+ * and a given budget always yields the same bytes. Returns null when nothing
+ * that is left fits (the caller drops the block as before).
+ *
+ * @param {string} content compiled personality content
+ * @param {number} maxTokens budget for the block
+ * @returns {{content: string, dropped: string[]}|null}
+ */
+function dropPersonalitySections(content, maxTokens) {
+  const split = splitPersonalitySections(content);
+  if (!split) return null;
+  let sections = split.sections;
+  const dropped = [];
+  for (const name of PERSONALITY_DROP_ORDER) {
+    if (!sections.some((section) => section.name === name)) continue;
+    sections = sections.filter((section) => section.name !== name);
+    dropped.push(name);
+    const parts = [split.preamble, ...sections.map((section) => section.text)].filter(Boolean);
+    const next = parts.join(SECTION_JOIN);
+    if (!next) return null;
+    if (estimateTokensFromChars(next) <= maxTokens) return { content: next, dropped };
+  }
+  return null;
+}
+
 /**
  * Deterministically select which context blocks survive within availableTokens,
  * shrinking the highest-priority shrinkable block(s) before dropping, and
@@ -227,6 +291,21 @@ function trimContextBlocks(blocks, availableTokens, options) {
       decisions.push({ kind: block.kind, action: 'keep', tokens });
       continue;
     }
+    if (block.kind === 'personality') {
+      // Never tail-shrunk: whole sections drop in a fixed order, else the block.
+      const fit = dropPersonalitySections(block.content, remaining);
+      if (fit) {
+        const fitTokens = estimateTokensFromChars(fit.content);
+        kept.set(block.kind, { content: fit.content, tokens: fitTokens, shrunk: true });
+        decisions.push({
+          kind: block.kind, action: 'drop_sections', dropped: fit.dropped, tokens: fitTokens, from: tokens,
+        });
+        remaining -= fitTokens;
+        continue;
+      }
+      decisions.push({ kind: block.kind, action: 'drop', tokens });
+      continue;
+    }
     const shrinkable = block.shrinkable !== false;
     if (shrinkable && remaining >= minBlockTokens) {
       const shrunkContent = shrinkBlockContent(block.content, remaining);
@@ -249,6 +328,7 @@ module.exports = {
   estimateMessagesTokens,
   computeEffectiveContextBudget,
   closeDanglingFence,
+  dropPersonalitySections,
   shrinkBlockContent,
   trimContextBlocks,
   DEFAULT_SYSTEM_RESERVE_TOKENS,

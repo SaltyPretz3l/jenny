@@ -56,3 +56,12 @@ test('classifyOllamaCrash returns null when nothing fatal is present', () => {
     null
   );
 });
+
+test('crash pattern priority wins over stderr line order', () => {
+  const lines = [
+    'level=WARN msg="open key: no such file or directory"',
+    'listen tcp: bind: address already in use',
+  ];
+  assert.equal(classifyOllamaCrash(lines).likelyCause, 'port_in_use');
+  assert.equal(classifyOllamaCrash(lines.join('\n')).likelyCause, 'port_in_use');
+});

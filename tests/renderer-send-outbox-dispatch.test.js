@@ -209,10 +209,12 @@ test('duplicate dispatch activation shares one pending operation and one bridge 
 
 test('dispatch transfers asset ownership and suppresses a duplicate failed-payload owner', async () => {
   const { outbox, dispatch, sendOptions } = makeHarness({ sendResults: [false] });
-  outbox.enqueue('s1', { prompt: 'asset', status: 'ready', attachments: [{ assetPath: 'asset-a' }] });
+  const promptBlock = { server: 'rea', prompt: 'p', text: 'Instructions', chars: 12 };
+  outbox.enqueue('s1', { prompt: 'asset', status: 'ready', attachments: [{ assetPath: 'asset-a' }], meta: { promptBlock } });
   await dispatch('s1');
   assert.equal(sendOptions[0].recordFailedPayload, false);
   assert.equal(sendOptions[0].outboxDispatch, true);
+  assert.deepEqual(sendOptions[0].promptBlock, promptBlock); // the entry's own MCP prompt block rides the replay
   assert.equal(outbox.peek('s1').attachmentOwner, 'outbox');
 });
 

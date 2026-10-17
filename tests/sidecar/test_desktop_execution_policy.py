@@ -86,13 +86,24 @@ def test_sandbox_tool_allowlist_matches_typed_files_and_bridge() -> None:
         "mermaid_generate",
         "ask_user",
         "exit_plan_mode",
+        "propose_command",
+        "propose_session",
+        "complete_session_handoff",
         "run_command",
     }
     assert DESKTOP_SANDBOX_ALLOWED_TOOL_NAMES == frozenset(allowed)
 
-    for name in allowed - {"ask_user", "exit_plan_mode", "run_command"}:
+    electron_owned = {
+        "ask_user",
+        "exit_plan_mode",
+        "propose_command",
+        "propose_session",
+        "complete_session_handoff",
+        "run_command",
+    }
+    for name in allowed - electron_owned:
         assert desktop_tool_decision(name, config)[0] is True
-    for name in ("python_execute", "run_temp_script", "monitor", "git_status", "lsp"):
+    for name in ("python_execute", "run_temp_script", "monitor", "git_status", "lsp", "session_message"):
         assert desktop_tool_decision(name, config)[0] is False
     assert desktop_tool_decision(
         SimpleNamespace(

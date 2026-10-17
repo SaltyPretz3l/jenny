@@ -78,3 +78,28 @@ def test_selected_route_and_terminal_reason_use_small_display_contracts() -> Non
     assert terminal_reason(completion_reason="deadline_exceeded") == "deadline_exceeded"
     assert terminal_reason(invalid_report=True) == "invalid_report"
     assert terminal_reason(error_message="No subagent slot is available") == "capacity_unavailable"
+
+
+def test_batch_usage_keeps_incomplete_child_accounting_visible() -> None:
+    usage = aggregate_usage([{'usage': {'total_tokens': 14, 'partial': True}}])
+    assert usage['total_tokens'] == 14
+    assert usage['partial'] is True
+
+
+def test_never_started_reports_do_not_make_generation_usage_partial():
+    reports = [{'status': 'completed', 'usage': {'total_tokens': 14}},
+        {'status': 'queued'}, {'status': 'rejected'}, {'status': 'skipped_budget'}]
+    assert aggregate_usage(reports) == {'total_tokens': 14, 'estimated': False}
+
+
+
+def test_real_rejected_task_report_does_not_make_usage_partial():
+    from sidecar.ai.routing.delegate import _task_report
+    from sidecar.ai.routing.delegate_contracts import DelegateTask
+    from sidecar.ai.routing.sub_agent_invocation import build_sub_agent_identity
+    rejected = _task_report(DelegateTask(ordinal=2), None,
+        identity=build_sub_agent_identity(parent_request_id="request", canonical_call_id="call", ordinal=2),
+        default_steps=1, default_runtime_ms=1000)
+    assert rejected["status"] == "failed" and rejected["terminal_reason"] == "rejected"
+    usage = aggregate_usage([{"status": "completed", "usage": {"total_tokens": 14}}, rejected])
+    assert usage == {"total_tokens": 14, "estimated": False}

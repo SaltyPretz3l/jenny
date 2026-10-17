@@ -164,6 +164,7 @@ class _OllamaGenerationMixin:
         system: str = "",
         messages: list[EngineMessage] | None = None,
         response_format: ResponseFormat | None = None,
+        cancel_handle: Any = None,
     ) -> str:
         return _ollama_generate(
             self,
@@ -175,6 +176,7 @@ class _OllamaGenerationMixin:
             system=system,
             messages=messages,
             response_format=response_format,
+            cancel_handle=cancel_handle,
         )
 
     def stream(  # preserves the positional engine API.
@@ -621,6 +623,21 @@ class _OllamaGenerationMixin:
             options["repeat_penalty"] = repeat_penalty
         return options
 
+    def _graded_reasoning_supported(self) -> bool:
+        return supports_ollama_reasoning_levels(self.model_name) or (
+            self._current_app_profile_behavior().get("family") == "qwen38"
+        )
+
+    def applies_reasoning_effort(self, reasoning_effort: str | None) -> bool:
+        """Whether ``_build_think_value`` honors this effort instead of degrading it."""
+
+        normalized = str(reasoning_effort or "").strip().lower()
+        if normalized in {"", "default", "none"}:
+            return True
+        return bool(self._thinking) and self._graded_reasoning_supported() and normalized in {
+            "minimal", "low", "medium", "high", "xhigh", "max",
+        }
+
     def _build_think_value(self, reasoning_effort: str | None) -> bool | str | None:
         if not self._thinking:
             return None
@@ -631,9 +648,7 @@ class _OllamaGenerationMixin:
             )
             return None
         normalized = str(reasoning_effort or "").strip().lower()
-        if supports_ollama_reasoning_levels(self.model_name) or (
-            self._current_app_profile_behavior().get("family") == "qwen38"
-        ):
+        if self._graded_reasoning_supported():
             return self._build_qwen38_think_value(normalized)
         if normalized == "none":
             return False

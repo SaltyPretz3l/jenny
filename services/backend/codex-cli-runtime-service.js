@@ -11,8 +11,8 @@ const {
   normalizeCodexCliSettings,
 } = require('../shell-config-state');
 const {
-  redactDiagnosticString,
-} = require('./diagnostic-redaction');
+  redactLogText,
+} = require('../../renderer/shared/log-contract-utils');
 
 const CODEX_CLI_PROVIDER = 'codex-cli';
 const CODEX_CLI_DEFAULT_MODEL = 'codex-cli/default';
@@ -231,12 +231,12 @@ function createCodexCliRuntimeService({
         requestTimeoutSeconds: settings.requestTimeoutSeconds,
         models,
         message: ready
-          ? redactDiagnosticString(auth?.message || 'Codex CLI is authenticated with ChatGPT.')
-          : redactDiagnosticString(auth?.message || fallbackMessage),
+          ? redactLogText(auth?.message || 'Codex CLI is authenticated with ChatGPT.')
+          : redactLogText(auth?.message || fallbackMessage),
       };
       return lastState;
     } catch (error) {
-      const message = redactDiagnosticString(
+      const message = redactLogText(
         error?.message || error || 'Codex CLI auth refresh failed.'
       );
       log('WARN', 'codex_cli_runtime.refresh_failed', {
@@ -301,7 +301,7 @@ function createCodexCliRuntimeService({
       codex_cli_auth_ready: availability.available === true,
       codex_cli_auth_reason: availability.available === true
         ? null
-        : redactDiagnosticString(availability.reason || 'Codex CLI ChatGPT auth is not ready.'),
+        : redactLogText(availability.reason || 'Codex CLI ChatGPT auth is not ready.'),
       // Prefer the path the auth probe actually authenticated. The settings
       // value is usually the bare "codex" token (or empty), so the sidecar was
       // handed a command it then had to re-resolve from PATH -- a different

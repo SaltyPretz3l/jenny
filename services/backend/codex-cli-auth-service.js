@@ -11,8 +11,8 @@ const {
   openCodexLoginTerminal,
 } = require('./codex-cli-setup-adapter');
 const {
-  redactDiagnosticString,
-} = require('./diagnostic-redaction');
+  redactLogText,
+} = require('../../renderer/shared/log-contract-utils');
 
 const CODEX_CLI_PROVIDER = 'codex-cli';
 
@@ -32,7 +32,7 @@ function compactAuthStatus(result = {}) {
   const apiKeyOnly = setupOk && authType === 'api_key';
   const unknownAuthenticated = setupOk && !authType;
   let code = String(source.code || '').trim() || (setupOk ? 'ready' : 'auth_required_or_cli_missing');
-  let message = redactDiagnosticString(source.message || '').trim();
+  let message = redactLogText(source.message || '').trim();
   if (apiKeyOnly) {
     code = 'chatgpt_auth_required';
     message = 'Codex CLI is authenticated with an API key. Sign in with ChatGPT for Codex CLI models.';
@@ -66,7 +66,7 @@ function createCodexCliAuthService({
       const setup = await Promise.resolve(checkSetup(options));
       state = compactAuthStatus(setup);
     } catch (error) {
-      const message = redactDiagnosticString(error?.message || error || 'Codex CLI login status failed.');
+      const message = redactLogText(error?.message || error || 'Codex CLI login status failed.');
       if (typeof logger === 'function') {
         logger('WARN', 'codex_cli_auth.status_failed', {
           message,
@@ -102,7 +102,7 @@ function createCodexCliAuthService({
         ...(result && typeof result === 'object' ? result : { ok: false, code: 'login_terminal_failed' }),
       };
     } catch (error) {
-      const message = redactDiagnosticString(error?.message || error || 'Could not open Codex login terminal.');
+      const message = redactLogText(error?.message || error || 'Could not open Codex login terminal.');
       return {
         ok: false,
         code: 'login_terminal_failed',

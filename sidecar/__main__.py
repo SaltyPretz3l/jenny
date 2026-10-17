@@ -241,6 +241,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_owned_process_bootstrap()
     if raw_args == [_OWNED_PROCESS_SUPERVISOR_FLAG]:
         return _run_owned_process_supervisor()
+    if raw_args == ["--owned-process-ledger-helper"]:
+        from sidecar.runtime.owned_process_ledger_helper import main as ledger_main
+        return ledger_main()
     if raw_args == [_WORKSPACE_TEST_HELPER_FLAG]:
         return _run_workspace_test_helper()
     if raw_args == [_GREP_SEARCH_WORKER_FLAG]:

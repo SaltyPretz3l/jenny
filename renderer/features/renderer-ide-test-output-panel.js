@@ -86,7 +86,7 @@
       }
       // The header carries the result, so the footer's status line stays empty here.
       const footerMarkup = typeof footer.buildFooterMarkup === 'function'
-        ? footer.buildFooterMarkup({ actionButton, escapeHtml, text: '', showAsk: outcomeOf(record) === 'failed' })
+        ? footer.buildFooterMarkup({ actionButton, escapeHtml, text: '', showAsk: outcomeOf(record) === 'failed', rerunDisabled: options.canRunAgain?.(configId) === false })
         : '';
       return '<div class="ide-task-view" data-ide-test-output>'
         + '<div class="ide-task-output-header">'
@@ -107,7 +107,7 @@
       if (!action || !configId) {
         return;
       }
-      if (action === 'rerun') {
+      if (action === 'rerun' && options.canRunAgain?.(configId) !== false) {
         onRunAgain(configId);
         return;
       }

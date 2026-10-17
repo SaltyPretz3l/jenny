@@ -59,6 +59,8 @@ _RULE_HIT_STAGE = {
     POLICY_DECISION_ASK: "user_ask",
 }
 _DEFAULT_TOOL_DEFAULTS = {
+    # The Electron tool owns exact-content consent, independently of run mode.
+    "session_message": "auto",
     "read_file": POLICY_DECISION_AUTO,
     "glob_files": POLICY_DECISION_AUTO,
     "grep_search": POLICY_DECISION_AUTO,
@@ -71,6 +73,7 @@ _DEFAULT_TOOL_DEFAULTS = {
     "run_temp_script": POLICY_DECISION_ASK,
     "monitor": POLICY_DECISION_ASK,
     "check_monitor": POLICY_DECISION_AUTO,
+    "recall_tool_output": POLICY_DECISION_AUTO,
     "create_artifact": POLICY_DECISION_ASK,
     "exit_plan_mode": POLICY_DECISION_ASK,
     # `verify` runs one of the user's own saved Workspace Test Runner
@@ -92,6 +95,12 @@ _DEFAULT_TOOL_DEFAULTS = {
     # The in-session todo list is the model's own scratch state; approval is
     # for the user's files and commands (owner, 2026-09-22).
     "todo_write": POLICY_DECISION_AUTO,
+    # Jenny's memory: bounded, attributed to Jenny, suppressible and one-click
+    # undoable; consent rides the per-request memory policy, not a prompt.
+    "memory": POLICY_DECISION_AUTO,
+    "conversations_recent": POLICY_DECISION_AUTO,
+    "conversation_open": POLICY_DECISION_AUTO,
+    "conversations_search": POLICY_DECISION_AUTO,
 }
 _MAX_POLICY_REASON_CHARS = 240
 _MAX_POLICY_ID_CHARS = 80
@@ -132,6 +141,8 @@ def approval_presentation_for_call(
             scope = "Web and browser session"
         elif family == "todo":
             scope = "Jenny work items"
+        elif family == "memory":
+            scope = "Jenny's memory"
         elif family in _APPROVAL_CONTENT_FAMILIES:
             scope = "Jenny content"
         elif family in {"python", "runtime", "shell"}:

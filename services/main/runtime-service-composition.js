@@ -19,6 +19,7 @@ const { ProcessLogWriter } = require('../process-log-writer');
 const { DiagnosticLogService } = require('../diagnostic-log-service');
 const { SetupService } = require('../setup-service');
 const { OllamaInstallService } = require('../ollama-install-service');
+const { ReaInstallService } = require('../rea-install-service');
 const { ShellConfigService } = require('../shell-config-service');
 const { isToolsWorktreeEnabled } = require('../shell-config-state');
 const { SystemStatsMonitor } = require('../system-stats');
@@ -144,7 +145,6 @@ function createRuntimeServicesWithDeps({
     filePath: processLogPath,
     onEntry: (entry) => {
       sendBridgeEvent('diagnostics.logs.onEntry', entry);
-      sendBridgeEvent('logs.onAppend', entry);
     },
   });
   // Publish core logging to the caller immediately, before any service that
@@ -233,8 +233,25 @@ function createRuntimeServicesWithDeps({
     userDataPath: userDataPath,
     openPathImpl: (targetPath) => shell.openPath(targetPath),
   });
+  const reaInstallService = new ReaInstallService({
+    manifest: require('../../config/rea-install-manifest.json'),
+    userDataPath, discovery: mcpDiscoveryService, skillsService, logger: log,
+  });
+  try {
+    reaInstallService.reconcile();
+  } catch (_error) {
+    log('WARN', 'rea_install.reconcile_failed', { reason: 'staging_cleanup_failed' });
+  }
+  reaInstallService.on('install-progress', (payload) => {
+    sendBridgeEvent('mcpDiscovery.onReaInstallProgress', payload);
+  });
   let toolExecutor = null;
+  const getOwnedOllamaPid = () => {
+    const manager = getBackendService()?.ollamaManager;
+    return manager?._getOwnedPid?.(manager?._readOwnedState?.()) || 0;
+  };
   const setupService = new SetupService({
+    getOwnedOllamaPid,
     configService: shellConfigService,
     getLlamaServerManager,
     readinessProvider: probeSetupReadiness,
@@ -270,6 +287,12 @@ function createRuntimeServicesWithDeps({
   const ollamaInstallService = new OllamaInstallService({
     manifest: require('../../config/ollama-install-manifest.json'),
     detectImpl: (args) => setupService.detectOllama(args),
+    releaseOwnedImpl: async () => {
+      const manager = getBackendService()?.ollamaManager;
+      if (!getOwnedOllamaPid() || typeof manager?.stop !== 'function') return false;
+      await manager.stop({ scope: 'app_owned' });
+      return true;
+    },
     restartImpl: async () => {
       const manager = getBackendService()?.ollamaManager;
       if (!manager || typeof manager.stop !== 'function' || typeof manager.start !== 'function') {
@@ -306,6 +329,8 @@ function createRuntimeServicesWithDeps({
     userDataPath: userDataPath,
     openPathImpl: (targetPath) => shell.openPath(targetPath),
     logger: log,
+    // A project chat's Notes slot is its project-notes page (row 58 W1 S5).
+    projectNotesProvider: () => getBackendService()?.projectNotesService,
   });
   const artifactService = new ArtifactWorkspaceService({
     configService: shellConfigService,
@@ -423,7 +448,11 @@ function createRuntimeServicesWithDeps({
   );
   // Preserve a retired per-type inspect deny by disabling the folded capability.
   if (toolPermissionStore.consumeRetiredInspectDenyNotice()) {
-    shellConfigService.updateFeatureSettings({ tools: { richFiles: false } });
+    try {
+      shellConfigService.updateFeatureSettings({ tools: { richFiles: false } });
+    } catch (error) {
+      log('WARN', 'permissions.retired_inspect_migration_persist_failed', { code: error?.code });
+    }
   }
 
   function isWorktreeToolEnabledFromConfig(configService = shellConfigService) {
@@ -443,6 +472,7 @@ function createRuntimeServicesWithDeps({
     toolsHomeEnabled = buildEffectiveFeatureFlags().tools_home_enabled === true,
     toolsTaskBoardEnabled = buildEffectiveFeatureFlags().tools_task_board_enabled === true,
     toolsProjectNotesEnabled = buildEffectiveFeatureFlags().tools_project_notes_enabled === true,
+    toolsConversationsEnabled = buildEffectiveFeatureFlags().memory_v2_enabled === true,
   } = {}) {
     return createDefaultRegistry({
       toolsWorktreeEnabled,
@@ -454,6 +484,7 @@ function createRuntimeServicesWithDeps({
       toolsHomeEnabled,
       toolsTaskBoardEnabled,
       toolsProjectNotesEnabled,
+      toolsConversationsEnabled,
     });
   }
 
@@ -541,6 +572,7 @@ function createRuntimeServicesWithDeps({
     processLogWriter,
     refreshElectronToolRegistry,
     ollamaInstallService,
+    reaInstallService,
     setupService,
     shellConfigService,
     skillsService,

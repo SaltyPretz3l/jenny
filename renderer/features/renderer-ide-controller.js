@@ -218,7 +218,7 @@
       focusEditor: () => focusIdeEditor(), focusTerminal: () => terminals?.focusTerminal?.() === true,
       // Problems shows only while there are markers of any severity (F7; the statusbar count stays);
       // test output only while the config it shows has output (F6).
-      isViewAvailable: (id) => (id === 'test-runner' ? testRunnerWiring?.isAvailable() !== false
+      isViewAvailable: (id) => (id === 'activity' ? state.features?.featureFlags?.activity_monitor === true : id === 'test-runner' ? testRunnerWiring?.isAvailable() !== false
         : id === 'chat' || id === 'changes' ? state?.features?.featureFlags?.ide_chat_dock === true
           : id === 'chat-2' || id === 'changes-2' ? workspaceChats?.isAvailable(id) === true // W6b: a second split-view pane
           : id === 'problems' ? problemsPanel?.hasMarkers?.() === true
@@ -226,6 +226,7 @@
       counts: {
         'source-control': () => gitFeature?.getDirtyCount() || 0,
         problems: () => problemCount(),
+        activity: () => activityView?.getSnapshot()?.items.filter(row=>row.group !== 'finished').length || 0,
         changes: () => ideChatDock?.getChangesWaitingCount?.() || 0,
         'changes-2': () => workspaceChats?.secondWaitingCount() || 0,
       },
@@ -600,17 +601,9 @@
       // The statusbar, and the Run tab's "Run: <script>" label (workbench chrome only).
       onRunStateChange: () => { statusBar?.render(); if (state.ui?.activeView === 'ide') workbenchWiring?.render(); },
     }) || null;
-    const testRunnerWiring = resolveModule('rendererIdeTestRunnerWiring', './renderer-ide-test-runner-wiring').createIdeTestRunnerWiring?.({ windowRef, actionButton, getMountEl: () => panelDeps('test-runner').getMountEl?.() || null, isActiveView: () => workbenchWiring?.isVisible('test-runner') === true, showShellErrorToast, onAvailabilityChange: () => renderIde(),
-      // F6: Show output selects the config and opens its Test output tab; a new run repaints it.
-      onShowOutput: (configId) => { testOutputConfigId = String(configId || ''); showPanel('test-output'); testOutputPanel?.render(); },
-      onOutputChange: () => { if (state.ui?.activeView === 'ide') renderIde(); } }) || null;
-    let testOutputConfigId = '';
-    const testOutputPanel = resolveModule('rendererIdeTestOutputPanel', './renderer-ide-test-output-panel').createIdeTestOutputPanel?.({
-      ...panelDeps('test-output'), actionButton, escapeHtml, onAskJenny: onSendToJenny,
-      getSelection: () => (testOutputConfigId ? { configId: testOutputConfigId } : null),
-      getRunOutput: (id) => testRunnerWiring?.getLastRunOutput(id) || null, getConfigLabel: (id) => testRunnerWiring?.getConfigLabel(id) || id,
-      onRunAgain: (id) => testRunnerWiring?.runConfig(id),
-    }) || null;
+    const {testRunnerWiring,testOutputPanel,activityView} = resolveModule('rendererIdeActivityWiring','./renderer-ide-activity-wiring').createIdeActivityWiring({
+      state,workbench:workbenchWiring,windowRef,actionButton,escapeHtml,onAskJenny:onSendToJenny,
+      showShellErrorToast,requestRender:renderIde,setActiveView:callbacks.setActiveView});
     // Focus fallback when a panel closes or hides: the editor (true only if focus got there).
     const focusIdeEditor = () => { editorHost?.focus?.(); const host = getDom().ideEditorHost; return Boolean(host?.contains?.(host.ownerDocument?.activeElement)); };
     // Workspace Chat Dock (ide_chat_dock): the chat subtree relocated into the
@@ -659,6 +652,7 @@
       renderRun: () => runScripts?.renderRunPanel(),
       renderTestRunner: () => testRunnerWiring?.render(),
       renderTestOutput: () => testOutputPanel?.render(),
+      renderActivity: () => {if(state.features?.featureFlags?.activity_monitor === true) activityView?.bind();activityView?.render();},
       chatDock: ideChatDock,
     }) || null;
     async function handleSearchResultOpen(path, line, column, origin) {
@@ -866,7 +860,7 @@
       diffController?.bindEvents(); terminals?.bindEvents();
       statusBar?.bindEvents(); gitFeature?.bindEvents();
       problemsPanel?.bindEvents();
-      runScripts?.bindEvents(); testRunnerWiring?.bindEvents();
+      runScripts?.bindEvents(); testRunnerWiring?.bindEvents(); if(state.features?.featureFlags?.activity_monitor === true) activityView?.bind();
       ideChatDock?.bindEvents();
       symbolNav?.bindEvents(); qol?.bindAll();
       chipPicker?.initHandlers();
@@ -901,7 +895,7 @@
         quickOpen?.dispose(); branchSwitcher?.dispose();
         tabsController?.dispose(); statusBar?.dispose();
         gitFeature?.dispose(); problemsPanel?.dispose(); workspaceChats?.dispose();
-        runScripts?.dispose(); testRunnerWiring?.dispose();
+        runScripts?.dispose(); testRunnerWiring?.dispose(); activityView?.dispose();
         workbenchWiring?.dispose(); stageSwitch?.dispose(); editorGroups?.dispose();
         ideChatDock?.dispose();
         terminals?.dispose(); testOutputPanel?.dispose();
@@ -966,7 +960,7 @@
 
     async function handleWorkspaceRootCommitted({ context } = {}) { if (disposed) return;
       const epoch = ++lifecycleEpoch;
-      fileLifecycle?.resetForRoot(context); ideStateUtils.resetIdeRootState?.(getIde()); tree?.resetForRoot?.(); searchPanel?.resetForRoot?.(); diffController?.resetForRoot?.(); quickOpen?.invalidate(); ideMru?.clear?.(); navBookmarks?.resetForRoot?.(); tabsController?.resetForRoot?.(); editorGroups?.resetForRoot(); testRunnerWiring?.resetForRoot?.(); runScripts?.resetForRoot?.(); gitFeature?.resetForRoot?.(); // Git presentation must not survive a root switch.
+      fileLifecycle?.resetForRoot(context); ideStateUtils.resetIdeRootState?.(getIde()); tree?.resetForRoot?.(); searchPanel?.resetForRoot?.(); diffController?.resetForRoot?.(); quickOpen?.invalidate(); ideMru?.clear?.(); navBookmarks?.resetForRoot?.(); tabsController?.resetForRoot?.(); editorGroups?.resetForRoot(); testRunnerWiring?.resetForRoot?.(); activityView?.clearOutput(); runScripts?.resetForRoot?.(); gitFeature?.resetForRoot?.(); // Git presentation must not survive a root switch.
       // The decoupled composer singletons (@-mention autocomplete, active-file consent) hear root commits only via this window event — they have no controller wire by design.
       try { windowRef.dispatchEvent?.(new windowRef.CustomEvent('ide:workspace-root-committed', { detail: { context } })); } catch (_error) { /* stub windows without CustomEvent */ }
       await persistence?.hydrateForContext(context); if (!lifecycleCurrent(epoch)) return; watchController?.start(); qol?.handleWorkspaceRootCommitted?.({ context });
@@ -987,8 +981,9 @@
       // Chat-dock surface for the render pipeline's renderLayout reconcile.
       chatDock: ideChatDock,
       openFile,
+      showActivityOutput: output => activityView?.showOutput(output),
       openFileAtLine: (path, line, column, origin) => handleSearchResultOpen(path, line, column, origin), // Chat timeline path chips and cite links use the same open-then-revealPosition seam as search; resolves true only when the file actually opened.
-      saveActiveFile,
+      saveActiveFile, openGitView: () => showPanel('source-control'), // The Changes panel's "Open in Git" (row 59 checkpoint 2).
       // Surfaced for the command palette + the global "?" router (shell bindings).
       // both halves stay empty off the IDE view so other surfaces stay uncluttered.
       getIdeCommandItems: () => {

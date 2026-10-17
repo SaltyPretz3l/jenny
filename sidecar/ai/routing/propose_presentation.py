@@ -15,6 +15,7 @@ import logging
 from typing import Any
 
 from sidecar.ai.config import read_environment_value
+from sidecar.ai.routing.heuristic_fires import emit_heuristic_fire
 from sidecar.ai.routing.loop_event_emit import emit_stream_reset_for_retry
 from sidecar.ai.routing.plan_presentation import ASSIST_FLAG
 from sidecar.ai.tools.sanitization import sanitize_assistant_output
@@ -91,6 +92,7 @@ def final_propose_nudge(loop: Any, result: Any, iteration: int) -> bool:
     if not reply.strip() or "?" in reply:
         return False
     loop._propose_nudged = True
+    emit_heuristic_fire(loop.runtime, "propose_nudge")
     # nudge_retry, not post_tool_restart: the draft described its changes as
     # prose instead of calling propose_change, so the fold reads "it skipped a
     # tool it needed" (2026-10-05 recheck, same cause as gate F5).

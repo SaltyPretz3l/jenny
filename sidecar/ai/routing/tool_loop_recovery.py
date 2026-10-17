@@ -18,7 +18,11 @@ import logging
 from dataclasses import dataclass, replace
 from typing import Any, Callable
 
-from sidecar.ai.tools.contracts import ToolExecutionFailure
+from sidecar.ai.routing.budget_stop_details import (
+    _NO_PROGRESS_WINDOW,
+    budget_stop_details,
+    fallback_sentence,
+)
 
 logger = logging.getLogger("sidecar.ai.routing.tool_loop")
 
@@ -105,6 +109,7 @@ def admit_tool_calls_for_turn(
     survive approval because the remaining count is frozen into the plan.
     """
 
+    import sidecar.ai.routing.tool_loop as _tl_hub
     from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED
 
     requested_calls = tuple(result.tool_calls)
@@ -152,6 +157,9 @@ def admit_tool_calls_for_turn(
                 {"role": "system", "content": _TOOL_BUDGET_EXHAUSTED_MESSAGE}
             )
             loop.tool_budget_exhausted_notified = True
+            _tl_hub.heuristic_fires.emit_heuristic_fire(
+                loop.runtime, "tool_budget_exhausted_row",
+            )
     if admitted_calls != requested_calls:
         result = replace(result, tool_calls=admitted_calls)
     if admitted_calls:
@@ -596,9 +604,6 @@ _BUDGET_EXHAUSTED_WIND_DOWN = (
     "and what is blocking further progress. Do not mention this note."
 )
 
-# Mirrors token_budget._DIMINISHING_RETURNS_WINDOW (not imported: this module
-# sits at the leaf import fan-out cap); pinned by the tests.
-_NO_PROGRESS_WINDOW = 3
 # TR-011: the no-progress stop is not a budget; calling it one made the model
 # tell the user its tool budget was exhausted after three failed reads.
 _NO_PROGRESS_WIND_DOWN = (
@@ -675,10 +680,10 @@ def wind_down_response(
         )
         loop.streamed_event_types.update(streamed_generation_types)
         loop.usage_totals = _tl_hub._merge_generation_usage(loop.usage_totals, result.usage)
+        loop.runtime.report_generation_usage(loop.usage_totals, result.usage)
         response_text = _tl_hub.finalize_visible_reply(
             result.content, request_id=loop.request_id, session_id=loop.session_id
         ).strip()
-        # This leg offered no tools, so a call written as text cannot run.
         response_text = _drop_text_tool_calls(loop, response_text, reason="tools_stripped")
     except _tl_hub.TerminalChatStateError:
         raise
@@ -732,42 +737,11 @@ def empty_final_wind_down(loop: Any) -> Any:
     )
 
 
-def _budget_stop_details(loop: Any, reason: str) -> tuple[str, str, dict[str, int]]:
-    tool_calls_used = int(loop.runtime.tool_calls_consumed)
-    if reason == "tool_cap":
-        limit = int(loop.runtime.tool_call_limit or 0)
-        footer = f"Reached this turn's tool limit ({limit}). Reply 'resume' to continue."
-        return (
-            footer,
-            "ai.router.tool_cap_reached",
-            {"limit": limit, "tool_calls_used": tool_calls_used},
-        )
-    if reason == "diminishing_returns":
-        window_size = _NO_PROGRESS_WINDOW
-        footer = (
-            f"Stopped after {window_size} tool calls in a row made no progress. "
-            "Reply 'resume' to continue."
-        )
-        return (
-            footer,
-            "ai.router.diminishing_returns_stop",
-            {
-                "consecutive_no_progress_window_size": window_size,
-                "tool_calls_used": tool_calls_used,
-            },
-        )
-    if reason == "context_budget":
-        tracker = getattr(loop, "budget_tracker", None)
-        footer = "Stopped: this turn's context budget is used up. Reply 'resume' to continue."
-        return (
-            footer,
-            "ai.router.context_budget_stop",
-            {
-                "context_tokens": int(getattr(tracker, "current_context_tokens", 0) or 0),
-                "tool_calls_used": tool_calls_used,
-            },
-        )
-    raise ValueError(f"unsupported budget wind-down reason: {reason}")
+_budget_stop_details = budget_stop_details
+
+
+def _output_capped(result: Any) -> bool:
+    return str(result.finish_reason).strip().lower() == "length"
 
 
 def budget_exhausted_wind_down(loop: Any, result: Any, *, reason: str) -> Any:
@@ -778,17 +752,15 @@ def budget_exhausted_wind_down(loop: Any, result: Any, *, reason: str) -> Any:
     response_text = _tl_hub.finalize_visible_reply(
         raw_content, request_id=loop.request_id, session_id=loop.session_id
     ).strip()
-    footer, event, log_data = _budget_stop_details(loop, reason)
-    fallback_sentence = {
-        "tool_cap": "I reached this turn's tool limit before I could finish.",
-        "context_budget": "I stopped because this turn's context budget is used up.",
-    }.get(reason, "I stopped because further tool calls were not making progress.")
+    output_capped = reason == "context_budget" and _output_capped(result)
+    stop_sentence = fallback_sentence(reason, output_capped=output_capped)
     completion_source = "model"
+    clean_answer = False
     if reason == "context_budget":
         # The context is already over the error threshold: another generation
         # would only fail, so go straight to the deterministic summary.
         response_text = (
-            _tl_hub._empty_post_tool_context_response(loop.outcomes) or fallback_sentence
+            _tl_hub._empty_post_tool_context_response(loop.outcomes) or stop_sentence
         )
         completion_source = "deterministic_tool_fallback"
         _restream_response(loop, response_text)
@@ -808,14 +780,20 @@ def budget_exhausted_wind_down(loop: Any, result: Any, *, reason: str) -> Any:
                 message="Tool-loop budget was exhausted; winding down with a summary.",
                 fallback_response=lambda: (
                     _tl_hub._empty_post_tool_context_response(loop.outcomes)
-                    or fallback_sentence
+                    or stop_sentence
                 ),
                 log_data={"reason": reason},
             ),
         )
     else:
         # HB-031: prose then a call written as text keeps the prose; no regeneration.
-        response_text = _drop_text_tool_calls(loop, response_text, reason="tool_cap")
+        kept = _drop_text_tool_calls(loop, response_text, reason="tool_cap")
+        # F25: no text call dropped means the model did not try to go on.
+        clean_answer = kept == response_text
+        response_text = kept
+    footer, event, log_data = _budget_stop_details(
+        loop, reason, output_capped=output_capped, clean_answer=clean_answer
+    )
     if footer not in response_text:
         response_text = f"{response_text.rstrip()}\n\n{footer}"
     emit_degradation_status(loop, text=footer, event=event, data=log_data, log_level=logging.INFO)
@@ -975,7 +953,7 @@ def approval_with_recovery(
                 policy_decisions_by_call=policy_decisions_by_call,
                 approval_mode=str(getattr(loop.request_context, "approval_mode", "prompt")),
             )
-        except ToolExecutionFailure as exc:
+        except _tl_hub.ToolExecutionFailure as exc:
             failure_message = str(exc.message or "the harness refused the call")
             _tl_hub.log_event(
                 logger,

@@ -22,6 +22,9 @@ class MCPToolDescriptor:
     # Optional per-action side-effect metadata (W6): resolved by
     # sidecar.ai.tools.tool_actions.effective_side_effecting at call sites.
     actions: dict[str, ToolActionSpec] | None = None
+    # tool_search ranking hint; empty = derived from the description's first
+    # sentence when the search index is built (tool_search.build_search_index).
+    search_hint: str = ""
 
 
 @dataclass(frozen=True)

@@ -39,7 +39,6 @@ class FakeShellConfig extends EventEmitter {
       tools: { web: false, imageRead: false },
       webSearch: { provider: 'duckduckgo', searxngUrl: '' },
       featureOverrides: {},
-      memory: { captureSuggestions: true },
       chatUi: { density: 'cozy' },
     };
   }
@@ -50,7 +49,7 @@ class FakeShellConfig extends EventEmitter {
 
   updateFeatureSettings(patch = {}) {
     const next = { ...this.state };
-    for (const key of ['tools', 'webSearch', 'featureOverrides', 'memory']) {
+    for (const key of ['tools', 'webSearch', 'featureOverrides']) {
       next[key] = { ...this.state[key], ...(patch[key] || {}) };
     }
     return this._write(next, 'feature_settings_updated');
@@ -282,7 +281,7 @@ for (const [label, buildPatch] of [
 
 test('a refresh that never publishes the saved revision fails the save instead of spinning', async () => {
   const { applyFeatureSettingsPatch } = require('../services/feature-settings-service');
-  let state = { tools: { web: false }, webSearch: {}, featureOverrides: {}, memory: {} };
+  let state = { tools: { web: false }, webSearch: {}, featureOverrides: {} };
   const shellConfigService = {
     getState: () => JSON.parse(JSON.stringify(state)),
     updateFeatureSettings: (patch) => { state = { ...state, tools: { ...state.tools, ...patch.tools } }; return shellConfigService.getState(); },

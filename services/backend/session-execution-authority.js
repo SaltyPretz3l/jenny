@@ -10,9 +10,10 @@ const { evaluatePolicy } = require('../tools/tool-policy-evaluator');
 const { effectiveSideEffecting } = require('../tools/tool-policy-actions');
 const { ALWAYS_ON_TOOL_NAMES } = require('../tools/tool-surface-families');
 const { PROJECT_ERROR_CODES, RUNTIME_ERROR_CODES, TOOL_ERROR_CODES } = require('./error-codes');
+const { normalizeHandoffPreparation } = require('./session-handoff-context');
 
 const EXECUTION_CONTEXT_SCHEMA_VERSION = 1;
-const SIDECAR_API_VERSION = '2026-08-17';
+const SIDECAR_API_VERSION = '2026-10-15';
 const MAX_EXECUTION_CONTEXT_BYTES = 5 * 1024 * 1024;
 const MAX_POLICY_SNAPSHOT_BYTES = 4 * 1024 * 1024;
 const MAX_RUNTIME_OPERATION_BYTES = 1024 * 1024;
@@ -246,6 +247,7 @@ class SessionExecutionAuthority {
     skillsService = null,
     resolveProjectWorkspaceServices,
     resolveSessionDisabledTools = null,
+    resolveExternalToolDescriptor = null,
     randomUUID: createUUID = randomUUID,
   } = {}) {
     if (!projectAuthority || typeof projectAuthority.captureSession !== 'function'
@@ -268,18 +270,38 @@ class SessionExecutionAuthority {
     this._resolveProjectWorkspaceServices = resolveProjectWorkspaceServices;
     this._createUUID = createUUID;
     this._resolveSessionDisabledTools = resolveSessionDisabledTools;
+    // Approved standalone MCP tools (row 53): built-in descriptors stay the
+    // registry; this resolver only answers for a server the host vouches for.
+    this._resolveExternalToolDescriptor = typeof resolveExternalToolDescriptor === 'function'
+      ? resolveExternalToolDescriptor : null;
     this._sessionBindings = new Map();
+  }
+
+  _executionDescriptor(toolName) {
+    const builtin = builtinExecutionDescriptor(toolName);
+    if (builtin || !this._resolveExternalToolDescriptor) return builtin;
+    try {
+      const external = this._resolveExternalToolDescriptor(toolName);
+      return external && typeof external === 'object' && external.name === toolName
+        && external.source_kind === 'mcp' ? external : undefined;
+    } catch (_error) {
+      return undefined;
+    }
   }
 
   captureSession(sessionId, {
     requestId, signal = null, mode = '', readOnly = false, toolPreferences = null,
-    approvalMode = 'prompt',
+    approvalMode = 'prompt', handoffPreparation = null,
   } = {}) {
     const normalizedSessionId = boundedToken(sessionId, MAX_CORRELATION_CHARS);
     const normalizedRequestId = boundedToken(requestId, MAX_CORRELATION_CHARS);
     if (!normalizedSessionId || !normalizedRequestId) {
       throw new Error('Session and request identity are required for execution authority.');
     }
+    // The handoff-only preparation turn (cp5a): the application-authored {proposal_id, attempt_id}
+    // is recorded once at capture; a present but malformed value fails the capture closed.
+    const preparation = handoffPreparation == null ? null : normalizeHandoffPreparation(handoffPreparation);
+    if (handoffPreparation != null && !preparation) throw new Error('Session handoff preparation is invalid.');
     const authority = normalizeCapturedAuthority(
       this._projectAuthority.captureSession(normalizedSessionId)
     );
@@ -338,13 +360,16 @@ class SessionExecutionAuthority {
       sessionId: normalizedSessionId,
       requestId: normalizedRequestId,
       authorityRevision,
+      handoffPreparation: preparation
+        ? Object.freeze({ proposalId: preparation.proposal_id, attemptId: preparation.attempt_id }) : null,
       get mode() { return bindingStates.get(binding)?.mode || capturedMode; },
       get readOnly() { return bindingStates.get(binding)?.readOnly ?? capturedReadOnly; },
+      get autoRun() { return bindingStates.get(binding)?.autoRun === true; },
       assertCurrent: () => this.requireCurrent(binding),
       describeToolAvailability: (status) => {
         this.requireCurrent(binding);
         const state = bindingStates.get(binding);
-        return scopedToolAvailability(status, state, builtinExecutionDescriptor);
+        return scopedToolAvailability(status, state, (name) => this._executionDescriptor(name));
       },
     });
     bindingStates.set(binding, {
@@ -485,7 +510,13 @@ class SessionExecutionAuthority {
       return rejected(validation.operationId, PROJECT_ERROR_CODES.STALE, 'project_authority_stale',
         String(error?.message || error || 'Project authority is stale.').slice(0, 300));
     }
-    const descriptor = builtinExecutionDescriptor(validation.toolName);
+    // A handoff preparation turn may only call complete_session_handoff, which runs through the
+    // Electron tool bridge; it is never a runtime resource operation.
+    if (state.trustedContext.handoffPreparation) {
+      return rejected(validation.operationId, TOOL_ERROR_CODES.POLICY_DENIED, 'handoff_preparation_only',
+        'This turn may only complete the session handoff.');
+    }
+    const descriptor = this._executionDescriptor(validation.toolName);
     if (!descriptor || (descriptor.workspace_required && !state.authority.root_path)) {
       return rejected(validation.operationId, TOOL_ERROR_CODES.DISABLED, 'tool_unavailable',
         'The tool is unavailable for this captured project authority.');

@@ -48,7 +48,7 @@ test('aborting mcp.inspect sends a best-effort JSON-RPC cancellation notificatio
   const { process, frames } = createCapturingMockProcess();
   client.attachProcess(process);
   const controller = new AbortController();
-  const promise = client.request('mcp.inspect', { accept_version: '2026-08-17' }, {
+  const promise = client.request('mcp.inspect', { accept_version: '2026-10-15' }, {
     signal: controller.signal, timeoutMs: null,
   });
   controller.abort(new Error('inspection replaced'));

@@ -6,6 +6,7 @@
 // and persistence to workspace-test-runner-history.
 
 const path = require('path');
+const { createTestRunnerObservation, scopeOf } = require('./workspace-test-runner-observation');
 
 const {
   normalizeConfigs,
@@ -100,6 +101,7 @@ function createWorkspaceTestRunnerService(deps = {}) {
   const resources = createWorkspaceTestRunnerResources({
     resourceAdmissionProvider: deps.resourceAdmissionProvider ?? null,
   });
+  const observations = createTestRunnerObservation({now});
   let runCounter = 0;
   const makeRunId = typeof deps.makeRunId === 'function'
     ? deps.makeRunId
@@ -116,6 +118,7 @@ function createWorkspaceTestRunnerService(deps = {}) {
   let activeTerminationRetry = null;
   let activeTerminationRetryPromise = null;
   let activeResourceAdmission = null;
+  let activeCleanupHistory = null;
   let activeRequestAbortCleanup = null;
   let disposePromise = null;
   let disposed = false;
@@ -139,10 +142,12 @@ function createWorkspaceTestRunnerService(deps = {}) {
     }
   }
 
-  function releaseActiveRun(configId, runId) {
+  function releaseActiveRun(configId, runId, cleanupConfirmed = true) {
     if (!activeRun || activeRun.runId !== runId) return false;
     activeRequestAbortCleanup?.();
     activeRequestAbortCleanup = null;
+    activeCleanupHistory = null;
+    observations.settle(runId, cleanupConfirmed);
     activeRun = null;
     activeController = null;
     activeTerminationRetry = null;
@@ -248,6 +253,8 @@ function createWorkspaceTestRunnerService(deps = {}) {
       return envelope(WORKSPACE_TEST_RUNNER_ERROR_CODES.ALREADY_RUNNING);
     }
 
+    const activity = {schema_version:1, label:config.label,
+      scope:scopeOf(scope?.activityScope || deps.activityScopeProvider?.())};
     const runId = String(makeRunId());
     activeRun = { runId, configId, scoped: !!scope, root };
     const controller = new AbortController();
@@ -266,6 +273,10 @@ function createWorkspaceTestRunnerService(deps = {}) {
     activeTerminationRetryPromise = null;
     activeResourceAdmission = null;
     const startedAt = now().toISOString();
+    let completedRecord = null;
+    let returnedRecord = null;
+    let runError = null;
+    let historyError = null;
     let terminationConfirmed = true;
     let historyStarted = false;
     let resourceStatus = 'failed';
@@ -288,8 +299,10 @@ function createWorkspaceTestRunnerService(deps = {}) {
       // policy/root/cwd replacement that raced the queued resource grant.
       activeResourceAdmission?.assertCurrent();
       scope?.assertCurrent();
-      runHistory?.recordStart?.(configId, { runId, startedAt, ...attribution });
+      runHistory?.recordStart?.(configId, { runId, startedAt, ...attribution, activity });
+      observations.begin({runId, configId, label:config.label, startedAt, scope:activity.scope});
       historyStarted = true;
+      activeCleanupHistory = () => runHistory?.recordFinish?.(configId, runId, {terminationConfirmed:true});
       // Resource ownership and live authority are established before a run is
       // visible in durable history or dispatched to the producer.
       emitState('started', configId, runId);
@@ -354,56 +367,63 @@ function createWorkspaceTestRunnerService(deps = {}) {
       if (result.terminationWarning) {
         record.terminationWarning = String(result.terminationWarning).slice(0, 80);
       }
-      runHistory?.recordFinish?.(configId, runId, record);
+      completedRecord = record;
+      observations.result(runId, record, result);
       // The bounded, token-masked output tails are OPT-IN and ride the returned
       // record only. History stays lean because the renderer reads it wholesale
       // on every panel render. Only two callers ask for the tails: the model-facing
       // `verify` tool (it needs the actual failing lines) and the Workspace panel's
       // own runs (it keeps the latest output per config in renderer memory).
-      if (!includeOutput) {
-        return { configId, runId, ...record };
-      }
-      return {
-        configId,
-        runId,
-        ...record,
-        stdoutTail: result.stdoutTail || '',
-        stderrTail: result.stderrTail || '',
-      };
+      returnedRecord = {configId, runId, ...record,
+        ...(includeOutput ? {stdoutTail:result.stdoutTail || '', stderrTail:result.stderrTail || ''} : {})};
     } catch (error) {
       // S13/S5a: an unexpected runner rejection must not leave a phantom 'running'
       // in history OR a stuck running badge in the renderer. Finalize the run as
       // 'error' (the finally still emits the settle event below) and re-throw so
       // callers still see the failure (the single-run lock test depends on this).
       if (historyStarted) {
-        runHistory?.recordFinish?.(configId, runId, {
+        completedRecord = {
           status: 'error',
           exitCode: null,
           durationMs: null,
           startedAt,
           finishedAt: now().toISOString(),
-        });
+        };
+        observations.result(runId, completedRecord, null);
       }
-      throw error;
+      runError = error;
     } finally {
       if (activeResourceAdmission && !activeResourceAdmission.settle(terminationConfirmed, resourceStatus)) {
         terminationConfirmed = false;
+      }
+      if (completedRecord) {
+        if (!terminationConfirmed || completedRecord.terminationConfirmed !== undefined) {
+          completedRecord.terminationConfirmed = terminationConfirmed;
+          if (returnedRecord) returnedRecord.terminationConfirmed = terminationConfirmed;
+        }
+        try { runHistory?.recordFinish?.(configId, runId, completedRecord); }
+        catch (error) { historyError = error; }
       }
       const settle = resolveActiveSettlement;
       resolveActiveSettlement = null;
       settle?.({ terminationConfirmed });
       if (terminationConfirmed) {
-        releaseActiveRun(configId, runId);
+        releaseActiveRun(configId, runId, completedRecord?.terminationConfirmed ?? null);
       } else {
+        observations.settle(runId, false);
         emitState('termination_failed', configId, runId);
       }
     }
+    if (runError) throw runError;
+    if (historyError) throw historyError;
+    return returnedRecord;
   }
 
   // S14: cancel the in-flight run, if any. Tripping the controller's signal lets
   // the runner kill the process tree and resolve the run as 'aborted' (which then
   // flows through recordFinish into history). A clean structured no-op when idle.
-  function abort() {
+  function abort({expectedRunId} = {}) {
+    if (expectedRunId !== undefined && expectedRunId !== activeRun?.runId) return {aborted:false, reason:'stale_run'};
     if (!activeController) {
       return { aborted: false };
     }
@@ -414,36 +434,42 @@ function createWorkspaceTestRunnerService(deps = {}) {
     if (!alreadyRequested) activeController.abort();
     // S13: surface the cancel request immediately (the authoritative 'finished'
     // still follows once the runner resolves the run as 'aborted').
-    if (!alreadyRequested) emitState('aborted', configId, runId);
+    if (!alreadyRequested) { observations.cancelling(runId); emitState('aborted', configId, runId); }
     return { aborted: true, runId, ...(alreadyRequested ? { alreadyRequested: true } : {}) };
   }
 
-  async function abortAndWait() {
+  async function abortAndWait({expectedRunId} = {}) {
+    if (expectedRunId !== undefined && expectedRunId !== activeRun?.runId) return {aborted:false,reason:'stale_run'};
     if (!activeRun) return { aborted: false, terminationConfirmed: true };
     const { runId, configId } = activeRun;
     const settlement = activeSettlement;
     abort();
-    const first = settlement ? await settlement : { terminationConfirmed: false };
-    if (first.terminationConfirmed === false && !activeTerminationRetry) {
-      return { aborted: true, runId, terminationConfirmed: false, reason: 'kill_unconfirmed' };
-    }
-    if (first.terminationConfirmed === false) {
-      if (!activeTerminationRetryPromise) {
-        activeTerminationRetryPromise = Promise.resolve().then(() => activeTerminationRetry());
+    try {
+      const first = settlement ? await settlement : { terminationConfirmed: false };
+      if (first.terminationConfirmed === false && !activeTerminationRetry) {
+        return { aborted: true, runId, terminationConfirmed: false, reason: 'kill_unconfirmed' };
       }
-      const retried = await activeTerminationRetryPromise;
-      if (retried?.confirmed !== true) activeTerminationRetryPromise = null;
-      if (retried?.confirmed === true) {
-        if (activeResourceAdmission && !activeResourceAdmission.confirmCleanup()) {
-          return { aborted: true, runId, terminationConfirmed: false,
-            reason: 'resource_cleanup_unconfirmed' };
+      if (first.terminationConfirmed === false) {
+        if (!activeTerminationRetryPromise) {
+          activeTerminationRetryPromise = Promise.resolve().then(() => activeTerminationRetry());
         }
-        releaseActiveRun(configId, runId);
-        return { aborted: true, runId, terminationConfirmed: true };
+        const retried = await activeTerminationRetryPromise;
+        if (retried?.confirmed !== true) activeTerminationRetryPromise = null;
+        if (retried?.confirmed === true) {
+          if (activeResourceAdmission && !activeResourceAdmission.confirmCleanup()) {
+            return { aborted: true, runId, terminationConfirmed: false,
+              reason: 'resource_cleanup_unconfirmed' };
+          }
+          activeCleanupHistory?.();
+          releaseActiveRun(configId, runId);
+          return { aborted: true, runId, terminationConfirmed: true };
+        }
+        return { aborted: true, runId, terminationConfirmed: false, reason: retried?.warning || 'kill_unconfirmed' };
       }
-      return { aborted: true, runId, terminationConfirmed: false, reason: retried?.warning || 'kill_unconfirmed' };
+      return { aborted: true, runId, terminationConfirmed: true };
+    } finally {
+      if (activeRun?.runId === runId) observations.settle(runId, false);
     }
-    return { aborted: true, runId, terminationConfirmed: true };
   }
 
   function dispose() {
@@ -451,6 +477,7 @@ function createWorkspaceTestRunnerService(deps = {}) {
     if (!disposePromise) {
       disposePromise = (async () => {
         const result = await abortAndWait();
+        observations.dispose();
         return { disposed: !activeRun, terminationConfirmed: result.terminationConfirmed !== false };
       })();
       void disposePromise.then((result) => { if (!result.disposed) disposePromise = null; });
@@ -473,6 +500,10 @@ function createWorkspaceTestRunnerService(deps = {}) {
   }
 
   return { listConfigs, run, abort, abortAndWait, dispose, saveConfigs, getState,
+    getActivityRuns: () => { observations.restore(history?.read?.());
+      return observations.snapshot().map(row => ({...row, live: row.runId === activeRun?.runId})); },
+    restoreActivity: records => observations.restore(records),
+    getRunOutput: runId => observations.output(runId), subscribeActivity: listener => observations.subscribe(listener),
     hasWorkspaceRun: () => !!activeRun && !activeRun.scoped };
 }
 

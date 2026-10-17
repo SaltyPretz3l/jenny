@@ -13,6 +13,7 @@ from sidecar.ai.error_codes import (
 )
 from sidecar.ai.feature_flags import FEATURE_SHELL_SECURITY, is_feature_flag_enabled
 from sidecar.ai.mcp.exceptions import MCPError
+from sidecar.ai.routing.tool_recall import execute_recall_tool  # noqa: F401 -- dispatch facade
 from sidecar.ai.tools.builtins.file_state import (
     READ_SNAPSHOT_SCOPE_FULL,
     read_snapshot_from_metadata,

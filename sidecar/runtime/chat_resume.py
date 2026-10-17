@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from types import SimpleNamespace
 from typing import Any
 
 from sidecar.ai.config import resolve_effective_max_tokens
@@ -35,6 +36,7 @@ from sidecar.ai.routing.plan_mode_transition import (
 )
 from sidecar.ai.routing.router import ChatDecision
 from sidecar.ai.routing.tool_resource_deferral import DecisionSuspensionError, ToolLoopSuspended
+from sidecar.ai.routing.turn_boundary import boundary_loop_result
 from sidecar.ai.tools.assembly import engine_receives_native_tool_schemas
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.plan_artifact_policy import PLAN_ARTIFACT_WRITE_ARG
@@ -235,6 +237,7 @@ def _build_live_approval_system_prompt(
     ).strip()
     kwargs: dict[str, Any] = {
         "learned_lessons": learned_lessons,
+        "subagent_routing": plan.request_context.subagent_routing,
         "session_start_date": session_start_date,
         "current_date": pinned_current_date,
         "tool_statuses": list(tool_statuses),
@@ -493,6 +496,45 @@ def _validate_approval_plan_live_context(
         )
 
 
+def _resume_decision_response(
+    resumed: Any, *, plan: ApprovalPlan, router: Any, working_messages: list[Any],
+    tool_schema_count: int, request_context: Any, canonical_session_messages: Any,
+    session_title: str, brain_container: BrainContainer, stream_notifications: bool,
+    notification_writer: Any, seq_state: dict[str, int],
+) -> ChatResponse:
+    """Render a resumed leg (tool loop result or session-proposal boundary) as chat.done."""
+    decision = ChatDecision(
+        thinking_text=resumed.thinking_text,
+        response_text=resumed.response_text,
+        approval_request=resumed.approval_request,
+        tool_results=tuple(resumed.outcomes),
+        approval_plan=resumed.approval_plan,
+        thinking_kind=resumed.thinking_kind,
+        persist_thinking=resumed.persist_thinking,
+        usage=resumed.usage_totals,
+        context_tokens_estimate=router._context_tokens_estimate(working_messages),
+        message_count=len(working_messages),
+        tool_schema_count=tool_schema_count,
+        streamed_event_types=frozenset(resumed.streamed_event_types),
+        completion_source=str(getattr(resumed, "completion_source", "model") or "model"),
+        resumable_stop=getattr(resumed, "resumable_stop", None),
+        turn_boundary=getattr(resumed, "turn_boundary", None),
+    )
+    return _chat_response_from_decision(
+        request_context=request_context,
+        latest_user_content=plan.latest_user_content,
+        canonical_session_messages=canonical_session_messages,
+        session_title=session_title,
+        brain_container=brain_container,
+        decision=decision,
+        progress_notifications=[],
+        budget_messages=working_messages,
+        stream_notifications=stream_notifications,
+        notification_writer=notification_writer,
+        canonical_seq_state=seq_state,
+    )
+
+
 def resume_chat_send_response_from_approval_plan(
     approval_plan: ApprovalPlan,
     *,
@@ -520,6 +562,7 @@ def resume_chat_send_response_from_approval_plan(
         settle_dropped_tool_calls,
     )
     from sidecar.ai.routing.tool_loop import run_tool_loop
+    from sidecar.ai.routing.tool_recall import build_recall_history
 
     from . import chat as _chat_hub
 
@@ -639,6 +682,9 @@ def resume_chat_send_response_from_approval_plan(
                 tool_calls_consumed=consumed_tool_calls,
             )
 
+        effective_runtime.recall_history = build_recall_history(
+            canonical_session_messages, (_attempt_live_params or {}).get("messages"),
+        )
         from sidecar.ai.routing.quota_runtime import restore_runtime_quota, settle_quota_outcomes
         if getattr(plan, "quota_state_json", None) is not None:
             restore_runtime_quota(effective_runtime, stack.config, plan.quota_state_json)
@@ -726,11 +772,12 @@ def resume_chat_send_response_from_approval_plan(
             effective_runtime, remaining_calls, kernel=kernel, request_id=plan.request_id,
             session_id=plan.session_id, outcomes=outcomes,
         )
-        bind_run_context(effective_runtime)
+        bind_run_context(effective_runtime, kernel=kernel)
+        boundary = None
         try:
             if remaining_calls:
                 try:
-                    execute_tool_calls_sequentially(
+                    boundary = execute_tool_calls_sequentially(
                         indexed_calls=remaining_calls,
                         runtime=effective_runtime,
                         kernel=kernel,
@@ -765,6 +812,24 @@ def resume_chat_send_response_from_approval_plan(
                     raise
 
             settle_quota_outcomes(effective_runtime, outcomes, tool_contract=tool_contract)
+            if boundary is not None:  # a session proposal ended the turn: no further generation
+                # run_tool_loop settles the change set on every other path; this one skips it.
+                from sidecar.ai.routing import mutation_run_settlement as _settlement
+
+                _settlement.settle_run_change_set(SimpleNamespace(
+                    _jenny_change_set_id=resumed_change_set_id, runtime=effective_runtime,
+                    kernel=kernel, request_context=resumed_request_context, outcomes=outcomes,
+                    session_id=plan.session_id, request_id=plan.request_id), reason="turn_boundary")
+                return _resume_decision_response(
+                    boundary_loop_result(
+                        boundary=boundary, outcomes=outcomes, usage_totals=plan.usage_totals,
+                        streamed_event_types=streamed_event_types),
+                    plan=plan, router=stack.router, working_messages=working_messages,
+                    tool_schema_count=0, request_context=resumed_request_context,
+                    canonical_session_messages=canonical_session_messages,
+                    session_title=session_title, brain_container=brain_container,
+                    stream_notifications=stream_notifications,
+                    notification_writer=notification_writer, seq_state=seq_state)
             was_plan_mode = resumed_request_context.plan_mode
             resumed_request_context = transition_after_exit_outcome(
                 request_context=resumed_request_context,
@@ -891,37 +956,14 @@ def resume_chat_send_response_from_approval_plan(
                 ),
                 stack,
             )
-        decision = ChatDecision(
-            thinking_text=resumed.thinking_text,
-            response_text=resumed.response_text,
-            approval_request=resumed.approval_request,
-            tool_results=tuple(resumed.outcomes),
-            approval_plan=resumed.approval_plan,
-            thinking_kind=resumed.thinking_kind,
-            persist_thinking=resumed.persist_thinking,
-            usage=resumed.usage_totals,
-            context_tokens_estimate=stack.router._context_tokens_estimate(working_messages),
-            message_count=len(working_messages),
+        return _resume_decision_response(
+            resumed, plan=plan, router=stack.router, working_messages=working_messages,
             tool_schema_count=len(tuple(refreshed_tool_contract.prompt_schemas)),
-            streamed_event_types=frozenset(resumed.streamed_event_types),
-            completion_source=str(
-                getattr(resumed, "completion_source", "model") or "model"
-            ),
-            resumable_stop=getattr(resumed, "resumable_stop", None),
-        )
-        return _chat_response_from_decision(
             request_context=resumed_request_context,
-            latest_user_content=plan.latest_user_content,
             canonical_session_messages=canonical_session_messages,
-            session_title=session_title,
-            brain_container=brain_container,
-            decision=decision,
-            progress_notifications=[],
-            budget_messages=working_messages,
+            session_title=session_title, brain_container=brain_container,
             stream_notifications=stream_notifications,
-            notification_writer=notification_writer,
-            canonical_seq_state=seq_state,
-        )
+            notification_writer=notification_writer, seq_state=seq_state)
 
     with scoped_chat_request_context(
         stack.engine,

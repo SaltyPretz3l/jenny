@@ -406,11 +406,12 @@ describe('DataLifecycleService', () => {
     service.on('progress', (event) => {
       if (event.phase === 'archiving') service.cancel(event.operationId);
     });
-    const originalRm = fs.promises.rm;
-    t.after(() => { fs.promises.rm = originalRm; });
-    fs.promises.rm = async function rmDenyingPartials(target, options) {
+    // Removal goes through the no-follow remover, so deny the partial directory's own rmdir.
+    const originalRmdir = fs.promises.rmdir;
+    t.after(() => { fs.promises.rmdir = originalRmdir; });
+    fs.promises.rmdir = async function rmdirDenyingPartials(target, ...args) {
       if (String(target).endsWith('.partial')) throw Object.assign(new Error('denied'), { code: 'EPERM' });
-      return originalRm.call(fs.promises, target, options);
+      return originalRmdir.call(fs.promises, target, ...args);
     };
 
     const result = await service.createArchive({ encrypted: false });

@@ -41,6 +41,9 @@ const PASSTHROUGH_SUBMISSION_REASONS = new Set([
   'pending_input_capacity',
   'runtime_transcript_cache_pressure',
   'session_busy',
+  'command_sandbox_transition',
+  // chat-turn-admission.js: a linked child waits for its handoff first turn (row 59).
+  'linked_first_turn_pending',
   // chat-turn-admission.js: an image render holds the GPU lease.
   'gpu_busy_plugin',
 ]);

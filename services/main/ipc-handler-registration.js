@@ -16,8 +16,7 @@ const {
   buildWebSearchSecretStatus,
   registerFeatureIpcHandlers: registerFeatureIpcHandlersWithDeps,
 } = require('../feature-settings-service');
-const { registerCloudModels } = require('./cloud-models-registration');
-const { readRetiredChatgptPluginFacts } = require('./chatgpt-legacy-plugin-choice');
+const { registerCloudModelsWithTransfer } = require('./conversation-transfer-registration');
 const { registerChatGptPlanUsageIpc } = require('./chatgpt-plan-usage-ipc');
 const { registerClientLogIpcHandler } = require('./client-log-forwarding');
 const { createWindowExitGuard } = require('./window-exit-guard');
@@ -286,6 +285,7 @@ function registerMainIpcHandlers({
   usageHistory,
   setupService,
   ollamaInstallService,
+  reaInstallService,
   mcpDiscoveryService,
   schedulerService,
   linkStatusService,
@@ -301,7 +301,6 @@ function registerMainIpcHandlers({
   getSystemStats = () => null,
   buildFeatureStatePayload,
   getDiagnosticLogService = () => logStore,
-  getProcessLogWriter = () => null,
   getLogRedactionPrefixes = () => [],
   trashItemImpl = null,
   showItemInFolderImpl = null,
@@ -332,6 +331,10 @@ function registerMainIpcHandlers({
     unauthorizedResult: unauthorizedIpcResult,
   };
   require('./suggested-changes-ipc-registration').registerSuggestedChangesIpc(ipcMain, { backendService, authorization: workspaceAuthorization });
+  require('./chat-workspace-ipc-registration').registerChatWorkspaceIpc(ipcMain, { backendService, authorization: workspaceAuthorization });
+  require('./chat-proposal-ipc-registration').registerChatProposalIpc(ipcMain, { backendService, authorization: workspaceAuthorization });
+  require('./chat-messaging-ipc-registration').registerChatMessagingIpc(ipcMain, { backendService, authorization: workspaceAuthorization });
+  require('./performance-ipc-registration').registerPerformanceIpc(ipcMain, { backendService, authorization: workspaceAuthorization });
   require('./tools-settings-ipc-registration').registerToolsSettingsIpc(ipcMain, {
     backendService, authorization: workspaceAuthorization, dialog, getMainWindow, userDataPath: app.getPath('userData'),
   });
@@ -390,11 +393,11 @@ function registerMainIpcHandlers({
       phase: 'ready',
     },
     service: workspaceIdeService,
-    emitChange: (payload) => sendBridgeEvent('workspaceFs.onChange', payload),
+    emitChange: (payload) => { sendBridgeEvent('workspaceFs.onChange', payload); backendService.chatWorkspace?.handleWorkspaceChange(payload); },
     // External git ops (commit/checkout/branch-switch) touch only `.git`, which
     // the file watcher ignores; this dedicated signal refreshes the renderer git
     // store so the tree/statusbar/gutter decorations don't go stale.
-    emitGitMeta: (payload) => sendBridgeEvent('workspaceFs.onGitMetaChange', payload),
+    emitGitMeta: (payload) => { sendBridgeEvent('workspaceFs.onGitMetaChange', payload); backendService.chatWorkspace?.handleWorkspaceChange(payload); },
     // WIDE-028: typed watcher lifecycle push so the renderer watch-controller
     // can reset its ownership latch and retry after a silent native error.
     emitLifecycle: (payload) => sendBridgeEvent('workspaceFs.onWatchLifecycle', payload),
@@ -432,7 +435,9 @@ function registerMainIpcHandlers({
   // workspaceTestRunner.* namespace, gated by the default-on workspace_test_runner
   // flag read live off the backend service's resolved feature flags. Per-workspace
   // -root config + history live in userData and follow the active root.
+  const activityWiring = require('./activity-monitor-wiring');
   const workspaceTestRunnerService = createWorkspaceTestRunnerWiring({
+    activityScopeProvider: () => activityWiring.captureWorkspaceActivityScope(backendService, shellConfigService),
     app,
     shellConfigService,
     resourceAdmissionProvider: () => ({
@@ -458,6 +463,8 @@ function registerMainIpcHandlers({
   });
   registerWorkspaceTestRunnerIpcHandlers(ipcMain, workspaceTestRunnerService, workspaceAuthorization);
   backendService.workspaceTestRunnerService = workspaceTestRunnerService;
+  const activityMonitor = activityWiring.registerActivityMonitor({ipcMain, backendService, shellConfigService,
+    source:workspaceTestRunnerService, authorization:workspaceAuthorization, sendBridgeEvent});
   // The model-facing `verify` tool runs the user's own saved Test Runner
   // configurations through this same service. It is created here, after
   // runtime-service-composition built the tool executor, so it is attached
@@ -509,12 +516,13 @@ function registerMainIpcHandlers({
   backendService.workspaceRootTransitionBroker = workspaceRootExternalTransitionBroker;
   const mainLifecycle = getMainLifecycle?.();
   if (typeof mainLifecycle?.registerShutdownTask === 'function') {
+    mainLifecycle.registerShutdownTask(() => activityMonitor.dispose());
     mainLifecycle.registerShutdownTask(() => modelTuningService.dispose());
     mainLifecycle.registerShutdownTask(() => engineTuningService.dispose());
     mainLifecycle.registerShutdownTask(() => workspaceRootExternalTransitionBroker.dispose());
   } else if (typeof app?.once === 'function') {
     app.once('will-quit', () => {
-      modelTuningService.dispose();
+      activityMonitor.dispose(); modelTuningService.dispose();
       engineTuningService.dispose();
       void workspaceRootExternalTransitionBroker.dispose();
     });
@@ -596,6 +604,9 @@ function registerMainIpcHandlers({
     getCatalogService: () => backendService?.semanticCatalogService || null,
     shellConfigService, dialog, getOwnerWindow: getMainWindow, authorization: workspaceAuthorization,
   });
+  require('./ollama-daemon-ipc').registerOllamaDaemonIpcHandlers(ipcMain, {
+    getManager: () => backendService?.ollamaManager, authorization: workspaceAuthorization,
+  });
   registerOllamaTrayRemediationIpcHandlers(ipcMain, {
     backendService,
     log,
@@ -640,23 +651,8 @@ function registerMainIpcHandlers({
     if (purged.length > 0) log('INFO', 'secure_store.retired_secrets_purged', { count: purged.length });
   } catch (_error) { /* best effort */ }
   // Core owner of the ChatGPT catalog and the cloudModels.* IPC.
-  const cloudModels = registerCloudModels(ipcMain, {
-    backendService,
-    shellConfigService,
-    sendBridgeEvent,
-    processRef,
-    readLegacyPluginFacts: () => readRetiredChatgptPluginFacts({
-      userDataDir: app.getPath('userData'), log,
-    }),
-    authorization: workspaceAuthorization,
-    log,
-  });
-  const cloudModelsLifecycle = getMainLifecycle?.();
-  if (typeof cloudModelsLifecycle?.registerShutdownTask === 'function') {
-    cloudModelsLifecycle.registerShutdownTask(cloudModels.dispose);
-  } else if (typeof app?.once === 'function') {
-    app.once('will-quit', cloudModels.dispose);
-  }
+  registerCloudModelsWithTransfer(ipcMain, { app, backendService, shellConfigService, sendBridgeEvent,
+    processRef, attachmentAssetStore, authorization: workspaceAuthorization, log, getMainLifecycle });
   // Composed AFTER registerCloudModels so backendService.chatgptAuthService
   // (the core ChatGPT auth owner) already exists to attach the sign-out clear.
   const teardownChatgptPlanUsageIpc = registerChatGptPlanUsageIpc(ipcMain, {
@@ -709,7 +705,6 @@ function registerMainIpcHandlers({
   registerClientLogIpcHandler(ipcMain, {
     authorize: workspaceAuthorization.authorize,
     getDiagnosticLogService,
-    getProcessLogWriter,
     getRedactionPrefixes: getLogRedactionPrefixes,
     env: processRef?.env || process.env,
     log,
@@ -752,7 +747,8 @@ function registerMainIpcHandlers({
       return exportSession(
         backendService.sessionStore,
         sessionId,
-        backendService.attachmentAssetStore
+        backendService.attachmentAssetStore,
+        { includeMemory: backendService.featureFlags?.memory_v2_enabled === true, service: backendService }
       );
     },
     'sessions.forkSession': (_, sessionId, atMessageId, options) => {
@@ -846,8 +842,7 @@ function registerMainIpcHandlers({
       const source = String(payload?.source || '').trim().slice(0, 32);
       return { watched: cadence.setWatched(source, payload?.watched === true) };
     },
-    'logs.list': () => logStore.list(),
-    'diagnostics.logs.getSnapshot': (_event, options) => logStore.getSnapshot(options),
+    'diagnostics.logs.getSnapshot': () => logStore.getSnapshot(),
     'diagnostics.reportRendererError': require('../main-error-hardening').createRendererDiagnosticsHandler(log),
     'diagnostics.reportClientStreamMetrics': (_, payload) => {
       const { mergeClientTimingIntoTurnDiagnostic } = require('../backend/turn-diagnostic-dump');
@@ -934,6 +929,7 @@ function registerMainIpcHandlers({
   registerAuxiliaryIpcHandlers({
     ipcMainLike: ipcMain,
     windowExitGuard,
+    getProtectedRoots: () => [app.getPath('userData')],
     personalityWorkspace,
     artifactService,
     backendService,
@@ -957,6 +953,7 @@ function registerMainIpcHandlers({
     isChildPath,
     clipboard,
     nativeImage,
+    shell: require('electron')?.shell || null,
     log,
     getMainLifecycle,
     getWindowState,
@@ -965,6 +962,7 @@ function registerMainIpcHandlers({
     usageHistory,
     setupService,
     ollamaInstallService,
+    reaInstallService,
     mcpDiscoveryService,
     schedulerService,
     linkStatusService,

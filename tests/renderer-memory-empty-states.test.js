@@ -1,8 +1,9 @@
 'use strict';
 
-// Memory Settings empty states (live review 2026-10-03): one message per empty
-// list, filter-empty wording, list controls only with items, and no healthy
-// summary row repeating the header badge.
+// Memory Settings empty states (live review 2026-10-03; row 58 W4 page): one
+// message per empty tab, filter-empty wording, list tools only with items, no
+// pending group without proposals, and no healthy summary row repeating the
+// header badge.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -16,11 +17,9 @@ async function openMemorySettings(window, settleMs = 80) {
   await waitForUi(window, settleMs);
 }
 
-function memoryGroup(doc, headingId) {
-  return doc.querySelector(`#memorySettingsSection [aria-labelledby="${headingId}"]`);
-}
+const listGroup = (doc) => doc.querySelector('#memorySettingsSection .memory-list-group');
 
-test('empty Memory lists read once and hide controls that have nothing to act on', async () => {
+test('an empty Memory tab reads once and hides the tools, folds, meter and pending group', async () => {
   const app = await loadRendererApp({
     shell: {
       memory: {
@@ -35,27 +34,19 @@ test('empty Memory lists read once and hide controls that have nothing to act on
   const doc = app.window.document;
   try {
     await openMemorySettings(app.window);
-    const pendingGroup = memoryGroup(doc, 'pendingMemoryHeading');
-    const approvedGroup = memoryGroup(doc, 'approvedMemoryHeading');
-
-    assert.equal(doc.getElementById('pendingMemoryStatus').textContent, 'No pending memory candidates are waiting right now.');
-    assert.equal(doc.getElementById('pendingMemoryStatus').getAttribute('aria-live'), 'polite');
-    assert.equal(doc.getElementById('pendingMemoryList').children.length, 0);
-    assert.equal(doc.getElementById('pendingMemoryList').hidden, true);
-    assert.doesNotMatch(pendingGroup.textContent, /No pending candidates to review/);
-    assert.equal(pendingGroup.textContent.match(/No pending/g).length, 1, 'one pending empty message');
-
-    assert.equal(doc.getElementById('approvedMemoryStatus').textContent, 'No approved memories saved yet.');
+    const status = doc.getElementById('approvedMemoryStatus');
+    assert.match(status.textContent, /hasn’t remembered anything here yet/);
+    assert.equal(status.getAttribute('aria-live'), 'polite');
+    assert.equal(listGroup(doc).textContent.match(/remembered anything/g).length, 1, 'one empty message');
     assert.equal(doc.getElementById('approvedMemoryList').children.length, 0);
     assert.equal(doc.getElementById('approvedMemoryList').hidden, true);
-    assert.doesNotMatch(approvedGroup.textContent, /No approved memories to show/);
-    assert.equal(approvedGroup.textContent.match(/No approved memories/g).length, 1, 'one approved empty message');
-    assert.equal(doc.querySelector('.memory-page-empty'), null);
 
-    assert.equal(doc.getElementById('pendingMemorySortHost').hidden, true, 'Sort hides while pending is empty');
-    assert.equal(doc.querySelector('#memorySettingsSection .memory-page-filters').hidden, true, 'filters hide while approved is empty');
+    assert.equal(doc.getElementById('pendingMemoryHost').hidden, true, 'no proposals, no pending group');
+    assert.equal(doc.querySelector('#memorySettingsSection .memory-page-filters').hidden, true, 'tools hide while the tab is empty');
+    assert.equal(doc.getElementById('memoryForgottenHost').hidden, true, 'nothing forgotten, no fold');
+    assert.equal(doc.getElementById('memoryHistoryHost').hidden, true, 'nothing changed, no fold');
+    assert.equal(doc.getElementById('memoryMeter').hidden, true, 'nothing pinned, no meter');
 
-    assert.equal(doc.getElementById('memoryNotesHint'), null, 'the notes hint no longer repeats the placeholder');
     assert.equal(doc.getElementById('memoryBadge').textContent.trim(), '0 saved');
     assert.equal(doc.getElementById('memorySummary').hidden, true, 'a healthy summary no longer repeats the badge');
   } finally {
@@ -63,7 +54,7 @@ test('empty Memory lists read once and hide controls that have nothing to act on
   }
 });
 
-test('Memory list controls return with items and a filtered-out list says nothing matches', async () => {
+test('Memory tools return with items, proposals show, and a filtered-out tab says nothing matches', async () => {
   const app = await loadRendererApp({
     shell: {
       memory: {
@@ -90,23 +81,22 @@ test('Memory list controls return with items and a filtered-out list says nothin
   const doc = window.document;
   try {
     await openMemorySettings(window);
-    assert.equal(doc.getElementById('pendingMemorySortHost').hidden, false);
-    assert.ok(doc.getElementById('pendingMemorySort'));
     assert.equal(doc.querySelector('#memorySettingsSection .memory-page-filters').hidden, false);
     assert.equal(doc.getElementById('approvedMemoryList').hidden, false);
-    assert.equal(doc.getElementById('pendingMemoryList').hidden, false);
+    assert.equal(doc.getElementById('pendingMemoryHost').hidden, false);
+    assert.equal(doc.querySelectorAll('#pendingMemoryHost [data-pending-memory-action="approve"]').length, 1);
     assert.equal(doc.querySelectorAll('#approvedMemoryList > article').length, 1);
+    assert.equal(doc.getElementById('approvedMemoryStatus').textContent, '');
 
     const search = doc.getElementById('memoryManagerSearchInput');
     search.value = 'no-such-memory';
     search.dispatchEvent(new window.Event('input', { bubbles: true }));
     await waitForUi(window, 400);
-    const approvedGroup = memoryGroup(doc, 'approvedMemoryHeading');
-    assert.equal(doc.getElementById('approvedMemoryStatus').textContent, 'No approved memories match these filters.');
-    assert.equal(approvedGroup.textContent.match(/No approved memories/g).length, 1, 'one filtered-empty message');
-    assert.doesNotMatch(approvedGroup.textContent, /saved yet/);
+    assert.equal(doc.getElementById('approvedMemoryStatus').textContent, 'No memories match.');
+    assert.equal(listGroup(doc).textContent.match(/No memories match/g).length, 1, 'one filtered-empty message');
+    assert.doesNotMatch(listGroup(doc).textContent, /remembered anything/);
     assert.equal(doc.getElementById('approvedMemoryList').hidden, true);
-    assert.equal(doc.querySelector('#memorySettingsSection .memory-page-filters').hidden, false, 'filters stay so the user can clear them');
+    assert.equal(doc.querySelector('#memorySettingsSection .memory-page-filters').hidden, false, 'tools stay so the user can clear them');
   } finally {
     await app.dispose();
   }

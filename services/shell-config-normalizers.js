@@ -40,14 +40,19 @@ const DEFAULT_TIPS = Object.freeze({
   sessionCount: 0,
   historyByTipId: {},
 });
-const DEFAULT_MEMORY = Object.freeze({
-  captureSuggestions: true,
-});
 const DEFAULT_TOOLS = DEFAULT_TOOL_SETTINGS;
 const DEFAULT_TELEMETRY = Object.freeze({
   crashReportingOptIn: false,
 });
 const DEFAULT_FEATURE_OVERRIDES = Object.freeze({});
+// Memory v2 (row 58): global saving/recall switches. A missing section is
+// normal (no CONFIG_VERSION bump); the retired v41 captureSuggestions drops.
+const DEFAULT_MEMORY = Object.freeze({
+  takeNotes: true,
+  askBeforeSaving: false,
+  pauseSaving: false,
+  useInChats: true,
+});
 const UI_LANGUAGE_TAGS = Object.freeze([
   'en', 'es', 'fr', 'de', 'it', 'pt-BR', 'nl', 'pl', 'ru', 'uk', 'tr', 'ar', 'hi',
   'id', 'vi', 'ja', 'ko', 'zh-CN', 'zh-TW',
@@ -95,11 +100,38 @@ function normalizeCompanion(value = {}) {
   };
 }
 
+// takeNotesSince (row 58 W4, owner decision G4): when "Jenny takes notes"
+// last turned back on. Messages sent before it are never mined. Optional (no
+// CONFIG_VERSION bump); kept only as a valid ISO instant.
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u;
+
+function normalizeTakeNotesSince(value) {
+  if (typeof value !== 'string' || !ISO_INSTANT.test(value)) return null;
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? new Date(at).toISOString() : null;
+}
+
 function normalizeMemorySettings(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const takeNotesSince = normalizeTakeNotesSince(source.takeNotesSince);
   return {
-    captureSuggestions: source.captureSuggestions !== false,
+    takeNotes: source.takeNotes !== false,
+    askBeforeSaving: source.askBeforeSaving === true,
+    pauseSaving: source.pauseSaving === true,
+    useInChats: source.useInChats !== false,
+    ...(takeNotesSince ? { takeNotesSince } : {}),
   };
+}
+
+// The settings write path: takeNotesSince is main-owned (a patch never sets
+// it) and is stamped `now` when takeNotes turns from off to on.
+function applyMemorySettingsPatch(current, patch, now = new Date()) {
+  const previous = normalizeMemorySettings(current);
+  const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+  const { takeNotesSince: _ignored, ...changes } = source;
+  const next = normalizeMemorySettings({ ...previous, ...changes });
+  if (previous.takeNotes === false && next.takeNotes === true) next.takeNotesSince = now.toISOString();
+  return next;
 }
 
 function normalizeWorkspaceRoot(value) {
@@ -405,6 +437,7 @@ module.exports = {
   normalizeAutoApproveStreakCap,
   normalizeCompanion,
   normalizeMaxBudgetUsd,
+  applyMemorySettingsPatch,
   normalizeMemorySettings,
   normalizeSkillSettings,
   normalizeTelemetrySettings,

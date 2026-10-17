@@ -37,7 +37,9 @@ function prepareManagedSession(service, {
   const automaticTitleCandidate = normalizedInteractiveResponse
     ? '' : deriveSessionTitleFromMessage(transcriptPrompt);
   const exchangeTitle = requestedSessionId
-    && shouldApplyAutomaticSessionTitle(existingSession, automaticTitleCandidate)
+    && shouldApplyAutomaticSessionTitle(existingSession && {
+      ...existingSession, messages: service.sessionStore?.peekSession?.(resolvedSessionId)?.messages,
+    }, automaticTitleCandidate)
     ? automaticTitleCandidate : '';
   const imageAdmission = imageAttachments.length ? validateImageAttachmentsForManagedSend(
     service, imageAttachments, { requestedSessionId, resolvedSessionId }

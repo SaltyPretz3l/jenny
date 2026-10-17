@@ -11,9 +11,16 @@ from sidecar.ai.error_codes import (
     CMP_MEMORY_FINGERPRINT_CONFLICT,
     CMP_MEMORY_SCHEMA_MIGRATION,
 )
-from sidecar.ai.memory.contracts import build_content_digest
+from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, build_text_digest
 from sidecar.ai.memory.store import SCHEMA_VERSION, MemoryStore
 from sidecar.exceptions import MemoryStoreError
+from tests.sidecar.ai.memory.memory_v9_helpers import (
+    find_row,
+    forget_row,
+    pending_rows,
+    save_row,
+    update_row,
+)
 
 
 def _insert_pending_candidate(
@@ -33,9 +40,9 @@ def _insert_pending_candidate(
         """
         INSERT INTO pending_memory_candidates (
             session_id, source_request_id, title, lesson_text, lesson_kind,
-            confidence, source_excerpt, content_fingerprint, family_key,
+            confidence, source_excerpt, content_fingerprint,
             category, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             session_id,
@@ -45,7 +52,7 @@ def _insert_pending_candidate(
             lesson_kind,
             confidence,
             source_excerpt,
-            build_content_digest(lesson_kind, lesson_text),
+            build_text_digest(lesson_text),
             category,
             timestamp,
             timestamp,
@@ -137,18 +144,21 @@ def test_memory_store_migrates_v1_and_purges_legacy_raw_exchanges(tmp_path: Path
             "title",
             "lesson_text",
             "content_fingerprint",
-            "family_key",
+            "origin",
+            "revision",
         } <= memories_columns
+        assert "family_key" not in memories_columns
         version = int(store._connection.execute("PRAGMA user_version").fetchone()[0])
         assert version == SCHEMA_VERSION
     finally:
         store.close()
 
 
-def test_memory_store_save_memory_dedupes_normalized_fingerprint(tmp_path: Path) -> None:
+def test_memory_store_save_dedupes_normalized_fingerprint(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        saved, created = store.save_memory(
+        saved, created = save_row(
+            store,
             session_id="session_1",
             title="Preference: tea",
             lesson_text="The user prefers tea.",
@@ -156,7 +166,8 @@ def test_memory_store_save_memory_dedupes_normalized_fingerprint(tmp_path: Path)
             confidence=0.95,
             source_excerpt="I prefer tea",
         )
-        duplicate, duplicate_created = store.save_memory(
+        duplicate, duplicate_created = save_row(
+            store,
             session_id="session_2",
             title="Preference: tea",
             lesson_text="The user prefers tea.",
@@ -168,13 +179,14 @@ def test_memory_store_save_memory_dedupes_normalized_fingerprint(tmp_path: Path)
         assert created is True
         assert duplicate_created is False
         assert duplicate.id == saved.id
-        assert duplicate.session_id == "session_2"
+        assert duplicate.session_id == "session_1"
         assert duplicate.source_excerpt == "I prefer tea"
-        assert duplicate.updated_at >= saved.updated_at
+        assert duplicate.updated_at == saved.updated_at
         assert len(store.get_all_memories()) == 1
-        assert store.has_memory_fingerprint(
-            build_content_digest("preference", "The user prefers tea.")
-        ) is True
+        assert (
+            store.get_all_memories()[0].content_fingerprint
+            == build_text_digest("The user prefers tea.")
+        )
     finally:
         store.close()
 
@@ -183,7 +195,8 @@ def test_memory_store_rejects_unstructured_memory_provenance(tmp_path: Path) -> 
     store = MemoryStore(tmp_path / "memory.db")
     try:
         with pytest.raises(MemoryStoreError, match="provenance is required") as exc_info:
-            store.save_memory(
+            save_row(
+                store,
                 session_id="session_1",
                 title="Preference: tea",
                 lesson_text="The user prefers tea.",
@@ -198,91 +211,11 @@ def test_memory_store_rejects_unstructured_memory_provenance(tmp_path: Path) -> 
         store.close()
 
 
-def test_memory_store_save_memory_accepts_response_style_kind(tmp_path: Path) -> None:
-    store = MemoryStore(tmp_path / "memory.db")
-    try:
-        saved, created = store.save_memory(
-            session_id="session_style",
-            title="Response style: concise",
-            lesson_text="Use concise answers unless the user asks for more detail.",
-            lesson_kind="response_style",
-            confidence=0.93,
-            source_excerpt="be concise",
-        )
-
-        assert created is True
-        assert saved.lesson_kind == "response_style"
-    finally:
-        store.close()
-
-
-def test_memory_store_save_memory_accepts_tool_strategy_kind(tmp_path: Path) -> None:
-    store = MemoryStore(tmp_path / "memory.db")
-    try:
-        saved, created = store.save_memory(
-            session_id="session_tool_strategy",
-            title="Tool strategy: prefer ripgrep",
-            lesson_text="For repository text search tasks, prefer rg/ripgrep when it is available.",
-            lesson_kind="tool_strategy",
-            confidence=0.9,
-            source_excerpt="prefer rg",
-            family_key="ripgrep",
-        )
-
-        assert created is True
-        assert saved.lesson_kind == "tool_strategy"
-        assert saved.family_key == "ripgrep"
-    finally:
-        store.close()
-
-
-@pytest.mark.parametrize(
-    ("lesson_kind", "title", "lesson_text", "family_key"),
-    [
-        (
-            "working_preference",
-            "Working preference: diagnose root cause first",
-            "Diagnose root cause before proposing fixes; avoid quick patches unless explicitly requested.",
-            "diagnose_root_cause_first",
-        ),
-        (
-            "project_context",
-            "Project context: sidecar is stateless per request",
-            "The sidecar is stateless per request.",
-            "sidecar_stateless_per_request",
-        ),
-    ],
-)
-def test_memory_store_save_memory_accepts_new_batch_d_memory_kinds(
-    tmp_path: Path,
-    lesson_kind: str,
-    title: str,
-    lesson_text: str,
-    family_key: str,
-) -> None:
-    store = MemoryStore(tmp_path / "memory.db")
-    try:
-        saved, created = store.save_memory(
-            session_id="session_new_kind",
-            title=title,
-            lesson_text=lesson_text,
-            lesson_kind=lesson_kind,
-            confidence=0.9,
-            source_excerpt=title,
-            family_key=family_key,
-        )
-
-        assert created is True
-        assert saved.lesson_kind == lesson_kind
-        assert saved.family_key == family_key
-    finally:
-        store.close()
-
-
 def test_memory_store_recall_memories_scores_overlap_and_recency(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        older_memory, _ = store.save_memory(
+        older_memory, _ = save_row(
+            store,
             session_id="session_old",
             title="Preference: tea",
             lesson_text="The user prefers tea over coffee.",
@@ -290,7 +223,8 @@ def test_memory_store_recall_memories_scores_overlap_and_recency(tmp_path: Path)
             confidence=0.95,
             source_excerpt="I prefer tea over coffee",
         )
-        newer_memory, _ = store.save_memory(
+        newer_memory, _ = save_row(
+            store,
             session_id="session_new",
             title="Preference: green tea",
             lesson_text="The user prefers green tea in the afternoon.",
@@ -322,7 +256,8 @@ def test_memory_store_recall_memories_prefers_weighted_title_and_source_matches(
 ) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        lesson_only_memory, _ = store.save_memory(
+        lesson_only_memory, _ = save_row(
+            store,
             session_id="session_lesson_only",
             title="Preference: drinks",
             lesson_text="The user prefers green tea in the afternoon.",
@@ -330,7 +265,8 @@ def test_memory_store_recall_memories_prefers_weighted_title_and_source_matches(
             confidence=0.95,
             source_excerpt="They usually enjoy a warm drink.",
         )
-        weighted_match_memory, _ = store.save_memory(
+        weighted_match_memory, _ = save_row(
+            store,
             session_id="session_weighted",
             title="Green tea routine",
             lesson_text="The user keeps a steady afternoon drink routine.",
@@ -349,58 +285,11 @@ def test_memory_store_recall_memories_prefers_weighted_title_and_source_matches(
         store.close()
 
 
-def test_memory_store_get_recent_memories_by_kind_returns_most_recent_first(tmp_path: Path) -> None:
-    store = MemoryStore(tmp_path / "memory.db")
-    try:
-        profile_memory, _ = store.save_memory(
-            session_id="session_profile",
-            title="Preferred name: Jen",
-            lesson_text="The user's name is Jen.",
-            lesson_kind="profile",
-            confidence=0.99,
-            source_excerpt="my name is Jen",
-        )
-        older_style_memory, _ = store.save_memory(
-            session_id="session_style_older",
-            title="Response style: concise",
-            lesson_text="Use concise answers unless the user asks for more detail.",
-            lesson_kind="response_style",
-            confidence=0.93,
-            source_excerpt="be concise",
-        )
-        newer_style_memory, _ = store.save_memory(
-            session_id="session_style_newer",
-            title="Response style: step-by-step",
-            lesson_text="Explain things step by step when helping the user.",
-            lesson_kind="response_style",
-            confidence=0.91,
-            source_excerpt="step by step",
-        )
-        stale_timestamp = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        fresh_timestamp = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-        store._connection.execute(
-            "UPDATE memories SET updated_at = ? WHERE id = ?",
-            (stale_timestamp, older_style_memory.id),
-        )
-        store._connection.execute(
-            "UPDATE memories SET updated_at = ? WHERE id = ?",
-            (fresh_timestamp, newer_style_memory.id),
-        )
-        store._connection.commit()
-
-        recalled = store.get_recent_memories_by_kind("response_style", limit=2)
-
-        assert [memory.id for memory in recalled] == [newer_style_memory.id, older_style_memory.id]
-        assert all(memory.lesson_kind == "response_style" for memory in recalled)
-        assert profile_memory.id not in [memory.id for memory in recalled]
-    finally:
-        store.close()
-
-
 def test_memory_store_recall_memories_breaks_score_ties_by_recency(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        older_memory, _ = store.save_memory(
+        older_memory, _ = save_row(
+            store,
             session_id="session_old",
             title="Preference: drinks",
             lesson_text="The user prefers tea with breakfast.",
@@ -408,7 +297,8 @@ def test_memory_store_recall_memories_breaks_score_ties_by_recency(tmp_path: Pat
             confidence=0.5,
             source_excerpt="breakfast drink",
         )
-        newer_memory, _ = store.save_memory(
+        newer_memory, _ = save_row(
+            store,
             session_id="session_new",
             title="Preference: beverages",
             lesson_text="The user drinks tea after lunch.",
@@ -438,7 +328,8 @@ def test_memory_store_recall_memories_breaks_score_ties_by_recency(tmp_path: Pat
 def test_memory_store_recall_memories_returns_empty_when_nothing_matches(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        store.save_memory(
+        save_row(
+            store,
             session_id="session_1",
             title="Preference: tea",
             lesson_text="The user prefers tea over coffee.",
@@ -455,7 +346,8 @@ def test_memory_store_recall_memories_returns_empty_when_nothing_matches(tmp_pat
 def test_memory_store_recall_memories_returns_new_ungated_memory_kinds(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        routine_memory, _ = store.save_memory(
+        routine_memory, _ = save_row(
+            store,
             session_id="session_routine",
             title="Routine: morning routine",
             lesson_text="The user's morning routine includes stretching and green tea.",
@@ -463,7 +355,8 @@ def test_memory_store_recall_memories_returns_new_ungated_memory_kinds(tmp_path:
             confidence=0.94,
             source_excerpt="every morning I stretch and drink green tea",
         )
-        goal_memory, _ = store.save_memory(
+        goal_memory, _ = save_row(
+            store,
             session_id="session_goal",
             title="Goal: finish the garden",
             lesson_text="The user's goal is to finish the garden before June.",
@@ -471,7 +364,8 @@ def test_memory_store_recall_memories_returns_new_ungated_memory_kinds(tmp_path:
             confidence=0.92,
             source_excerpt="my goal is to finish the garden before June",
         )
-        person_memory, _ = store.save_memory(
+        person_memory, _ = save_row(
+            store,
             session_id="session_person",
             title="Important person: Alex (coworker)",
             lesson_text="The user's coworker is Alex.",
@@ -495,46 +389,25 @@ def test_memory_store_recall_memories_returns_new_ungated_memory_kinds(tmp_path:
         store.close()
 
 
-def test_memory_store_recall_memories_returns_tool_strategy_matches(tmp_path: Path) -> None:
-    store = MemoryStore(tmp_path / "memory.db")
-    try:
-        saved, _ = store.save_memory(
-            session_id="session_tool_strategy",
-            title="Tool strategy: prefer ripgrep",
-            lesson_text="For repository text search tasks, prefer rg/ripgrep when it is available.",
-            lesson_kind="tool_strategy",
-            confidence=0.9,
-            source_excerpt="prefer ripgrep",
-            family_key="",
-        )
-
-        recalled = store.recall_memories("search repository text with ripgrep", limit=2)
-
-        assert recalled == []
-        assert saved.family_key == ""
-    finally:
-        store.close()
-
-
-def test_memory_store_recall_memories_returns_tool_strategy_matches_with_family_key(
+def test_memory_store_recall_memories_returns_tool_strategy_matches(
     tmp_path: Path,
 ) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        saved, _ = store.save_memory(
+        saved, _ = save_row(
+            store,
             session_id="session_tool_strategy",
             title="Tool strategy: prefer ripgrep",
             lesson_text="For repository text search tasks, prefer rg/ripgrep when it is available.",
             lesson_kind="tool_strategy",
             confidence=0.9,
             source_excerpt="prefer ripgrep",
-            family_key="ripgrep",
         )
 
         recalled = store.recall_memories("search repository text with ripgrep", limit=2)
 
         assert [memory.id for memory in recalled] == [saved.id]
-        assert recalled[0].lesson_kind == "tool_strategy"
+        assert recalled[0].lesson_kind == "lesson"
     finally:
         store.close()
 
@@ -542,7 +415,8 @@ def test_memory_store_recall_memories_returns_tool_strategy_matches_with_family_
 def test_memory_store_recall_memories_ignores_generic_stopword_overlap(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        store.save_memory(
+        save_row(
+            store,
             session_id="session_1",
             title="Preference: tea",
             lesson_text="The user prefers tea over coffee.",
@@ -559,7 +433,8 @@ def test_memory_store_recall_memories_ignores_generic_stopword_overlap(tmp_path:
 def test_memory_store_lists_memories_newest_first(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        older_memory, _ = store.save_memory(
+        older_memory, _ = save_row(
+            store,
             session_id="session_old",
             title="Preference: tea",
             lesson_text="The user prefers tea over coffee.",
@@ -567,7 +442,8 @@ def test_memory_store_lists_memories_newest_first(tmp_path: Path) -> None:
             confidence=0.95,
             source_excerpt="I prefer tea over coffee",
         )
-        newer_memory, _ = store.save_memory(
+        newer_memory, _ = save_row(
+            store,
             session_id="session_new",
             title="Response style: concise",
             lesson_text="Use concise answers unless the user asks for more detail.",
@@ -586,7 +462,8 @@ def test_memory_store_lists_memories_newest_first(tmp_path: Path) -> None:
 def test_memory_store_updates_memory_without_changing_kind_metadata(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        saved, _ = store.save_memory(
+        saved, _ = save_row(
+            store,
             session_id="session_1",
             title="Preference: tea",
             lesson_text="The user prefers tea over coffee.",
@@ -595,57 +472,34 @@ def test_memory_store_updates_memory_without_changing_kind_metadata(tmp_path: Pa
             source_excerpt="I prefer tea over coffee",
         )
 
-        updated = store.update_memory(
-            memory_id=saved.id,
+        result = update_row(
+            store,
+            saved.id,
             title="Preference: green tea",
             lesson_text="The user prefers green tea over coffee.",
         )
 
+        assert result.status == "saved" and result.memory is not None
+        updated = result.memory
         assert updated.id == saved.id
         assert updated.lesson_kind == "preference"
         assert updated.session_id == saved.session_id
         assert updated.source_excerpt == saved.source_excerpt
         assert updated.title == "Preference: green tea"
         assert updated.lesson_text == "The user prefers green tea over coffee."
-        assert updated.content_fingerprint == build_content_digest(
-            "preference", "The user prefers green tea over coffee."
+        assert updated.content_fingerprint == build_text_digest(
+            "The user prefers green tea over coffee."
         )
         assert updated.updated_at >= saved.updated_at
     finally:
         store.close()
 
 
-def test_memory_store_updates_gated_memory_preserves_family_key(tmp_path: Path) -> None:
+def test_memory_store_update_rejects_duplicate_fingerprint(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        saved, _ = store.save_memory(
-            session_id="session_work_pref",
-            title="Working preference: diagnose root cause first",
-            lesson_text="Diagnose root cause before proposing fixes; avoid quick patches unless explicitly requested.",
-            lesson_kind="working_preference",
-            confidence=0.94,
-            source_excerpt="diagnose root cause first",
-            family_key="diagnose_root_cause_first",
-        )
-
-        updated = store.update_memory(
-            memory_id=saved.id,
-            title="Working preference: investigate first",
-            lesson_text="Keep this generic so lexical overlap would be broader.",
-        )
-
-        assert updated.family_key == "diagnose_root_cause_first"
-        assert store.recall_memories("investigate first", limit=2) == []
-        recalled = store.recall_memories("debug this issue and find the root cause", limit=2)
-        assert [memory.id for memory in recalled] == [saved.id]
-    finally:
-        store.close()
-
-
-def test_memory_store_update_memory_rejects_duplicate_fingerprint(tmp_path: Path) -> None:
-    store = MemoryStore(tmp_path / "memory.db")
-    try:
-        first_memory, _ = store.save_memory(
+        first_memory, _ = save_row(
+            store,
             session_id="session_1",
             title="Preference: tea",
             lesson_text="The user prefers tea over coffee.",
@@ -653,7 +507,8 @@ def test_memory_store_update_memory_rejects_duplicate_fingerprint(tmp_path: Path
             confidence=0.95,
             source_excerpt="I prefer tea over coffee",
         )
-        second_memory, _ = store.save_memory(
+        second_memory, _ = save_row(
+            store,
             session_id="session_2",
             title="Preference: coffee",
             lesson_text="The user prefers coffee in the morning.",
@@ -662,17 +517,17 @@ def test_memory_store_update_memory_rejects_duplicate_fingerprint(tmp_path: Path
             source_excerpt="I prefer coffee in the morning",
         )
 
-        with pytest.raises(
-            MemoryStoreError, match="content_fingerprint already exists"
-        ) as exc_info:
-            store.update_memory(
-                memory_id=second_memory.id,
-                title="Preference: tea",
-                lesson_text="THE USER PREFERS TEA OVER COFFEE",
-            )
+        result = update_row(
+            store,
+            second_memory.id,
+            title="Preference: tea",
+            lesson_text="THE USER PREFERS TEA OVER COFFEE",
+        )
 
-        assert exc_info.value.code == CMP_MEMORY_FINGERPRINT_CONFLICT
-        assert store.get_memory_by_id(first_memory.id) is not None
+        assert result.status == "refused"
+        assert result.reason == "already_remembered"
+        assert result.code == CMP_MEMORY_FINGERPRINT_CONFLICT
+        assert find_row(store, first_memory.id, project_id=GENERAL_PROJECT_ID) is not None
     finally:
         store.close()
 
@@ -680,7 +535,8 @@ def test_memory_store_update_memory_rejects_duplicate_fingerprint(tmp_path: Path
 def test_memory_store_deletes_memory_by_id(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        saved, _ = store.save_memory(
+        saved, _ = save_row(
+            store,
             session_id="session_1",
             title="Preference: tea",
             lesson_text="The user prefers tea over coffee.",
@@ -689,10 +545,14 @@ def test_memory_store_deletes_memory_by_id(tmp_path: Path) -> None:
             source_excerpt="I prefer tea over coffee",
         )
 
-        deleted = store.delete_memory(saved.id)
+        deleted = forget_row(store, saved.id)
 
-        assert deleted is True
-        assert store.get_memory_by_id(saved.id) is None
+        assert deleted.status == "saved"
+        forgotten = find_row(store, saved.id, project_id=GENERAL_PROJECT_ID)
+        assert forgotten is not None and forgotten.status == "archived"
+        assert store.get_all_memories() == []
+        missing = forget_row(store, saved.id)
+        assert missing.status == "refused" and missing.reason == "not_found"
     finally:
         store.close()
 
@@ -759,10 +619,7 @@ def test_memory_store_migrates_v2_memories_with_family_key_backfill(tmp_path: Pa
     store = MemoryStore(db_path)
     try:
         memories = store.get_all_memories()
-        assert {memory.family_key for memory in memories} == {
-            "plan_first",
-            "workspace_has_no_git_metadata",
-        }
+        assert {memory.lesson_kind for memory in memories} == {"lesson", "convention"}
     finally:
         store.close()
 
@@ -814,75 +671,26 @@ def test_memory_store_v2_to_v3_migration_is_idempotent(tmp_path: Path) -> None:
         store2.close()
 
 
-def test_memory_store_recall_memories_fails_closed_for_unknown_gated_family_key(
-    tmp_path: Path,
-) -> None:
-    store = MemoryStore(tmp_path / "memory.db")
-    try:
-        saved, _ = store.save_memory(
-            session_id="session_work_pref",
-            title="Working preference: diagnose root cause first",
-            lesson_text="Diagnose root cause before proposing fixes; avoid quick patches unless explicitly requested.",
-            lesson_kind="working_preference",
-            confidence=0.94,
-            source_excerpt="diagnose root cause first",
-            family_key="unknown_family",
-        )
-
-        assert saved.family_key == "unknown_family"
-        assert store.recall_memories("debug this issue and find the root cause", limit=2) == []
-    finally:
-        store.close()
-
-
-def test_memory_store_recall_memories_blocks_generic_tool_strategy_overlap(tmp_path: Path) -> None:
-    store = MemoryStore(tmp_path / "memory.db")
-    try:
-        store.save_memory(
-            session_id="session_tool_strategy",
-            title="Tool strategy: plan before implementation",
-            lesson_text="Plan the approach before implementing non-trivial work.",
-            lesson_kind="tool_strategy",
-            confidence=0.87,
-            source_excerpt="plan before implementation",
-            family_key="plan_first",
-        )
-        store.save_memory(
-            session_id="session_tool_strategy_2",
-            title="Tool strategy: keep diffs small",
-            lesson_text="Keep changes small and reviewable.",
-            lesson_kind="tool_strategy",
-            confidence=0.88,
-            source_excerpt="keep diffs small",
-            family_key="small_diffs",
-        )
-
-        assert store.recall_memories("plan the release work", limit=3) == []
-        assert store.recall_memories("small implementation detail", limit=3) == []
-    finally:
-        store.close()
-
-
 def test_memory_store_recall_memories_keeps_relevant_tool_strategy_matches(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        ripgrep_memory, _ = store.save_memory(
+        ripgrep_memory, _ = save_row(
+            store,
             session_id="session_search",
             title="Tool strategy: prefer ripgrep",
             lesson_text="For repository text search tasks, prefer rg/ripgrep when it is available.",
             lesson_kind="tool_strategy",
             confidence=0.9,
             source_excerpt="prefer rg",
-            family_key="ripgrep",
         )
-        apply_patch_memory, _ = store.save_memory(
+        apply_patch_memory, _ = save_row(
+            store,
             session_id="session_edit",
             title="Tool strategy: use apply_patch",
             lesson_text="Prefer apply_patch for small manual file edits when practical.",
             lesson_kind="tool_strategy",
             confidence=0.89,
             source_excerpt="prefer apply_patch",
-            family_key="apply_patch",
         )
 
         search_recalled = store.recall_memories(
@@ -892,8 +700,8 @@ def test_memory_store_recall_memories_keeps_relevant_tool_strategy_matches(tmp_p
             "How should I edit and patch this file manually?", limit=2
         )
 
-        assert [memory.id for memory in search_recalled] == [ripgrep_memory.id]
-        assert [memory.id for memory in edit_recalled] == [apply_patch_memory.id]
+        assert search_recalled[0].id == ripgrep_memory.id
+        assert edit_recalled[0].id == apply_patch_memory.id
     finally:
         store.close()
 
@@ -903,40 +711,20 @@ def test_memory_store_recall_memories_keeps_relevant_working_preference_matches(
 ) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        saved, _ = store.save_memory(
+        saved, _ = save_row(
+            store,
             session_id="session_work_pref",
             title="Working preference: diagnose root cause first",
             lesson_text="Diagnose root cause before proposing fixes; avoid quick patches unless explicitly requested.",
             lesson_kind="working_preference",
             confidence=0.94,
             source_excerpt="diagnose root cause first",
-            family_key="diagnose_root_cause_first",
         )
 
         recalled = store.recall_memories("debug this regression and find the root cause", limit=2)
 
         assert [memory.id for memory in recalled] == [saved.id]
-        assert recalled[0].lesson_kind == "working_preference"
-    finally:
-        store.close()
-
-
-def test_memory_store_recall_memories_blocks_generic_working_preference_overlap(
-    tmp_path: Path,
-) -> None:
-    store = MemoryStore(tmp_path / "memory.db")
-    try:
-        store.save_memory(
-            session_id="session_work_pref",
-            title="Working preference: update plan docs after completion",
-            lesson_text="When following a plan document, update it after the task or batch is completed.",
-            lesson_kind="working_preference",
-            confidence=0.88,
-            source_excerpt="update the plan document when task or batch is completed",
-            family_key="update_plan_docs_after_completion",
-        )
-
-        assert store.recall_memories("plan the next feature work", limit=3) == []
+        assert recalled[0].lesson_kind == "preference"
     finally:
         store.close()
 
@@ -946,20 +734,20 @@ def test_memory_store_recall_memories_keeps_relevant_project_context_matches(
 ) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        saved, _ = store.save_memory(
+        saved, _ = save_row(
+            store,
             session_id="session_project_context",
             title="Project context: workspace has no git metadata",
             lesson_text="This workspace has no .git metadata, so branch and status information are unavailable.",
             lesson_kind="project_context",
             confidence=0.95,
             source_excerpt="workspace has no .git metadata",
-            family_key="workspace_has_no_git_metadata",
         )
 
         recalled = store.recall_memories("what branch am I on in this git workspace?", limit=2)
 
         assert [memory.id for memory in recalled] == [saved.id]
-        assert recalled[0].lesson_kind == "project_context"
+        assert recalled[0].lesson_kind == "convention"
     finally:
         store.close()
 
@@ -969,14 +757,14 @@ def test_memory_store_recall_memories_blocks_generic_project_context_overlap(
 ) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        store.save_memory(
+        save_row(
+            store,
             session_id="session_project_context",
             title="Project context: tools require explicit workspace root",
             lesson_text="Tools remain blocked until a workspace root is explicitly configured.",
             lesson_kind="project_context",
             confidence=0.9,
             source_excerpt="tools stay blocked until the workspace root is set",
-            family_key="tools_require_workspace_root",
         )
 
         assert store.recall_memories("outline the feature roadmap for this quarter", limit=3) == []
@@ -988,14 +776,14 @@ def test_memory_store_recall_tool_strategy_plan_matches_should_i_plan(tmp_path: 
     """Relaxed intent gating: 'should I plan this feature?' matches plan-before-implementation."""
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        saved, _ = store.save_memory(
+        saved, _ = save_row(
+            store,
             session_id="session_plan",
             title="Tool strategy: plan before implementation",
             lesson_text="Plan the approach before implementing non-trivial work.",
             lesson_kind="tool_strategy",
             confidence=0.87,
             source_excerpt="plan before implementation",
-            family_key="plan_first",
         )
 
         recalled = store.recall_memories("should I plan this feature first?", limit=3)
@@ -1009,14 +797,14 @@ def test_memory_store_recall_tool_strategy_plan_matches_design_the_task(tmp_path
     """Relaxed intent gating: 'design this task' matches plan-before-implementation."""
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        saved, _ = store.save_memory(
+        saved, _ = save_row(
+            store,
             session_id="session_plan_2",
             title="Tool strategy: plan before implementation",
             lesson_text="Plan the approach before implementing non-trivial work.",
             lesson_kind="tool_strategy",
             confidence=0.87,
             source_excerpt="plan before implementation",
-            family_key="plan_first",
         )
 
         recalled = store.recall_memories("design the change before starting", limit=3)
@@ -1033,44 +821,6 @@ def test_memory_store_fresh_db_uses_incremental_auto_vacuum(tmp_path: Path) -> N
         # purge sweeps can reclaim freed pages via PRAGMA incremental_vacuum.
         mode = store._connection.execute("PRAGMA auto_vacuum").fetchone()[0]
         assert mode == 2
-    finally:
-        store.close()
-
-
-def test_memory_store_get_pending_candidates_orders_by_confidence_then_recency(
-    tmp_path: Path,
-) -> None:
-    store = MemoryStore(tmp_path / "memory.db")
-    try:
-        _insert_pending_candidate(
-            store,
-            session_id="session-1",
-            source_request_id="request-1",
-            title="Lower confidence",
-            lesson_text="The user prefers tea.",
-            lesson_kind="preference",
-            confidence=0.7,
-            source_excerpt="tea",
-            category="user",
-        )
-        _insert_pending_candidate(
-            store,
-            session_id="session-1",
-            source_request_id="request-2",
-            title="Higher confidence",
-            lesson_text="Use concise answers.",
-            lesson_kind="response_style",
-            confidence=0.9,
-            source_excerpt="concise",
-            category="feedback",
-        )
-
-        pending = store.get_pending_candidates("session-1")
-
-        assert [candidate.title for candidate in pending] == [
-            "Higher confidence",
-            "Lower confidence",
-        ]
     finally:
         store.close()
 
@@ -1140,7 +890,7 @@ def test_memory_store_get_pending_candidates_for_harness_applies_limit(tmp_path:
         store.close()
 
 
-def test_memory_store_save_memory_deletes_matching_pending_candidate(tmp_path: Path) -> None:
+def test_memory_store_save_deletes_matching_pending_candidate(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
         _insert_pending_candidate(
@@ -1155,7 +905,8 @@ def test_memory_store_save_memory_deletes_matching_pending_candidate(tmp_path: P
             category="user",
         )
 
-        memory, created = store.save_memory(
+        memory, created = save_row(
+            store,
             session_id="session-1",
             title="Preference: tea",
             lesson_text="The user prefers tea.",
@@ -1165,15 +916,13 @@ def test_memory_store_save_memory_deletes_matching_pending_candidate(tmp_path: P
         )
 
         assert created is True
-        assert memory.content_fingerprint == build_content_digest(
-            "preference", "The user prefers tea."
-        )
-        assert store.get_pending_candidates("session-1") == []
+        assert memory.content_fingerprint == build_text_digest("The user prefers tea.")
+        assert pending_rows(store, project_id=GENERAL_PROJECT_ID) == []
     finally:
         store.close()
 
 
-def test_memory_store_migrates_v3_database_to_v4_extraction_tables(tmp_path: Path) -> None:
+def test_memory_store_migrates_v3_database_through_v9(tmp_path: Path) -> None:
     db_path = tmp_path / "memory.db"
     connection = sqlite3.connect(str(db_path))
     try:
@@ -1242,8 +991,8 @@ def test_memory_store_migrates_v3_database_to_v4_extraction_tables(tmp_path: Pat
         }
 
         assert version == SCHEMA_VERSION
-        assert "memory_extraction_runs" in tables
-        assert "pending_memory_candidates" in tables
+        assert "memory_extraction_runs" not in tables
+        assert {"pending_memory_candidates", "memory_operations"} <= tables
         assert len(store.get_all_memories()) == 1
     finally:
         store.close()

@@ -154,6 +154,8 @@ test('cancel during a download stops installation, and concurrent mutations are 
   let resume;
   const paused = new Promise((resolve) => { resume = resolve; });
   const c = build(t);
+  const logs = [];
+  c.service.logger = (...entry) => logs.push(entry);
   c.service.fetchImpl = async (_url, request) => request.redirect === 'manual'
     ? { status: 200 } : { ok: true, status: 200, body: (async function* () {
       yield c.archives[0].subarray(0, 16);
@@ -168,6 +170,9 @@ test('cancel during a download stops installation, and concurrent mutations are 
   assert.deepEqual(await c.service.cancel(), { ok: true });
   resume();
   assert.deepEqual(await installing, { ok: false, reason: 'cancelled' });
+  // Gate 2026-10-14: a cancel logged a WARN install_failed that Diagnostics flagged.
+  assert.equal(logs.some(([, event]) => event === 'image_engine.install_failed'), false);
+  assert.ok(logs.some(([level, event]) => level === 'INFO' && event === 'image_engine.install_cancelled'));
   assertUnpublished(c);
 });
 
@@ -362,6 +367,38 @@ test('remove unlinks managed and staging junctions but preserves other root entr
   assert.equal(fs.readFileSync(path.join(outside, 'keep'), 'utf8'), 'untouched');
   assert.deepEqual(fs.readdirSync(c.root).sort(), ['staging-file', 'state.json', 'unrelated']);
   assert.equal(c.calls.length, 0);
+});
+
+// Node's rm answers a transient Windows EPERM on a junction with stat() and empties the target.
+test('removal never enters a junction, even when unlinking it fails transiently', async (t) => {
+  const failed = new Set();
+  const forbidden = () => { throw new Error('Node rm follows junctions after EPERM'); };
+  const flakyUnlink = async (file) => {
+    if (fs.lstatSync(file).isSymbolicLink() && !failed.has(file)) {
+      failed.add(file);
+      throw Object.assign(new Error('transient lock'), { code: 'EPERM' });
+    }
+    return fs.promises.unlink(file);
+  };
+  const c = build(t, { serviceOptions: { fsImpl: { ...fs, rmSync: forbidden,
+    promises: { ...fs.promises, rm: forbidden, unlink: flakyUnlink } } } });
+  const outside = path.join(c.temp, 'outside');
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, 'keep'), 'untouched');
+  const old = path.join(c.root, 'old-gen');
+  fs.mkdirSync(old, { recursive: true });
+  fs.writeFileSync(path.join(old, '.jenny-engine-install.json'),
+    JSON.stringify({ version: 1, tag: 'old-gen', commit: 'abc1234', files: {} }));
+  fs.symlinkSync(outside, path.join(old, 'nested'), 'junction');
+  fs.symlinkSync(outside, path.join(c.root, 'staging-boot'), 'junction');
+  c.service.start();
+  assert.equal(c.service.getState().last_error, null);
+  fs.symlinkSync(outside, c.target, 'junction');
+  fs.symlinkSync(outside, path.join(c.root, 'staging-link'), 'junction');
+  assert.deepEqual(await c.service.remove(ACCEPT), { ok: true });
+  assert.deepEqual([...failed].sort(), [c.target, path.join(c.root, 'staging-link'), path.join(old, 'nested')].sort());
+  assert.deepEqual(fs.readdirSync(outside), ['keep']);
+  assert.deepEqual(fs.readdirSync(c.root), ['state.json']);
 });
 
 test('progress notifications are throttled while byte counts remain monotonic', async (t) => {

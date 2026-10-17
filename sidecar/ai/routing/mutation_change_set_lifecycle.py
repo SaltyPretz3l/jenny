@@ -12,7 +12,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Mapping, Sequence, cast
+from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
 
 from sidecar.ai.error_codes import CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.contracts import ToolExecutionFailure
@@ -22,10 +22,18 @@ from sidecar.ai.tools.workspace_mutation_journal_contract import (
     signature_for_path,
     workspace_identity,
 )
-from sidecar.ai.tools.workspace_mutation_journal_store import (
-    StoreResult,
-    WorkspaceMutationJournalStore,
+from sidecar.ai.tools.workspace_mutation_live_owner import (
+    acquire_run_owner,
 )
+from sidecar.ai.tools.workspace_mutation_live_owner import (
+    mutation_ownership_conflict as _journal_conflict,
+)
+
+if TYPE_CHECKING:
+    from sidecar.ai.tools.workspace_mutation_journal_store import (
+        StoreResult,
+        WorkspaceMutationJournalStore,
+    )
 
 TYPED_MUTATION_TOOLS = frozenset({"write_file", "edit_file", "delete_file", "move_file"})
 # Tools that may change workspace files outside the journal. They get turn/call
@@ -66,9 +74,11 @@ _CURRENT_RUN: ContextVar[_RunAttribution | None] = ContextVar(
 )
 
 
-def bind_run_context(run: Any) -> None:
+def bind_run_context(run: Any, *, kernel: Any | None = None) -> None:
     """Bind request identity before approval freezing or tool dispatch."""
 
+    if kernel is not None:
+        run._jenny_mutation_kernel = kernel
     session_id = str(getattr(run, "session_id", "") or "").strip()
     runtime = getattr(run, "runtime", None)
     turn_id = str(
@@ -83,6 +93,9 @@ def bind_run_context(run: Any) -> None:
         session_id=session_id,
         change_set_id=_bounded_id(getattr(run, "_jenny_change_set_id", "")),
     )
+    if context.change_set_id:
+        acquire_run_owner(run, context.change_set_id, session_id, turn_id)
+    run._jenny_mutation_attribution = context
     token = _CURRENT_RUN.set(context)
     run._jenny_mutation_context_token = token
 
@@ -95,7 +108,10 @@ def release_run_context(run: Any) -> None:
         return
     try:
         _CURRENT_RUN.reset(token)
-    finally:
+    except ValueError:
+        # The original request thread may still clear its own context later.
+        logger.debug("workspace_mutation_context_owned_by_other_thread")
+    else:
         run._jenny_mutation_context_token = None
 
 
@@ -140,6 +156,10 @@ def inject_tool_attribution(  # noqa: C901, PLR0912 - ordered trust and context 
             attribution: Mapping[str, object] = {}
             if state_root and workspace_root:
                 identity = workspace_identity(workspace_root)
+                from sidecar.ai.tools.workspace_mutation_journal_store import (
+                    WorkspaceMutationJournalStore,
+                )
+
                 loaded = WorkspaceMutationJournalStore.from_version_root(
                     Path(state_root) / "workspace-recovery" / "v1"
                 ).load(identity.workspace_id, supplied_change_set)
@@ -162,6 +182,9 @@ def inject_tool_attribution(  # noqa: C901, PLR0912 - ordered trust and context 
             context.turn_id = turn_id
     if not normalized_session or not turn_id or not tool_call_id:
         return {}
+    if (tool_name in TYPED_MUTATION_TOOLS and context is not None
+            and context.session_id == normalized_session):
+        acquire_run_owner(context.run, change_set_id, normalized_session, turn_id)
     result = {
         "_jenny_turn_id": turn_id,
         "_jenny_tool_call_id": tool_call_id,
@@ -194,59 +217,14 @@ def freeze_approval_tool_calls(
 
 
 def finish_run_change_set(run: Any, *, approval_paused: bool, reason: str) -> None:
-    """Settle a durable set only when the top-level turn truly settles."""
+    """Settle using this run's identity, including a resumed request thread."""
+    from sidecar.ai.routing.mutation_run_settlement import settle_run_change_set
 
-    token = getattr(run, "_jenny_mutation_context_token", None)
-    if not isinstance(token, Token):
-        return
     try:
-        if approval_paused:
-            return
-        change_set_id = str(getattr(run, "_jenny_change_set_id", "") or "").strip()
-        config = getattr(getattr(run, "kernel", None), "_config", None)
-        state_root = str(getattr(config, "electron_state_root", "") or "").strip()
-        execution_context = getattr(
-            getattr(run, "request_context", None), "execution_context", None
-        )
-        workspace_root = str((
-            getattr(execution_context, "root_path", None)
-            if execution_context is not None
-            else getattr(config, "tools_workspace_root", "")
-        ) or "").strip()
-        if not change_set_id or not state_root or not workspace_root:
-            return
-        lifecycle = MutationChangeSetLifecycle(
-            WorkspaceMutationJournalStore.from_version_root(
-                Path(state_root) / "workspace-recovery" / "v1"
-            ),
-            workspace_root,
-        )
-        runtime = getattr(run, "runtime", None)
-        cancelled = bool(getattr(getattr(runtime, "cancel_handle", None), "cancelled", False))
-        interrupted = cancelled or "interrupt" in reason or "cancel" in reason
-        tool_failed = any(not bool(getattr(item, "success", True)) for item in run.outcomes)
-        result = lifecycle.finalize(
-            change_set_id,
-            interrupted=interrupted,
-            tool_failed=tool_failed,
-        )
-        if result.record is not None and result.record["state"] == "committed":
-            try:
-                from sidecar.ai.tools.workspace_retention import (
-                    run_recovery_maintenance,
-                )
-
-                run_recovery_maintenance(lifecycle.store, workspace_root)
-            except Exception as error:  # noqa: BLE001 - maintenance is best-effort.
-                logger.warning(
-                    "workspace_recovery_maintenance_failed",
-                    extra={"reason": type(error).__name__},
-                )
+        if not approval_paused:
+            settle_run_change_set(run, reason=reason)
     finally:
-        try:
-            _CURRENT_RUN.reset(token)
-        finally:
-            run._jenny_mutation_context_token = None
+        release_run_context(run)
 
 
 class MutationChangeSetLifecycle:
@@ -406,6 +384,8 @@ class MutationChangeSetLifecycle:
         interrupted: bool = False,
         tool_failed: bool = False,
     ) -> StoreResult:
+        from sidecar.ai.tools.workspace_mutation_journal_store import StoreResult
+
         record = self._load_by_id(change_set_id)
         if record is None or record["state"] not in {"prepared", "in_progress"}:
             return StoreResult(ok=True, record=record)
@@ -982,17 +962,11 @@ def _validate_preparation_owner(
     if record["session_id"] != session_id or record["turn_id"] != turn_id:
         raise _journal_conflict("The mutation change set belongs to another session or turn.")
     if record["state"] not in {"prepared", "in_progress"}:
-        raise _journal_conflict("The mutation change set is already terminal.")
-
-
-def _journal_conflict(message: str) -> ToolExecutionFailure:
-    """Reject invalid preparation before any workspace mutation or journal append."""
-    return ToolExecutionFailure(
-        code=CMP_TOOL_IO_FAILED,
-        message=message,
-        retryable=False,
-        error_details={"failure_class": "conflict", "effects": "none"},
-    )
+        raise _journal_conflict(
+            "Mutation change set is terminal. Verify prior results and start a new turn.",
+            details={"journal_state": "mutation_change_set_terminal",
+                     "remediation": "Verify prior results and start a new turn."},
+        )
 
 
 def _journal_failure(message: str) -> ToolExecutionFailure:

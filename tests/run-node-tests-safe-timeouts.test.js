@@ -13,6 +13,12 @@ const ROOT = path.resolve(__dirname, '..');
 const RUNNER_PATH = path.join(ROOT, 'scripts', 'run-node-tests-safe.js');
 const safeRunner = require('../scripts/run-node-tests-safe');
 
+function keepFakeChildAlive(t) {
+  // Unlike a real subprocess, EventEmitter holds no handles for unref'd timers.
+  const keepAlive = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(keepAlive));
+}
+
 test('real inherited pipes cannot keep a settled runner alive after green output', () => {
   const producer = [
     "const { spawn } = require('child_process');",
@@ -36,10 +42,7 @@ test('real inherited pipes cannot keep a settled runner alive after green output
 });
 
 test('post-exit undrained pipes fail that file and release the exited child', async (t) => {
-  // The runner's drain timer is unref'd and this fake child holds no handles, so
-  // keep the loop alive until the grace fires (Linux would otherwise exit first).
-  const keepAlive = setInterval(() => {}, 1000);
-  t.after(() => clearInterval(keepAlive));
+  keepFakeChildAlive(t);
   const child = new EventEmitter();
   child.pid = 4545;
   child.stdout = new PassThrough();
@@ -96,7 +99,8 @@ test('real-store durability replay keeps contention headroom in the heavy wave',
   );
 });
 
-test('per-file watchdog settles after a confirmed tree kill without exit or close events', async () => {
+test('per-file watchdog settles after a confirmed tree kill without exit or close events', async (t) => {
+  keepFakeChildAlive(t);
   const child = new EventEmitter();
   child.pid = 4242;
   child.stdout = new PassThrough();
@@ -128,7 +132,8 @@ test('per-file watchdog settles after a confirmed tree kill without exit or clos
   assert.equal(activeChildren.size, 0);
 });
 
-test('per-file watchdog reports an unconfirmed kill without waiting for process events', async () => {
+test('per-file watchdog reports an unconfirmed kill without waiting for process events', async (t) => {
+  keepFakeChildAlive(t);
   const child = new EventEmitter();
   child.pid = 4343;
   child.stdout = new PassThrough();
@@ -153,7 +158,8 @@ test('per-file watchdog reports an unconfirmed kill without waiting for process 
   assert.match(result.output, /termination was not confirmed/);
 });
 
-test('per-file watchdog waits for tree-kill confirmation after child exit and close', async () => {
+test('per-file watchdog waits for tree-kill confirmation after child exit and close', async (t) => {
+  keepFakeChildAlive(t);
   const child = new EventEmitter();
   child.pid = 4444;
   child.stdout = new PassThrough();
@@ -201,7 +207,7 @@ test('global watchdog exits within its bounded termination grace', (t) => {
   const testPath = path.join(tempRoot, 'global-hang.test.js');
   fs.writeFileSync(
     testPath,
-    "const test = require('node:test');\ntest('hang', () => new Promise(() => {}));\n"
+    "const test = require('node:test');\ntest('hang', () => new Promise(() => { setInterval(() => {}, 1000); }));\n"
   );
 
   const startedAt = Date.now();

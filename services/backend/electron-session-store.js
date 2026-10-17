@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { buildCreatedSession } = require('./session-store-create-record');
 const {
   createConversationStorePort,
   messageIntentMatches,
@@ -67,11 +68,12 @@ const {
   normalizeBranchOrigin,
   normalizeDiagnosticMetadata,
   normalizeLinkedSessionIds, normalizeLinkedTaskId,
-  summarizeMessage,
 } = require('./session-store-migrations');
+const { planInsertBefore, previewOfLast, previewOfMessage } = require('./session-message-store-helpers');
 const { preserveRuntimeContinuations } = require('./runtime-continuation-records');
 const { normalizeFailureRetryReasoningSnapshots } = require('./session-failure-retry-reasoning');
 const { normalizeSuggestedChanges, settleSuggestedChangesOnRead } = require('./suggested-changes-store');
+const { normalizeCoordinationFields, stripCoordinationFields } = require('./session-coordination-records');
 // TURN_EVENT_LOG_VERSION and the turn-event append/persist helpers now live in
 // ./session-turn-events (imported above and re-exported below); the constant is
 // still surfaced from this module for backward compatibility with importers.
@@ -98,13 +100,10 @@ function clipTitle(value) {
   return normalized.length > 80 ? `${normalized.slice(0, 77).trim()}...` : normalized;
 }
 
-// Non-enumerable sentinel stamped on every normalizeMessage output recording
-// the fallback model it was normalized under. normalizeSession can then
-// identity-skip re-normalizing a message whose only external dependency
-// (fallbackModel) is unchanged, turning the per-chunk-commit message-array
-// re-normalization from O(messages) into O(touched messages). The
-// property is non-enumerable so it never serializes to disk, never appears in
-// JSON/Object.spread, and is invisible to deepEqual.
+// Non-enumerable sentinel stamped on every normalizeMessage output recording the
+// fallback model it was normalized under: normalizeSession identity-skips a message
+// whose fallbackModel is unchanged (O(touched messages) per chunk commit). Never
+// serialized, spread or visible to deepEqual.
 const NORMALIZED_MESSAGE_MODEL = Symbol('normalizedMessageModel');
 
 function normalizeMessage(input, fallbackModel = '') {
@@ -174,7 +173,7 @@ function normalizeSession(sessionId, input = {}, { reuseTaggedMessages = false }
     created_at: createdAt,
     updated_at: String(input.updated_at || nowIso()),
     message_count: Math.max(Number(input.message_count || messageList.length || 0), 0),
-    last_message_preview: String(input.last_message_preview || summarizeMessage(messageList[messageList.length - 1]) || ''),
+    last_message_preview: String(input.last_message_preview || previewOfLast(messageList) || ''),
     last_model_used: String(input.last_model_used || ''),
     session_start_date: normalizeSessionStartDate(input.session_start_date, createdAt),
     preferred_model: normalizePreferredModel(input.preferred_model),
@@ -201,6 +200,7 @@ function normalizeSession(sessionId, input = {}, { reuseTaggedMessages = false }
     active_turn: normalizeActiveTurn(input.active_turn),
     runtime_continuations: preserveRuntimeContinuations(input.runtime_continuations),
     suggested_changes: normalizeSuggestedChanges(input.suggested_changes),
+    ...normalizeCoordinationFields(input),
     failure_retry_reasoning_snapshots: normalizeFailureRetryReasoningSnapshots(input.failure_retry_reasoning_snapshots),
     compaction_snapshot: normalizeCompactionSnapshot(input.compaction_snapshot),
     context_usage: normalizeSessionContextUsage(input.context_usage),
@@ -340,6 +340,8 @@ class ElectronSessionStore {
 
   onTranscriptCacheAvailable(listener) { return this._backend.onCacheAvailable(listener); }
 
+  getTurnEventStamp(sessionId) { return this._backend.getTurnEventStamp(sessionId); }
+
   hasPendingWrites() {
     return this._backend.hasPendingWrites();
   }
@@ -431,7 +433,7 @@ class ElectronSessionStore {
   }
 
   createSessionWithId(sessionId, {
-    title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId, projectId,
+    title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId, projectId, sessionIncarnation, spawnedFrom,
   } = {}) {
     const normalizedSessionId = String(sessionId || '').trim();
     if (!normalizedSessionId || (projectId !== undefined && !normalizeProjectId(projectId))) {
@@ -445,38 +447,13 @@ class ElectronSessionStore {
       imageConfig,
       composerDraft,
       linkedTaskId,
-      projectId,
+      projectId, sessionIncarnation, spawnedFrom,
     });
   }
 
-  _createSessionRecord(sessionId, {
-    title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId, projectId,
-  } = {}) {
-    const createdAt = nowIso();
-    const rawSessionType = String(sessionType || '').trim().toLowerCase();
-    const normalizedType = normalizeSessionType(rawSessionType);
-    const normalizedPluginSession = normalizedType === 'plugin'
-      ? (normalizePluginSession(pluginSession)
-        || (rawSessionType === 'image' ? createOfficialImagePluginSession(imageConfig) : null))
-      : null;
-    if (normalizedType === 'plugin' && !normalizedPluginSession) return null;
-    const session = normalizeSession(sessionId, {
-      title: clipTitle(title),
-      project_id: projectId || GENERAL_PROJECT_ID,
-      session_type: normalizedType,
-      plugin_session: normalizedPluginSession,
-      session_start_date: normalizeSessionStartDate(
-        preferences && preferences.session_start_date,
-        createdAt
-      ),
-      ...this._preferencesPatch(preferences),
-      created_at: createdAt,
-      updated_at: createdAt,
-      session_incarnation: `inc_${crypto.randomUUID().replace(/-/g, '')}`,
-      ...(composerDraft ? { composer_draft: composerDraft } : {}),
-      ...(linkedTaskId ? { linked_task_id: linkedTaskId } : {}),
-      messages: [],
-    });
+  _createSessionRecord(sessionId, options = {}) {
+    const session = buildCreatedSession(sessionId, options, { normalizeSession, clipTitle });
+    if (!session) return null;
     const ok = this._backend.upsertSession(sessionId, session, { persist: true });
     if (!ok) {
       // The backend refused the write (newer-schema read-only mode) and did
@@ -704,7 +681,7 @@ class ElectronSessionStore {
     });
   }
 
-  appendMessage(sessionId, message, { updatePreview = true } = {}) {
+  appendMessage(sessionId, message, { updatePreview = true, keepDraft = false } = {}) {
     const session = this.getSession(sessionId);
     if (!session) {
       return null;
@@ -718,11 +695,8 @@ class ElectronSessionStore {
           : null;
       }
     }
-    // Assign a monotonic event_seq so new messages carry an explicit ordering
-    // anchor independent of their array position. The effective seq is at least
-    // session.messages.length so that messages appended to a legacy session
-    // (one loaded from disk without a stored counter) always sort after all
-    // existing messages, whose projector message_index values are 0..N-1.
+    // Monotonic event_seq: an ordering anchor independent of array position, at least
+    // messages.length so a legacy session (no stored counter) sorts new rows last.
     const effectiveSeq = Math.max(
       Number(session.message_seq_counter) || 0,
       session.messages.length
@@ -740,11 +714,19 @@ class ElectronSessionStore {
       message_count: messages.length,
       message_seq_counter: effectiveSeq + 1,
       last_message_preview: updatePreview
-        ? summarizeMessage(normalized) || session.last_message_preview
+        ? previewOfMessage(normalized) || session.last_message_preview
         : session.last_message_preview,
       last_model_used: String(normalized.model_used || session.last_model_used || ''),
-      composer_draft: '',
+      composer_draft: keepDraft ? session.composer_draft : '',
     });
+  }
+
+  // Context rows go just before the last user anchor; idempotent by row id; null on conflict.
+  insertMessagesBefore(sessionId, anchorMessageId, rows) {
+    const session = this.getSession(sessionId);
+    const plan = session && planInsertBefore(session, anchorMessageId, rows, (row) => normalizeMessage(row, session.last_model_used || ''));
+    if (!plan) return null;
+    return plan.patch ? this.updateSession(sessionId, plan.patch) : this._toSummary(session);
   }
 
   updateMessage(sessionId, messageId, patch = {}) {
@@ -810,7 +792,7 @@ class ElectronSessionStore {
     return this.updateSession(sessionId, {
       messages: normalizedMessages,
       message_count: normalizedMessages.length,
-      last_message_preview: summarizeMessage(lastMessage) || '',
+      last_message_preview: previewOfLast(normalizedMessages) || '',
       last_model_used: String(lastMessage && lastMessage.model_used || session.last_model_used || ''),
       compaction_snapshot: retainCompactionSnapshotForMessages(
         session.compaction_snapshot,
@@ -880,7 +862,7 @@ class ElectronSessionStore {
     const updated = this.updateSession(sessionId, {
       messages: nextMessages,
       message_count: nextMessages.length,
-      last_message_preview: summarizeMessage(nextMessages[nextMessages.length - 1]) || '',
+      last_message_preview: previewOfLast(nextMessages) || '',
       turn_events: nextTurnEvents,
       active_turn: options.preserveActiveTurn === true ? session.active_turn : null,
       // Re-anchoring invalidates any compacted prefix that no longer survives.
@@ -925,6 +907,7 @@ class ElectronSessionStore {
     const safePatch = { ...patch };
     delete safePatch.runtime_continuations;
     delete safePatch.suggested_changes;
+    stripCoordinationFields(safePatch);
     return this._updateSessionRecord(sessionId, safePatch, {
       bumpUpdatedAt: true,
     });
@@ -958,6 +941,7 @@ class ElectronSessionStore {
       if (Number(summary.message_count || 0) > 0) continue;
       const title = String(summary.title || '').trim();
       if (title && title !== 'New Chat') continue;
+      if (summary.spawned_from != null || this._backend.getSession(sessionId)?.spawned_from != null) continue;
       candidateIds.push(sessionId);
     }
     if (dryRun) {
@@ -972,6 +956,16 @@ class ElectronSessionStore {
 
   _updateSessionRecord(sessionId, patch = {}, { bumpUpdatedAt = true, persist = true } = {}) {
     return this._withSessionMutation(sessionId, patch, { bumpUpdatedAt, persist });
+  }
+
+  // Trusted full-profile archive restore only (never reachable from IPC): the six coordination fields of a
+  // just-imported chat, normalized, in one flushed write. Refuses a chat that already carries coordination.
+  restoreSessionCoordination(sessionId, record) {
+    const current = this._backend.peekSession(sessionId);
+    if (!current || !record || typeof record !== 'object' || Array.isArray(record)) return false;
+    if (JSON.stringify(normalizeCoordinationFields(current)) !== JSON.stringify(normalizeCoordinationFields({}))) return false;
+    const patch = normalizeCoordinationFields(record);
+    return Boolean(this._updateSessionRecord(sessionId, patch, { bumpUpdatedAt: false })) && this.flushSession(sessionId) === true;
   }
 
   _preferencesPatch(preferences = {}, record = {}) {

@@ -15,3 +15,9 @@ def configure_shell_security(flags: dict[str, bool]) -> None:
 
     _FEATURE_FLAGS.clear()
     _FEATURE_FLAGS.update(flags)
+
+
+def default_on_feature_enabled(name: str) -> bool:
+    """A default-ON builtin flag (row 60): only an explicit ``False`` disables it."""
+
+    return _FEATURE_FLAGS.get(name, True) is not False

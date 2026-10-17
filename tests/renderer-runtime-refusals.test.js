@@ -166,6 +166,17 @@ test('a send refused while an image render holds the GPU says so and asks for a 
   assert.equal(generic.hint, "The runtime didn't accept the message. Your draft is back in the composer.");
 });
 
+test('a sandbox transition names the wait and asks for another Send without claiming a queue', () => {
+  const described = describeRuntimeRefusal({ ok: false, acceptance: 'rejected',
+    error: { code: 'CMP-RUNTIME-0005', reason: 'command_sandbox_transition' } });
+  assert.equal(described.reason, 'command_sandbox_transition');
+  assert.equal(described.title, 'Command sandbox is changing');
+  assert.equal(described.hint, 'Wait a moment, then send again.');
+  assert.equal(described.severity, 'calm');
+  assert.equal(described.action, null);
+  assert.equal(/queued|runs when|saved/i.test(described.hint), false);
+});
+
 test('an unrecognised reason falls back without losing the raw reason or inventing a step', () => {
   const described = describeRuntimeRefusal({ reason: 'bespoke_internal_failure' });
   assert.equal(described.reason, 'bespoke_internal_failure');

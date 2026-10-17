@@ -21,6 +21,12 @@ const SURFACE_FAMILIES = Object.freeze([
 const ALWAYS_ON_TOOL_NAMES = Object.freeze([
   'ask_user', 'exit_plan_mode', 'todo_write', 'todo_read', 'operation_status', 'jenny_status',
   'tool_search', 'load_skill', 'connections_list', 'session_spawn', 'session_wait', 'session_result',
+  'memory', 'propose_git_action', 'propose_command', 'propose_session', 'complete_session_handoff',
+  'session_message',
+  // Memory v2 (row 58): the memory tool's read-only look-back tools (W3, W4 search).
+  'conversations_recent', 'conversation_open', 'conversations_search',
+  // Row 60: the compaction recall tool for micro-compacted tool outputs.
+  'recall_tool_output',
 ]);
 
 const LEGACY_TOGGLE_TO_SURFACE = Object.freeze({

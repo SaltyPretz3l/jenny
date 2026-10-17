@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  causePhrase, causeSentence, failureDetails, readModelLoadFailure, recoveryActions, retryContext,
+  causePhrase, causeSentence, engineLabel, failureDetails, readModelLoadFailure, recoveryActions, retryContext,
 } = require('../renderer/shared/model-load-failure');
 
 function backend(failure, phase = 'model_unavailable') {
@@ -44,6 +44,16 @@ test('plain words and the matching recovery follow the cause', () => {
   assert.equal(causePhrase(other), 'unexpected EOF');
   assert.deepEqual(recoveryActions(other), ['retry', 'copyDetails']);
   assert.equal(causeSentence({ ...other, message: '', engine: 'openai-compatible' }), 'llama-server could not load it.');
+  // Row 54: a stamped record names the managed server it belonged to on every surface.
+  assert.equal(causeSentence({ ...other, message: '', engine: 'openai-compatible', managed: 'ninfer' }), 'NInfer could not load it.');
+  assert.equal(causePhrase({ ...unreachable, engine: 'openai-compatible', managed: 'ninfer' }), "NInfer isn't responding");
+  assert.equal(causeSentence({ ...unreachable, engine: 'openai-compatible', managed: 'llama-server' }), "llama-server isn't responding.");
+});
+
+test('readModelLoadFailure keeps the managed stamp and drops an unknown one', () => {
+  const stamped = readModelLoadFailure(backend({ ...OOM, engine: 'openai-compatible', managed: 'ninfer' }));
+  assert.equal(stamped.managed, 'ninfer');
+  assert.equal(Object.hasOwn(readModelLoadFailure(backend({ ...OOM, managed: 'vllm' })), 'managed'), false);
 });
 
 test('the memory retry picks the Tune step under the attempted context, 8K when unknown or small', () => {
@@ -60,4 +70,18 @@ test('copy details lists the facts one per line and skips empty ones', () => {
     'at: 2026-10-07T12:00:00.000Z', 'message: model requires more system memory',
   ].join('\n'));
   assert.equal(failureDetails({ ...OOM, context: null, at: '', message: '' }), 'model: qwen3:8b\nengine: ollama\ncause: out_of_memory');
+});
+
+test('engineLabel names NInfer for the openai-compatible engine only when the snapshot says it serves', () => {
+  const ninfer = { runtime: { managed_server: { kind: 'ninfer', state: 'ready' } } };
+  const llama = { runtime: { managed_server: { kind: 'llama-server', state: 'ready' } } };
+  assert.equal(engineLabel('openai-compatible', ninfer), 'NInfer');
+  assert.equal(engineLabel('openai-compatible', llama), 'llama-server');
+  assert.equal(engineLabel('openai-compatible'), 'llama-server');
+  assert.equal(engineLabel('openai-compatible', { runtime: { managed_server: null } }), 'llama-server');
+  assert.equal(engineLabel('ollama', ninfer), 'Ollama');
+  // The record's own stamp beats the live snapshot: a NInfer failure stays NInfer after a llama-server fallback.
+  assert.equal(engineLabel('openai-compatible', llama, 'ninfer'), 'NInfer');
+  assert.equal(engineLabel('openai-compatible', ninfer, 'llama-server'), 'llama-server');
+  assert.equal(engineLabel('openai-compatible', ninfer, 'vllm'), 'NInfer', 'an unknown stamp falls back to the snapshot');
 });

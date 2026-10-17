@@ -66,6 +66,14 @@ function sha16(text) {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 16);
 }
 
+test('compaction input completeness preserves booleans and leaves absent values unknown', () => {
+  const recorder = createCompactionDiagnostics();
+  for (const params of [{}, { input_complete: true }, { input_complete: false }, { input_complete: null }]) {
+    recorder.record(params);
+  }
+  assert.deepEqual(recorder.snapshot().map((entry) => entry.input_complete), [null, true, false, null]);
+});
+
 test('compactions land in the dump with summary text that survives redaction except paths', async (t) => {
   const recorder = createCompactionDiagnostics({ includeText: true });
   const params = compactedParams();

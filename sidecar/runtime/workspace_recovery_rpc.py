@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from sidecar.ai.error_codes import CMP_PROTO_VERSION_MISMATCH, CMP_TOOL_EXECUTION_FAILED
+from sidecar.ai.tools.workspace_mutation_journal_contract import workspace_identity
 from sidecar.ai.tools.workspace_mutation_journal_store import WorkspaceMutationJournalStore
 from sidecar.ai.tools.workspace_reapply import reapply_change_set
 from sidecar.ai.tools.workspace_restore import (
@@ -109,6 +110,11 @@ def process_workspace_recovery_method(
             result = release_mutation_checkpoint(params, brain_container.stack.config,
                 confirm_published=method == WORKSPACE_CONFIRM_RUNTIME_CHECKPOINT_METHOD)
             return _outcome(result_response(message_id, result), initialized)
+        if method == WORKSPACE_LIST_CHANGE_SETS_METHOD and "workspace_root" in params:
+            # A suggested-change receipt names the workspace its apply ran in.
+            store = _journal_store(brain_container.stack.config)
+            result = list_change_sets(store, _authorized_root(params))
+            return _outcome(result_response(message_id, result), initialized)
         workspace_root, store = _recovery_context(brain_container)
         result = _invoke(method, params, workspace_root, store)
     except (WorkspaceRestoreError, WorkspaceRetentionError) as error:
@@ -209,6 +215,26 @@ def _recovery_context(brain_container: Any) -> tuple[Path, WorkspaceMutationJour
     if not state_text:
         raise WorkspaceRestoreError("recovery_root_missing", "Workspace recovery storage is unavailable.")
     return Path(workspace_text), WorkspaceMutationJournalStore(Path(state_text) / "workspace-recovery")
+
+
+def _journal_store(config: Any) -> WorkspaceMutationJournalStore:
+    state_text = str(getattr(config, "electron_state_root", "") or "").strip()
+    if not state_text:
+        raise WorkspaceRestoreError("recovery_root_missing", "Workspace recovery storage is unavailable.")
+    return WorkspaceMutationJournalStore(Path(state_text) / "workspace-recovery")
+
+
+def _authorized_root(params: dict[str, Any]) -> Path:
+    """An explicit root named with its device id and inode, like an apply's."""
+    root = Path(_required_text(params, "workspace_root"))
+    device_id, inode = _required_text(params, "device_id"), _required_text(params, "inode")
+    try:
+        identity = workspace_identity(root) if root.is_absolute() else None
+    except (OSError, ValueError):
+        identity = None
+    if identity is None or (identity.device_id, identity.file_id) != (device_id, inode):
+        raise WorkspaceRestoreError("workspace_root_changed", "The workspace folder is unavailable or changed.")
+    return root
 
 
 def _required_text(params: dict[str, Any], key: str) -> str:

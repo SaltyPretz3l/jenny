@@ -39,6 +39,7 @@ from sidecar.ai.config import (
     ToolPolicyRuleMatch,
     ToolPolicySnapshot,
 )
+from sidecar.ai.context.compaction_prompts import FULL_COMPACTION_PROMPT
 from sidecar.ai.feature_flags import (
     FEATURE_CONTEXT_COMPACTION,
     FEATURE_TOKEN_BUDGET,
@@ -72,6 +73,19 @@ _LONG_HISTORY = [
     {"role": "user", "content": "x " * 3000},
     {"role": "assistant", "content": "tool noise " * 400},
 ]
+
+
+class _SearchCompactionEngine(_CompactionStreamEngine):
+    def generate_with_tools(self, **kwargs: Any) -> GenerationResult:
+        messages = kwargs.get("messages", [])
+        if messages and str(messages[0].get("content", "")).startswith(FULL_COMPACTION_PROMPT.rstrip()):
+            # Prompt growth may require another compaction after tool search.
+            # Summary calls must not consume the queued approval/resume replies.
+            self._plans.insert(
+                self._index,
+                _ToolPlan(result=GenerationResult(content=_COMPACTION_SUMMARY, finish_reason="stop")),
+            )
+        return super().generate_with_tools(**kwargs)
 
 
 def _descriptor(name: str, description: str, *, server_name: str) -> MCPToolDescriptor:
@@ -125,13 +139,7 @@ def _pause_on_gated_read(
     )
     engine: _StubEngine = _StubEngine(plans=plans)
     if turn_start_compaction:
-        # Compaction runs on the stream path; its summary is the first reply.
-        engine = _CompactionStreamEngine(
-            plans=[
-                _ToolPlan(result=GenerationResult(content=_COMPACTION_SUMMARY, finish_reason="stop")),
-                *plans,
-            ]
-        )
+        engine = _SearchCompactionEngine(plans=plans)
         config = replace(
             config,
             # 30% char-fallback headroom (A9-F5): an 8,000-token budget window.

@@ -43,6 +43,11 @@ function registerImageEngineIpc(ipcMain, {
       return { ok: false, reason: safeReason(error?.reason) };
     }
   };
+  const announceChanged = () => {
+    const engine = backendService.imageEngine;
+    try { if (typeof engine.emit === 'function') engine.emit('changed', engine.getState()); }
+    catch (_error) { /* the renderer refreshes after its own answer anyway */ }
+  };
   const noPayload = (method) => (_event, payload) => safe(() => {
     if (payload !== undefined) fail('unexpected_payload');
     return method();
@@ -92,6 +97,7 @@ function registerImageEngineIpc(ipcMain, {
     }),
     'imageEngine.saveModelSet': (_event, payload) => safe(() => {
       const selected = fields(payload, ['root', 'diffusion', 'text_encoder', 'vae', 'family', 'label']);
+      if (payload.vision_projector !== undefined) Object.assign(selected, fields(payload, ['vision_projector']));
       chosenRoot(selected.root);
       return saveModelSet({ storePath, ...selected });
     }),
@@ -99,6 +105,14 @@ function registerImageEngineIpc(ipcMain, {
     'imageEngine.removeModelSet': modelId(removeModelSet),
     'imageEngine.setDefaultModelSet': modelId(setDefaultModelSet),
     'imageEngine.reconcile': noPayload(() => backendService.chatGpuHandoff.reconcile()),
+    // "Clear anyway": the handoff keeps its own gates (an unconfirmed attempt
+    // first, never mid-render); a cleared record re-renders the section.
+    'imageEngine.forceClear': (_event, payload) => safe(async () => {
+      if (payload?.confirmed !== true) fail('confirmation_required');
+      const result = await backendService.chatGpuHandoff.forceClear({ confirmed: true });
+      if (result?.ok === true) announceChanged();
+      return result;
+    }),
   }, authorization);
 }
 

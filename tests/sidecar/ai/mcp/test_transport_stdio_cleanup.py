@@ -275,3 +275,20 @@ def test_close_terminates_before_closing_stdin() -> None:
     transport._reader_thread = _FakeThread()
     transport._stderr_thread = _FakeThread()
     transport.close()
+
+
+
+def test_handed_off_close_does_not_wait_on_background_output_readers(monkeypatch):
+    from sidecar.runtime import owned_process_tracking
+    transport = _stub_transport()
+    transport._process = _FakeProcess()
+    transport._reader_thread = _FakeThread()
+    transport._stderr_thread = _FakeThread()
+    monkeypatch.setattr(owned_process_tracking, "preserve_transport", lambda _: True)
+    transport.close()
+    assert transport._process.stdin.closed
+    assert not transport._process.stdout.closed
+    assert not transport._process.stderr.closed
+    assert not transport._reader_thread.join_calls
+    assert not transport._stderr_thread.join_calls
+    assert not transport._containment.terminated

@@ -210,11 +210,17 @@ function createChatGptAuthService({
   // deleted record. This is the single revocation clock the chat-turn admission
   // gate compares the running sidecar's credential generation against.
   let credentialEpoch = 0;
+  // A rotated credential the secure store failed to save. The provider already
+  // consumed the stored refresh token, so this stays authoritative over storage
+  // until a retried save lands; an epoch change (sign-out, sign-in) discards it.
+  let pendingSave = null;
+  let loadFailureLogged = false;
   const subscribers = new Set();
 
   function clearCredentialInMemory() {
     credentialEpoch += 1;
     record = null;
+    pendingSave = null;
   }
 
   function createRefreshDeadline(timeoutMs) {
@@ -329,17 +335,27 @@ function createChatGptAuthService({
     }
   }
 
+  // Unavailable storage leaves loading retryable (one read per call, no timers).
+  // Any credential change in this process advances the epoch and ends loading,
+  // so a record a sign-out failed to delete is never reloaded. A sign-in in
+  // progress owns the status until it settles; a recovered stored credential
+  // must not publish signed_in over its connecting state (Astra w2e R1).
   function ensureLoaded() {
-    if (loaded) {
+    if (loaded || credentialEpoch !== 0 || activeFlow) {
+      return;
+    }
+    let stored;
+    try {
+      stored = secureStore?.getModelProviderOAuth(PROVIDER_ID);
+    } catch (_error) {
+      if (!loadFailureLogged) {
+        loadFailureLogged = true;
+        logBounded('WARN', 'chatgpt_auth.load_failed', boundedError('storage_unavailable', 'Saved sign-in could not be loaded.'));
+      }
       return;
     }
     loaded = true;
-    try {
-      record = parseStoredRecord(secureStore?.getModelProviderOAuth(PROVIDER_ID));
-    } catch (_error) {
-      record = null;
-      logBounded('WARN', 'chatgpt_auth.load_failed', boundedError('storage_unavailable', 'Saved sign-in could not be loaded.'));
-    }
+    record = parseStoredRecord(stored);
     if (record) {
       transition('signed_in');
     }
@@ -347,6 +363,19 @@ function createChatGptAuthService({
 
   function saveRecord(nextRecord) {
     secureStore.setModelProviderOAuth(PROVIDER_ID, JSON.stringify(nextRecord));
+  }
+
+  function retryPendingSave() {
+    if (pendingSave?.epoch !== credentialEpoch) {
+      pendingSave = null;
+      return;
+    }
+    try {
+      saveRecord(pendingSave.record);
+      pendingSave = null;
+    } catch (_error) {
+      // Still unsaved; the in-memory record stays authoritative.
+    }
   }
 
   function removeRecord() {
@@ -781,9 +810,9 @@ function createChatGptAuthService({
   async function refreshAccessToken(force, previousAccessToken, signal) {
     const epochAtStart = credentialEpoch;
     const expectedAccountId = record?.account_id || '';
-    let latest;
+    let latest = pendingSave?.record;
     try {
-      latest = parseStoredRecord(secureStore.getModelProviderOAuth(PROVIDER_ID));
+      latest ||= parseStoredRecord(secureStore.getModelProviderOAuth(PROVIDER_ID));
     } catch (_error) {
       throw authError('refresh_failed', 'ChatGPT credentials could not be refreshed.');
     }
@@ -861,17 +890,20 @@ function createChatGptAuthService({
       email: identity.email || latest.email,
       last_refresh_ms: Number(now()),
     };
+    record = nextRecord;
+    pendingSave = null;
     try {
       saveRecord(nextRecord);
     } catch (_error) {
-      throw authError('refresh_failed', 'ChatGPT credentials could not be refreshed.');
+      pendingSave = { epoch: credentialEpoch, record: nextRecord };
+      logBounded('WARN', 'chatgpt_auth.save_failed', boundedError('storage_failed', 'Refreshed sign-in could not be saved; retrying.'));
     }
-    record = nextRecord;
     return nextRecord.access_token;
   }
 
   async function getAccessToken({ force = false } = {}) {
     ensureLoaded();
+    retryPendingSave();
     if (!record) {
       return '';
     }

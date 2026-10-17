@@ -7,6 +7,10 @@
 //   S12 (Performance/Reliability) — the output tail is capped AND token-redacted.
 
 const test = require('node:test');
+const { holdEventLoopUntilTestsFinish } = require('./helpers/event-loop-hold');
+
+// Service wait timers are unref'd on purpose; Node 22's runner would drain the loop under them.
+holdEventLoopUntilTestsFinish(test);
 const assert = require('node:assert/strict');
 
 const { runTestCommand } = require('../services/backend/workspace-test-runner-runner');

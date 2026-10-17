@@ -93,6 +93,7 @@ test('persistRuntimePreferences routes through the injected setSessionPreference
       history_scope: 'recent',
       include_personality: true,
       include_memory: true,
+      memory_opt_out: false,
     },
   }, 'preferences are mapped to the snake_case persistence contract');
 });

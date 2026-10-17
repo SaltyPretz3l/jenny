@@ -265,7 +265,7 @@
 
     function renderRailContent(surface) {
       const host = prepareSurface(surface);
-      if (!host) return;
+      if (!host) return false;
       host.innerHTML = typeof render.renderTaskRailSurface === 'function'
         ? render.renderTaskRailSurface(buildRows(), ensureUiState(), {
             escapeHtml,
@@ -273,6 +273,7 @@
             scope: scopeHelper(),
           }) : '';
       syncCount();
+      return true;
     }
 
     function rerender() {

@@ -15,7 +15,7 @@ const { executeResolvedTool } = require('../../services/tools/tool-execution-dis
 const { ToolExecutor } = require('../../services/tools/tool-executor');
 const { TOOL_ERROR_CODES } = require('../../services/backend/error-codes');
 
-function fixture(rootPath = os.tmpdir()) {
+function fixture(rootPath = os.tmpdir(), { handoffPreparation = null } = {}) {
   let decision = 'auto';
   const authority = Object.freeze({ project_id: 'project_test', root_path: rootPath,
     root_id: rootPath === null ? null : 'root_test', root_revision: 1, device_id: null, inode: null });
@@ -27,7 +27,7 @@ function fixture(rootPath = os.tmpdir()) {
     knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
     resolveProjectWorkspaceServices: () => ({}),
   });
-  const binding = executionAuthority.captureSession('session_test', { requestId: 'request_test' });
+  const binding = executionAuthority.captureSession('session_test', { requestId: 'request_test', handoffPreparation });
   const context = executionAuthority.toExecutionContext(binding);
   const broker = new ResourceBroker({ limits: { tool_operations: 1 } });
   const lanes = new RuntimeLaneAdmission();
@@ -103,6 +103,29 @@ test('Electron execution brackets the actual producer and quarantines an unprove
     assert.equal(setup.broker.snapshot().lease_count, throws ? 1 : 0);
     setup.gateway.close({ producerSettled: false });
   }
+});
+
+test('handoff completion reaches its Electron handler without a runtime resource operation', async () => {
+  const setup = fixture(os.tmpdir(), { handoffPreparation: {
+    proposal_id: `proposal_${'a'.repeat(64)}`, attempt_id: '11111111-1111-4111-8111-111111111111',
+  } });
+  const executor = { _logger() {}, _mergePolicyDecisionMetadata: value => value,
+    _evaluateToolPolicy: () => ({ decision: 'auto' }) };
+  let completed = false;
+  try {
+    const result = await executeResolvedTool(executor,
+      { callId: 'operation:handoff', toolName: 'complete_session_handoff', input: {} },
+      { executionAuthority: setup.binding, backendService: { sessionRuntime: {} } },
+      { startTime: Date.now(), approvalState: 'auto', tool: {
+        summarize: () => 'handoff', async execute() {
+          assert.equal(setup.broker.snapshot().lease_count, 0);
+          completed = true;
+          return { content: 'child created', isError: false };
+        },
+      } });
+    assert.equal(result.isError, false, JSON.stringify(result));
+    assert.equal(completed, true);
+  } finally { setup.gateway.close({ producerSettled: true }); }
 });
 
 // F27: the dispatcher dropped image_generate's model copy before the bridge saw it.

@@ -40,6 +40,7 @@ def test_tool_manifest_v2_excludes_removed_runtime_and_includes_synthetic_entrie
     assert "jenny_status" in tools
     assert "tool_search" in tools
     assert "monitor" in tools
+    assert "recall_tool_output" in tools
     assert "delegate" in tools
     assert "subagent_batch" not in tools
     assert "subagent_run" not in tools
@@ -63,6 +64,15 @@ def test_tool_manifest_uses_known_canonical_tool_families() -> None:
 
     tools = {tool["name"]: tool for tool in manifest["tools"]}
     assert tools["mermaid_generate"]["tool_family"] == "diagram"
+
+
+def test_recall_is_registered_without_a_subprocess_descriptor() -> None:
+    descriptor = next(item for item in build_tool_catalog() if item.name == "recall_tool_output")
+    assert descriptor.runtime_registered is True
+    assert descriptor.source_kind == "synthetic"
+    assert descriptor.read_only is True
+    assert descriptor.side_effecting is False
+    assert descriptor.availability.defer_eligible is False
 
 
 def test_build_tool_catalog_uses_manifest_metadata_for_jenny_owned_runtime_tools() -> None:

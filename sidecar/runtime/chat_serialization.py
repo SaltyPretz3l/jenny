@@ -1,7 +1,4 @@
-"""Loop-event serialization helpers.
-
-Extracted from ``chat.py`` to stay under the 1000-line hard max.
-"""
+"""Loop-event serialization helpers, extracted from ``chat.py`` for its line cap."""
 
 from __future__ import annotations
 
@@ -15,6 +12,7 @@ from sidecar.ai.routing.loop_events import (
     ContextCompactionStartedEvent,
     ContextUsageEvent,
     HeartbeatEvent,
+    HeuristicFireEvent,
     IterationStartEvent,
     PhaseCompletedEvent,
     PhaseStartedEvent,
@@ -39,14 +37,13 @@ from sidecar.protocol import (
     CONTEXT_COMPACTED_METHOD,
     CONTEXT_COMPACTION_STARTED_METHOD,
     CONTEXT_USAGE_METHOD,
+    HEURISTIC_FIRE_METHOD,
     TOOL_EXECUTING_METHOD,
     TOOL_OUTPUT_CHUNK_METHOD,
     TOOL_RESULT_METHOD,
     TURN_EVENT_METHOD,
 )
-from sidecar.runtime.chat_helpers import (
-    notification_context,
-)
+from sidecar.runtime.chat_helpers import notification_context
 from sidecar.runtime.ipc_payloads import IpcPayloadExternalizer
 from sidecar.runtime.rpc import notification
 
@@ -141,12 +138,13 @@ def _serialize_loop_event(
     session_id: str | None,
     payload_externalizer: IpcPayloadExternalizer | None = None,
 ) -> dict[str, Any] | None:
-    """Convert a typed domain event to a JSON-RPC notification dict.
-
-    Returns ``None`` for event types that have no transport representation
-    (the caller skips them silently).
-    """
+    """Convert a typed domain event to a JSON-RPC notification dict, or ``None``
+    for event types with no transport representation (the caller skips them silently)."""
     ctx = notification_context(request_id, trace_id=trace_id, session_id=session_id)
+    if isinstance(event, HeuristicFireEvent):
+        return notification(HEURISTIC_FIRE_METHOD, {
+            **ctx, "name": event.name, **({"detail": event.detail} if event.detail else {}),
+        })
 
     def phase_payload(phase_event: Any) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -185,6 +183,8 @@ def _serialize_loop_event(
             "kind": event.kind,
             "persist": event.persist,
         }
+        if event.kind == "status" and not event.persist and event.progress is not None:
+            payload["progress"] = dict(event.progress)
         budget_chars = getattr(event, "thinking_budget_chars", None)
         if isinstance(budget_chars, int) and budget_chars > 0:
             payload["thinking_budget_chars"] = budget_chars
@@ -288,6 +288,8 @@ def _serialize_loop_event(
         )
     if isinstance(event, ContextCompactedEvent):
         return _serialize_context_compacted(event, ctx)
+    if callable(getattr(event, "notification_params", None)):  # self-serializing meter events (cp6)
+        return notification(event.method, event.notification_params(ctx))
     if isinstance(event, ContextUsageEvent):
         # Mid-turn meter snapshot — ephemeral, no canonical turn event, no
         # journaling (see the deliberate absence from _turn_event_parts).

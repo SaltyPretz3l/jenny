@@ -1,0 +1,372 @@
+/* ── Session rail (row 59 checkpoint 2) ──
+   One rail per chat pane (renderer/chat/renderer-session-rail.js), its own session's facts. This
+   file is imported right after chat-panes.css. The controller writes data-session-rail on the pane
+   element:
+     docked    the 280px rail at the pane's end edge, spanning the stage and composer rows. The stage
+               gives up the rail's room as a margin (so its size container, and every absolute child
+               of it, stays clear of the rail), the composer and the empty-chat hero do the same, and
+               the composer's own width formula is re-stated over the room that is left so the
+               timeline measure and the composer keep one set of edges.
+     undocked  below the dock threshold: the Session toggle opens a sheet anchored to the pane.
+     hidden    docked-capable but hidden by the person, or not available here.
+   .chat-pane is display: contents in the one-pane view, so the rail, the sheet and the stage are
+   all grid items of #chatView there and of the pane in a split; the placement below works for
+   both. Logical properties only; existing tokens only; reduced motion turns every motion off
+   (the motion tokens go to 0 and the one keyframe animation is removed). */
+
+.chat-pane {
+  --session-rail-width: 280px;
+  --session-rail-reserve: 0px;
+}
+
+.chat-pane[data-session-rail="docked"]:not(.ide-chat-dock-body) {
+  /* Rail width plus one space-8 of air between the reading column and the rail. */
+  --session-rail-reserve: calc(var(--session-rail-width) + var(--space-8));
+  --chat-room: calc(100% - var(--session-rail-reserve));
+  --composer-width: var(--chat-measure-lock, min(var(--chat-measure-cap), calc(var(--chat-room) - 2 * max(clamp(var(--chat-gutter-min), calc(0.03 * var(--chat-room)), 40px), var(--chat-sprite-rail-offset), min(var(--chat-utility-room), (var(--chat-room) - var(--chat-reading-floor)) / 2)))));
+}
+
+/* ── Docked: room for the rail ── */
+.chat-pane[data-session-rail="docked"]:not(.ide-chat-dock-body) > .chat-thread-stage {
+  margin-inline-end: var(--session-rail-reserve);
+}
+
+.chat-pane[data-session-rail="docked"]:not(.ide-chat-dock-body) > .composer-wrap {
+  /* The margin box (composer + reserve) is centred in the pane's cell, so the composer is centred in
+     the room beside the rail, as the timeline column is in the stage. */
+  justify-self: center;
+  margin-inline: 0 var(--session-rail-reserve);
+}
+
+.chat-pane[data-session-rail="docked"]:not(.ide-chat-dock-body) > .hero-stage {
+  padding-inline-end: var(--session-rail-reserve);
+}
+
+.chat-view.chat-empty .chat-pane[data-session-rail="docked"]:not(.ide-chat-dock-body) > .hero-stage::before {
+  inset-inline-start: max(0px, calc((100% - var(--session-rail-reserve) - var(--_thread-col-content)) / 2 - var(--chat-sprite-rail-offset)));
+}
+
+/* Docked, the utility cluster (with the Session toggle) is one row over the rail's head, on the
+   tray's end edge, so nothing floats over the reading column and its gutters reserve nothing
+   (observeUtilityReserve measures no reach into the stage). The rail's tray starts below it. */
+.chat-pane[data-session-rail="docked"]:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster {
+  flex-direction: row;
+  margin-inline-end: var(--space-8);
+}
+
+.chat-pane[data-session-rail="docked"]:not(.ide-chat-dock-body) > .session-rail {
+  padding-block-start: calc(var(--space-4) + 28px + var(--space-4));
+}
+
+/* ── The rail ── */
+.session-rail {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  justify-self: end;
+  align-self: stretch;
+  box-sizing: border-box;
+  inline-size: var(--session-rail-width);
+  min-inline-size: 0;
+  min-block-size: 0;
+  /* Equal room round the tray (owner, 2026-10-15). */
+  padding: var(--space-8);
+  overflow-y: auto;
+  z-index: var(--z-raised);
+}
+
+.chat-view[data-pane-count="2"] > .chat-pane > .session-rail {
+  grid-row: 2 / -1;
+}
+
+.session-rail[hidden],
+.session-rail-sheet[hidden] {
+  display: none;
+}
+
+/* One tray: hairline-divided sections on the side panel's surface. */
+.session-rail-tray {
+  display: grid;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-md);
+  background: var(--side-panel-bg);
+}
+
+.session-rail-section {
+  padding-block: var(--space-5);
+}
+
+.session-rail-section + .session-rail-section {
+  border-block-start: 1px solid var(--line);
+}
+
+/* Header: chevron, title, value (with an optional status dot). Titles may wrap; values never truncate. */
+.session-rail-section-head {
+  appearance: none;
+  display: grid;
+  grid-template-columns: 12px minmax(0, auto) 1fr auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  inline-size: 100%;
+  min-block-size: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  font-weight: 500;
+  text-align: start;
+  cursor: pointer;
+}
+
+.session-rail-section-head:hover .session-rail-section-title {
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+
+.session-rail-section-head:focus-visible,
+.session-rail-fact:focus-visible,
+.session-rail-toggle:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.session-rail-chevron {
+  inline-size: 12px;
+  block-size: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--text-muted);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.session-rail-section-head[aria-expanded="false"] .session-rail-chevron {
+  transform: rotate(-90deg);
+}
+
+:root[dir="rtl"] .session-rail-section-head[aria-expanded="false"] .session-rail-chevron {
+  transform: rotate(90deg);
+}
+
+.session-rail-section-value {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  grid-column: 4;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.session-rail-section-value .status-dot {
+  inline-size: 6px;
+  block-size: 6px;
+}
+
+.session-rail-count--add {
+  color: var(--widget-tool-success-color);
+}
+
+.session-rail-count--del {
+  color: var(--widget-tool-error-color);
+}
+
+.session-rail-dot-pulse {
+  animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
+}
+
+/* ── Disclosure: height animates with interpolate-size; reduced motion turns it off ── */
+.session-rail-section-body {
+  display: grid;
+  gap: var(--space-1);
+  margin-block-start: var(--space-3);
+  interpolate-size: allow-keywords;
+  block-size: auto;
+  overflow: clip;
+  overflow-clip-margin: var(--space-2);
+  transition:
+    block-size var(--motion-duration-regular) var(--motion-ease-emphasis),
+    margin-block-start var(--motion-duration-regular) var(--motion-ease-emphasis),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    visibility 0s;
+}
+
+.session-rail-section-head[aria-expanded="false"] + .session-rail-section-body {
+  block-size: 0;
+  margin-block-start: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    block-size var(--motion-duration-regular) var(--motion-ease-emphasis),
+    margin-block-start var(--motion-duration-regular) var(--motion-ease-emphasis),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    visibility 0s linear var(--motion-duration-regular);
+}
+
+/* Data settling in after "checking" (load, session switch) is not motion. */
+.session-rail-tray[data-no-motion] * {
+  transition: none !important;
+}
+
+/* ── Rows ── */
+.session-rail-fact {
+  appearance: none;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  box-sizing: border-box;
+  min-block-size: 28px;
+  padding-block: 0;
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  text-align: start;
+}
+
+button.session-rail-fact {
+  inline-size: 100%;
+  cursor: pointer;
+}
+
+button.session-rail-fact:hover {
+  background: var(--rail-hover-bg);
+  color: var(--text-primary);
+}
+
+.session-rail-icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.session-rail-icon-glyph {
+  inline-size: 14px;
+  block-size: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Rows ellipsize; the full text is in the row's tooltip and accessible name. */
+.session-rail-ellip {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A path keeps its left-to-right reading order under RTL (its ellipsis sits at the end). */
+.session-rail-ellip--path {
+  direction: ltr;
+  text-align: start;
+}
+
+.session-rail-meta {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.session-rail-note {
+  margin: 0;
+  padding-inline: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.45;
+}
+
+/* ── Session toggle (in the pane's utility cluster) ──
+   At every width it is the panel glyph alone (the label stays for assistive tech), so the cluster, whose reach the
+   reading gutters clear, stays one glyph wide. */
+.chat-timeline-utility-button.session-rail-toggle--icon:has(.chat-timeline-utility-text) {
+  inline-size: 28px;
+  padding-inline: var(--space-2);
+}
+
+.session-rail-toggle--icon .chat-timeline-utility-text {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.session-rail-toggle[aria-expanded="true"] {
+  color: var(--toprail-item-active-color);
+  background: var(--toprail-item-active-bg);
+}
+
+/* ── Sheet: below the dock threshold, anchored to the pane (never writes rail_visible) ── */
+.session-rail-sheet {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  justify-self: end;
+  align-self: start;
+  box-sizing: border-box;
+  inline-size: min(320px, 92%);
+  max-block-size: calc(100% - var(--session-rail-sheet-top, 40px) - 100px);
+  margin-block-start: var(--session-rail-sheet-top, 40px);
+  margin-inline-end: var(--space-4);
+  padding: var(--space-2) var(--space-6);
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-popover-background);
+  box-shadow: var(--shadow-elevation-2);
+  z-index: var(--z-popover);
+  animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
+}
+
+.chat-view[data-pane-count="2"] > .chat-pane > .session-rail-sheet {
+  grid-row: 2 / -1;
+}
+
+.session-rail-sheet .session-rail-tray {
+  padding: 0;
+  background: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-rail-dot-pulse,
+  .session-rail-sheet {
+    animation: none;
+  }
+
+  .session-rail-chevron,
+  .session-rail-section-body,
+  .session-rail-section-head[aria-expanded="false"] + .session-rail-section-body {
+    transition: none;
+  }
+}
+
+/* Context categories share the application's palette; counts remain readable without color. */
+.session-context-bar { display: flex; height: 5px; overflow: hidden; border-radius: var(--radius-pill); background: var(--border-subtle); margin-block: var(--space-2) var(--space-3); }
+.session-context-bar > span { min-width: 0; flex-shrink: 1; }
+.session-context-category { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto 42px; gap: var(--space-2); align-items: center; font-size: var(--font-size-caption); padding-block: var(--space-1); }
+.session-context-category > :nth-child(2) { overflow-wrap: anywhere; }
+.session-context-category > :nth-child(n+3) { text-align: end; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.session-context-category strong { font-weight: 500; }
+.session-context-swatch { width: 8px; height: 8px; border-radius: 2px; }
+[data-context-category="messages"] { background: var(--accent); }
+[data-context-category="system_prompt"] { background: var(--state-success); }
+[data-context-category="tools"] { background: var(--state-warning); }
+[data-context-category="instructions"] { background: var(--accent-amber); }
+[data-context-category="skills"] { background: var(--accent-cyan); }
+[data-context-category="other"] { background: var(--text-muted); }
+[data-context-category="free"] { background: var(--border-subtle); }

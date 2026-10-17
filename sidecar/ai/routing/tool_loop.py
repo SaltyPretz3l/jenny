@@ -37,11 +37,14 @@ from sidecar.ai.error_codes import (
     CMP_LOOP_TOOL_INTERRUPTED,  # noqa: F401
 )
 from sidecar.ai.feature_flags import (
+    FEATURE_LOOP_RESULT_AWARE_SIGNATURE,  # noqa: F401
     FEATURE_PHASE_EVENTS,  # noqa: F401
+    is_default_on_flag_enabled,  # noqa: F401
     is_feature_flag_enabled,  # noqa: F401
     is_resource_discipline_enabled,  # noqa: F401
 )
 from sidecar.ai.routing import (  # noqa: F401
+    heuristic_fires,
     loop_event_emit,
     plan_presentation,
     promise_nudge,
@@ -49,6 +52,7 @@ from sidecar.ai.routing import (  # noqa: F401
     thinking_checkpoint,
     tool_loop_compaction,
     tool_loop_recovery,
+    tool_loop_text_tool_calls,
     write_progress,
 )
 from sidecar.ai.routing.auto_checkpoint import maybe_create_auto_checkpoint  # noqa: F401
@@ -64,6 +68,7 @@ from sidecar.ai.routing.loop_stop import (
     StopDecision,  # noqa: F401
     StopReason,
     _tool_call_signature,  # noqa: F401
+    advance_cycle_history,  # noqa: F401
 )
 from sidecar.ai.routing.route_policy_runtime import (
     apply_route_policy_pre_dispatch,  # noqa: F401
@@ -82,6 +87,7 @@ from sidecar.ai.routing.tool_observation import (
     KIND_TURN_FAILED,  # noqa: F401
     KIND_USER_APPROVAL_REQUESTED,  # noqa: F401
 )
+from sidecar.ai.routing.turn_boundary import finish_loop_at_boundary  # noqa: F401
 from sidecar.ai.routing.visible_reply import finalize_visible_reply
 from sidecar.ai.tools import text_tool_calls  # noqa: F401
 from sidecar.ai.tools.assembly import current_info_remediation
@@ -309,6 +315,7 @@ class ToolLoopResult:
         "approval_plan",
         "completion_source",
         "resumable_stop",
+        "turn_boundary",
         "terminal_error_code",
         "terminal_subcode",
         "terminal_error_retryable",
@@ -328,6 +335,7 @@ class ToolLoopResult:
         streamed_event_types: set[str],
         completion_source: str = "model",
         resumable_stop: str | None = None,
+        turn_boundary: Any | None = None,
         terminal_error_code: str | None = None,
         terminal_subcode: str | None = None,
         terminal_error_retryable: bool = False,
@@ -343,6 +351,7 @@ class ToolLoopResult:
         self.streamed_event_types = streamed_event_types
         self.completion_source = str(completion_source or "model")
         self.resumable_stop = str(resumable_stop or "").strip() or None
+        self.turn_boundary = turn_boundary
         self.terminal_error_code = str(terminal_error_code or "").strip() or None
         self.terminal_subcode = str(terminal_subcode or "").strip() or None
         self.terminal_error_retryable = bool(terminal_error_retryable)

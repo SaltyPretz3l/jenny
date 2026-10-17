@@ -24,6 +24,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
+const { removeFile, removeTree } = require('./fs-remove-no-follow');
 const {
   normalizeBody,
   truncateUtf8,
@@ -108,7 +109,7 @@ async function moveFile(service, journal, sourcePath, destinationPath) {
     if (error?.code !== 'EXDEV') throw error;
     await fs.copyFile(sourcePath, target);
     journal.push({ sourcePath, target });
-    await fs.rm(sourcePath, { force: true });
+    await removeFile(sourcePath);
   }
   return path.basename(target);
 }
@@ -156,7 +157,7 @@ async function archiveMemoryDirectory(service, journal, archivedFiles) {
   // schema 3 is still recorded so the app is usable.
   const leftover = await collectRelativeFiles(service.memoryDirectoryPath, '', [], 1);
   if (leftover.length === 0) {
-    await fs.rm(service.memoryDirectoryPath, { recursive: true, force: true }).catch(() => {});
+    await removeTree(service.memoryDirectoryPath).catch(() => {});
     return;
   }
   service._logMigrationEvent('WARN', 'archive_incomplete', { remaining: leftover.length });
@@ -195,7 +196,7 @@ async function buildMergedNote(service, journal, mergedFrom, archivedFiles) {
     if (isStock) {
       // Only exact app-owned stock text is safe to discard.
       await remember(service, journal, filePath);
-      await fs.rm(filePath, { force: true });
+      await removeFile(filePath);
       service._logMigrationEvent('INFO', 'discarded_stock', { file: filename });
       continue;
     }
@@ -355,7 +356,7 @@ async function migratePersonalityWorkspaceToV3(service) {
       merged_from: mergedFrom,
     });
     for (const entry of journal) {
-      if (entry.snapshot?.backupPath) await fs.rm(entry.snapshot.backupPath, { force: true }).catch(() => {});
+      if (entry.snapshot?.backupPath) await removeFile(entry.snapshot.backupPath).catch(() => {});
     }
   } catch (error) {
     let rollbackFailures = 0;
@@ -368,7 +369,7 @@ async function migratePersonalityWorkspaceToV3(service) {
           } catch (moveError) {
             if (moveError?.code !== 'EXDEV') throw moveError;
             await fs.copyFile(entry.target, entry.sourcePath);
-            await fs.rm(entry.target, { force: true });
+            await removeFile(entry.target);
           }
         } else {
           await service.restoreFileSnapshot(entry.filePath, entry.snapshot);

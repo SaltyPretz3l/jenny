@@ -309,19 +309,27 @@ test('failed slash command completion preserves the exact composer draft', async
 
 test('successful slash completion never clears text typed while the command was pending', async (t) => {
   let settle;
+  let executed;
+  const dispatched = new Promise((resolve) => { executed = resolve; });
   const slashCommandRegistry = {
-    execute: () => ({
-      matched: true,
-      accepted: true,
-      clearPolicy: 'on_success',
-      invocation: { sessionId: 'session-1', generation: 0 },
-      completion: new Promise((resolve) => { settle = resolve; }),
-    }),
+    execute: () => {
+      executed();
+      return {
+        matched: true,
+        accepted: true,
+        clearPolicy: 'on_success',
+        invocation: { sessionId: 'session-1', generation: 0 },
+        completion: new Promise((resolve) => { settle = resolve; }),
+      };
+    },
   };
   const harness = createHarness({ chatInputValue: '/note original', slashCommandRegistry });
   t.after(() => harness.restore());
 
   const pending = harness.controller.startPromptSend('/note original');
+  // A slash send refreshes prompt commands before it dispatches (row 53 S7b),
+  // so the command runs after an await; type only once it is pending.
+  await dispatched;
   harness.chatInput.value = 'new draft';
   settle({ ok: true, code: 'note_saved' });
   await pending;

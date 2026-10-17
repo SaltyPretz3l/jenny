@@ -1,0 +1,218 @@
+/* styles/chat-changes-detail.css: the Changes side panel's read-only Working tree page
+   (row 59 checkpoint 2; PO rows "Changes detail" and "Changes panel alignment").
+   Reuses the chat file-diff list (styles/chat-tool-diff.css) and the inventory primitives; no new
+   tokens. Alignment contract: one start edge on the panel's 12px inline padding (owner line, scope
+   row, summary, chevrons, footer) and one end edge (tools, switch, counts, open buttons); every
+   row reserves the same scrollbar gutter as the scrolling body so the end edge never jumps when
+   the list starts to scroll. Logical properties only; no motion beyond the existing chevron turn. */
+
+.changes-detail-page {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-block-size: 0;
+  block-size: 100%;
+}
+
+.changes-view-host { flex: 1 1 auto; min-block-size: 0; }
+.changes-view-host[hidden] { display: none; }
+
+.changes-wt {
+  --changes-wt-name-line: calc(1.4 * var(--tl-font-code));
+  --changes-wt-name-indent: calc(13px + 7px + 2 * var(--space-3));
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+}
+.changes-wt[hidden] { display: none; }
+.changes-detail-page[data-changes-scope="working_tree"] > .changes-wt { flex: 1 1 auto; }
+
+/* The owner line takes the same start edge and gutter as the rows below it. */
+#artifactReviewPanel[data-artifact-review-mode="code_review"] > .side-panel-owner-line {
+  padding-inline: var(--space-6);
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+
+/* ── Scope row: branch, tools, Working tree / This chat ── */
+.changes-wt-scope { flex: 0 0 auto; }
+.changes-scope {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-inline: var(--space-6);
+  padding-block-end: var(--space-4);
+  overflow: hidden;
+  scrollbar-gutter: stable;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+.changes-scope-branch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+.changes-scope-branch svg { flex: none; color: var(--text-muted); }
+.changes-scope-branch-text {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.changes-scope-spacer { flex: 1 1 auto; }
+.changes-scope-switch { flex: none; }
+.changes-scope-tool {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  inline-size: 28px;
+  block-size: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.changes-scope-tool:hover { background: var(--rail-hover-bg); color: var(--text-primary); }
+.changes-scope-tool[aria-pressed="true"] { background: var(--rail-hover-bg); color: var(--text-primary); }
+
+/* ── Body: filter, summary, rows, footer ── */
+.changes-wt-scroll {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow-y: auto;
+  padding-inline: var(--space-6);
+  padding-block-end: var(--space-8);
+  scrollbar-gutter: stable;
+}
+.changes-wt-scroll[hidden] { display: none; }
+.changes-wt-filter-slot:not(:empty) { margin-block-end: var(--space-4); }
+.changes-wt-filter-slot .inv-text-field { display: block; }
+.changes-wt-filter-slot .inv-text-field-control { inline-size: 100%; }
+
+.changes-wt-summary-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-block-end: var(--space-4);
+}
+.changes-wt-tools {
+  display: inline-flex;
+  flex: none;
+  margin-block-start: calc(-1 * var(--space-2));
+}
+.changes-wt-summary {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
+.changes-wt-add { color: var(--widget-tool-success-color); }
+.changes-wt-del { color: var(--widget-tool-error-color); }
+.changes-wt-limit {
+  margin: var(--space-4) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+/* File rows reuse .file-diff; the name leads and the folder sits under it (420px never fits both). */
+.changes-wt .file-diff-head {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  align-items: flex-start;
+  background: var(--side-panel-bg);
+}
+.changes-wt .file-diff-body { max-block-size: none; }
+.changes-wt .file-diff-toggle {
+  align-items: flex-start;
+  min-block-size: 40px;
+  padding-block: var(--space-2);
+  padding-inline: 0 var(--space-3);
+}
+.changes-wt .file-diff-chevron { margin-block-start: calc((var(--changes-wt-name-line) - 13px) / 2); }
+.changes-wt .file-diff-language-dot { margin-block-start: calc((var(--changes-wt-name-line) - 7px) / 2); }
+.changes-wt .file-diff-counts,
+.changes-wt .file-diff-note { line-height: var(--changes-wt-name-line); }
+.changes-wt .file-diff-count-add { color: var(--widget-tool-success-color); }
+.changes-wt .file-diff-count-remove { color: var(--widget-tool-error-color); }
+.changes-wt .file-diff-note {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-style: italic;
+}
+.changes-wt .file-diff-note + .file-diff-counts { margin-inline-start: 0; }
+.changes-wt .file-diff-open {
+  min-inline-size: 28px;
+  min-block-size: 28px;
+  inline-size: 28px;
+  block-size: 28px;
+  margin-block-start: calc(var(--space-2) + (var(--changes-wt-name-line) - 28px) / 2);
+}
+.changes-wt .file-diff--stacked .file-diff-path {
+  display: grid;
+  grid-template-areas: "base" "dir";
+}
+.changes-wt .file-diff--stacked .file-diff-basename {
+  grid-area: base;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.changes-wt .file-diff--stacked .file-diff-directory {
+  grid-area: dir;
+  direction: ltr;
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-caption);
+  line-height: 1.35;
+}
+.changes-wt .file-diff-body:has(> .changes-wt-note) {
+  padding-block: 0;
+  background: none;
+  border: 0;
+}
+.changes-wt-note {
+  padding-block-end: var(--space-3);
+  padding-inline-start: var(--changes-wt-name-indent);
+  color: var(--text-muted);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-caption);
+}
+
+.changes-wt-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  margin-block-start: var(--space-6);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+.changes-wt-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--text-secondary) 40%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.changes-wt-link:hover { color: var(--text-primary); }
+
+/* Every control carries the 2px focus ring. */
+.changes-wt :is(button, input, .inv-segmented-option):focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+.changes-wt .file-diff-toggle:focus-visible,
+.changes-wt .file-diff-open:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }

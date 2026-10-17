@@ -293,6 +293,45 @@ def _build_messages(
     return constructed
 
 
+_TOP_LEVEL_SCHEMA_COMBINATORS = ("anyOf", "oneOf", "allOf")
+
+
+def _provider_tool_parameters(schema: dict[str, Any]) -> dict[str, Any]:
+    """Drop top-level schema combinators from what the provider sees.
+
+    llama.cpp builds its tool-call grammar from ``anyOf`` before ``properties``,
+    so write_file's alias branches (each only a ``required`` list) left no room
+    for arguments and every call streamed as ``{}``. The provider gets the plain
+    object; Jenny still validates arguments against the full schema.
+    """
+    if not any(key in schema for key in _TOP_LEVEL_SCHEMA_COMBINATORS):
+        return schema
+    required: list[str] = [str(key) for key in schema.get("required") or [] if isinstance(key, str)]
+    for combinator in _TOP_LEVEL_SCHEMA_COMBINATORS:
+        branches = [branch for branch in schema.get(combinator) or [] if isinstance(branch, dict)]
+        branch_required = [
+            {key for key in branch.get("required") or [] if isinstance(key, str)}
+            for branch in branches
+        ]
+        if not branch_required:
+            continue
+        # allOf demands every branch; anyOf/oneOf only what all branches share.
+        keys = (
+            set.union(*branch_required)
+            if combinator == "allOf"
+            else set.intersection(*branch_required)
+        )
+        required.extend(sorted(keys - set(required)))
+    flattened = {
+        key: value for key, value in schema.items() if key not in _TOP_LEVEL_SCHEMA_COMBINATORS
+    }
+    if required:
+        flattened["required"] = required
+    else:
+        flattened.pop("required", None)
+    return flattened
+
+
 def _build_tools_payload(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     payload: list[dict[str, Any]] = []
     for tool in tools:
@@ -302,14 +341,15 @@ def _build_tools_payload(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if tool.get("defer_loading") is True:
             continue
         description = _as_non_empty_string(tool.get("description")) or ""
-        parameters = tool.get("parameters") if isinstance(tool.get("parameters"), dict) else {}
+        raw_parameters = tool.get("parameters")
+        parameters = raw_parameters if isinstance(raw_parameters, dict) else {}
         payload.append(
             {
                 "type": "function",
                 "function": {
                     "name": name,
                     "description": description,
-                    "parameters": parameters,
+                    "parameters": _provider_tool_parameters(parameters),
                 },
             }
         )

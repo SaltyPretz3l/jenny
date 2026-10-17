@@ -529,3 +529,24 @@ test('stream unit reuse resets when the active session changes even if message i
 
   assert.deepEqual(previousLengths, [0, 1, 0]);
 });
+
+test('streaming canonical image references use their pane session and refresh unchanged Markdown after tool metadata', () => {
+  const dom = new JSDOM('');
+  try {
+    const message = { id: 'answer', role: 'assistant', turn_id: 'turn', content: 'image' };
+    const messages = [message];
+    const state = { currentSessionId: 'source', messagesBySession: new Map([['source', messages]]) };
+    const controller = createStreamRevealController({ state, windowRef: dom.window,
+      reducedMotionQuery: { matches: true },
+      renderStreamingMarkdownUnits: () => ({ html: '<img src="image-id">',
+        units: [{ html: '<img src="image-id">', fingerprint: 'same' }], changedStartIndex: 1 }) });
+    assert.match(controller.buildStreamingBubbleMarkup(message).bubbleInnerHtml, /<img/);
+    messages.push({ role: 'tool', turn_id: 'turn', tool_result: { tool_name: 'image_generate',
+      generated_artifacts: [{ artifact_id: 'image-id', artifact_kind: 'image', display_path: 'image.png' }] } });
+    const rendered = controller.buildStreamingBubbleMarkup(message);
+    assert.doesNotMatch(rendered.bubbleInnerHtml, /<img/);
+    assert.match(rendered.bubbleInnerHtml, /data-session-id="source"/);
+    assert.match(rendered.bubbleInnerHtml, /data-image-viewer-open="artifact"[^>]*data-image-id="image-id"/);
+    assert.equal(rendered.streamChangedStart, 0);
+  } finally { dom.window.close(); }
+});

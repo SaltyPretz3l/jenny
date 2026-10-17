@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+const { removeFile, removeTree } = require('../fs-remove-no-follow');
 const { ensureDir } = require('./path-utils');
 const { HARNESS_ERROR_CODES } = require('./error-codes');
 const { redactLogValue } = require('../log-entry-normalizer');
@@ -21,8 +22,22 @@ const DEFAULT_DIAGNOSTIC_MAX_FILES = 5000;
 // tighter 100 MiB override below.
 const DEFAULT_DIAGNOSTIC_MAX_TOTAL_BYTES = 200 * 1024 * 1024;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
+const _lastPruneAt = new Map();
 const _clientTimingOperations = new Map();
 const _publishingStreams = new Set();
+
+function makeEmitLog(service) {
+  return (level, event, details) => {
+    if (typeof service?._emitServiceLog === 'function') {
+      service._emitServiceLog(level, event, details);
+    }
+  };
+}
+
+function isValidStreamId(streamId) {
+  return /^[A-Za-z0-9._-]+$/.test(streamId);
+}
 
 function _streamTimingKey(userDataPath, streamId) {
   return `${userDataPath}\0${streamId}`;
@@ -46,11 +61,7 @@ async function _mergeClientTimingFile(filePath, timing) {
 }
 
 function _dateSegmentForNow() {
-  const now = new Date();
-  const yyyy = String(now.getUTCFullYear()).padStart(4, '0');
-  const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(now.getUTCDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
+  return new Date().toISOString().slice(0, 10);
 }
 
 function _normalizeTimingMarkers(markers) {
@@ -160,30 +171,19 @@ function _dateFromSegment(segment) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-async function _safeRm(targetPath) {
-  await fs.promises.rm(targetPath, { recursive: true, force: true });
-  return 1;
-}
-
 async function _writeFileAtomic(filePath, content) {
   const tempPath = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   try {
     await fs.promises.writeFile(tempPath, content, 'utf8');
     await fs.promises.rename(tempPath, filePath);
   } catch (error) {
-    await fs.promises.rm(tempPath, { force: true }).catch(() => null);
+    await removeFile(tempPath).catch(() => null);
     throw error;
   }
 }
 
-async function _collectDiagnosticFiles(root) {
+async function _collectDiagnosticFiles(root, entries) {
   const files = [];
-  let entries;
-  try {
-    entries = await fs.promises.readdir(root, { withFileTypes: true });
-  } catch {
-    return files;
-  }
   for (const entry of entries) {
     if (!entry.isDirectory()) {
       continue;
@@ -230,6 +230,7 @@ async function pruneTurnDiagnostics({
   } catch {
     return { removedCount: 0 };
   }
+  const removedDirs = new Set();
   for (const entry of entries) {
     if (!entry.isDirectory()) {
       continue;
@@ -238,26 +239,26 @@ async function pruneTurnDiagnostics({
     if (!date || date.getTime() + MS_PER_DAY > cutoffMs) {
       continue;
     }
-    removedCount += await _safeRm(path.join(root, entry.name));
+    await removeTree(path.join(root, entry.name));
+    removedDirs.add(entry.name);
+    removedCount += 1;
   }
 
-  const files = await _collectDiagnosticFiles(root);
+  const files = await _collectDiagnosticFiles(root, entries.filter((entry) => !removedDirs.has(entry.name)));
   const cap = Math.max(Number(maxFiles) || DEFAULT_DIAGNOSTIC_MAX_FILES, 1);
+  files.sort((a, b) => a.mtimeMs - b.mtimeMs);
   if (files.length > cap) {
-    files.sort((a, b) => a.mtimeMs - b.mtimeMs);
-    for (const entry of files.slice(0, files.length - cap)) {
-      removedCount += await _safeRm(entry.filePath);
+    for (const entry of files.splice(0, files.length - cap)) {
+      await removeTree(entry.filePath);
+      removedCount += 1;
     }
   }
-  if (Number.isFinite(maxTotalBytes)) {
-    const remaining = await _collectDiagnosticFiles(root);
-    let total = remaining.reduce((sum, entry) => sum + entry.size, 0);
-    for (const entry of remaining.sort((a, b) => a.mtimeMs - b.mtimeMs)) {
-      if (total <= maxTotalBytes) break;
-      const removed = await _safeRm(entry.filePath);
-      if (removed) total -= entry.size;
-      removedCount += removed;
-    }
+  let total = files.reduce((sum, entry) => sum + entry.size, 0);
+  for (const entry of files) {
+    if (!Number.isFinite(maxTotalBytes) || total <= maxTotalBytes) break;
+    await removeTree(entry.filePath);
+    total -= entry.size;
+    removedCount += 1;
   }
   return { removedCount };
 }
@@ -287,11 +288,7 @@ async function _fetchSidecarSnapshot(emitLog, service, requestId) {
 }
 
 async function fetchTurnProviderDiagnostics({ service, requestId } = {}) {
-  const emitLog = (level, event, details) => {
-    if (typeof service?._emitServiceLog === 'function') {
-      service._emitServiceLog(level, event, details);
-    }
-  };
+  const emitLog = makeEmitLog(service);
   return _fetchSidecarSnapshot(emitLog, service, requestId);
 }
 
@@ -322,7 +319,7 @@ async function dumpTurnDiagnostic({
   if (!resolvedStreamId) {
     return null;
   }
-  if (!/^[A-Za-z0-9._-]+$/.test(resolvedStreamId)) {
+  if (!isValidStreamId(resolvedStreamId)) {
     service?._emitServiceLog?.('WARN', 'chat.turn_diagnostic_stream_id_rejected', {
       streamId: String(resolvedStreamId).slice(0, 100),
     });
@@ -333,11 +330,7 @@ async function dumpTurnDiagnostic({
     return null;
   }
 
-  const emitLog = (level, event, details) => {
-    if (typeof service?._emitServiceLog === 'function') {
-      service._emitServiceLog(level, event, details);
-    }
-  };
+  const emitLog = makeEmitLog(service);
 
   if (providerDiagnostics === undefined) {
     providerDiagnostics = await fetchTurnProviderDiagnostics({
@@ -383,12 +376,18 @@ async function dumpTurnDiagnostic({
   const filePath = path.join(dir, `${resolvedStreamId}.json`);
 
   try {
-    const sweep = await pruneTurnDiagnostics({ userDataPath, ...(service?.hostMode === 'server'
-      ? { maxAgeDays: 7, maxTotalBytes: 100 * 1024 * 1024 } : {}) });
-    if (sweep.removedCount > 0) {
-      emitLog('INFO', 'logs.turn_diagnostic_swept', {
-        removedCount: sweep.removedCount,
-      });
+    const root = path.resolve(_diagnosticsRoot(userDataPath));
+    const now = Date.now();
+    const lastPruneAt = _lastPruneAt.get(root);
+    if (lastPruneAt == null || now - lastPruneAt >= PRUNE_INTERVAL_MS) {
+      _lastPruneAt.set(root, now);
+      const sweep = await pruneTurnDiagnostics({ userDataPath, ...(service?.hostMode === 'server'
+        ? { maxAgeDays: 7, maxTotalBytes: 100 * 1024 * 1024 } : {}) });
+      if (sweep.removedCount > 0) {
+        emitLog('INFO', 'logs.turn_diagnostic_swept', {
+          removedCount: sweep.removedCount,
+        });
+      }
     }
   } catch (error) {
     emitLog('WARN', 'chat.turn_diagnostic_sweep_failed', {
@@ -518,14 +517,10 @@ async function mergeClientTimingIntoTurnDiagnostic({
   }
   // streamIds are caller-supplied over IPC; reject anything that could
   // escape the diagnostics directory before it reaches a path join.
-  if (!/^[A-Za-z0-9._-]+$/.test(resolvedStreamId)) {
+  if (!isValidStreamId(resolvedStreamId)) {
     return null;
   }
-  const emitLog = (level, event, details) => {
-    if (typeof service?._emitServiceLog === 'function') {
-      service._emitServiceLog(level, event, details);
-    }
-  };
+  const emitLog = makeEmitLog(service);
 
   // Park the report first, synchronously: a dump that has not taken its final
   // pending snapshot yet consumes it. Only an already-published dump needs a

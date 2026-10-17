@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "engine": "ninfer-windows",
+  "repo": "natpate/ninfer-windows",
+  "release": "v0.9.1",
+  "version": "0.9.1",
+  "asset": "ninfer-windows-0.9.1-win64-cuda131.zip",
+  "size_bytes": 450215373,
+  "sha256": "d05f9df73feb43b47de23cb09ee9b9e79b040afb8d73ae30a0f4c93dea379060",
+  "install_dirname": "ninfer-0.9.1",
+  "executable": "ninfer-serve.exe",
+  "sums_file": "SHA256SUMS",
+  "expected_files": [
+    "ninfer-serve.exe",
+    "avcodec-62.dll",
+    "avformat-62.dll",
+    "avutil-60.dll",
+    "libcurl.dll",
+    "msvcp140.dll",
+    "swresample-6.dll",
+    "swscale-9.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "z.dll",
+    "SHA256SUMS"
+  ],
+  "extract_limits": {
+    "max_entries": 64,
+    "max_entry_uncompressed_bytes": 268435456,
+    "max_total_uncompressed_bytes": 1073741824
+  },
+  "license": "Apache-2.0",
+  "license_url": "https://github.com/natpate/ninfer-windows/blob/master/LICENSE",
+  "project_url": "https://github.com/natpate/ninfer-windows",
+  "_comment": "PROVENANCE MANIFEST. NInfer for Windows (Apache-2.0; Windows CUDA build of https://github.com/Neroued/ninfer) is never bundled: the main process downloads this one pinned release asset only after the user asks to install the NInfer runtime, verifies size_bytes and sha256 before extraction, checks the zip's own SHA256SUMS, and installs it under userData/engines/ninfer/<install_dirname>/. The download URL is derived from repo, release and asset (never read from this file) and redirects once to release-assets.githubusercontent.com. size_bytes and sha256 equal the GitHub release API digest field for v0.9.1, verified 2026-10-13 (24 zip entries under one top-level folder, 481.3 MB uncompressed, largest ninfer-serve.exe at 231236096 bytes). Jenny launches ninfer-serve.exe itself on loopback; the launcher scripts in the zip bind 0.0.0.0 with --cors --webui and are never used. No model weights are referenced here: the model artifact is pinned separately in ninfer-artifacts.json."
+}

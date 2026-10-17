@@ -15,6 +15,8 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Protocol, runtime_checkable
 
+from sidecar.ai.context.context_rows import CONTEXT_ROLE, render_context_content
+
 if TYPE_CHECKING:
     from sidecar.ai.config import RuntimeConfig
     from sidecar.ai.engines.base import BaseEngine
@@ -300,6 +302,12 @@ def estimate_messages_tokens(
     total = 0
     for message in messages:
         content = message.get("content")
+        if message.get("role") == CONTEXT_ROLE:
+            # Count the form the model actually receives (preamble + JSON
+            # envelope), not the bare body.
+            rendered = render_context_content(message)
+            if rendered is not None:
+                content = rendered
         if isinstance(content, str) and content:
             total += backend.count_tokens(content)
         tool_calls = message.get("tool_calls")
@@ -384,6 +392,10 @@ class BudgetTracker:
     # the chars//4 estimator. TokenBudget stays frozen; this is the mutable
     # per-request companion, so the field belongs on the tracker.
     backend: TokenizerBackend | None = None
+    # The served window before the estimator's headroom was taken off. A
+    # provider's own prompt count needs no headroom, so the tool loop judges
+    # it against this (0 when unknown: the estimate path only).
+    raw_context_window: int = 0
     _progress_tokens: list[int | None] = field(default_factory=list)
     _made_tool_progress: list[bool] = field(default_factory=list)
     _cumulative_progress_tokens: int = 0
@@ -691,7 +703,12 @@ def apply_budget_check(  # noqa: PLR0913 - keyword-only budget inputs.
         output_reservation_tokens=explicit_output_reservation,
         **budget_kwargs,
     )
-    tracker = BudgetTracker(budget=budget, num_tools=num_tools, backend=backend)
+    tracker = BudgetTracker(
+        budget=budget,
+        num_tools=num_tools,
+        backend=backend,
+        raw_context_window=int(context_window),
+    )
     return working_messages, budget, tracker
 
 

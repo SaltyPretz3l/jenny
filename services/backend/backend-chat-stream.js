@@ -225,7 +225,7 @@ async function compactContextNow(service, sessionId) {
         : renderableResult;
     };
     return await requestRuntimeInference(service, 'chat.compact', {
-      accept_version: '2026-08-17', session_id: normalizedSessionId, messages,
+      accept_version: '2026-10-15', session_id: normalizedSessionId, messages,
       // A history larger than one summariser request is folded in up to four
       // model passes (sidecar compaction_passes.py), so this outlasts two slow ones.
     }, { sessionId: normalizedSessionId, timeoutMs: 300_000, consumeResult });

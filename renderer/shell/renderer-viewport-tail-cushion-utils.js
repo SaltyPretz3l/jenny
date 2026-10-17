@@ -22,6 +22,10 @@
   const TAIL_CUSHION_GLIDE_MS = 200;
   // A reader gesture this recent means the reader is moving the view.
   const TAIL_CUSHION_READER_INTENT_MS = 300;
+  // A shrink this soon after streaming ended still becomes room (gate F29: the
+  // Answers view hides the settled turn's reasoning lines in the frame after
+  // the terminal render, once a plain streaming check would say no).
+  const TAIL_CUSHION_SETTLE_WINDOW_MS = 250;
   const SENTINEL_SELECTOR = '.chat-thread-scroll-sentinel';
 
   function finite(value) {
@@ -68,18 +72,34 @@
       glideFrame: 0,
       glideFrom: 0,
       glideStartedAt: 0,
+      lastStreamingAt: 0,
+      settleFrame: 0,
     };
 
     function readRect(node) {
       try { return node?.getBoundingClientRect?.() || null; } catch (_error) { return null; }
     }
 
-    // The tail reference is the timeline's last root (a turn); the activity row
-    // can sit directly in the timeline before any article exists, so skip it.
+    // The tail reference is the last visible row of the timeline's last root
+    // (a turn), else the turn itself; the activity row can sit directly in the
+    // timeline before any article exists, so skip it. Measuring the row, not
+    // the turn, makes a Thinking panel collapsing above a newer answer row an
+    // above-the-tail shift the clamp absorbs: as a tail shrink it became room
+    // that dropped the whole view at reply end (gate 2026-10-14).
+    function readLastRow(turn) {
+      let rows;
+      try { rows = turn.querySelectorAll?.('.turn-row-list > .chat-row') || null; } catch (_error) { rows = null; }
+      for (let index = (rows?.length || 0) - 1; index >= 0; index -= 1) {
+        if (finite(readRect(rows[index])?.height) > 0) return rows[index];
+      }
+      return null;
+    }
+
     function readTail() {
-      let node = chatTimeline?.lastElementChild || null;
-      while (node && node.classList?.contains?.('turn-activity-row')) node = node.previousElementSibling;
-      if (!node) return { node: null, offset: 0 };
+      let turn = chatTimeline?.lastElementChild || null;
+      while (turn && turn.classList?.contains?.('turn-activity-row')) turn = turn.previousElementSibling;
+      if (!turn) return { node: null, offset: 0 };
+      const node = readLastRow(turn) || turn;
       const timelineRect = readRect(chatTimeline);
       const tailRect = readRect(node);
       return { node, offset: finite(tailRect?.top) - finite(timelineRect?.top) };
@@ -90,6 +110,7 @@
     }
 
     function record() {
+      if (isStreaming() === true) runtime.lastStreamingAt = now();
       const tail = readTail();
       runtime.timelineHeight = readTimelineHeight();
       runtime.tailNode = tail.node;
@@ -132,11 +153,15 @@
       return at > 0 && Date.now() - at <= TAIL_CUSHION_READER_INTENT_MS;
     }
 
+    function isSettling() {
+      return runtime.lastStreamingAt > 0 && now() - runtime.lastStreamingAt <= TAIL_CUSHION_SETTLE_WINDOW_MS;
+    }
+
     function canGrow() {
       return followState.get() !== false
         && !isReaderReleaseHeld()
         && !hasRecentReaderIntent()
-        && isStreaming() === true;
+        && (isStreaming() === true || isSettling());
     }
 
     // The room sits wholly below the viewport: removing it moves nothing.
@@ -220,6 +245,17 @@
           noteProgrammaticWrite(TAIL_CUSHION_WRITE_REASON);
           chatThreadScroll.scrollTop = keepTop;
         }
+        // Room added after the reply ended is retired next frame: the shrink
+        // lands without a jump, then the usual glide (or silent drop) runs.
+        if (next > previous && isStreaming() !== true) {
+          stopGlide();
+          if (!runtime.settleFrame) {
+            runtime.settleFrame = requestFrame(() => {
+              runtime.settleFrame = 0;
+              if (!runtime.disposed) settle('reply_end');
+            });
+          }
+        }
       }
       record();
     }
@@ -269,6 +305,8 @@
     function dispose() {
       if (runtime.disposed) return;
       stopGlide();
+      if (runtime.settleFrame) cancelFrame(runtime.settleFrame);
+      runtime.settleFrame = 0;
       writeCushion(0);
       runtime.observer?.disconnect?.();
       runtime.observer = null;

@@ -445,3 +445,15 @@ test('the failure line skips the tool\'s truncation markers', () => {
   // Nothing but a marker: fall through to the next stream, then to the plain fallback.
   assert.equal(line({ stderr: '...[truncated]', stdout: 'last real line\n' }), 'last real line');
 });
+
+test('python shell images with a trusted ref id open the image viewer; legacy images stay plain', (t) => {
+  const html = setupRenderer(t).renderToolShell({
+    toolKind: 'python_execute', callId: 'py-1', status: 'completed', metadata: {}, inputJson: '{}',
+    outputText: JSON.stringify({ images: ['file:///C:/legacy.png'] }),
+    trustedAttachmentImages: [{ src: 'file:///C:/stored/chart.png', id: 'chart-1' }, { src: 'https://example.invalid/x.png', id: 'remote' }],
+  });
+  assert.equal((html.match(/data-image-viewer-open=/g) || []).length, 1);
+  assert.match(html, /<button type="button" class="inv-artifact-figure-frame" data-image-viewer-open="tool" data-image-id="chart-1" data-session-id="" aria-label="View Python output image 2 of 2" title="View Python output image 2 of 2"><img class="inv-artifact-figure-image" src="file:\/\/\/C:\/stored\/chart\.png"/);
+  assert.match(html, /<span class="inv-artifact-figure-frame"><img class="inv-artifact-figure-image" src="file:\/\/\/C:\/legacy\.png"/);
+  assert.doesNotMatch(html, /example\.invalid/);
+});

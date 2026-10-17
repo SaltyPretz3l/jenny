@@ -3,6 +3,9 @@ const {
   resolveRequestedEngineType,
 } = require('./backend-service-utils');
 const { managedModelKey, normalizePreferredEngineType } = require('../shell-config-engines');
+const {
+  findNinferArtifactForModel, managedServerKindForModel, stopManagedServerOrAbort, ninferServerStops,
+} = require('./ninfer-load-path');
 const { t } = require('../i18n-main');
 const { AI_ERROR_CODES, SIDECAR_ERROR_CODES } = require('./error-codes');
 const { getResidentModels } = require('./backend-resident-models');
@@ -87,6 +90,7 @@ function normalizeModelListEntry(entry) {
   if (typeof entry.digest === 'string' && entry.digest.trim()) {
     normalized.digest = entry.digest.trim().slice(0, 128);
   }
+  if (entry.managed === 'ninfer' || entry.managed === 'llama-server') normalized.managed = entry.managed;
   return normalized;
 }
 
@@ -208,13 +212,24 @@ async function refreshStatusSnapshot(service) {
   return service.currentStatus;
 }
 
+// Which provider-integration models (Codex CLI) the aggregate would carry and
+// whether each is usable: part of the cache key, so a sign-in that lands inside
+// the TTL is not served the list read before it.
+function providerCatalogKey(service, engineType) {
+  const entries = service.providerIntegrationRegistry?.appendModelEntries?.([], {
+    engineType, includeAvailable: true,
+  }) || [];
+  return entries.map((entry) => `${entry.id}:${entry.available === true}`).join('|');
+}
+
 function listModels(service) {
   service.chatgptModelCatalogService?.snapshot?.();
   const catalogEpoch = service._modelCatalogEpoch || 0;
   const now = Date.now();
   const desiredEngineType = resolveManagedModelListEngineType(service);
+  const providerKey = providerCatalogKey(service, desiredEngineType);
   const lastResult = service._modelListLastResult;
-  if (lastResult && lastResult.engineType === desiredEngineType
+  if (lastResult && lastResult.engineType === desiredEngineType && lastResult.providerKey === providerKey
       && now >= lastResult.at && now - lastResult.at < MODEL_LIST_CACHE_TTL_MS) {
     return Promise.resolve(lastResult.value);
   }
@@ -267,8 +282,13 @@ function listModels(service) {
     }
     const providerData = service.providerIntegrationRegistry?.appendModelEntries?.(data, {
       engineType: desiredEngineType,
+      includeAvailable: true,
     }) || data;
-    const taggedData = tagModelListEntries(providerData, desiredEngineType);
+    if (providerData.slice(data.length).some((entry) => entry.available === true)) available = true;
+    const taggedData = tagModelListEntries(providerData, desiredEngineType).map((entry) => {
+      const managedKind = entry.engine_type === 'openai-compatible' ? managedServerKindForModel(service, entry.id) : '';
+      return managedKind ? { ...entry, managed: managedKind } : entry;
+    });
     replaceModelEngineHints(service, taggedData);
     return {
       ...payload,
@@ -283,7 +303,7 @@ function listModels(service) {
   inFlightPromise.then(
     (value) => {
       if (cacheable && catalogEpoch === (service._modelCatalogEpoch || 0)) {
-        service._modelListLastResult = { at: Date.now(), value, engineType: desiredEngineType };
+        service._modelListLastResult = { at: Date.now(), value, engineType: desiredEngineType, providerKey };
       }
       if (service._modelListInFlightPromise === inFlightPromise) {
         service._modelListInFlightPromise = null;
@@ -417,7 +437,7 @@ async function loadModel(service, model, options = {}) {
     // and discarded an explicit user pin whenever inference fell through to
     // Ollama. Catalog-backed callers add validated engine provenance instead.
     const inferredEngineType = inferEngineTypeFromModel(requestedModelName);
-    const requestedEngineType = loadRequest.engineType || resolveRequestedEngineType(
+    let requestedEngineType = loadRequest.engineType || resolveRequestedEngineType(
       service.configService?.getState?.()?.preferredEngineType,
       requestedModelName
     );
@@ -435,6 +455,22 @@ async function loadModel(service, model, options = {}) {
         inferred_engine: inferredEngineType,
       });
     }
+    // A managed llama-server / NInfer id never reaches `ollama pull` on a
+    // derived engine (gate F27: the chat route fell back to the current engine
+    // for a GGUF the backend list did not carry). An explicit request or a
+    // validated catalog hint keeps its engine, as in the chat route: the same
+    // tag can exist on Ollama too.
+    const managedKind = loadRequest.engineSource
+      ? '' : managedServerKindForModel(service, requestedModelName, { routing: true });
+    if ((managedKind === 'llama-server' || managedKind === 'ninfer') && requestedEngineType !== 'openai-compatible') {
+      service._emitServiceLog?.('INFO', 'backend.model_load_engine_hint_overridden', {
+        model: requestedModelName,
+        requested_engine: requestedEngineType,
+        managed_kind: managedKind,
+        source: loadRequest.engineSource,
+      });
+      requestedEngineType = 'openai-compatible';
+    }
     const manager = service.options?.getLlamaServerManager?.() || null;
     const managed = manager
       ? service.configService?.getLocalEngines?.()?.openaiCompatible?.managed || null
@@ -449,6 +485,13 @@ async function loadModel(service, model, options = {}) {
     const stopsManagedServer = Boolean(llamaServerStatus)
       && (['ready', 'starting', 'stopping', 'crashed'].includes(llamaServerStatus.state)
         || Boolean(llamaServerStatus.lastError));
+    // The managed NInfer runtime (row 54): its own artifact ids load through
+    // its manager (which stops llama-server first); every other load stops it.
+    const ninferManager = service.options?.getNinferManager?.() || null;
+    const ninferArtifact = ninferManager && requestedEngineType === 'openai-compatible'
+      ? findNinferArtifactForModel(service, requestedModelName) : null;
+    const ninferLoad = Boolean(ninferArtifact);
+    const stopsNinfer = !ninferLoad && ninferServerStops(ninferManager);
     // Starting or stopping llama-server takes the GPU over. Doing that under a live
     // response starves the engine still generating on it (2026-09-04: Ollama fell to
     // 2.58 t/s and its blocking HTTP calls then wedged the sidecar loop), so the
@@ -479,7 +522,7 @@ async function loadModel(service, model, options = {}) {
         }
       );
     }
-    if ((managedLoad || stopsManagedServer) && otherActiveStreams > 0) {
+    if ((managedLoad || stopsManagedServer || ninferLoad || stopsNinfer) && otherActiveStreams > 0) {
       service._emitServiceLog?.('WARN', 'backend.engine_switch_refused_stream_active', {
         active_stream_count: otherActiveStreams,
         model: requestedModelName,
@@ -493,7 +536,7 @@ async function loadModel(service, model, options = {}) {
         }
       );
     }
-    if (managedLoad) {
+    if (managedLoad || ninferLoad) {
       const previousModel = String(service.currentModel || '').trim();
       if (service.currentEngineType === 'ollama' && previousModel) {
         try {
@@ -536,49 +579,35 @@ async function loadModel(service, model, options = {}) {
           }
         }
       }
-      const llamaStatus = await manager.ensureRunning({
-        modelTag: requestedModelName,
-        modelPath: perModel.modelPath,
-        profileId: managed.profileId,
-        mtp: perModel.mtp,
-      });
-      if (llamaStatus?.state !== 'ready') {
-        throw new Error(
-          `Could not start llama-server for "${requestedModelName}": ${llamaStatus?.lastError || llamaStatus?.state}`
-        );
-      }
-    } else if (manager) {
-      // Any other load (another engine or a user-run openai-compatible endpoint)
-      // takes the GPU over: the managed server lives only while it is the active
-      // engine. A parked launch failure is cleared too (health pill goes quiet).
-      if (stopsManagedServer) {
-        let stopFailure;
-        try {
-          const stopped = await manager.stop();
-          stopFailure = String(stopped?.lastError || '');
-        } catch (error) {
-          stopFailure = String(error?.message || error) || 'stop_failed';
-        }
-        if (stopFailure) {
-          service._emitServiceLog?.('WARN', 'backend.engine_switch_stop_llama_server_failed', {
-            to: requestedEngineType, message: stopFailure,
-          });
+      if (ninferLoad) {
+        const ninferStatus = await ninferManager.ensureRunning({ artifactId: ninferArtifact.id });
+        if (ninferStatus?.state !== 'ready') {
           throw Object.assign(
-            new Error(
-              'The managed llama-server could not be confirmed stopped; '
-              + 'the engine switch was aborted so the GPU is not double-loaded.'
-            ),
-            {
-              error_code: AI_ERROR_CODES.ENGINE_CONNECTION,
-              category: 'engine_switch_aborted',
-              retryable: true,
-            }
+            new Error(`Could not start NInfer for "${requestedModelName}": ${ninferStatus?.lastError || ninferStatus?.state}`),
+            { ninfer_status: ninferStatus || null }
           );
         }
-        service._emitServiceLog?.('INFO', 'backend.engine_switch_stop_llama_server', {
-          to: requestedEngineType,
+      } else {
+        // llama-server's launch gate refuses while NInfer is up: stop it with proof first.
+        if (stopsNinfer) await stopManagedServerOrAbort(service, ninferManager, 'ninfer', requestedEngineType);
+        const llamaStatus = await manager.ensureRunning({
+          modelTag: requestedModelName,
+          modelPath: perModel.modelPath,
+          profileId: managed.profileId,
+          mtp: perModel.mtp,
         });
+        if (llamaStatus?.state !== 'ready') {
+          throw new Error(
+            `Could not start llama-server for "${requestedModelName}": ${llamaStatus?.lastError || llamaStatus?.state}`
+          );
+        }
       }
+    } else {
+      // Any other load (another engine or a user-run openai-compatible endpoint)
+      // takes the GPU over: a managed server lives only while it is the active
+      // engine. A parked launch failure is cleared too (health pill goes quiet).
+      if (stopsManagedServer) await stopManagedServerOrAbort(service, manager, 'llama_server', requestedEngineType);
+      if (stopsNinfer) await stopManagedServerOrAbort(service, ninferManager, 'ninfer', requestedEngineType);
     }
     await service._initializeManagedSidecar({
       reason: 'model_load',
@@ -602,6 +631,16 @@ async function loadModel(service, model, options = {}) {
       );
     }
     // Persist only a switch that actually took (pin + autostart/preflight tag).
+    // The two managed boot targets are mutually exclusive: a load on either
+    // managed server clears the other's.
+    const ninferSettings = ninferManager ? service.configService?.getLocalEngines?.()?.ninfer || null : null;
+    if (ninferLoad) {
+      service.configService?.updatePreferredEngineType?.('openai-compatible');
+      service.configService?.updateNinferSettings?.({ lastUsedArtifactId: ninferArtifact.id });
+      if (managed?.lastUsedTag) service.configService?.updateManagedLlamaServer?.({ lastUsedTag: '' });
+    } else if (ninferSettings?.lastUsedArtifactId) {
+      service.configService?.updateNinferSettings?.({ lastUsedArtifactId: '' });
+    }
     if (managedLoad) {
       // Re-read the entry: the launch takes seconds, and Tune can change it (a
       // build picked or cleared, the engine moved to Ollama) or remove the model
@@ -621,7 +660,7 @@ async function loadModel(service, model, options = {}) {
         // one initialized) recorded its own target, and keeps it.
         service.configService?.updateManagedLlamaServer?.({ lastUsedTag: '' });
       }
-    } else if (manager && managed) {
+    } else if (manager && managed && !ninferLoad) {
       if (managed.lastUsedTag) {
         // Forget the boot autostart target so the next launch cannot reverse this.
         service.configService?.updateManagedLlamaServer?.({ lastUsedTag: '' });
@@ -703,6 +742,13 @@ function autoLoadDefaultModel(service) {
 async function unloadModel(service, { stopManagedServer = false } = {}) {
     // Jenny's own llama-server holds the model and VRAM; the sidecar unload below
     // only clears Python bookkeeping for it. A reused (external) server is never ours to stop.
+    const ninferManager = stopManagedServer ? service.options?.getNinferManager?.() : null;
+    // A stop whose exit was never confirmed is retried here, so an unload
+    // never reports success while ninfer-serve may still hold the GPU.
+    if (['ready', 'starting'].includes(ninferManager?.getStatus?.()?.state) || ninferManager?.cleanupUnconfirmed?.()) {
+      await stopManagedServerOrAbort(service, ninferManager, 'ninfer', 'unload');
+      service._emitServiceLog?.('INFO', 'backend.model_unload_stopped_ninfer', {});
+    }
     const manager = stopManagedServer ? service.options?.getLlamaServerManager?.() : null;
     const serverStatus = manager?.getStatus?.() || {};
     if (['ready', 'starting'].includes(serverStatus.state) && serverStatus.reused !== true) {

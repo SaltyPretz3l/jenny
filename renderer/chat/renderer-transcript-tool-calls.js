@@ -74,17 +74,14 @@
     : typeof require === 'function'
       ? require('./renderer-code-review-affordance')
       : null;
-  const _taskSpawnChip = typeof globalThis !== 'undefined' && globalThis.rendererTaskSpawnChip
-    ? globalThis.rendererTaskSpawnChip
-    : typeof require === 'function'
-      ? require('./renderer-task-spawn-chip')
-      : null;
   const _calendarChatBlock = typeof globalThis !== 'undefined' && globalThis.rendererCalendarChatBlock
     ? globalThis.rendererCalendarChatBlock
     : typeof require === 'function' ? require('./renderer-calendar-chat-block') : null;
   // Resolved per render: index.html loads the notes entry after this module.
   const _projectNotesEntry = () => (typeof globalThis !== 'undefined' && globalThis.rendererProjectNotesEntry)
     || (typeof require === 'function' ? require('../features/renderer-project-notes-entry') : null);
+  const _memoryChatEntry = () => (typeof globalThis !== 'undefined' && globalThis.rendererMemoryChatEntry)
+    || (typeof require === 'function' ? require('../features/renderer-memory-chat-entry') : null);
   const _monitorToolUtils = typeof globalThis !== 'undefined' && globalThis.rendererMonitorToolUtils
     ? globalThis.rendererMonitorToolUtils
     : typeof require === 'function'
@@ -452,14 +449,9 @@
       const fileOperationClass = viewModel.isFileOperation
         ? ` tool-call-file-operation${viewModel.isRunning ? ' tool-call-file-composing' : (viewModel.isSettled ? ' tool-call-file-settled' : '')}`
         : '';
-      const taskSpawnChipMarkup = _taskSpawnChip?.renderTaskSpawnChipStrip?.(viewModel, {
-        escapeHtml,
-        getLinkedSessionId: _taskSpawnChip.getLinkedSessionId,
-      }) || '';
       return `
         <div class="tool-call-block${fileOperationClass}" data-call-id="${escapeHtml(viewModel.callId)}" data-tool-row-key="${escapeHtml(viewModel.rowKey)}" data-tool-status="${escapeHtml(viewModel.status)}" data-tool-details-materialized="${viewModel.detailsMaterialized ? 'true' : 'false'}">
           ${contentHtml}
-          ${taskSpawnChipMarkup}
           ${extraHtml || ''}
           ${renderToolApprovalBlock(viewModel)}
         </div>
@@ -519,8 +511,8 @@
         ? resultMeta.metadata
         : {};
       const generatedArtifacts = readToolResultGeneratedArtifacts(resultMeta);
-      const trustedAttachmentImageUrls = typeof toolCallUtils.getTrustedToolResultImageUrls === 'function'
-        ? toolCallUtils.getTrustedToolResultImageUrls(resultMeta)
+      const trustedAttachmentImages = typeof toolCallUtils.getTrustedToolResultImages === 'function'
+        ? toolCallUtils.getTrustedToolResultImages(resultMeta)
         : [];
       const durationMs = readToolResultDurationMs(resultMeta, source.durationMs || 0);
       const runningStartedAtMs = Number(source.runningStartedAtMs);
@@ -618,7 +610,7 @@
         retryMessageId: normalizeId(source.retryMessageId),
         metadata,
         generatedArtifacts,
-        trustedAttachmentImageUrls,
+        trustedAttachmentImages,
         reviewableChange,
       };
     }
@@ -693,7 +685,7 @@
     }
 
     function resolveReviewableChangeForRow(canonical, projectedToolRow, renderOptions) {
-      if (!_jennyChangeLedger || typeof _jennyChangeLedger.normalizeJennyChangeFromToolCall !== 'function') {
+      if (!_jennyChangeLedger || typeof _jennyChangeLedger.resolveReviewableChange !== 'function') {
         return null;
       }
       const turnId = normalizeId(
@@ -709,24 +701,7 @@
           && toolCallForLedger.resultMetadata.suggested_change;
         return recorded ? { scope: 'suggested', turnId, toolCallId: normalizeId(toolCallForLedger.toolCallId) } : null;
       }
-      if (typeof _jennyChangeLedger.normalizeJennyChangesFromToolCall === 'function') {
-        const pluralResult = _jennyChangeLedger.normalizeJennyChangesFromToolCall(toolCallForLedger, { turnId });
-        const changes = Array.isArray(pluralResult && pluralResult.changes) ? pluralResult.changes : [];
-        if (changes.length > 1) {
-          return {
-            scope: 'turn',
-            turnId,
-            changeCount: changes.length,
-            toolCallId: normalizeId(toolCallForLedger.toolCallId),
-            toolName: normalizeId(toolCallForLedger.toolName),
-          };
-        }
-        if (changes.length === 1) {
-          return changes[0];
-        }
-      }
-      const result = _jennyChangeLedger.normalizeJennyChangeFromToolCall(toolCallForLedger, { turnId });
-      return result && result.change ? result.change : null;
+      return _jennyChangeLedger.resolveReviewableChange(toolCallForLedger, { turnId });
     }
 
     function buildToolCallViewModelFromRow(message, allMessages, projectedToolRow, options) {
@@ -891,7 +866,9 @@
           hasLiveJournalEntry: globalThis.rendererCalendarChatBindings?.hasLiveJournalEntry,
         }) : '';
       const notesMarkup = viewModel.metadata?.result_kind === 'project_notes'
-        ? _projectNotesEntry()?.buildProjectNotesResultBlockMarkup?.(viewModel.metadata, { escapeHtml }) || '' : '';
+        ? _projectNotesEntry()?.buildProjectNotesResultBlockMarkup?.(viewModel.metadata, { escapeHtml }) || ''
+        : viewModel.metadata?.result_kind === 'memory' // the memory chip shares the notes row slot
+          ? _memoryChatEntry()?.buildMemoryResultBlockMarkup?.(viewModel.metadata, { escapeHtml, sessionId: viewModel.sessionId }) || '' : '';
       if (!viewModel.detailsMaterialized) {
         return renderToolDisclosureShell(
           viewModel,

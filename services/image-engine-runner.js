@@ -280,13 +280,23 @@ function runImageGeneration(options = {}) {
     };
     // Node keeps the root's pid reserved until it observes the exit, so a child
     // of the root created before then is ours; after it, the pid may be reused.
+    // What a later reconcile needs to re-prove the tree dead once only its root has exited.
+    let treeEvidence = null;
+    // Pids the kill helper enumerated and saw survive; no creation times, so never kill targets.
+    let killSurvivors = null;
     const reapSurvivors = async (snapshot) => {
       const rootHeldUntilMs = exitedWallAt ?? Date.now();
+      treeEvidence = { spawnedAtMs: spawnedWallAt, spawnReturnedAtMs: spawnReturnedWallAt, rootHeldUntilMs,
+        rootCreatedMs: snapshot.rootCreatedMs ?? null, survivors: [],
+        processes: (Array.isArray(snapshot.processes) ? snapshot.processes
+          : (snapshot.pids || []).map((pid) => ({ pid, createdMs: null }))).slice(0, 64) };
       let table = { ok: false, rows: [] };
       try { table = await processTools.listProcessRows(); } catch (_error) { /* Unavailable proof is never clean. */ }
       if (!table.ok) return false;
       const survivors = processTools.selectRootSurvivors({ rootPid: child.pid, spawnedAtMs: spawnedWallAt,
         spawnReturnedAtMs: spawnReturnedWallAt, rootHeldUntilMs, snapshot, rows: table.rows });
+      const created = new Map(table.rows.map((row) => [row.pid, row.createdMs ?? null]));
+      treeEvidence.survivors = survivors.pids.slice(0, 64).map((pid) => ({ pid, createdMs: created.get(pid) ?? null }));
       await processTools.terminatePids(survivors.pids);
       const proof = await processTools.confirmAllGone(survivors.pids);
       return snapshot.ok === true && survivors.ok === true && proof.confirmed === true;
@@ -331,6 +341,9 @@ function runImageGeneration(options = {}) {
           if (Number.isSafeInteger(child.pid) && child.pid > 0) {
             const proof = await processTools.killTreeWithProof(child.pid);
             confirmed = proof.confirmed === true;
+            if (proof.enumerated === true && Array.isArray(proof.survivors)) {
+              killSurvivors = proof.survivors.filter((pid) => Number.isSafeInteger(pid) && pid > 0 && pid !== child.pid);
+            }
             if (enumerationStarted) {
               const snapshot = await enumerationPromise;
               const gone = await processTools.confirmAllGone(snapshot.pids, { timeoutMs: 0 });
@@ -348,6 +361,17 @@ function runImageGeneration(options = {}) {
       if (!confirmed) {
         result.status = 'unconfirmed';
         result.reason = 'image_engine_cleanup_pending';
+        // Without any evidence the record keeps its marker, which root death never clears.
+        try {
+          if (recorded && (treeEvidence || killSurvivors)) {
+            const tree = treeEvidence ?? { spawnedAtMs: spawnedWallAt, spawnReturnedAtMs: spawnReturnedWallAt,
+              rootHeldUntilMs: exitedWallAt ?? Date.now(), rootCreatedMs: null, processes: [], survivors: [] };
+            const known = new Set(tree.survivors.map((entry) => entry.pid));
+            const reported = (killSurvivors || []).filter((pid) => !known.has(pid)).map((pid) => ({ pid, createdMs: null }));
+            pidfile.retainRenderTree(pidPath, opId, { ...tree, survivors: [...tree.survivors, ...reported].slice(0, 64) },
+              { fsImpl });
+          }
+        } catch (_error) { emitLog('WARN', 'record_tree_failed'); }
       }
       if (confirmed) {
         try { if (recorded) pidfile.clearOwnedRenderRecord(pidPath, opId, { fsImpl }); }
@@ -395,7 +419,8 @@ function runImageGeneration(options = {}) {
     child.stderr?.on('data', onStderr);
     if (!Number.isSafeInteger(child.pid) || child.pid <= 0) return;
     try {
-      pidfile.writeRenderRecord(pidPath, { pid: child.pid, exePath, opId, output: outputPath, startedAt }, { fsImpl });
+      pidfile.writeRenderRecord(pidPath, { pid: child.pid, exePath, opId, output: outputPath, startedAt,
+        treeSince: spawnedWallAt }, { fsImpl });
       recorded = true;
     } catch (_error) { requestSettlement('unrecorded'); return; }
     emitLog('INFO', 'spawned', { exe: path.basename(exePath), pid: child.pid });
@@ -424,4 +449,4 @@ function runImageGeneration(options = {}) {
   });
 }
 
-module.exports = { parseSdCliProgressLine, classifyPhaseLine, createLineSplitter, runImageGeneration };
+module.exports = { assertOutputParent, parseSdCliProgressLine, classifyPhaseLine, createLineSplitter, runImageGeneration };

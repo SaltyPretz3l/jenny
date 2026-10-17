@@ -119,3 +119,24 @@ test('the view control names itself once, from the current view', (t) => {
   assert.equal(button.title, 'Transcript view: Thinking');
   assert.equal(button.dataset.transcriptView, 'thinking');
 });
+
+test('the view control refreshes its visible tooltip when the rendered view changes', (t) => {
+  const { window, button } = mountControl(t);
+  const savedTooltip = globalThis.inventoryTooltip;
+  const Tooltip = require('../renderer/inventory/tooltip.js');
+  globalThis.inventoryTooltip = Tooltip;
+  t.after(() => {
+    Tooltip.hide({ force: true });
+    globalThis.inventoryTooltip = savedTooltip;
+  });
+
+  button.setAttribute('data-tooltip', 'Transcript view: Thinking');
+  Tooltip.show(button, 'Transcript view: Thinking');
+  globalThis.rendererTranscriptViewController.getView = () => 'answers';
+  window.document.getElementById('chatTimeline').dispatchEvent(new window.Event('transcript-view-rendered'));
+
+  assert.equal(button.getAttribute('data-tooltip'), 'Transcript view: Answers');
+  const tooltip = window.document.querySelector('[role="tooltip"]');
+  assert.equal(tooltip.textContent, 'Transcript view: Answers');
+  assert.equal(tooltip.getAttribute('aria-hidden'), 'false');
+});

@@ -151,10 +151,6 @@
       }
       currentArtifact = artifact || null;
       afterRenderV3(artifact, mode);
-      if (mode !== 'artifact') {
-        const title = panelEl.querySelector('.artifact-panel-title-text');
-        if (title) title.textContent = mode === 'code_review' ? jt("artifactPanelV2Render.changes", "Changes") : mode === 'file_preview' ? jt("ide.filePreviewLabel", "File preview") : mode === 'notes' ? jt("projectNotes.title", "Notes") : jt("artifactPanelV2Render.tasks", "Tasks");
-      }
     }
 
     function patchDirtyState(artifact) {
@@ -228,7 +224,15 @@
       const dirty = isArtifactDirty(state, artifact);
       const capabilities = resolveCapabilities(artifact);
       const titleSlot = panelEl.querySelector('[data-artifact-panel-title-slot]');
-      syncSlotHtml(titleSlot, chromeRender.buildTitleHtml({ artifact, artifactCount: switcherController ? artifacts.length : 1, dirty, kind: capabilities.kind, switcherOpen: switcherController?.isOpen?.() === true, formatLanguageLabel: projection?.formatLanguageLabel }));
+      const title = artifactMode ? (artifact ? null : jt('artifacts.review.toggleTitle', 'Artifacts'))
+        : mode === 'code_review' ? jt('artifactPanelV2Render.changes', 'Changes')
+        : mode === 'file_preview' ? jt('ide.filePreviewLabel', 'File preview')
+        : mode === 'notes' ? jt('projectNotes.title', 'Notes') : jt('artifactPanelV2Render.tasks', 'Tasks');
+      syncSlotHtml(titleSlot, chromeRender.buildTitleHtml({ artifact, title, artifactCount: switcherController ? artifacts.length : 1, dirty, kind: capabilities.kind, switcherOpen: switcherController?.isOpen?.() === true, formatLanguageLabel: projection?.formatLanguageLabel }));
+      // Non-artifact surfaces clear the live title text before rendering; an
+      // unchanged cached slot would otherwise leave it blank.
+      const titleText = artifactMode ? null : titleSlot?.querySelector('.artifact-panel-title-text');
+      if (titleText && titleText.textContent !== title) titleText.textContent = title;
       const viewSlot = panelEl.querySelector('[data-artifact-panel-view-slot]');
       syncSlotHtml(viewSlot, capabilities.hasPreview && capabilities.hasCode ? chromeRender.buildViewControlHtml(currentV3View(capabilities)) : '');
 
@@ -239,14 +243,20 @@
       const hasArtifact = Boolean(artifact);
       const sourceReady = hasArtifact && managerHooks.getSelectedArtifactSource?.() != null;
       const isImage = hasArtifact && capabilities.kind === 'image';
+      // An available generated image: View full screen shows and Copy copies the image.
+      const imageTarget = artifactMode ? actionsModule?.imageActionTarget?.(artifact, panelEl) || null : null;
       // Tasks, code review, file preview and subagents share this header for
       // its Close only: the artifact actions hide there.
       const copyBtn = panelEl.querySelector('[data-artifact-panel-v2-copy]');
       const overflowBtn = panelEl.querySelector('[data-artifact-panel-overflow]');
+      setHidden(panelEl.querySelector('[data-artifact-panel-fullscreen]'), !imageTarget);
       setHidden(copyBtn, !artifactMode);
-      setDisabled(copyBtn, !sourceReady || isImage);
+      setDisabled(copyBtn, !imageTarget && (!sourceReady || isImage));
+      const copyLabel = imageTarget ? jt('artifacts.actions.copyImage', 'Copy image') : jt('common.copy', 'Copy');
+      copyBtn?.setAttribute('aria-label', copyLabel);
+      copyBtn?.setAttribute('title', copyLabel);
       setHidden(overflowBtn, !artifactMode);
-      setDisabled(overflowBtn, !hasArtifact || !actionsController);
+      setDisabled(overflowBtn, !hasArtifact || !actionsController || actionsController.hasOverflowItems?.(artifact) === false);
       setDisabled(panelEl.querySelector('#artifactPanelV2ProvenanceTrigger'), !hasArtifact);
 
       const info = artifact && versionHistoryUtils?.resolveArtifactVersionInfo?.(artifact, state);
@@ -340,8 +350,15 @@
         toggleTextWrap();
         return;
       }
+      if (event.target.closest?.('[data-artifact-panel-fullscreen]')) {
+        // The body's image button owns the viewer open and its failure report.
+        panelEl.querySelector('.artifact-preview-image-open')?.click();
+        return;
+      }
       if (event.target.closest?.('[data-artifact-panel-v2-copy]')) {
-        managerHooks.copySelectedArtifact?.();
+        const imageTarget = actionsModule?.imageActionTarget?.(currentArtifact, panelEl);
+        if (imageTarget) globalThis.rendererImageViewerController?.run?.('copy', imageTarget);
+        else managerHooks.copySelectedArtifact?.();
         return;
       }
       const stepperBtn = event.target.closest?.('.artifact-panel-v2-stepper-btn[data-artifact-select]');

@@ -2,9 +2,11 @@
 
 const fs = require('fs');
 const path = require('path');
+const { removeTree } = require('../fs-remove-no-follow');
 
 const { parsePreservedCorruptName } = require('../backend/corrupt-file-preserve');
 const { WORKSPACE_PORTABLE_NAMES } = require('./data-inventory');
+const { DERIVED_INDEX_CHILDREN, isDerivedIndexCorruptCopy } = require('./derived-indexes');
 
 const MAX_RETAINED_WORKSPACE_CHILDREN = 50;
 const KNOWN_RUNTIME_CHILDREN = Object.freeze([
@@ -97,6 +99,8 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'WebStorage',
   'window-state.json',
   'workspace-snapshots',
+  // Rebuildable sidecar indexes and their WAL siblings (derived-indexes.js).
+  ...DERIVED_INDEX_CHILDREN,
 ]);
 
 const SESSION_MIGRATION_BACKUP_NAME = /^sessions\.json\.migrated-\d{10,16}$/;
@@ -104,13 +108,14 @@ const ATOMIC_WRITE_TEMP_NAME = /^(.+)\.\d{10,16}\.[0-9a-f]{12}\.tmp$/;
 
 // Leftovers Jenny's own writers create beside a known profile file: the
 // preserved damaged copy of a store (`<known>.corrupt-<ms>`), the pre-split
-// session backup, and an atomic-write temp orphaned by a crash. Exact name
+// session backup, an atomic-write temp orphaned by a crash, and a derived
+// index the sidecar set aside as unreadable (with its -wal/-shm). Exact name
 // contracts only; the caller also requires a regular file.
 function isOwnedDerivedName(name) {
   const text = String(name || '');
   const corruptBase = parsePreservedCorruptName(text)?.baseName;
   if (corruptBase && KNOWN_USER_DATA_CHILDREN.includes(corruptBase)) return true;
-  if (SESSION_MIGRATION_BACKUP_NAME.test(text)) return true;
+  if (SESSION_MIGRATION_BACKUP_NAME.test(text) || isDerivedIndexCorruptCopy(text)) return true;
   const tempBase = ATOMIC_WRITE_TEMP_NAME.exec(text)?.[1];
   return Boolean(tempBase) && KNOWN_USER_DATA_CHILDREN.includes(tempBase);
 }
@@ -324,7 +329,10 @@ async function cleanupJennyData(options = {}) {
         results.push(cleanupResult(target, 'retained', 'reparse_or_symlink'));
         continue;
       }
-      await fs.promises.rm(target.path, { recursive: stat.isDirectory(), force: true });
+      // lstat proved a plain file or a real directory whose tree held no link; removeTree keeps that
+      // file-or-tree choice per entry and never enters a link that appears after the scan, where Node's
+      // rm would follow a junction on a Windows EPERM retry (see fs-remove-no-follow).
+      await removeTree(target.path);
       results.push(cleanupResult(target, 'removed'));
     } catch (error) {
       results.push(cleanupResult(target, 'retained', boundedFsReason(error, 'remove_failed')));

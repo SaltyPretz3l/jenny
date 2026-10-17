@@ -23,6 +23,17 @@ async function promotePendingRestore(app, nativeImage, log = () => {}) {
     nativeImage,
   });
   if (!result.ok) log('WARN', 'data_lifecycle.restore_promotion_failed', result.error);
+  // Restored chat coordination (row 59 cp5b-3): ids and reason tokens only, never record content.
+  const coordination = result.ok ? result.coordination : null;
+  if (coordination && (coordination.quarantined?.length || coordination.ignored?.length || coordination.unavailable_links?.length)) {
+    log('WARN', 'data_lifecycle.restore_coordination_partial', {
+      applied: coordination.applied, quarantined: coordination.quarantined, ignored: coordination.ignored,
+      unavailableLinks: coordination.unavailable_links,
+    });
+  }
+  // A derived index left behind is stale for the restored profile; the sidecar replaces it.
+  const retained = result.derivedIndexes?.retained || [];
+  if (retained.length) log('WARN', 'data_lifecycle.derived_index_retained', { retained });
   return result;
 }
 

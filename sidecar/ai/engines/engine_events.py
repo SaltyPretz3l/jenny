@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from sidecar.ai.tools.models import StreamingEvent, ThinkingDelta, ToolCallRequest
+
+if TYPE_CHECKING:
+    from sidecar.ai.engines.provider_metrics import InferencePerformance
 
 ENGINE_EVENT_TEXT_DELTA = "text_delta"
 ENGINE_EVENT_REASONING_DELTA = "reasoning_delta"
@@ -19,6 +22,19 @@ ENGINE_EVENT_TOOL_CALL_DELTA = "tool_call_delta"
 ENGINE_EVENT_TOOL_CALL_COMPLETED = "tool_call_completed"
 ENGINE_EVENT_DONE = "done"
 ENGINE_EVENT_FAILED = "failed"
+ENGINE_EVENT_PREFILL = "prefill"
+ENGINE_EVENT_INFERENCE_PERFORMANCE = "inference_performance"
+
+
+@dataclass(frozen=True)
+class PrefillProgress:
+    """Validated cumulative prompt counters; processed includes cached tokens."""
+
+    total_tokens: int
+    cached_tokens: int
+    processed_tokens: int
+    elapsed_ms: float | None = None
+
 
 @dataclass(frozen=True)
 class EngineEvent:
@@ -36,6 +52,10 @@ class EngineEvent:
     finish_reason: str = ""
     result: Any = None
     source: str = "engine_stream"
+    prefill: PrefillProgress | None = None
+    prefill_state: str = ""
+    attempt_id: str = ""
+    performance: InferencePerformance | None = None
 
 
 def _coerce_arguments(value: Any) -> dict[str, Any]:

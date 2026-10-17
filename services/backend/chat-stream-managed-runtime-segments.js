@@ -57,6 +57,7 @@ function persistCurrentTextSegment(ctx, options) {
     // loses it while the live `complete` event still carries it.
     ...buildTerminalMessageExtras({
       resumableStop: options && options.resumableStop,
+      completion: options && options.completion,
       discardedDrafts: hasSegmentText && options ? options.discardedDrafts : null,
     }),
     ...transcriptFields,

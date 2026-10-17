@@ -27,6 +27,9 @@ const WEB_SEARCH_PROVIDER_KEY_IDS = Object.freeze([
 ]);
 const SAFE_STORAGE_NOT_READY_MESSAGE =
   'SecureStore: safeStorage is not ready. Restart Jenny if this continues after startup.';
+// Content-free on purpose: a read that cannot decrypt keeps the ciphertext and
+// reports this instead, so a transient keychain failure never loses a secret.
+const STORAGE_UNAVAILABLE_MESSAGE = 'SecureStore: credential storage is unavailable; the saved value was kept.';
 const NOT_READY_RECOVERY = {
   recoveryTitle: 'Credential storage is not ready',
   recoveryHint: 'Restart Jenny if credential storage still is not ready after startup completes.',
@@ -101,6 +104,13 @@ function buildUnavailableStatus({
 
 function isUnavailableStorageBackend(storageBackend) {
   return storageBackend === BASIC_TEXT_STORAGE_BACKEND;
+}
+
+function storageUnavailableError() {
+  return Object.assign(new Error(STORAGE_UNAVAILABLE_MESSAGE), {
+    name: 'SecureStoreUnavailableError',
+    code: 'storage_unavailable',
+  });
 }
 
 function fingerprintSecret(value) {
@@ -269,6 +279,20 @@ class SecureStore {
     }
   }
 
+  // The read-side twin of getStatus()'s refusal: never decrypt through a
+  // backend that writes are refused on (basic_text) or without encryption.
+  _assertDecryptionAvailable() {
+    let encryptionAvailable;
+    try {
+      encryptionAvailable = this.safeStorage.isEncryptionAvailable() === true;
+    } catch (_error) {
+      encryptionAvailable = false;
+    }
+    if (!encryptionAvailable || isUnavailableStorageBackend(this._getSelectedStorageBackend())) {
+      throw storageUnavailableError();
+    }
+  }
+
   _assertSafeStorageReady() {
     const status = this.getStatus();
     if (status.status === 'not_ready') {
@@ -342,15 +366,15 @@ class SecureStore {
       );
     }
 
+    this._assertDecryptionAvailable();
     const encrypted = Buffer.from(String(record.value || ''), 'base64');
     try {
       return this.safeStorage.decryptString(encrypted);
-    } catch (error) {
-      return this._dropInvalidRecord(
-        payload,
-        key,
-        `SecureStore: decryption failed for "${key}", removing corrupted entry.`
-      );
+    } catch (_error) {
+      // safeStorage reports corrupt ciphertext and a locked or unavailable
+      // keychain the same way, so the record is kept; only an explicit delete
+      // or sign-out removes it.
+      throw storageUnavailableError();
     }
   }
 
@@ -483,8 +507,14 @@ class SecureStore {
     return retired;
   }
 
+  // An unreadable or damaged credential file reads as empty, which the auth
+  // service would cache as "signed out"; it is reported as unavailable instead.
   getModelProviderOAuth(providerId) {
-    return this.get(modelProviderOAuthKeyName(providerId));
+    const value = this.get(modelProviderOAuthKeyName(providerId));
+    if (!value && this.store.damagedDetail()) {
+      throw storageUnavailableError();
+    }
+    return value;
   }
 
   setModelProviderOAuth(providerId, value) {

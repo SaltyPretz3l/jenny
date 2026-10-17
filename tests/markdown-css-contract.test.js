@@ -70,14 +70,15 @@ test('prose chrome uses quiet timeline tokens and no micro-motion', () => {
   assert.doesNotMatch(css, /data-copy-status="copied"[^}]*![Ii]mportant/);
 });
 
-test('user bubbles use a flat timeline surface and the content column stays at 760px', () => {
+test('user bubbles use a flat timeline surface and no viewport rule resizes the reading measure', () => {
   assert.match(timelineTokens, /--tl-user-bubble-bg:\s*color-mix\(in srgb, var\(--text-primary\) 6%, var\(--bg-surface\)\)/);
   const userBubble = threadCss.match(/\.chat-entry\.user \.chat-bubble\s*\{[\s\S]*?\}/)?.[0] || '';
   assert.match(userBubble, /background:\s*var\(--tl-user-bubble-bg\)/);
   assert.match(userBubble, /border:\s*0/);
   assert.doesNotMatch(userBubble, /backdrop-filter|gradient/);
-  assert.doesNotMatch(mediaCss, /--content-column-width:\s*min\(920px/);
-  assert.match(mediaCss, /--composer-width:\s*min\(920px/);
+  // Row 59: the measure is pane-relative (chat-panes.css); the composer shares it at every viewport.
+  assert.doesNotMatch(mediaCss, /--content-column-width:/);
+  assert.doesNotMatch(mediaCss, /--composer-width:/);
 });
 
 test('collapsible code blocks interpolate between the collapsed cap and max-content', () => {

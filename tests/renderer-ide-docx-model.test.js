@@ -394,3 +394,98 @@ test('deleteRange never removes zero-length runs such as footnote references', a
   assert.equal(count(xml, '<w:fldSimple'), count(options.documentXml, '<w:fldSimple'), 'fields preserved');
   assert.equal(model.getParagraphText(block.id), '');
 });
+
+function countingSerializer() {
+  const counts = { document: 0, numbering: 0, rels: 0, total: 0 };
+  const partOf = { document: 'document', numbering: 'numbering', Relationships: 'rels' };
+  class CountingSerializer {
+    serializeToString(node) {
+      const part = partOf[(node.documentElement || node).localName] || 'other';
+      counts[part] = (counts[part] || 0) + 1;
+      counts.total += 1;
+      return new XMLSerializer().serializeToString(node);
+    }
+  }
+  const reset = () => { for (const key of Object.keys(counts)) counts[key] = 0; };
+  return { CountingSerializer, counts, reset };
+}
+
+async function countedModel() {
+  const counter = countingSerializer();
+  const model = createDocxModel({ ...await loadFixture('lists-tables.docx'), XMLSerializer: counter.CountingSerializer });
+  counter.reset();
+  return { model, ...counter };
+}
+
+test('isDirty performs no serialization while nothing changed', async () => {
+  const { model, counts } = await countedModel();
+  for (let check = 0; check < 5; check += 1) assert.equal(model.isDirty(), false);
+  assert.equal(counts.total, 0);
+});
+
+test('one text edit serializes only the document part, at most once for undo and once for isDirty', async () => {
+  const { model, counts } = await countedModel();
+  assert.equal(model.insertText('b1', 0, 'x'), true);
+  assert.ok(counts.document <= 1, `undo snapshot serialized document ${counts.document} times`);
+  assert.equal(model.isDirty(), true);
+  assert.ok(counts.document <= 2, `edit + isDirty serialized document ${counts.document} times`);
+  assert.equal(counts.numbering, 0, 'numbering did not change');
+  assert.equal(counts.rels, 0, 'relationships did not change');
+  const afterFirstCheck = counts.total;
+  assert.equal(model.isDirty(), true);
+  assert.equal(counts.total, afterFirstCheck, 'a repeated isDirty reuses the cached parts');
+});
+
+test('undo and redo never serve a stale cached document', async () => {
+  const { model } = await countedModel();
+  assert.equal(model.insertText('b1', 0, 'REDONE '), true);
+  assert.equal(model.isDirty(), true);
+  assert.match(model.serialize()['word/document.xml'], /REDONE/);
+  assert.equal(model.undo(), true);
+  assert.equal(model.isDirty(), false);
+  assert.doesNotMatch(model.serialize()['word/document.xml'], /REDONE/);
+  assert.equal(model.redo(), true);
+  assert.equal(model.isDirty(), true);
+  assert.match(model.serialize()['word/document.xml'], /REDONE/);
+  assert.equal(model.undo(), true);
+  assert.equal(model.isDirty(), false);
+  assert.doesNotMatch(model.serialize()['word/document.xml'], /REDONE/);
+});
+
+test('markSaved then isDirty is clean without serializing again', async () => {
+  const { model, counts, reset } = await countedModel();
+  assert.equal(model.setList('b4', 'bullet'), true);
+  model.markSaved();
+  reset();
+  assert.equal(model.isDirty(), false);
+  assert.equal(counts.total, 0);
+});
+
+function scriptedExport(model) {
+  const steps = [
+    () => model.insertText('b1', 0, 'Weekly '),
+    () => model.toggleRunProperty('b1', 0, 6, 'bold'),
+    () => model.setList('b4', 'number'),
+    () => model.splitParagraph('b8', 5),
+    () => model.insertImage('b1', 0, { mime: 'image/png', base64: 'AQ==', widthPx: 40, heightPx: 40 }),
+    () => model.undo(), () => model.redo(),
+    () => model.deleteRange('b1', 0, 1),
+    () => model.mergeWithPrevious('b9'),
+    () => model.undo(), () => model.redo(), () => model.undo(),
+    () => model.setList('b2', null),
+  ];
+  for (const step of steps) {
+    assert.ok(step() !== false);
+    model.isDirty();
+  }
+  const result = model.serialize();
+  return JSON.stringify({ ...result, media: [...result.media.keys()] });
+}
+
+test('serialize after scripted edits, undo and redo matches the pre-cache bytes', async () => {
+  const crypto = require('node:crypto');
+  const plain = scriptedExport(createDocxModel(await loadFixture('lists-tables.docx')));
+  const counted = scriptedExport((await countedModel()).model);
+  assert.equal(counted, plain);
+  assert.equal(crypto.createHash('sha256').update(plain).digest('hex'), 'fddc36321618e1a9fd4653d02549c7410acb69236d7eacf12613b5be9837ecd5');
+});

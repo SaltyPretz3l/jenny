@@ -6,6 +6,7 @@ from typing import Any
 
 from sidecar.ai.tools.workspace_mutation_journal_contract import workspace_identity
 from sidecar.ai.tools.workspace_mutation_journal_store import WorkspaceMutationJournalStore
+from sidecar.ai.tools.workspace_mutation_live_owner import recovery_ownership
 from sidecar.protocol import API_VERSION
 
 _MAX_ID_CHARS = 160
@@ -51,8 +52,12 @@ def reconcile_mutation_preparations(params: Any, config: Any) -> dict[str, Any]:
                     continue
                 if record["workspace"]["fingerprint"] != identity.fingerprint:
                     raise ValueError("mutation_preparation_workspace_changed")
-                recovered = store._reconcile_record(record, Path(root))
-                if not store._write_mapping_locked(recovered, Path(root)).ok:
-                    raise ValueError("mutation_preparation_recovery_unconfirmed")
-                interrupted += 1
+                with recovery_ownership(store.live_owner_path(
+                        identity.workspace_id, entry.change_set_id)) as abandoned:
+                    if not abandoned:
+                        continue
+                    recovered = store._reconcile_record(record, Path(root))
+                    if not store._write_mapping_locked(recovered, Path(root)).ok:
+                        raise ValueError("mutation_preparation_recovery_unconfirmed")
+                    interrupted += 1
     return {"schema_version": 1, "status": "reconciled", "interrupted": interrupted}

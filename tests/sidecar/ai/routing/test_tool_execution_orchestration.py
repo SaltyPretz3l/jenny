@@ -38,6 +38,7 @@ from sidecar.ai.routing.tool_execution import (
     execute_tool,
     execute_tool_search,
 )
+from sidecar.ai.routing.tool_execution_tool_handlers import SYNTHETIC_TOOL_HANDLERS
 from sidecar.ai.routing.tool_observation import (
     KIND_TOOL_EXECUTION_FAILED,
     KIND_TOOL_EXECUTION_OBSERVED,
@@ -735,18 +736,18 @@ def test_execute_tool_delegate_invalid_top_level_uses_existing_repair_contract()
 
 
 @pytest.mark.parametrize(
-    ("tool_name", "arguments", "handler_name"),
+    ("tool_name", "arguments"),
     [
-        ("monitor", {"command": "echo hi"}, "_execute_monitor_tool"),
-        ("check_monitor", {"monitor_id": "monitor_1"}, "_execute_check_monitor_tool"),
-        ("delegate", {"tasks": ["inspect"]}, "_execute_delegate_synthetic_tool"),
+        ("monitor", {"command": "echo hi"}),
+        ("check_monitor", {"monitor_id": "monitor_1"}),
+        ("delegate", {"tasks": ["inspect"]}),
+        ("memory", {"action": "recall", "query": "tabs"}),
     ],
 )
 def test_revoked_scoped_authority_stops_synthetic_tool_before_invocation(
     monkeypatch: pytest.MonkeyPatch,
     tool_name: str,
     arguments: dict[str, object],
-    handler_name: str,
 ) -> None:
     descriptor = _descriptor(tool_name, side_effecting=True)
     client = _RecordingMCPClient(descriptor, result=_mcp_result())
@@ -763,10 +764,8 @@ def test_revoked_scoped_authority_stops_synthetic_tool_before_invocation(
         )
 
     runtime.operation_admission = reject_authority
-    monkeypatch.setattr(
-        _tool_execution_module,
-        handler_name,
-        lambda **_kwargs: invoked.append(True),
+    monkeypatch.setitem(
+        SYNTHETIC_TOOL_HANDLERS, tool_name, lambda **_kwargs: invoked.append(True)
     )
 
     with pytest.raises(ToolExecutionFailure, match="stale"):

@@ -29,6 +29,9 @@ const { hostedSidecarEnvironment } = require('../host/sidecar-environment');
 // HTTPS_PROXY=https://user:pass@host, AWS_PROFILE, and any vendor-specific
 // config var — exactly the ambient shell state this child has no business
 // seeing.
+const { attachLedgerBridge } = require('./owned-process-ledger-bridge');
+const { frozenInterpreter } = require('./owned-process-recovery');
+
 const SIDECAR_ALLOWED_ENV = Object.freeze([
   /^JENNY_/i,
   /^PYTHON/i,
@@ -116,6 +119,7 @@ class SidecarManager extends EventEmitter {
     resolvePackagedLaunch = null,
     resolveExtraEnv = null,
     killProcessTreeImpl,
+    findFrozenInterpreterImpl,
     getProcessCommandLineImpl,
     startupSoftTimeoutMs = DEFAULT_SOFT_TIMEOUT_MS,
     gracefulStopTimeoutMs = GRACEFUL_STOP_TIMEOUT_MS,
@@ -127,6 +131,7 @@ class SidecarManager extends EventEmitter {
   }) {
     super();
     this.mode = mode;
+    this.userDataPath = userDataPath;
     this.repoRoot = resolveBackendRepoRoot(repoRoot);
     this.runtimeHome = runtimeHome;
     this.pythonExecutable = resolvePythonExecutable(this.repoRoot, pythonExecutable);
@@ -157,6 +162,7 @@ class SidecarManager extends EventEmitter {
       : null;
     this._resolveExtraEnv = typeof resolveExtraEnv === 'function' ? resolveExtraEnv : null;
     this.killProcessTreeImpl = killProcessTreeImpl || killProcessTree;
+    this.findFrozenInterpreterImpl = findFrozenInterpreterImpl || frozenInterpreter;
     this.getProcessCommandLineImpl = getProcessCommandLineImpl || getProcessCommandLine;
     // startupSoftTimeoutMs is the managed startup watchdog used for exit grace and the ready deadline.
     this.startupSoftTimeoutMs = Math.max(Number(startupSoftTimeoutMs) || 0, 0);
@@ -228,6 +234,8 @@ class SidecarManager extends EventEmitter {
     }
     this._retryStartInFlight = (async () => {
       try {
+        this.ownedProcessHandoff = this.process?.pid
+          ? this.ownedProcessLedger?.prepare(this.process.pid) : null;
         await this.stop();
         return await this.start();
       } finally {
@@ -362,6 +370,7 @@ class SidecarManager extends EventEmitter {
       packagedLaunchDetail,
     });
 
+    attachLedgerBridge(this, launchCommand, launchArgs);
     const spawnedProcess = this.spawnImpl(
       launchCommand,
       launchArgs,
@@ -507,7 +516,7 @@ class SidecarManager extends EventEmitter {
       force: true,
       confirmExit: true,
       timeoutMs: this.forcedStopTimeoutMs,
-    });
+    }, state.launchSource);
     if (!terminated && !(await this._isStoredSidecarGone(pid, state))) {
       // True means ownership remains unresolved; callers must not retire it.
       return true;
@@ -617,6 +626,7 @@ class SidecarManager extends EventEmitter {
       });
       this.isStopping = false;
     }
+    this.ownedProcessLedger?.recover();
     const result = {
       pid: currentPid,
       graceful,
@@ -660,9 +670,19 @@ class SidecarManager extends EventEmitter {
     }
   }
 
-  async _killProcessTreeForStop(pid, options) {
+  async _killProcessTreeForStop(pid, options, launchSource = this.launchSource) {
     try {
-      const result = await this.killProcessTreeImpl(pid, options);
+      // A packaged onefile pid is the bootloader: SIGKILL never reaches its signal
+      // forwarder, so its exit alone leaves the interpreter (the ledger owner) running.
+      // Confirm the interpreter first; an unconfirmed or unresolved one keeps the bootloader tracked.
+      const interpreter = launchSource === 'packaged-binary' ? this.findFrozenInterpreterImpl(pid) : null;
+      if (interpreter?.state === 'unresolved') return false;
+      const deadline = this._now() + options.timeoutMs;
+      if (interpreter && (await this.killProcessTreeImpl(interpreter.pid, options))?.terminated !== true) {
+        return false;
+      }
+      const result = await this.killProcessTreeImpl(pid, interpreter
+        ? { ...options, timeoutMs: Math.max(deadline - this._now(), 1) } : options);
       return result?.terminated === true;
     } catch (_error) {
       return false;

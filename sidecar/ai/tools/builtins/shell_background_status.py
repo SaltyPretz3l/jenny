@@ -6,9 +6,14 @@ import json
 import logging
 import os
 import re
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
+from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED
+from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.runtime.diagnostics import log_event
+
+if TYPE_CHECKING:
+    from sidecar.ai.tools.workspace_store import GuardedWorkspaceStore, StoreRef
 
 MAX_INLINE_OUTPUT_CHARS = 20_000
 MAX_STATUS_FILE_BYTES = 262_144
@@ -26,6 +31,8 @@ MAX_STATUS_EXIT_CODE = (2**32) - 1
 MAX_STATUS_OUTPUT_BYTE_COUNT = (2**63) - 1
 
 JOB_ID_PATTERN = re.compile(r"^[0-9a-f]{12}$")
+# A running record binds to its own owned-process ledger entry (the receipt id).
+LEDGER_ENTRY_PATTERN = re.compile(r"^op_[0-9a-f]{32}$")
 _STATUS_STATES = frozenset({"running", "completed", "failed"})
 _STATUS_KEYS = frozenset(
     {
@@ -33,6 +40,7 @@ _STATUS_KEYS = frozenset(
         "job_id",
         "state",
         "pid",
+        "ledger_entry",
         "exit_code",
         "stdout",
         "stderr",
@@ -45,8 +53,8 @@ _STATUS_KEYS = frozenset(
         "output_truncated",
     }
 )
-_RUNNING_STATUS_KEYS = frozenset({"schema_version", "job_id", "state", "pid"})
-_TERMINAL_STATUS_KEYS = _STATUS_KEYS - {"pid"}
+_RUNNING_STATUS_KEYS = frozenset({"schema_version", "job_id", "state", "pid", "ledger_entry"})
+_TERMINAL_STATUS_KEYS = _STATUS_KEYS - {"pid", "ledger_entry"}
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +238,16 @@ def _parse_running_job_status(
             schema_version=schema_version,
         )
     sanitized["pid"] = pid
+    ledger_entry = parsed.get("ledger_entry")
+    if ledger_entry is None:
+        return
+    if not isinstance(ledger_entry, str) or LEDGER_ENTRY_PATTERN.fullmatch(ledger_entry) is None:
+        _reject_job_status(
+            "running job status ledger entry is invalid",
+            "invalid_ledger_entry",
+            schema_version=schema_version,
+        )
+    sanitized["ledger_entry"] = ledger_entry
 
 
 def _parse_terminal_job_status(
@@ -475,6 +493,32 @@ def job_status_error(
     return result
 
 
+def read_background_status_bytes(
+    store: GuardedWorkspaceStore,
+    status_ref: StoreRef,
+    *,
+    job_id: str,
+) -> bytes | dict[str, object]:
+    """Bounded status.json read; a typed rejection or not_found dict instead of raising."""
+    try:
+        raw_bytes = store.read_bytes(
+            status_ref,
+            max_bytes=MAX_STATUS_FILE_BYTES,
+            missing_ok=True,
+        )
+    except ToolExecutionFailure as error:
+        if error.code == CMP_TOOL_CAP_EXCEEDED:
+            return job_status_error(
+                job_id,
+                f"job status file exceeds {MAX_STATUS_FILE_BYTES} byte limit",
+                "status_too_large",
+            )
+        return job_status_error(job_id, "failed to read status", "read_failed")
+    if raw_bytes is None:
+        return {"job_id": job_id, "state": "not_found"}
+    return raw_bytes
+
+
 __all__ = [
     "JOB_STATUS_SCHEMA_VERSION",
     "LEGACY_JOB_STATUS_SCHEMA_VERSION",
@@ -485,5 +529,6 @@ __all__ = [
     "is_valid_job_id",
     "job_status_error",
     "parse_job_status",
+    "read_background_status_bytes",
     "validate_job_status_for_write",
 ]

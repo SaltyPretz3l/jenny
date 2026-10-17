@@ -336,7 +336,7 @@ def test_cloud_scheduler_overlaps_and_preserves_input_order(
         )
 
     monkeypatch.setattr(scheduler_module, "invoke_sub_agent", fake_invoke)
-    router = SimpleNamespace(_config=parse_runtime_config({"engine_type": "chatgpt"}))
+    router = SimpleNamespace(_config=parse_runtime_config({"engine_type": "chatgpt", "model": "gpt-6.1-sol"}))
     runtime = _runtime(capacity=3)
     schedule = schedule_delegate_tasks(
         router=router,
@@ -417,7 +417,7 @@ def test_non_cloud_and_unknown_profiles_remain_sequential(
 
 def test_one_cloud_task_uses_single_execution() -> None:
     request = validate_delegate_arguments({"tasks": ["one"]})
-    router = SimpleNamespace(_config=parse_runtime_config({"engine_type": "chatgpt"}))
+    router = SimpleNamespace(_config=parse_runtime_config({"engine_type": "chatgpt", "model": "gpt-6.1-sol"}))
 
     assert scheduler_module.execution_for_request(router, request) == "single"
 
@@ -634,7 +634,7 @@ def test_cloud_prewarm_runs_inside_frozen_parent_envelope(
     runtime.wall_clock_deadline = now + 100.0
 
     schedule = schedule_delegate_tasks(
-        router=SimpleNamespace(_config=parse_runtime_config({"engine_type": "chatgpt"})),
+        router=SimpleNamespace(_config=parse_runtime_config({"engine_type": "chatgpt", "model": "gpt-6.1-sol"})),
         parent_context=_context(),
         runtime=runtime,
         request=validate_delegate_arguments({"tasks": ["one", "two"]}),
@@ -665,7 +665,7 @@ def test_cloud_sibling_failure_is_isolated_and_ordered(
 
     monkeypatch.setattr(scheduler_module, "invoke_sub_agent", fake_invoke)
     schedule = schedule_delegate_tasks(
-        router=SimpleNamespace(_config=parse_runtime_config({"engine_type": "chatgpt"})),
+        router=SimpleNamespace(_config=parse_runtime_config({"engine_type": "chatgpt", "model": "gpt-6.1-sol"})),
         parent_context=_context(),
         runtime=_runtime(),
         request=validate_delegate_arguments({"tasks": ["one", "two", "three"]}),
@@ -722,7 +722,7 @@ def test_cloud_parent_cancellation_settles_workers_and_releases_every_slot(
     canceller = threading.Thread(target=cancel_after_start)
     canceller.start()
     schedule = schedule_delegate_tasks(
-        router=SimpleNamespace(_config=parse_runtime_config({"engine_type": "chatgpt"})),
+        router=SimpleNamespace(_config=parse_runtime_config({"engine_type": "chatgpt", "model": "gpt-6.1-sol"})),
         parent_context=_context(),
         runtime=runtime,
         request=validate_delegate_arguments({"tasks": ["one", "two", "three"]}),
@@ -937,7 +937,7 @@ def test_sequential_capacity_refusal_never_reports_started(tasks: list[str]) -> 
             parent_context=_context(), runtime=runtime,
             request=validate_delegate_arguments({"tasks": tasks}),
             parent_request_id="parent-request", call_id="capacity", parent_agent_id="main@parent-request",
-            on_task_started=lambda task, _identity: started.append(task.ordinal),
+            on_task_started=lambda task, _identity, _route: started.append(task.ordinal),
         )
         assert started == []
         assert all(not item.started for item in schedule.invocations)
@@ -974,3 +974,79 @@ def test_compact_evidence_omits_overlong_and_rewritten_path_identifiers() -> Non
     evidence = settlement.report["results"][0]["evidence"]
     assert all("relative_path" not in record for record in evidence[:2])
     assert evidence[2]["relative_path"] == " file.py "
+
+
+def test_parent_cancel_keeps_completed_child_report_on_interrupted_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sidecar.ai.routing.loop_event_emit import (
+        build_interrupted_tool_outcome,
+        emit_interrupted_results_for_pending_calls,
+    )
+
+    request = validate_delegate_arguments({"tasks": ["first", "second"]})
+    invocations = []
+    for task, status, answer in (
+        (request.tasks[0], "completed", "Child A finished: the entry point is main.js."),
+        (request.tasks[1], "cancelled", ""),
+    ):
+        identity = scheduler_module.build_sub_agent_identity(
+            parent_request_id="parent-request",
+            canonical_call_id="call",
+            parent_agent_id="main@parent-request",
+            ordinal=task.ordinal,
+            operation="delegate",
+        )
+        result = SubAgentInvocationResult(
+            status=status,
+            response_text=answer,
+            decision=_decision(answer),
+            iterations_used=1,
+        )
+        invocations.append(ScheduledInvocation(task, identity, result, 1, 8, 120_000, True))
+    schedule = DelegateSchedule(
+        execution="parallel",
+        invocations=tuple(invocations),
+        effective_max_total_runtime_ms=120_000,
+        parent_synthesis_reserve_ms=0,
+    )
+    runtime = _runtime()
+    runtime.cancel_handle = TurnCancellationHandle(request_id="parent-request")
+    notifications: list[dict[str, Any]] = []
+    runtime.notification_writer = notifications.append
+    runtime.record_tool_executing(call_id="call", tool_name="delegate", arguments={})
+
+    def cancel_during_second(**_kwargs: Any) -> DelegateSchedule:
+        runtime.cancel_handle.cancel(reason="user_cancel")
+        return schedule
+
+    monkeypatch.setattr(delegate_module, "schedule_delegate_tasks", cancel_during_second)
+
+    with pytest.raises(TerminalChatStateError):
+        execute_delegate_tool(
+            router=SimpleNamespace(_config=parse_runtime_config({})),
+            arguments={"tasks": ["first", "second"]},
+            runtime=runtime,
+            outcome_type=ToolExecutionOutcome,
+            call_id="call",
+        )
+
+    outcomes: list[Any] = []
+    settled = emit_interrupted_results_for_pending_calls(
+        runtime=runtime,
+        outcomes=outcomes,
+        streamed_event_types=set(),
+        outcome_factory=build_interrupted_tool_outcome,
+    )
+    assert settled == 1
+    outcome = outcomes[0]
+    assert outcome.success is False
+    assert outcome.metadata["interrupted"] is True
+    assert outcome.metadata["recovery"] == "orphaned_tool_call"
+    report = outcome.metadata["subagent_batch_report"]
+    assert outcome.metadata["result_kind"] == "subagent_batch_report"
+    assert report["status"] == "cancelled"
+    assert [task["status"] for task in report["tasks"]] == ["completed", "cancelled"]
+    assert report["tasks"][0]["answer"] == "Child A finished: the entry point is main.js."
+    progress = [item["params"] for item in notifications if item["method"] == "agent.progress"]
+    assert not any(item.get("terminal") for item in progress)

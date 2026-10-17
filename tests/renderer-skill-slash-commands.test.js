@@ -42,6 +42,21 @@ test('skill commands register, diff, unregister, and log deterministic collision
   assert.deepEqual(registry.listCommands().map((row) => row.name), ['/help']);
 });
 
+test('skills cannot take the memory command names', async () => {
+  const logs = [];
+  const registry = createSlashCommandRegistry({ state: { currentSessionId: '' } });
+  const manager = createSkillSlashCommands({
+    registry,
+    getSkillsState: () => snapshot(['remember', 'forget', 'memory'].map((command) => (
+      { id: `bundled/${command}`, name: command, description: 'Reserved', command, enabled: true }))),
+    onChanged: () => () => {},
+    log: (...args) => logs.push(args),
+  });
+  await manager.refresh();
+  assert.deepEqual(registry.listCommands(), []);
+  assert.deepEqual(logs.map((entry) => entry[2].firstId).sort(), ['builtin/forget', 'builtin/memory', 'builtin/remember']);
+});
+
 test('send slash dispatch attaches, strips the token, carries the full invocation, and clears only on acceptance', async () => {
   const state = { currentSessionId: 's1', ui: {}, composerSessionState: new Map([['s1', { generation: 1 }]]) };
   const chatInput = { value: '/verify check this', focusCalls: 0, focus() { this.focusCalls += 1; } };

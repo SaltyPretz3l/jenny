@@ -192,6 +192,18 @@
     }
 
     function updateComposerSafeOffset(options = {}) {
+      const panelHost = chatView?.closest?.('.chat-view') || chatView;
+      if (panelHost?.querySelector?.('.artifact-review-overlay:not(.hidden)')) {
+        const bounds = panelHost.getBoundingClientRect();
+        const visibleRects = (selector) => Array.from(panelHost.querySelectorAll(selector))
+          .map((node) => node.getBoundingClientRect()).filter((rect) => rect.height > 0);
+        const composers = visibleRects('.composer-wrap');
+        const controls = visibleRects('.chat-timeline-utility-cluster');
+        const bottom = Math.max(0, ...composers.map((rect) => bounds.bottom - rect.top));
+        const top = Math.max(0, ...controls.map((rect) => rect.bottom - bounds.top + 8));
+        panelHost.style.setProperty('--artifact-overlay-bottom', `${Math.ceil(bottom)}px`);
+        panelHost.style.setProperty('--artifact-overlay-top', `${Math.ceil(top)}px`);
+      }
       const viewportHeightChanged = updateAppWindowHeight();
       const preserveSurfaceEffectWidths = options && options.preserveSurfaceEffectWidths === true;
       const chatSurfaceEffectWidthsChanged = preserveSurfaceEffectWidths

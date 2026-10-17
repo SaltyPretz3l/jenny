@@ -20,12 +20,12 @@ function normalizeDraftMetadata(value = {}) {
 
 function buildNextTurnContextSummary(sessionStore, sessionId, draftMetadata = {}) {
   const normalizedSessionId = String(sessionId || '').trim();
-  if (!normalizedSessionId || !sessionStore || typeof sessionStore.getSession !== 'function') {
+  if (!normalizedSessionId || !sessionStore || typeof sessionStore.peekSession !== 'function') {
     return { status: 'unavailable', reason: 'session_unavailable' };
   }
   let session;
   try {
-    session = sessionStore.getSession(normalizedSessionId);
+    session = sessionStore.peekSession(normalizedSessionId);
   } catch (_error) {
     return { status: 'unavailable', reason: 'session_read_failed' };
   }

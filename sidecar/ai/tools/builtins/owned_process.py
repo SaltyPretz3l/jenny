@@ -21,7 +21,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Callable, Mapping, Sequence
+from typing import IO, Any, Callable, Mapping, Sequence
 
 from sidecar._owned_process_supervisor import (
     LINEAGE_CONTAINMENT,
@@ -33,6 +33,7 @@ from sidecar._owned_process_supervisor import (
     supervisor_command,
     supervisor_containment,
 )
+from sidecar.ai.tools.builtins.owned_process_drain import close_process_pipes
 from sidecar.ai.tools.builtins.owned_process_observation import (
     create_process_cleanup_observer,
 )
@@ -219,6 +220,7 @@ class OwnedProcess:
     _finalize_lock: threading.Lock = field(default_factory=threading.Lock)
     _supervisor_ready_fd: int | None = None
     _supervisor_report: bytes = b""
+    _ledger_ticket: Any = None
     _supervisor_ready_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -263,6 +265,7 @@ class OwnedProcessService:
         queue_timeout_seconds: float = DEFAULT_QUEUE_WAIT_SECONDS,
         on_cleanup: CleanupObserver | None = None,
         input_data: bytes | None = None,
+        process_kind: str = "owned_process",
     ) -> OwnedProcess:
         if not argv:
             raise ValueError("argv cannot be empty")
@@ -298,6 +301,8 @@ class OwnedProcessService:
                 job_object = WindowsJobObject()
                 containment = "windows_job_object_bootstrap"
             process, ready_fd = self._start_transport(job_object)
+            from sidecar.runtime import owned_process_tracking
+
             process_group_id = int(process.pid) if os.name != "nt" else None
             owned = OwnedProcess(
                 process=process,
@@ -309,6 +314,7 @@ class OwnedProcessService:
                 _lease=lease,
                 _cleanup_observation=cleanup_observation,
                 _supervisor_ready_fd=ready_fd,
+                _ledger_ticket=owned_process_tracking.record(process.pid, process_kind),
             )
             ready_fd = None
             with self._condition:
@@ -484,10 +490,7 @@ class OwnedProcessService:
                 io_thread.join(timeout=PIPE_DRAIN_GRACE_SECONDS)
             if any(io_thread.is_alive() for io_thread in io_threads):
                 drain_incomplete = True
-                if process.stdin is not None:
-                    self._close_pipe(process.stdin)
-                self._close_pipe(process.stdout)
-                self._close_pipe(process.stderr)
+                self._close_pipes(owned)
                 for io_thread in io_threads:
                     io_thread.join(timeout=0.2)
 
@@ -524,10 +527,7 @@ class OwnedProcessService:
             )
         except BaseException:
             self.terminate(owned)
-            if process.stdin is not None:
-                self._close_pipe(process.stdin)
-            self._close_pipe(process.stdout)
-            self._close_pipe(process.stderr)
+            self._close_pipes(owned)
             for io_thread in self._io_threads(owned):
                 io_thread.join(timeout=0.2)
             raise
@@ -615,13 +615,7 @@ class OwnedProcessService:
         """Retry owner cleanup and release a quarantined slot only on proof."""
 
         self.terminate(owned, timeout_seconds=timeout_seconds)
-        for pipe in (
-            getattr(owned.process, "stdin", None),
-            owned.process.stdout,
-            owned.process.stderr,
-        ):
-            if pipe is not None:
-                self._close_pipe(pipe)
+        self._close_pipes(owned)
         deadline = time.monotonic() + max(0.1, float(timeout_seconds))
         for io_thread in self._io_threads(owned):
             io_thread.join(timeout=max(0.0, deadline - time.monotonic()))
@@ -730,6 +724,9 @@ class OwnedProcessService:
             with self._condition:
                 self._active.pop(id(owned), None)
             owned._lease.release()
+        from sidecar.runtime import owned_process_tracking
+
+        owned_process_tracking.settle(owned._ledger_ticket, confirmed=confirmed)
         owned._cleanup_observation.publish(verdict)
         return verdict
 
@@ -944,6 +941,11 @@ class OwnedProcessService:
         )
         thread.start()
         return thread
+
+    def _close_pipes(self, owned: OwnedProcess) -> None:
+        process = owned.process
+        pipes = (getattr(process, "stdin", None), process.stdout, process.stderr)
+        close_process_pipes(pipes, self._io_threads(owned), close_pipe=self._close_pipe)
 
     @staticmethod
     def _close_pipe(pipe: IO[bytes]) -> None:

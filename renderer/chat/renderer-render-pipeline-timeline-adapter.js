@@ -38,18 +38,21 @@
         const nonAssistantKinds = new Set([
           'interactive_round_recap',
           'slash_command_output',
+          'memory_note',
         ]);
         const nonReplyAssistantKinds = new Set([
           'interactive_round_recap',
           'proactive_suggestion',
           'question_batch',
           'slash_command_output',
+          'memory_note',
           'tool_use',
         ]);
         const streamingIneligibleKinds = new Set([
           'question_batch',
           'interactive_round_recap',
           'slash_command_output',
+          'memory_note',
         ]);
         const streamTailToolKinds = new Set([
           'tool_use',

@@ -1,5 +1,5 @@
 {
-  "mcp_config_schema_version": 1,
+  "mcp_config_schema_version": 2,
   "mcp_sse_enabled": false,
   "mcp_servers": [
     {
@@ -7,10 +7,11 @@
       "transport": "stdio",
       "command": "node",
       "args": ["server.js"],
+      "env": { "REA_LOG_LEVEL": "debug" },
       "enabled": true,
       "trust": {
         "status": "approved",
-        "configuration_digest": "4a45964c58332cfab35fd811c74257970bd77e17fcd03fb274befb17d851e654",
+        "configuration_digest": "3a427f5f2ffbcda90893fd1593c1f54e1bdc9a70b37bbf25b391a9cfc294ace9",
         "advertised_tools_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reviewed_at": "2026-08-17T00:00:00Z"
       }

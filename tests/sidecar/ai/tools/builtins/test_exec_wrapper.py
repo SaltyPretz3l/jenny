@@ -33,6 +33,9 @@ class _FakeFigure:
     def get_size_inches(self) -> tuple[float, float]:
         return 1.0, 1.0
 
+    def get_axes(self) -> list[object]:
+        return [object()]
+
 
 @pytest.fixture
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -47,6 +50,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     fake_plt.close = lambda *_a, **_k: state["fignums"].clear()  # type: ignore[attr-defined]
     fake_plt.plot = lambda *_a, **_k: state["fignums"].append(len(state["fignums"]))  # type: ignore[attr-defined]
     fake_plt.show = lambda *_a, **_k: None  # type: ignore[attr-defined]  # wrapper overrides this on import
+    fake_plt.gcf = lambda: _FakeFigure(state["fignums"][-1])  # type: ignore[attr-defined]
     fake_mpl.pyplot = fake_plt  # type: ignore[attr-defined]
 
     monkeypatch.setitem(sys.modules, "matplotlib", fake_mpl)
@@ -159,6 +163,47 @@ def test_main_preserves_shown_then_dangling_figure_order(env) -> None:
 
     assert exit_code == 0
     assert payload["images"] == ["figure_0.png", "figure_1.png"]
+
+
+def test_main_captures_a_figure_saved_and_closed(env) -> None:
+    # Gate 2026-10-14 F8: a figure saved to disk and then closed never reached
+    # the end-of-run sweep, so the chart never showed in chat.
+    source = "import matplotlib.pyplot as plt\nplt.plot([1, 2])\nplt.close()\n"
+
+    exit_code, payload = _run_main(env, source)
+
+    assert exit_code == 0
+    assert payload["images"] == ["figure_0.png"]
+
+
+def test_main_close_all_with_nothing_open_captures_nothing(env) -> None:
+    exit_code, payload = _run_main(env, "import matplotlib.pyplot as plt\nplt.close('all')\n")
+
+    assert exit_code == 0
+    assert payload["images"] == []
+
+
+def test_main_close_capture_respects_the_image_cap(env) -> None:
+    source = (
+        "import matplotlib.pyplot as plt\n"
+        "for _ in range(9):\n"
+        "    plt.plot([1, 2])\n"
+        "    plt.close()\n"
+    )
+
+    exit_code, payload = _run_main(env, source)
+
+    assert exit_code == 0
+    assert len(payload["images"]) == env.wrapper._MAX_IMAGES
+
+
+def test_main_show_then_close_does_not_duplicate(env) -> None:
+    source = "import matplotlib.pyplot as plt\nplt.plot([1, 2])\nplt.show()\nplt.close()\n"
+
+    exit_code, payload = _run_main(env, source)
+
+    assert exit_code == 0
+    assert payload["images"] == ["figure_0.png"]
 
 
 # --- main(): pandas table collection -----------------------------------------

@@ -1,0 +1,355 @@
+/* Addressed session messaging (row 59 checkpoint 4): the Send to chat dialog, the composer
+   message strip (inbox backlog + sender receipts), the Review dialog and the sidebar unread
+   mark. Markup: renderer/chat/renderer-chat-send-modal.js, renderer-composer-message-strip.js,
+   renderer-chat-messages-review.js, renderer/shell/renderer-session-unread.js. Logical
+   properties and tokens only; the dot echoes the state word, it never carries it alone. */
+
+/* ---------- Composer message strip ---------- */
+.composer-message-strip {
+  display: grid;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  margin: 0 0 var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.composer-message-strip__receipt {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.composer-message-strip__sent {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.composer-message-strip__status,
+.chat-review__status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-block-size: 24px;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.composer-message-strip__state,
+.chat-review__state {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.composer-message-strip__status[data-tone="warn"] .composer-message-strip__state,
+.chat-review__status[data-tone="warn"] .chat-review__state { color: var(--state-warning); }
+.composer-message-strip__status[data-tone="error"] .composer-message-strip__state { color: var(--text-danger-emphasis); }
+
+.composer-message-strip__detail {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.composer-message-strip__status[data-running="true"] > .status-dot {
+  animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
+}
+
+.composer-message-strip__link.composer-message-strip__link,
+.chat-send__link.chat-send__link,
+.chat-review__link.chat-review__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--text-secondary) 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+.composer-message-strip__link.composer-message-strip__link:hover,
+.chat-send__link.chat-send__link:hover,
+.chat-review__link.chat-review__link:hover { color: var(--text-primary); }
+
+.composer-message-strip__link.composer-message-strip__link:focus-visible,
+.chat-send__link.chat-send__link:focus-visible,
+.chat-review__link.chat-review__link:focus-visible,
+.chat-review__chip:focus-visible,
+.chat-send__option:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.chat-review__link.chat-review__link:disabled { opacity: 0.5; cursor: default; }
+
+/* ---------- Send to chat dialog ---------- */
+.chat-send {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.chat-send__label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  font-weight: 500;
+}
+
+.chat-send .inv-text-field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.chat-send .inv-text-field-label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  font-weight: 500;
+}
+
+.chat-send .inv-text-field-control {
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-input-background);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.chat-send textarea.inv-text-field-control {
+  min-block-size: 96px;
+  resize: vertical;
+}
+
+.chat-send .inv-text-field-control:focus-visible {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+}
+
+.chat-send__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-block-size: min(220px, 32vh);
+  overflow-y: auto;
+}
+
+.chat-send__option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.chat-send__option:hover:not(:disabled) { background: var(--rail-hover-bg); }
+.chat-send__option[aria-selected="true"] { background: color-mix(in srgb, var(--text-primary) 9%, transparent); }
+
+.chat-send__option:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.chat-send__option-title {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-send__option-meta {
+  flex: 0 1 auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-send__note,
+.chat-review__note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.chat-send__more:empty { display: none; }
+
+.chat-send__error {
+  margin: 0;
+  color: var(--text-danger-emphasis);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+/* ---------- Review dialog ---------- */
+.chat-review {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.chat-review__list {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-review__item {
+  display: grid;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
+}
+
+.chat-review__item:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.chat-review__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.chat-review__chip {
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  overflow-wrap: anywhere;
+}
+
+button.chat-review__chip { cursor: pointer; }
+
+.chat-review__chip strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.chat-review__body {
+  margin: 0;
+  color: var(--text-primary);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.chat-review__notice {
+  margin: 0;
+  color: var(--state-warning);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+/* ---------- Archive-restore confirmation (Review and send) ----------
+   The exact body of a send a restore parked, as scrollable selectable plain text, with the
+   recipient and the short envelope hash. Markup: renderer/chat/renderer-chat-messages-review.js. */
+.chat-restore {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.chat-restore__to {
+  margin: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.chat-restore__to strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.chat-restore__label {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  font-weight: 500;
+}
+
+.chat-restore__meta { color: var(--text-muted); }
+
+.chat-restore__text {
+  max-block-size: 40vh;
+  overflow: auto;
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
+  color: var(--text-primary);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+.chat-restore__text:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.chat-restore__hash {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.chat-restore__hash code {
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  user-select: text;
+}
+
+.chat-restore__error {
+  margin: 0;
+  color: var(--text-danger-emphasis);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+/* ---------- Sidebar unread ---------- */
+.session-row .session-row__title.session-row__title--unread {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.session-row__unread-dot {
+  order: 2;
+  flex: 0 0 auto;
+  inline-size: 6px;
+  block-size: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-message-strip__status[data-running="true"] > .status-dot { animation: none; }
+}

@@ -1,11 +1,11 @@
 /* renderer/chat/renderer-chat-shell-controller.js - Internal chat-surface composition. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../shell/renderer-slash-command-registry'), require('./renderer-pane-session-context'));
+    module.exports = factory(require('../shell/renderer-slash-command-registry'), require('./renderer-pane-session-context'), require('./renderer-mcp-prompt-slash-commands'));
     return;
   }
-  root.rendererChatShellControllerUtils = factory(root.rendererSlashCommandRegistryUtils || {}, root.rendererPaneSessionContext);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (slashCommandUtils, paneSessionContextUtils) {
+  root.rendererChatShellControllerUtils = factory(root.rendererSlashCommandRegistryUtils || {}, root.rendererPaneSessionContext, root.rendererMcpPromptSlashCommands);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (slashCommandUtils, paneSessionContextUtils, promptSlashUtils) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   // Split view W1-4b: the ONE pane session context every surface below acts on (renderer-pane-session-context.js).
   // W1-4c injects a pane-bound one; `paneId` alone builds that pane's default, built inline until the module is tagged.
@@ -78,12 +78,20 @@
       captureToScratchpad: slashDependencies && slashDependencies.captureToScratchpad,
       showToastMessage: (...a) => callbacks.showToastMessage?.(...a), appendClientLog: (...a) => callbacks.appendClientLog?.(...a),
     });
+    const linkedHandler = (factories.createLinkedCommandHandler || windowRef.rendererSlashLinkedCommand?.createLinkedCommandHandler)?.({
+      state, getStartPromptSend: () => startPromptSend, getSessionProposals: () => windowRef.jennyShell?.sessionProposals,
+      setNotice: (text) => callbacks.setComposerStatusNotice?.(text, { owner: 'slash:linked', tone: 'warning' }),
+      appendClientLog: (...a) => callbacks.appendClientLog?.(...a) });
+    const memoryHandlers = (factories.createMemoryCommandHandlers || windowRef.rendererSlashMemoryCommands?.createMemoryCommandHandlers)?.({ state, getMemoryApi: slashDependencies?.getMemoryApi,
+      injectOutput: (...a) => slashCommandRegistry.injectOutput(...a), showToastMessage: (...a) => callbacks.showToastMessage?.(...a), appendClientLog: (...a) => callbacks.appendClientLog?.(...a) }) || {};
     registerBuiltInSlashCommands({
-      registry: slashCommandRegistry,
-      contextHandler,
-      noteHandler,
-      compact: (sessionId) => compactionCoordinator?.invoke?.(sessionId, { source: 'slash' }),
+      registry: slashCommandRegistry, contextHandler, noteHandler, linkedHandler, ...memoryHandlers, compact: (sessionId) => compactionCoordinator?.invoke?.(sessionId, { source: 'slash' }),
       showToastMessage: (...args) => callbacks.showToastMessage?.(...args),
+    });
+    const promptCommands = promptSlashUtils?.createMcpPromptSlashCommands?.({
+      registry: slashCommandRegistry, state, sessionContext, chatInput: dom.chatInput,
+      getMcpState: () => windowRef.jennyShell?.mcpDiscovery?.getState?.(), getPrompt: payload => windowRef.jennyShell?.mcpDiscovery?.getPrompt?.(payload),
+      showToastMessage: callbacks.showToastMessage, renderComposerState: callbacks.renderComposerState, log: callbacks.appendClientLog,
     });
     function insertSlashCommand(prompt) {
       if (!dom.chatInput) return false;
@@ -128,7 +136,7 @@
     const sendController = sendUtils.createSendController?.({
       state, sessionContext,
       dom: { chatInput: dom.chatInput },
-      slashCommandRegistry,
+      slashCommandRegistry, promptCommands,
       multiStreamController: controllers.multiStreamController,
       thinkingIndicator: controllers.thinkingIndicator, compactionCoordinator,
       constants: {
@@ -678,7 +686,6 @@
         refreshObservability: (...args) => callbacks.refreshObservability?.(...args) ?? Promise.resolve(null),
         showToastMessage: (...args) => callbacks.showToastMessage(...args), dismissToast: (...args) => callbacks.dismissToast?.(...args),
         dismissStreamErrors: (...args) => callbacks.dismissStreamErrors(...args),
-        maybeSuggestMemoryCapture: (...args) => callbacks.maybeSuggestMemoryCapture(...args),
         getInteractiveComposerStatusNotice: (...args) => slashDependencies.getInteractiveComposerStatusNotice(...args),
         persistInteractiveFallbackRequest,
         requestInteractiveGuardrailAnswer,
@@ -776,7 +783,6 @@
         refreshApprovedMemories: (...args) => callbacks.refreshApprovedMemories(...args),
         refreshComposerToolToggles: (...args) => callbacks.refreshComposerToolToggles?.(...args),
         resetArtifactsState: (...args) => callbacks.resetArtifactsState(...args), resetPanes: (...args) => callbacks.resetPanes?.(...args),
-        resetMemorySuggestionState: (...args) => callbacks.resetMemorySuggestionState(...args),
         resetAttachmentQueue: (...args) => callbacks.resetAttachmentQueue(...args),
         closeComposerPopover: (...args) => callbacks.closeComposerPopover(...args),
         closeCommandPopover: (...args) => callbacks.closeCommandPopover(...args),
@@ -899,6 +905,8 @@
         return;
       }
       bound = true;
+      promptCommands?.refresh()?.catch(() => {});
+      addCleanup(() => promptCommands?.dispose());
       addCleanup(() => sendController?.dispose?.());
       addCleanup(() => resumeTurnInteraction?.dispose?.());
       addCleanup(() => messageEditController?.dispose?.());
@@ -920,25 +928,18 @@
       addCleanup(() => unreadOrientationController?.dispose?.());
       chatEventBindings.bind();
       addCleanup(() => chatEventBindings.dispose?.());
-      globalThis.rendererTaskSpawnChip?.bindTaskSpawnChip?.(dom.chatTimeline, {
-        activateWorkspaceSession,
-        getLinkedSessionId: (taskId) => state.sessions.find(
-          (session) => String(session?.linked_task_id || '').trim() === String(taskId || '').trim()
-        )?.id || '',
-        // The task's own project first (the board row carries it), else the current chat's.
-        getProjectId: (taskId) => String(['active', 'deferred', 'recentResolved', 'archived']
-          .flatMap((section) => state.companion?.openLoopsBoard?.[section] || [])
-          .find((task) => String(task?.followUpId || '').trim() === String(taskId || '').trim())?.projectId
-          || state.sessions.find((session) => String(session?.id || '') === String(state.currentSessionId || ''))?.project_id || '').trim(),
-        getTaskNotes: (taskId) => String(['active', 'deferred', 'recentResolved', 'archived']
-          .flatMap((section) => state.companion?.openLoopsBoard?.[section] || [])
-          .find((task) => String(task?.followUpId || '').trim() === String(taskId || '').trim())?.body || ''),
-      });
       addCleanup(globalThis.rendererCalendarChatBindings?.bindCalendarChatInteractions?.(dom.chatTimeline, {
         shell: windowRef.jennyShell,
         setActiveView: (...args) => callbacks.setActiveView(...args),
         setHomeCalendarFocusDay: (key) => { state.ui.homeCalendarFocusDay = key; },
         appendClientLog: (...args) => callbacks.appendClientLog(...args),
+      }) || (() => {}));
+      addCleanup(globalThis.rendererProposalCardActions?.bindProposalCardInteractions?.(dom.chatTimeline, {
+        shell: windowRef.jennyShell, appendClientLog: (...args) => callbacks.appendClientLog(...args),
+        openSession: (sessionId) => activateWorkspaceSession(sessionId, { mode: 'replace' }),
+      }) || (() => {}));
+      addCleanup(globalThis.rendererSessionMessageRows?.bindSessionMessageCards?.(dom.chatTimeline, {
+        openSession: (sessionId) => activateWorkspaceSession(sessionId, { mode: 'replace' }),
       }) || (() => {}));
     }
 

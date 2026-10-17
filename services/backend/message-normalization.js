@@ -14,8 +14,9 @@ const { normalizeString, normalizeId } = require('../shared/normalize');
 const { normalizePluginOperationMetadata } = require('./session-type');
 const { normalizeDiscardedDrafts } = require('./chat-stream-discarded-drafts');
 const { normalizeSubagentMetadata } = require('./subagent-report-metadata');
+const { validateAnyContextRow } = require('./session-handoff-context');
 
-const VALID_MESSAGE_ROLES = new Set(['user', 'assistant', 'system', 'tool']);
+const VALID_MESSAGE_ROLES = new Set(['user', 'assistant', 'system', 'tool', 'context']);
 const VALID_EXTERNAL_PAYLOAD_ROOT_KINDS = new Set([
   'artifact',
   'attachment',
@@ -640,6 +641,31 @@ function normalizeReasoningPayload(value, phases) {
   };
 }
 
+// The memory chips of a `memory_note` message (row 58 W2 reflection receipt):
+// at most one per proposal a run may save, bounded scalar fields only, never
+// the memory text beyond its preview.
+const MEMORY_NOTE_KEYS = Object.freeze(['result_kind', 'action', 'status', 'memory_id', 'revision',
+  'operation_id', 'scope', 'kind', 'duplicate', 'undoable', 'reason', 'text_preview', 'origin']);
+
+const MAX_MEMORY_NOTES = 5;
+
+function normalizeMemoryNote(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.result_kind !== 'memory') return null;
+  const note = {};
+  for (const key of MEMORY_NOTE_KEYS) {
+    const field = value[key];
+    if (typeof field === 'string') note[key] = field.slice(0, 256);
+    else if (typeof field === 'boolean' || Number.isSafeInteger(field)) note[key] = field;
+  }
+  return note;
+}
+
+function normalizeMemoryNotes(value) {
+  if (!Array.isArray(value)) return null;
+  const notes = value.slice(0, MAX_MEMORY_NOTES).map(normalizeMemoryNote).filter(Boolean);
+  return notes.length ? notes : null;
+}
+
 function normalizeProactiveSuggestionMetadata(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
@@ -738,12 +764,41 @@ function normalizeTurnEvent(input, fallbackIndex = 0) {
   };
 }
 
+// The contract fields of a canonical context row (an addressed message or a first-turn
+// handoff), or null when it fails validation. A malformed `role:'context'` row is dropped,
+// never coerced to assistant text, and carries no other fields (tool/attachment metadata, etc.).
+function pickValidContextRow(source) {
+  const handoffKind = source.kind === 'session_handoff';
+  let payload;
+  try {
+    payload = structuredClone(handoffKind ? source.session_handoff : source.session_message);
+  } catch {
+    return null;
+  }
+  const row = {
+    id: source.id,
+    role: 'context',
+    kind: source.kind,
+    content: source.content,
+    [handoffKind ? 'session_handoff' : 'session_message']: payload,
+    timestamp: source.timestamp || nowIso(),
+    ...(source.turn_id || source.turnId ? { turn_id: source.turn_id || source.turnId } : {}),
+    ...(source.disposition === undefined ? {} : { disposition: source.disposition }),
+    ...(source.event_seq === undefined ? {} : { event_seq: source.event_seq }),
+  };
+  return validateAnyContextRow(row);
+}
+
 /**
  * Shared message field normalization used by both stores.
  * Returns a normalized message object or null if input is invalid.
  */
-function normalizeMessageFields(input, fallbackModel = '') {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+function normalizeMessageFields(rawInput, fallbackModel = '') {
+  if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) {
+    return null;
+  }
+  const input = normalizeMessageRole(rawInput.role) === 'context' ? pickValidContextRow(rawInput) : rawInput;
+  if (!input) {
     return null;
   }
   const {
@@ -751,8 +806,10 @@ function normalizeMessageFields(input, fallbackModel = '') {
     context_compactions: _contextCompactions,
     context_compacted: _contextCompacted,
     discarded_drafts: _discardedDrafts,
+    memory_notes: _memoryNotes,
     ...sourceFields
   } = input;
+  const memoryNotes = normalizeMemoryNotes(input.memory_notes);
   const discardedDrafts = normalizeDiscardedDrafts(input.discarded_drafts);
   const toolCall = normalizeToolCallMetadata(input.tool_call);
   const toolResult = normalizeToolResultMetadata(input.tool_result);
@@ -801,6 +858,7 @@ function normalizeMessageFields(input, fallbackModel = '') {
     tool_call: toolCall,
     tool_result: toolResult,
     proactive_suggestion: proactiveSuggestion,
+    ...(memoryNotes ? { memory_notes: memoryNotes } : {}),
     skill_invocation: normalizeSkillInvocationMetadata(input.skill_invocation),
     plugin_operation: normalizePluginOperationMetadata(input.plugin_operation),
     message_reactions: normalizeMessageReactions(

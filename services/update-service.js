@@ -203,6 +203,10 @@ class UpdateService extends EventEmitter {
     this._installOperation = null;
     this._disposed = false;
     this._abort = new AbortController();
+    // Late-bound by main.js to the window exit guard's authorizeNextQuit(): the
+    // renderer already ran its update-restart preflight, so the quit must not re-prompt.
+    this.authorizeQuit = () => {};
+    this.revokeQuitAuthorization = () => {};
     this.state = {
       status: 'unchecked', reason: '', currentVersion: this._currentVersion(),
       latestVersion: '', releaseName: '', releaseDate: '', releaseNotesMarkdown: '',
@@ -253,6 +257,7 @@ class UpdateService extends EventEmitter {
       await this._verifyDownloadedArtifact();
       this._installOperation = this._operation;
       this._setState({ status: 'installing' });
+      this.authorizeQuit();
       await this.autoUpdater.quitAndInstall();
     });
   }
@@ -514,6 +519,8 @@ class UpdateService extends EventEmitter {
     if (error?.code === 'missing-sha512') message = t('updates.service.missingHash', 'Release metadata is missing SHA512 verification data. Open the releases page.');
     const launchFailed = stage === 'install'
       && (error?.code === 'install-launch-failed' || this.state.status === 'installing');
+    // The install did not quit the app: the pre-authorized quit must prompt again.
+    if (stage === 'install') this.revokeQuitAuthorization();
     if (launchFailed) this._installLatched = true;
     const errorCode = error?.code === 'install-integrity'
       ? 'install-integrity'

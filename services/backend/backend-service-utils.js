@@ -322,37 +322,9 @@ function dedupeSessionMessages(backendMessages, shadowMessages) {
   };
 }
 
-function buildMemorySuggestionMessages(messages, options = {}) {
-  const maxUserMessages = Number.isInteger(options.maxUserMessages)
-    ? Math.max(1, options.maxUserMessages)
-    : null;
-
-  const normalizedMessages = ensureArray(messages)
-    .filter(
-      (message) =>
-        isPlainUserAssistantMessage(message) && String(message?.role || '').trim() === 'user'
-    )
-    .map((message) => ({
-      role: 'user',
-      content: String(message?.content || '').trim(),
-    }))
-    .filter((message) => message.content);
-
-  return maxUserMessages
-    ? normalizedMessages.slice(-maxUserMessages)
-    : normalizedMessages;
-}
-
 function normalizeRecallQueryFragment(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
-
-const RESPONSE_STYLE_RECALL_LIMIT = 2;
-const RESPONSE_STYLE_PATTERNS = [
-  /\b(?:be concise|keep it brief|short answers?)\b/i,
-  /\b(?:be direct|straight to the point|no fluff)\b/i,
-  /\b(?:step by step|walk me through|show me step by step)\b/i,
-];
 
 function buildRecallQuery(messages, prompt, options = {}) {
   const maxPriorMessages = Math.max(0, Number(options.maxPriorMessages || 2));
@@ -405,14 +377,6 @@ function buildRecallQuery(messages, prompt, options = {}) {
   return joined.slice(0, maxQueryLength);
 }
 
-function promptHasExplicitResponseStyleInstruction(prompt) {
-  const normalizedPrompt = normalizeRecallQueryFragment(prompt);
-  if (!normalizedPrompt) {
-    return false;
-  }
-  return RESPONSE_STYLE_PATTERNS.some((pattern) => pattern.test(normalizedPrompt));
-}
-
 function normalizeManagedToolPreferences(toolPreferences, { catalog } = {}) {
   if (!toolPreferences || typeof toolPreferences !== 'object' || Array.isArray(toolPreferences)) {
     return undefined;
@@ -449,7 +413,6 @@ function resolveSessionToolDenyList(session, catalog) {
 
 module.exports = {
   LOCAL_AUTH_ACCOUNTS_KEY,
-  RESPONSE_STYLE_RECALL_LIMIT,
   inferEngineTypeFromModel,
   resolveRequestedEngineType,
   normalizeModelCapabilities,
@@ -463,10 +426,8 @@ module.exports = {
   summarizeToolPayload,
   extractClientMessageId,
   dedupeSessionMessages,
-  buildMemorySuggestionMessages,
   normalizeRecallQueryFragment,
   buildRecallQuery,
-  promptHasExplicitResponseStyleInstruction,
   normalizeManagedToolPreferences,
   resolveSessionToolDenyList,
 };

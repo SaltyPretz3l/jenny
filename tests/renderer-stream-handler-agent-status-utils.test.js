@@ -151,3 +151,55 @@ test('sibling export identity: main stream-handler re-exports appendAgentStatusS
     'stream-handler re-export must be the same reference as the agent-status sibling export — diverged copies would silently break the contract'
   );
 });
+
+test('appendAgentStatusStep: a full bound of settled rows never evicts the new live child', () => {
+  let list = [];
+  for (let i = 0; i < AGENT_STATUS_STEPS_MAX; i += 1) {
+    list = appendAgentStatusStep(list, {
+      taskId: `batch-${i}`, stage: 'complete', source: 'delegate', status: 'completed',
+      terminal: true, success: true, updatedAt: 1000 + i,
+    });
+  }
+  list = appendAgentStatusStep(list, {
+    taskId: 'batch-new', stage: 'task_1_queued', childTaskId: 'child-new', toolCallId: 'call-new',
+    source: 'delegate', status: 'queued', updatedAt: 5000,
+  });
+  list = appendAgentStatusStep(list, {
+    taskId: 'batch-new', stage: 'task_1_running', childTaskId: 'child-new', toolCallId: 'call-new',
+    source: 'delegate', status: 'running', updatedAt: 5001,
+  });
+  list = appendAgentStatusStep(list, {
+    taskId: 'batch-new', stage: 'task_1_activity', childTaskId: 'child-new', toolCallId: 'call-new',
+    source: 'delegate', status: 'running', updatedAt: 5002,
+    childActivity: { sequence: 1, steps: [], step_count: 0, text: 'reading files' },
+  });
+  list = appendAgentStatusStep(list, {
+    taskId: 'batch-new', stage: 'task_2_running', childTaskId: 'child-two', toolCallId: 'call-new',
+    source: 'delegate', status: 'running', updatedAt: 5003,
+  });
+  assert.equal(list.length, AGENT_STATUS_STEPS_MAX);
+  const child = list.find((step) => step.key === 'child-new');
+  assert.ok(child, 'the running child stays visible');
+  assert.equal(child.status, 'running');
+  assert.equal(child.childActivity.text, 'reading files');
+  assert.ok(list.some((step) => step.key === 'child-two'), 'a second live child stays visible too');
+  assert.ok(!list.some((step) => step.taskId === 'batch-0'), 'the oldest settled row made room');
+});
+
+test('appendAgentStatusStep: a child-terminal row counts as settled for eviction', () => {
+  let list = appendAgentStatusStep([], {
+    childTaskId: 'oldest-live', stage: 'task_1_running', source: 'delegate', status: 'running', updatedAt: 900,
+  });
+  for (let i = 0; i < AGENT_STATUS_STEPS_MAX - 1; i += 1) {
+    list = appendAgentStatusStep(list, {
+      childTaskId: `done-${i}`, stage: 'task_1_completed', source: 'delegate', status: 'completed',
+      childTerminal: true, updatedAt: 1000 + i,
+    });
+  }
+  list = appendAgentStatusStep(list, {
+    childTaskId: 'live', stage: 'task_1_running', source: 'delegate', status: 'running', updatedAt: 5000,
+  });
+  assert.ok(list.some((step) => step.key === 'live'));
+  assert.ok(list.some((step) => step.key === 'oldest-live'), 'an older running child is still current work');
+  assert.ok(!list.some((step) => step.key === 'done-0'));
+});

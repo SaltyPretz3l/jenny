@@ -8,6 +8,7 @@ from sidecar.ai.config import RuntimeConfig
 from sidecar.ai.context.builder import ContextBuilder
 from sidecar.ai.memory.store import MemoryStore
 from sidecar.runtime.harness_snapshot import HarnessSnapshotBuilder
+from tests.sidecar.ai.memory.memory_v9_helpers import save_row
 
 
 def _builder(user_data: Path, memory_store: MemoryStore) -> HarnessSnapshotBuilder:
@@ -31,7 +32,8 @@ def test_harness_snapshot_preserves_and_counts_source_removed_provenance(
 ) -> None:
     memory_store = MemoryStore(tmp_path / "sidecar-memory.db")
     try:
-        memory_store.save_memory(
+        save_row(
+            memory_store,
             session_id="session-1",
             title="Removed source",
             lesson_text="Keep this lesson without its source.",

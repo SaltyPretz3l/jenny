@@ -28,6 +28,7 @@ class MainLifecycleController {
     getPlatform = () => process.platform,
     shutdownTimeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS,
     onEmergencyShutdown = () => {},
+    quitPreflight = null,
     log = () => {},
     setTimeoutImpl = setTimeout,
     clearTimeoutImpl = clearTimeout,
@@ -42,6 +43,7 @@ class MainLifecycleController {
     this._onEmergencyShutdown = typeof onEmergencyShutdown === 'function'
       ? onEmergencyShutdown
       : () => {};
+    this._quitPreflight = typeof quitPreflight === 'function' ? quitPreflight : null;
     this._log = typeof log === 'function' ? log : () => {};
     this._setTimeout = typeof setTimeoutImpl === 'function' ? setTimeoutImpl : setTimeout;
     this._clearTimeout = typeof clearTimeoutImpl === 'function' ? clearTimeoutImpl : clearTimeout;
@@ -219,9 +221,30 @@ class MainLifecycleController {
     }
   }
 
-  handleBeforeQuit(event) {
+  handleBeforeQuit(event, { preflight = true } = {}) {
     if (event && typeof event.preventDefault === 'function') {
       event.preventDefault();
+    }
+    if (this._shutdownPromise || !preflight || !this._quitPreflight) {
+      return this._beginShutdown(0);
+    }
+    return this._runQuitPreflight();
+  }
+
+  // Unsaved-work preflight for a user-initiated quit. Only an explicit false
+  // (the user cancelled) keeps the app open; a throw fails open and quits.
+  async _runQuitPreflight() {
+    let proceed = true;
+    try {
+      proceed = (await this._quitPreflight()) !== false;
+    } catch (error) {
+      this._safeLog('WARN', 'lifecycle.quit_preflight_failed', {
+        message: boundedErrorMessage(error),
+      });
+    }
+    if (!proceed && !this._shutdownPromise) {
+      this._safeLog('INFO', 'lifecycle.quit_cancelled_by_preflight', {});
+      return undefined;
     }
     return this._beginShutdown(0);
   }
@@ -303,7 +326,8 @@ function registerMainProcessLifecycleHandlers(app, lifecycle) {
 }
 
 function registerMainWindowSessionEndHandlers(window, lifecycle) {
-  window.on('query-session-end', (event) => lifecycle.handleBeforeQuit(event));
+  // OS logoff must never block on the unsaved-work dialog.
+  window.on('query-session-end', (event) => lifecycle.handleBeforeQuit(event, { preflight: false }));
   window.on('session-end', () => lifecycle.requestEmergencyShutdown({ exitCode: 0 }));
 }
 

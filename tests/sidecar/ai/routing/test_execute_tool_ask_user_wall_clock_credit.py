@@ -3,8 +3,8 @@ wall-clock deadline once the tool settles, mirroring
 ``request_dispatch_chat._credit_approval_wait`` for approvals. The credit has
 to land whether the human answers, declines, or the bridge errors, and each
 sequential ``ask_user`` call in a turn must credit its own wait independently.
-Ordinary tools must be byte-identical: no timing measurement, no deadline
-mutation.
+Trusted Electron message sends use the same human-wait accounting. Other tools,
+message reads and external lookalikes retain their working-time budget.
 """
 
 from __future__ import annotations
@@ -61,11 +61,13 @@ def _ok_result(tool_name: str) -> SimpleNamespace:
 
 
 @pytest.mark.parametrize("dispatch_error", [None, RuntimeError("bridge failed")])
+@pytest.mark.parametrize("tool_id", ["ask_user", "session_message"])
 def test_ask_user_wait_is_credited_back_to_the_deadline_on_every_outcome(
     monkeypatch: pytest.MonkeyPatch,
     dispatch_error: RuntimeError | None,
+    tool_id: str,
 ) -> None:
-    descriptor = _descriptor("ask_user")
+    descriptor = _descriptor(tool_id)
     kernel = _kernel(descriptor)
     now = [100.0]
     runtime = LoopRuntime(
@@ -73,13 +75,13 @@ def test_ask_user_wait_is_credited_back_to_the_deadline_on_every_outcome(
         wall_clock_deadline=105.0,
         clock=lambda: now[0],
     )
-    call = ToolCallRequest(tool_id="ask_user", arguments={}, call_id="c-ask-user")
+    call = ToolCallRequest(tool_id=tool_id, arguments={"action": "send"}, call_id="c-ask-user")
 
     def fake_dispatch(**_kwargs: object) -> SimpleNamespace:
         now[0] += 20.0  # the human takes 20s to answer -- longer than the 5s left
         if dispatch_error is not None:
             raise dispatch_error
-        return _ok_result("ask_user")
+        return _ok_result(tool_id)
 
     monkeypatch.setattr(tool_execution, "_dispatch_tool_call", fake_dispatch)
     monkeypatch.setattr(tool_execution, "apply_tool_pressure_backoff", lambda **_kwargs: None)
@@ -106,6 +108,33 @@ def test_ask_user_wait_is_credited_back_to_the_deadline_on_every_outcome(
 
     # 105.0 + 20.0 -- the wait is credited back regardless of outcome.
     assert runtime.wall_clock_deadline == 125.0
+
+
+@pytest.mark.parametrize(("tool_id", "action", "server"), [
+    ("session_message", "read", "electron_tool_bridge"),
+    ("session_message", "list_targets", "electron_tool_bridge"),
+    ("session_message", "send", "external_mcp"),
+    ("session_message", "send", "jenny_builtin"),
+    ("mcp__external__session_message", "send", "external_mcp"),
+])
+def test_non_consent_calls_keep_their_working_time_budget(
+    monkeypatch: pytest.MonkeyPatch, tool_id: str, action: str, server: str,
+) -> None:
+    descriptor = _descriptor(tool_id, server_name=server)
+    now = [0.0]
+    runtime = LoopRuntime(request_id=REQUEST_ID, wall_clock_deadline=10.0, clock=lambda: now[0])
+
+    def dispatch(**_kwargs: object) -> SimpleNamespace:
+        now[0] += 3.0
+        return _ok_result(tool_id)
+
+    monkeypatch.setattr(tool_execution, "_dispatch_tool_call", dispatch)
+    monkeypatch.setattr(tool_execution, "apply_tool_pressure_backoff", lambda **_kwargs: None)
+    tool_execution.execute_tool(
+        _kernel(descriptor), ToolCallRequest(tool_id=tool_id, arguments={"action": action}, call_id="c-control"),
+        request_id=REQUEST_ID, read_snapshot_cache={}, tool_contract=_contract(descriptor), runtime=runtime,
+    )
+    assert runtime.wall_clock_deadline == 10.0
 
 
 def test_two_sequential_ask_user_calls_each_credit_their_own_wait(

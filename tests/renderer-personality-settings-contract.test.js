@@ -77,15 +77,15 @@ test('the shared form owns the Personality note copy and the Show exact text aff
   );
 });
 
-test('Memory owns Long-term notes and no daily record twin', () => {
+// Row 58 W4: the Memory page links USER.md and MEMORY.md (opened in the OS
+// default app) instead of editing MEMORY.md inline.
+test('Memory links the notes files instead of an inline editor, and has no daily record twin', () => {
   const memory = sliceSection(readIndexHtml(), 'memories', 'usage');
   assert.ok(memory, 'the Memory section still exists');
 
-  assert.match(memory, /Long-term notes/);
-  assert.match(memory, /Sent with your messages in the General project, except on the ChatGPT engine\. Approved memories are separate and live below\./);
-  assert.match(memory, /id="memoryNotesFieldHost"/);
-  assert.match(memory, /id="memoryNotesCounter"/);
-  assert.match(memory, /id="memoryNotesActions"/);
+  assert.match(memory, /Your notes files/);
+  assert.match(memory, /id="memoryFilesHost"/);
+  assert.doesNotMatch(memory, /memoryNotesFieldHost|memoryNotesCounter|memoryNotesActions/);
   assert.doesNotMatch(memory, /daily record|memoryContextTabs|memoryContextEditor|memoryContextFilesGroup/);
   assert.doesNotMatch(memory, /<\s*(button|input|select|textarea)\b/);
 });

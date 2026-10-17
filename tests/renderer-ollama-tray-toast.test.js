@@ -52,12 +52,13 @@ function makeDeps(overrides) {
     featureFlags: { ollama_tray_remediation: true },
     navigate: () => {},
     appendClientLog: () => {},
+    storage: null,
     ...overrides,
   };
   return { deps, toastCalls, bridgeCalls };
 }
 
-test('flag ON + matching event calls showToast with 3 actions', (t) => {
+test('flag ON + matching event calls showToast with 4 actions', (t) => {
   const { deps, toastCalls } = makeDeps();
   handleOllamaTrayConflictLogEntry(makeEntry(), deps);
 
@@ -67,9 +68,43 @@ test('flag ON + matching event calls showToast with 3 actions', (t) => {
   assert.equal(options.tone, 'warning');
   assert.equal(options.sticky, true);
   assert.ok(Array.isArray(options.actions));
-  assert.equal(options.actions.length, 3);
+  assert.equal(options.actions.length, 4);
   const ids = options.actions.map((a) => a.id);
-  assert.deepEqual(ids.sort(), ['disable', 'quit', 'settings']);
+  assert.deepEqual(ids.sort(), ['disable', 'dismiss', 'quit', 'settings']);
+});
+
+function memoryStorage(initial = {}) {
+  const values = new Map(Object.entries(initial));
+  return {
+    getItem: (key) => (values.has(key) ? values.get(key) : null),
+    setItem: (key, value) => values.set(key, String(value)),
+    values,
+  };
+}
+
+test("Don't show again closes the toast and silences it on later launches", () => {
+  const storage = memoryStorage();
+  const dismissed = [];
+  const { deps, toastCalls } = makeDeps({ storage, dismissToast: (id) => dismissed.push(id) });
+  handleOllamaTrayConflictLogEntry(makeEntry(), deps);
+  toastCalls[0].options.actions.find((a) => a.id === 'dismiss').onClick();
+  assert.deepEqual(dismissed, ['toast_1']);
+  assert.equal(storage.values.get('jenny.ollamaTray.conflictToastDismissed'), '1');
+
+  // A fresh launch (new module instance) with the stored choice shows nothing.
+  delete require.cache[modulePath];
+  const relaunched = require(modulePath);
+  const next = makeDeps({ storage });
+  relaunched.handleOllamaTrayConflictLogEntry(makeEntry(), next.deps);
+  assert.equal(next.toastCalls.length, 0);
+});
+
+test('an unreadable store still shows the toast and the dismiss click does not throw', () => {
+  const broken = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
+  const { deps, toastCalls } = makeDeps({ storage: broken });
+  handleOllamaTrayConflictLogEntry(makeEntry(), deps);
+  assert.equal(toastCalls.length, 1);
+  toastCalls[0].options.actions.find((a) => a.id === 'dismiss').onClick();
 });
 
 test('clicking the quit action invokes the stubbed bridge method', async (t) => {

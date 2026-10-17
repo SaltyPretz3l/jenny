@@ -158,30 +158,21 @@ class ProcessLogWriter {
   }
 
   write(entry) {
-    return this.writeBatch([entry]);
-  }
-
-  writeBatch(entries) {
-    const items = [];
-    for (const entry of Array.isArray(entries) ? entries : []) {
-      try {
-        const line = `${JSON.stringify(entry)}\n`;
-        items.push({ line, bytes: Buffer.byteLength(line, 'utf8'), level: normalizeLevel(entry) });
-      } catch {
-        this._recordDrop(normalizeLevel(entry));
-      }
+    let item;
+    try {
+      const line = `${JSON.stringify(entry)}\n`;
+      item = { line, bytes: Buffer.byteLength(line, 'utf8'), level: normalizeLevel(entry) };
+    } catch {
+      this._recordDrop(normalizeLevel(entry));
+      return false;
     }
-    if (items.length === 0) return false;
-
-    const streamWrote = this._writeStream(items.map((item) => item.line).join(''));
-    const fileItems = this.fileMinRank > 0
-      ? items.filter((item) => LEVEL_ORDER.indexOf(item.level) >= this.fileMinRank)
-      : items;
-    let fileAccepted = false;
+    const streamWrote = this._writeStream(item.line);
+    if (LEVEL_ORDER.indexOf(item.level) < this.fileMinRank) return streamWrote;
+    let fileAccepted;
     if (this.durable) {
-      for (const item of fileItems) fileAccepted = this._writeFileSyncItems([item]) || fileAccepted;
+      fileAccepted = this._writeFileSyncItems([item]);
     } else {
-      for (const item of fileItems) fileAccepted = this._enqueue(item) || fileAccepted;
+      fileAccepted = this._enqueue(item);
       if (fileAccepted) this._scheduleDrain();
     }
     return streamWrote || fileAccepted;

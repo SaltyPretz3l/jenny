@@ -56,6 +56,8 @@
     }
 
     async function handleThinkingStatus(payload) {
+      // The activity row owns this transient presentation; no reasoning shell/history.
+      if (payload.progress) return { buffered: false, terminal: false };
       const normalizedStreamId = normalizeId(payload.streamId);
       const thinkingText = normalizeString(payload.text);
       const hadThinkingStatus = Boolean(

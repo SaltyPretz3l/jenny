@@ -115,3 +115,97 @@ test('actor refuses an overlapping idle-only deletion rather than reusing its ha
   const idle = actors.beginDeletion('a', { onlyIfIdle: true });
   assert.ok(idle); actors.rollbackDeletion(idle);
 });
+
+// Memory v2 (row 58): a deleted chat's chat-scope memories are purged once the
+// delete has committed (W3: a refused delete must leave the live chat's memory
+// alone); a missing or failing sidecar never blocks the delete.
+function purgeHarness(sidecarClient) {
+  const h = harness();
+  const logs = [];
+  h.service.sidecarClient = sidecarClient;
+  h.service._emitServiceLog = (level, event, details) => logs.push([level, event, details]);
+  h.service.sessionTurnActors.awaitQuiescence = async () => { h.calls.push(['actor-wait']); return { ok: true }; };
+  h.service.sessionTurnActors.commitDeletion = async () => {
+    h.calls.push(['commit']);
+    return { ok: true, result: { object: 'session', id: 'a', deleted: true } };
+  };
+  return { ...h, logs };
+}
+
+test('normal deletion purges the chat-scope memories after the chat is removed and bumps the epoch', async () => {
+  let h = null;
+  h = purgeHarness({
+    request: async (method, params) => {
+      h.calls.push(['request', method, Object.keys(params).sort(), params.session_id]);
+      return { ok: true, removed: 2 };
+    },
+  });
+  const result = await deleteSessionWithQuiescence(h.service, 'a');
+  assert.equal(result.deleted, true);
+  assert.deepEqual(h.calls, [
+    ['begin', false],
+    ['actor-wait'],
+    ['commit'],
+    ['request', 'memory.purge_session', ['accept_version', 'session_id'], 'a'],
+    // The epoch bump is pushed to the sidecar's apply fence (row 58 W2).
+    ['request', 'memory.policy_epoch', ['accept_version', 'epoch_source', 'policy_epoch'], undefined],
+  ]);
+  assert.equal(h.service._memoryPolicyEpoch, 1);
+  assert.equal(h.logs.some(([, event]) => event === 'lifecycle.session_memory_purge_skipped'), false);
+});
+
+test('a committed delete also purges the chat from the conversation index, best effort (row 58 W4)', async () => {
+  for (const fail of [false, true]) {
+    let h = null;
+    h = purgeHarness({
+      connected: true,
+      request: async (method, params) => {
+        h.calls.push(['request', method, params.session_ids || params.session_id]);
+        if (fail && method === 'conversations.purge') throw new Error('index down');
+        return { ok: true, removed: 1 };
+      },
+    });
+    const result = await deleteSessionWithQuiescence(h.service, 'a');
+    assert.equal(result.deleted, true);
+    assert.deepEqual(h.calls.filter(call => call[0] === 'request').map(call => call.slice(1)), [
+      ['memory.purge_session', 'a'], ['memory.policy_epoch', undefined], ['conversations.purge', ['a']],
+    ]);
+  }
+});
+
+test('a failing or missing sidecar logs the skipped purge and the delete proceeds', async () => {
+  const failing = purgeHarness({
+    request: async () => { throw Object.assign(new Error('memory.purge_session failed'), { error_code: 'CMP-MEM-0001' }); },
+  });
+  assert.equal((await deleteSessionWithQuiescence(failing.service, 'a')).deleted, true);
+  assert.deepEqual(failing.logs.filter(([, event]) => event === 'lifecycle.session_memory_purge_skipped'),
+    [['WARN', 'lifecycle.session_memory_purge_skipped', { reason: 'CMP-MEM-0001' }]]);
+  assert.equal(failing.service._memoryPolicyEpoch, undefined, 'a failed purge does not move the epoch');
+
+  const missing = purgeHarness(null);
+  assert.equal((await deleteSessionWithQuiescence(missing.service, 'a')).deleted, true);
+  assert.deepEqual(missing.logs.filter(([, event]) => event === 'lifecycle.session_memory_purge_skipped'),
+    [['INFO', 'lifecycle.session_memory_purge_skipped', { reason: 'sidecar_unavailable' }]]);
+});
+
+test('a refused or retained delete never purges the live chat', async () => {
+  for (const committed of [
+    { ok: false, result: { object: 'session', id: 'a', deleted: false, reason: 'activity_changed' } },
+    { ok: true, result: { object: 'session', id: 'a', deleted: false, reason: 'retained' } },
+  ]) {
+    let requests = 0;
+    const h = purgeHarness({ request: async () => { requests += 1; return { ok: true, removed: 0 }; } });
+    h.service.sessionTurnActors.commitDeletion = async () => committed;
+    assert.equal((await deleteSessionWithQuiescence(h.service, 'a')).deleted, false);
+    assert.equal(requests, 0);
+  }
+});
+
+test('a refused quiescence never purges', async () => {
+  let requests = 0;
+  const h = purgeHarness({ request: async () => { requests += 1; return { ok: true, removed: 0 }; } });
+  h.service.sessionTurnActors.awaitQuiescence = async () => ({ ok: false, reason: 'not_quiescent' });
+  const result = await deleteSessionWithQuiescence(h.service, 'a');
+  assert.equal(result.deleted, false);
+  assert.equal(requests, 0);
+});

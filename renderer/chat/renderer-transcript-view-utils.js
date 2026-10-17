@@ -85,6 +85,8 @@
       if (button.dataset.transcriptView !== view) button.dataset.transcriptView = view;
       button.setAttribute('aria-label', label);
       button.title = label;
+      if (button.hasAttribute('data-tooltip')) button.setAttribute('data-tooltip', label);
+      globalThis.inventoryTooltip?.refresh?.(button);
     }
     registerListener(button, 'click', (event) => {
       event.preventDefault();

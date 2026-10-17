@@ -1,11 +1,23 @@
 {
   "schema_version": 1,
-  "_comment": "Provenance for the local-only llama_server_extract/ binary. The binary is gitignored and never shipped in releases; this file records what the acceleration feature was last validated against. Runtime behavior is driven by the live --help probe in services/backend/llama-server-capabilities.js, never by this file. Refreshed 2026-09-01 from llama.cpp release b10749 (llama-b10749-bin-win-cuda-13.3-x64.zip + cudart-llama-bin-win-cuda-13.3-x64.zip); previous validated baseline was build 8846 (bcdcc1044), which had no draft-mtp.",
-  "expected_build": 10749,
-  "expected_commit": "dfc29b64e",
-  "cuda": "13.3",
+  "_comment": "Provenance for the ignored, local-only llama_server_extract/ runtime; never shipped. Behavior uses the live capability probe. Owner authorized CUDA 13.4 on 2026-10-08 after newest CUDA 13.3 b10976 failed to load gemma-embedding2. This baseline is frozen for the remaining Jenny 1.5 burn.",
+  "expected_build": 11513,
+  "expected_commit": "71ad0590f",
+  "cuda": "13.4",
   "required_spec_types_for_mtp": [
     "draft-mtp"
   ],
-  "validated_on": "2026-09-01"
+  "validated_on": "2026-10-08",
+  "release": "b11513",
+  "source_commit": "71ad0590f4808b6202f9213d166913858c73b1bc",
+  "assets": [
+    {
+      "name": "llama-b11513-bin-win-cuda-13.4-x64.zip",
+      "sha256": "c1a145892c5cf044078f0ff14b0cb78fb8c5310aae054f9d5ef1fa4e15c0c650"
+    },
+    {
+      "name": "cudart-llama-bin-win-cuda-13.4-x64.zip",
+      "sha256": "738f8c251ac22b70c3ae6f83a10cf222725df0395246a2cf58f32bdb85fbe668"
+    }
+  ]
 }

@@ -21,7 +21,9 @@ function loader(t, read) {
   const reads = [];
   let probe = false;
   cards.resetArtifactImageLoaderForTests();
-  globalThis.document = { querySelectorAll: () => nodes.values() };
+  // The loader queries one exact key; the fake honours that selector.
+  globalThis.document = { querySelectorAll: (selector) => [...nodes.values()]
+    .filter((node) => selector.includes(`"${node.attrs.get('data-inv-artifact-image-key')}"`)) };
   globalThis.jennyShell = { artifacts: { read: (sessionId, id) => {
     reads.push(id);
     return probe ? new Promise(() => {}) : read(id, sessionId);
@@ -39,10 +41,10 @@ function loader(t, read) {
     const node = {
       getAttribute: (name) => attrs.get(name),
       setAttribute: (name, value) => attrs.set(name, value),
-      closest: () => ({
+      closest: (selector) => (selector === '.inv-artifact-figure' ? {
         setAttribute: (name, value) => states.set(name, value),
         removeAttribute: (name) => states.delete(name),
-      }),
+      } : null),
       attrs, states,
     };
     nodes.set(id, node);

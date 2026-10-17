@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const { explainIssue, mergeByExplanation } = require('../renderer/shared/diagnostics-issue-explanations');
+const { groupIssues } = require('../renderer/shared/diagnostics-issue-utils');
 
 test('workspace events distinguish a missing folder from a read failure', () => {
   for (const event of ['ide.watch_start_failed', 'ide.tree_list_failed']) {
@@ -24,6 +25,17 @@ test('workspace events distinguish a missing folder from a read failure', () => 
     assert.deepEqual(explainIssue({ event, message: 'Permission denied' }), failed);
     assert.deepEqual(explainIssue({ event }), failed);
   }
+});
+
+// Gate 2026-10-14 F4: the tray conflict showed the generic "no specific advice".
+test('the Ollama tray-app conflict explains itself with the toast copy', () => {
+  assert.deepEqual(explainIssue({ event: 'ollama.tray_app_conflict_detected', severity: 'WARN' }), {
+    id: 'ollamaTrayConflict',
+    title: 'Ollama Tray App Conflict',
+    cause: "The Ollama tray app can silently kill Jenny's engine. Quit it or disable its Startup shortcut to prevent unexpected restarts.",
+    action: null,
+    area: 'Models',
+  });
 });
 
 test('slow requests format finite nested or top-level durations', () => {
@@ -65,7 +77,7 @@ test('fallback chooses the longest component prefix and translates the severity 
       assert.deepEqual(explainIssue({ component, event: 'unknown.event', severity }), {
         id: 'fallback:unknown.event',
         title: `${area} reported ${severity === 'ERROR' ? 'an error' : 'a warning'}`,
-        cause: 'Jenny has no specific advice for this yet. Technical details show what was recorded.',
+        cause: 'Jenny has no specific advice for this yet. Open Details to see what was recorded.',
         action: null,
         area,
       });
@@ -142,17 +154,82 @@ test('merging does not mutate the array or its rows and rejects non-arrays', () 
   for (const input of [null, undefined, {}, 'bad']) assert.deepEqual(mergeByExplanation(input), []);
 });
 
-test('browser UMD export resolves copy through jennyI18n and exposes only the two functions', () => {
+test('browser UMD exports resolve copy and grouping predicates in renderer load order', () => {
   const context = vm.createContext({ jennyI18n: {
     t: (key, fallback, params) => key === 'diagnostics.issues.area.memory' ? 'Memoire'
       : key === 'diagnostics.issues.explain.fallback.errorTitle' ? `${params.area}: erreur` : fallback,
   } });
+  vm.runInContext(fs.readFileSync(require.resolve('../renderer/shared/diagnostics-issue-utils'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(require.resolve('../renderer/shared/diagnostics-issue-explanations'), 'utf8'), context);
   const api = context.rendererDiagnosticsIssueExplanations;
-  assert.deepEqual(Object.keys(api).sort(), ['explainIssue', 'mergeByExplanation']);
+  assert.deepEqual(Object.keys(api).sort(), ['explainIssue', 'matchIssueVariant', 'mergeByExplanation']);
   const explanation = api.explainIssue({ component: 'sidecar.memory.x', severity: 'ERROR' });
   assert.equal(explanation.area, 'Memoire');
   assert.equal(explanation.title, 'Memoire: erreur');
+  const groups = context.diagnosticsIssueUtils.groupIssues([
+    { level: 'WARN', event: 'ide.watch_start_failed', message: 'no workspace root' },
+    { level: 'WARN', event: 'ide.watch_start_failed', message: 'EACCES' },
+  ]);
+  assert.equal(groups.length, 2);
+  assert.equal(api.mergeByExplanation(groups).length, 2);
+});
+
+test('Python logger prefixes and unknown components use the recorded layer for area labels', () => {
+  for (const [component, layer, area] of [
+    ['ai.engines.ollama', 'sidecar', 'Local engine'],
+    ['runtime.diagnostics', '', 'Local engine'],
+    ['unknown', 'sidecar', 'Local engine'],
+    ['unknown', 'renderer', 'App window'],
+    ['unknown', 'electron', 'App'],
+    ['unknown', 'other', 'App'],
+    ['ide.tree', 'sidecar', 'Workspace'],
+  ]) assert.equal(explainIssue({ component, layer, severity: 'ERROR' }).area, area);
+});
+
+test('grouped workspace advice, engine notices and slow-request durations survive modeling and merging', () => {
+  const groups = groupIssues([
+    { level: 'WARN', event: 'ide.watch_start_failed', message: 'no workspace root' },
+    { level: 'WARN', event: 'ide.watch_start_failed', message: 'EACCES' },
+    { level: 'WARN', event: 'ollama.output', message: 'notice' },
+    { level: 'ERROR', event: 'ollama.output', message: 'failed' },
+    { level: 'WARN', event: 'ipc.handler_slow', data: { durationMs: 1532 } },
+  ]);
+  const merged = mergeByExplanation(groups);
+  assert.deepEqual(merged.map(row => row.explanation.id).sort(), [
+    'engineNotice', 'fallback:ollama.output', 'noWorkspaceFolder', 'slowRequest', 'workspaceReadFailed',
+  ]);
+  assert.match(merged.find(row => row.explanation.id === 'slowRequest').explanation.cause, /1\.5 s/);
+});
+
+test('matched explanations inspect every member of an explanation group', () => {
+  const group = { event: 'ide.watch_start_failed', message: 'EACCES', members: [
+    { event: 'ide.watch_start_failed', message: 'no workspace root' },
+    { event: 'ide.watch_start_failed', message: 'EACCES' },
+  ] };
+  assert.equal(explainIssue(group).id, 'noWorkspaceFolder');
+  assert.equal(mergeByExplanation([group])[0].explanation.id, 'noWorkspaceFolder');
+});
+
+test('explanation merging and sorting parse timestamps before existing string tie-breaks', () => {
+  const groups = [
+    { event: 'same', severity: 'WARN', ts: '2026-10-07T02:00:00Z' },
+    { event: 'same', severity: 'WARN', ts: '2026-10-07T02:00:00.500+00:00' },
+    { event: 'other', severity: 'WARN', ts: '2026-10-07T02:00:00.750+00:00' },
+  ];
+  const merged = mergeByExplanation(groups);
+  assert.equal(merged[0].explanation.id, 'fallback:other');
+  assert.equal(merged[1].ts, groups[1].ts);
+});
+
+test('explanations use the shared severity rank for INFO and DEBUG as well as issues', () => {
+  const merged = mergeByExplanation([
+    { event: 'debug', severity: 'DEBUG', ts: '2026-10-08T02:00:00Z' },
+    { event: 'info', severity: 'INFO', ts: '2026-10-07T02:00:00Z' },
+    { event: 'same', severity: 'DEBUG' },
+    { event: 'same', severity: 'INFO' },
+  ]);
+  assert.deepEqual(merged.map(row => row.explanation.id), ['fallback:info', 'fallback:same', 'fallback:debug']);
+  assert.equal(merged[1].severity, 'INFO');
 });
 
 test('local engine stderr warnings get their own plain explanation; engine errors keep the fallback', () => {

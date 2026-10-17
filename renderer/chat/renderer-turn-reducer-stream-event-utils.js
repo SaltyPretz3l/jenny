@@ -313,6 +313,9 @@
               : {}),
             ...(String(payload && payload.reason || '').trim() ? { reason: String(payload.reason).trim() } : {}),
             ...(payload && (payload.oneOffOnly === true || payload.one_off_only === true) ? { one_off_only: true } : {}),
+            // A message to another chat is approved against its full body (cp5b-2), never the clipped input.
+            ...(payload && payload.session_message_approval && typeof payload.session_message_approval === 'object' && !Array.isArray(payload.session_message_approval)
+              ? { session_message_approval: deepCloneJsonValue(payload.session_message_approval) } : {}),
             // The approval can beat its tool_use event to the reducer; carrying
             // the tool name, summary and input here lets the gap row name the
             // tool and quote the command in that race instead of rendering

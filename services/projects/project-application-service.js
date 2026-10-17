@@ -90,7 +90,7 @@ function projectFailure(reason, details = {}) {
     ),
     project_memories_unavailable: t(
       'projects.application.memoriesUnavailable',
-      'Memories could not be moved to General, so the project was not deleted. Try again.'
+      'Memories could not be archived, so the project was not deleted. Try again.'
     ),
     project_knowledge_unavailable: t(
       'projects.application.knowledgeUnavailable',
@@ -182,7 +182,7 @@ class ProjectApplicationService {
     resolveWorkspaceRoot = null,
     folderStatus = null,
     knowledgeService = null,
-    moveProjectMemories = null,
+    archiveProjectMemories = null,
     projectDeleteJournal = null,
     onSessionProjectChanged = null,
     onProjectDeleted = null,
@@ -238,7 +238,7 @@ class ProjectApplicationService {
       isSessionBusy,
       sessionIsBusy,
       knowledge: typeof knowledgeService?.moveProjectFolders === 'function' ? knowledgeService : null,
-      moveMemories: typeof moveProjectMemories === 'function' ? moveProjectMemories : null,
+      archiveMemories: typeof archiveProjectMemories === 'function' ? archiveProjectMemories : null,
       journal: projectDeleteJournal,
       folderStatus: this._folderStatus,
       isCurrentProject: (project) => this._isCurrentProject(project),
@@ -483,8 +483,8 @@ class ProjectApplicationService {
       : assigned;
   }
 
-  // Delete a project: its knowledge folders, idle chats and memories move to
-  // General in one all-or-nothing operation (project-delete-operation.js).
+  // Delete a project: its knowledge folders and idle chats move to General and
+  // its memories are archived, all or nothing (project-delete-operation.js).
   async deleteProject(payload) {
     if (!hasExactKeys(payload, ['project_id'])) return projectFailure('invalid_project_request');
     const projectId = normalizeProjectIdentity(payload.project_id);

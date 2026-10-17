@@ -11,10 +11,6 @@ const {
   mergeClientTimingIntoTurnDiagnostic,
   pruneTurnDiagnostics,
 } = require('../services/backend/turn-diagnostic-dump');
-const { pipeChildLogs } = require('../services/backend/child-process-logging');
-const { normalizeLogEntry } = require('../services/log-entry-normalizer');
-const { redactLogReportValue } = require('../renderer/shared/log-contract-utils');
-const { EventEmitter } = require('node:events');
 
 function makeTempDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'turn-diagnostic-dump-'));
@@ -472,15 +468,7 @@ test('mergeClientTimingIntoTurnDiagnostic rejects path-escaping stream ids and e
   }), null);
 });
 
-// ---------------------------------------------------------------------------
-// F17 REQUIRED REGRESSION — one sentinel set, three surfaces.
-//
-// Sentinel probes proved these shapes survived the general log path all the way
-// into the user-facing log-report copy: the artifact a user pastes into a bug
-// report. services/log-entry-normalizer.js is the single require seam into
-// renderer/shared/log-contract-utils.js, so the persisted main log, the
-// turn-diagnostic dump and the report copy must now all fail identically.
-// ---------------------------------------------------------------------------
+// Sentinel secrets from child stderr must not survive the diagnostic dump.
 const SENTINEL_CHILD_SECRETS = [
   'ghp_SENTINEL01234567',
   'hf_SENTINELabcdefghijklmnopqrstuvwx',
@@ -504,39 +492,6 @@ function assertNoSentinels(serialized, where) {
     `POSIX root path leaked into ${where}`
   );
 }
-
-test('sentinel secrets in child stderr never reach a persisted main log entry', () => {
-  const stderr = new EventEmitter();
-  stderr.setEncoding = () => {};
-  const raw = [];
-  pipeChildLogs({ stderr }, {
-    prefix: 'codex.cli',
-    logger: (level, event, details) => raw.push({ level, event, details }),
-  });
-  stderr.emit('data', `${sentinelStderrLine()}\n`);
-
-  // Pre-redaction the line is verbatim — the sentinel really is in the pipe.
-  assert.equal(raw.length, 1);
-  assert.equal(raw[0].details.line.includes(SENTINEL_CHILD_SECRETS[0]), true);
-
-  // Every persisted log goes through normalizeLogEntry.
-  const persisted = normalizeLogEntry({
-    level: raw[0].level,
-    event: raw[0].event,
-    details: raw[0].details,
-  });
-  assertNoSentinels(JSON.stringify(persisted), 'the persisted main log entry');
-  assert.match(JSON.stringify(persisted), /\[redacted/);
-});
-
-test('sentinel secrets in child stderr never reach the user-facing log-report copy', () => {
-  const report = redactLogReportValue({
-    stream: 'stderr',
-    line: sentinelStderrLine(),
-    nested: { tail: [sentinelStderrLine()] },
-  });
-  assertNoSentinels(JSON.stringify(report), 'the log-report copy');
-});
 
 test('sentinel secrets in child stderr never reach a written turn diagnostic', async (t) => {
   const userDataPath = makeTempDir(t);

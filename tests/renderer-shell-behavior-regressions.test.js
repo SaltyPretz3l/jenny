@@ -14,26 +14,14 @@ async function loadRendererTestApp(t, options) {
   return app;
 }
 
-test('renderer shows a memory suggestion toast and saves approved memories', async (t) => {
-  const memoryCalls = { suggest: [], save: [] };
-  const candidate = {
-    title: 'Preference: tea over coffee',
-    lesson_text: 'The user prefers tea over coffee.',
-    lesson_kind: 'preference',
-    confidence: 0.95,
-    source_excerpt: 'I prefer tea over coffee',
-    content_fingerprint: 'preference:the-user-prefers-tea-over-coffee',
-  };
+test('a completed turn raises no memory suggestion toast and saves nothing', async (t) => {
+  const saves = [];
   const { window, shell } = await loadRendererTestApp(t, {
     shell: {
       memory: {
-        async suggestForSession(sessionId) {
-          memoryCalls.suggest.push(sessionId);
-          return { suggestions: [candidate] };
-        },
-        async save(sessionId, savedCandidate) {
-          memoryCalls.save.push({ sessionId, candidate: savedCandidate });
-          return { created: true, memory: { id: 1, session_id: sessionId, ...savedCandidate } };
+        async save(sessionId, candidate) {
+          saves.push({ sessionId, candidate });
+          return { created: true, memory: { id: 1, session_id: sessionId, ...candidate } };
         },
       },
     },
@@ -42,7 +30,7 @@ test('renderer shows a memory suggestion toast and saves approved memories', asy
   const sendButton = window.document.getElementById('sendButton');
   const toastViewport = window.document.getElementById('toastViewport');
 
-  input.value = 'Remember this';
+  input.value = 'I prefer tea over coffee';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   sendButton.click();
   await waitForUi(window, 20);
@@ -54,126 +42,9 @@ test('renderer shows a memory suggestion toast and saves approved memories', asy
   });
   await waitForUi(window, 20);
 
-  const rememberButton = toastViewport.querySelector('[data-toast-action-id="remember"]');
-  assert.ok(rememberButton);
-  assert.match(toastViewport.textContent, /Remember this\?/);
-  assert.equal(memoryCalls.suggest.length, 1);
-
-  rememberButton.click();
-  await waitForUi(window, 20);
-
-  assert.equal(memoryCalls.save.length, 1);
-  assert.equal(memoryCalls.save[0].sessionId, 'session-1');
-  assert.equal(memoryCalls.save[0].candidate.content_fingerprint, candidate.content_fingerprint);
-  assert.match(toastViewport.textContent, /Memory Saved/);
-});
-
-test('renderer dismisses memory suggestions without saving when user chooses not now', async (t) => {
-  const memoryCalls = { suggest: [], save: [] };
-  const candidate = {
-    title: 'Preference: tea over coffee',
-    lesson_text: 'The user prefers tea over coffee.',
-    lesson_kind: 'preference',
-    confidence: 0.95,
-    source_excerpt: 'I prefer tea over coffee',
-    content_fingerprint: 'preference:the-user-prefers-tea-over-coffee',
-  };
-  const { window, shell } = await loadRendererTestApp(t, {
-    shell: {
-      memory: {
-        async suggestForSession(sessionId) {
-          memoryCalls.suggest.push(sessionId);
-          return { suggestions: [candidate] };
-        },
-        async save(sessionId, savedCandidate) {
-          memoryCalls.save.push({ sessionId, candidate: savedCandidate });
-          return { created: true, memory: { id: 1, session_id: sessionId, ...savedCandidate } };
-        },
-      },
-    },
-  });
-  const input = window.document.getElementById('chatInput');
-  const sendButton = window.document.getElementById('sendButton');
-  const toastViewport = window.document.getElementById('toastViewport');
-
-  input.value = 'Remember this';
-  input.dispatchEvent(new window.Event('input', { bubbles: true }));
-  sendButton.click();
-  await waitForUi(window, 20);
-  await shell.__emitChat({
-    type: 'complete',
-    sessionId: 'session-1',
-    streamId: 'stream-test-1',
-    content: 'Sounds good.',
-  });
-  await waitForUi(window, 20);
-
-  const dismissButton = toastViewport.querySelector('[data-toast-action-id="dismiss"]');
-  assert.ok(dismissButton);
-  dismissButton.click();
-  await waitForUi(window, 20);
-
-  assert.equal(memoryCalls.suggest.length, 1);
-  assert.equal(memoryCalls.save.length, 0);
+  assert.equal(toastViewport.querySelector('[data-toast-action-id="remember"]'), null);
   assert.doesNotMatch(toastViewport.textContent, /Remember this\?/);
-});
-
-test('renderer suppresses re-showing dismissed memory suggestions for the same session', async (t) => {
-  const memoryCalls = { suggest: [], save: [] };
-  const candidate = {
-    title: 'Preference: tea over coffee',
-    lesson_text: 'The user prefers tea over coffee.',
-    lesson_kind: 'preference',
-    confidence: 0.95,
-    source_excerpt: 'I prefer tea over coffee',
-    content_fingerprint: 'preference:the-user-prefers-tea-over-coffee',
-  };
-  const { window, shell } = await loadRendererTestApp(t, {
-    shell: {
-      memory: {
-        async suggestForSession(sessionId) {
-          memoryCalls.suggest.push(sessionId);
-          return { suggestions: [candidate] };
-        },
-        async save(sessionId, savedCandidate) {
-          memoryCalls.save.push({ sessionId, candidate: savedCandidate });
-          return { created: true, memory: { id: 1, session_id: sessionId, ...savedCandidate } };
-        },
-      },
-    },
-  });
-  const input = window.document.getElementById('chatInput');
-  const sendButton = window.document.getElementById('sendButton');
-  const toastViewport = window.document.getElementById('toastViewport');
-
-  input.value = 'Remember this later';
-  input.dispatchEvent(new window.Event('input', { bubbles: true }));
-  sendButton.click();
-  await waitForUi(window, 20);
-  await shell.__emitChat({
-    type: 'complete',
-    sessionId: 'session-1',
-    streamId: 'stream-test-1',
-    content: 'Sounds good.',
-  });
-  await waitForUi(window, 20);
-
-  const dismissButton = toastViewport.querySelector('[data-toast-action-id="dismiss"]');
-  assert.ok(dismissButton);
-  dismissButton.click();
-  await waitForUi(window, 20);
-
-  await shell.__emitChat({
-    type: 'complete',
-    sessionId: 'session-1',
-    streamId: 'stream-test-2',
-    content: 'Anything else?',
-  });
-  await waitForUi(window, 20);
-
-  assert.equal(memoryCalls.suggest.length, 2);
-  assert.equal(memoryCalls.save.length, 0);
-  assert.doesNotMatch(toastViewport.textContent, /Remember this\?/);
+  assert.equal(saves.length, 0);
 });
 
 test('renderer interactive skip-question selector marks one question skipped and submits when all are resolved', async (t) => {

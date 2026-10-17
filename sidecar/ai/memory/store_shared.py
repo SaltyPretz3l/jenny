@@ -8,14 +8,17 @@ import logging
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Iterator, Literal
 
 from sidecar.ai.error_codes import CMP_MEMORY_FAILED
-from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, require_project_id
+from sidecar.ai.memory.contracts import (  # noqa: F401 - recap ceiling re-exported
+    GENERAL_PROJECT_ID,
+    MAX_PROMPT_RECAP_LINES,
+    require_project_id,
+)
 from sidecar.exceptions import MemoryStoreError
 
 MAX_RECALL_LIMIT = 5
-PROMPT_RECALL_TOKEN_BUDGET = 256
 MAX_HARNESS_PENDING_LIMIT = 200
 MAX_CONTENT_LENGTH = 200_000
 MAX_ALL_MEMORIES_LIMIT = 10_000
@@ -26,13 +29,18 @@ MEMORY_RETENTION_MAX_DB_BYTES = 256 * 1024 * 1024
 MEMORY_MAINTENANCE_MUTATION_INTERVAL = 100
 MEMORY_MAINTENANCE_SECONDS = 60 * 60
 MEMORY_RETENTION_DELETE_BATCH = 500
+# Reflection (row 58 W2): proposals carry "reflection"; the per-chat recap row
+# carries RECAP_PROVENANCE and stays out of every listing and recall query.
+RECAP_PROVENANCE = "reflection_recap"
+NOT_RECAP_SQL = f"provenance != '{RECAP_PROVENANCE}'"
 _ALLOWED_MEMORY_PROVENANCE = frozenset(
-    {"user_approved", "automatic", "unknown_legacy", "source_removed"}
+    {"user_approved", "automatic", "unknown_legacy", "source_removed", "reflection",
+     RECAP_PROVENANCE}
 )
 logger = logging.getLogger(__name__)
 _SAVEPOINT_IDS = itertools.count(1)
-_APPROVED_MEMORY_SELECT = """
-SELECT
+# Column order is the row contract `_approved_from_row` reads by index.
+_APPROVED_MEMORY_COLUMNS = """
     id,
     session_id,
     title,
@@ -41,13 +49,21 @@ SELECT
     confidence,
     source_excerpt,
     content_fingerprint,
-    family_key,
     provenance,
     created_at,
     updated_at,
-    project_id
-FROM memories
+    project_id,
+    scope_session_id,
+    origin,
+    status,
+    archived_at,
+    revision,
+    protected,
+    always_on,
+    source_message_ids
 """
+_APPROVED_MEMORY_SELECT = f"SELECT {_APPROVED_MEMORY_COLUMNS} FROM memories"
+APPROVED_UPDATED_AT_INDEX = 10
 _PENDING_MEMORY_SELECT = """
 SELECT
     id,
@@ -59,11 +75,11 @@ SELECT
     confidence,
     source_excerpt,
     content_fingerprint,
-    family_key,
     category,
     created_at,
     updated_at,
-    project_id
+    project_id,
+    origin
 FROM pending_memory_candidates
 """
 
@@ -78,11 +94,18 @@ class ApprovedMemory:
     confidence: float
     source_excerpt: str
     content_fingerprint: str
-    family_key: str
     provenance: str
     created_at: str
     updated_at: str
     project_id: str = GENERAL_PROJECT_ID
+    scope_session_id: str = ""
+    origin: str = "legacy"
+    status: str = "active"
+    archived_at: str | None = None
+    revision: int = 1
+    protected: bool = False
+    always_on: bool = False
+    source_message_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -96,11 +119,29 @@ class PendingMemoryCandidate:
     confidence: float
     source_excerpt: str
     content_fingerprint: str
-    family_key: str
     category: str
     created_at: str
     updated_at: str
     project_id: str = GENERAL_PROJECT_ID
+    origin: str = "legacy"
+
+
+WriteStatus = Literal["saved", "conflict", "refused"]
+
+
+@dataclass(frozen=True)
+class MemoryWriteResult:
+    """Outcome of one v9 memory write. Refusals and conflicts are results."""
+
+    status: WriteStatus
+    memory: ApprovedMemory | None
+    operation_id: str | None
+    duplicate: bool = False
+    replayed: bool = False
+    undoable: bool = False
+    reason: str | None = None
+    code: str | None = None
+    always_on_lines: tuple[str, ...] = ()
 
 
 def _project_scope(project_id: object) -> str:

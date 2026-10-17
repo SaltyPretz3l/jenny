@@ -7,7 +7,7 @@ const model = require('../../renderer/shared/workbench-layout-model');
 const { VIEW_CATALOG, SIZE_MAX, MAX_EDITOR_GROUPS, findView, findStack } = model;
 
 const LEFT = ['explorer', 'search', 'source-control'];
-const BOTTOM = ['terminal', 'problems', 'run', 'test-runner', 'test-output'];
+const BOTTOM = ['terminal', 'problems', 'run', 'test-runner', 'test-output', 'activity'];
 const CHAT = ['chat', 'changes'];
 const ALL_VIEWS = Object.keys(VIEW_CATALOG);
 

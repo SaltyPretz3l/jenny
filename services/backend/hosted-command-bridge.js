@@ -3,6 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const { removeTree } = require('../fs-remove-no-follow');
 const { TOOL_ERROR_CODES } = require('./error-codes');
 const { getTrustedExecutionBinding } = require('./session-execution-authority');
 const { createWorkspaceSnapshot, removeSnapshot, inside } = require('../execution/desktop-workspace-snapshot');
@@ -127,7 +128,7 @@ async function purgeStagingRoot(stagingRoot) {
         if (stat.isDirectory() && !stat.isSymbolicLink() && process.platform !== 'win32') {
           await makeTreeWritable(child).catch(() => {});
         }
-        await fs.rm(child, { recursive: true, force: true });
+        await removeTree(child);
       }
     } catch { throw sandboxError('snapshot_staging_purge_failed'); }
   }

@@ -75,7 +75,7 @@ test('view registry covers every catalog view with a label function and a strip 
   assert.deepEqual([...ALL_VIEWS].sort(), [...Object.keys(model.VIEW_CATALOG), ...instances].sort(), 'wiring registry matches the layout catalog plus the terminal and chat instances');
   const expected = {
     explorer: 'Files', search: 'Search', 'source-control': 'Git', terminal: 'Terminal',
-    problems: 'Problems', run: 'Run', 'test-runner': 'Tests', 'test-output': 'Test output', chat: 'Chat', changes: 'Changes',
+    problems: 'Problems', run: 'Run', 'test-runner': 'Tests', 'test-output': 'Test output', activity: 'Activity', chat: 'Chat', changes: 'Changes',
     'terminal-2': 'Terminal 2', 'terminal-3': 'Terminal 3', 'terminal-4': 'Terminal 4', 'chat-2': 'Chat 2', 'changes-2': 'Changes 2',
   };
   for (const id of ALL_VIEWS) {

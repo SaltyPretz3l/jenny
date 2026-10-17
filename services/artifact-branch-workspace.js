@@ -4,6 +4,7 @@ const { normalizeGeneratedArtifactMetadata } = require('./artifact-metadata-util
 const { sameProjectAuthority } = require('./artifact-session-authority');
 const { createMissingSessionCleanup } = require('./artifact-session-cleanup');
 const { assertSessionScratchDirUnredirected } = require('./artifact-scratch-containment');
+const { removeTree } = require('./fs-remove-no-follow');
 
 function capError(reason, bytes) {
   const error = new Error(`branch clone aborted: ${reason}`);
@@ -201,7 +202,7 @@ async function cloneSessionArtifactsForBranch(
           service, targetId, sourceScope.authority, contract.sessionArtifactRoot
         )().catch(() => {});
       } else {
-        await service._fs.rm(targetDir, { recursive: true, force: true }).catch(() => {});
+        await removeTree(targetDir, { fsImpl: service._fs }).catch(() => {});
       }
     }
     if (error?.cloneCapReason) {

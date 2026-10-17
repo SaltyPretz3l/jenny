@@ -139,7 +139,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     artifactReviewEditorHost, artifactReviewEditorFallback, artifactReviewSaveButton,
     artifactReviewRevertButton, artifactReviewRevealButton, artifactReviewOpenExternalButton,
     artifactReviewJumpButton, artifactReviewDeleteButton, artifactReviewProvenanceTimeline,
-    chatContextPanel, contextArtifactList, contextSessionLogs, contextPanelToggle, contextArtifactExpand,
+    chatContextPanel, contextSessionLogs, contextPanelToggle,
   } = rendererBootstrap.dom;
   const {
     APPEARANCE_STORAGE_KEY, SIDEBAR_STORAGE_KEY,
@@ -425,20 +425,18 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     getPersonalityActiveFileSafe, setPersonalityDraftSafe, refreshPersonalityWorkspaceSafe, renderPersonalityEditorSafe,
     handlePersonalityTabChangeSafe, handlePersonalitySaveSafe, handlePersonalityResetSafe,
     handlePersonalityOpenFolderSafe,
-    hasPersonalityUnsavedChangesSafe, refreshMemoryContextFilesSafe, renderMemoryContextFilesSafe,
-    loadMemoryContextFileSafe, setMemoryContextDraftSafe, getMemoryContextActiveFileSafe,
-    saveMemoryContextFileSafe, resetMemoryContextFileSafe, hasMemoryContextUnsavedChangesSafe,
+    hasPersonalityUnsavedChangesSafe,
     refreshProactiveStateSafe,
     handleUseProactiveSuggestionMessageSafe, refreshSkillsStateSafe,
     renderSkillsManagerSafe, updateSkillsSettingsSafe, openSkillsScopeFolderSafe, bindSkillsShellEventsSafe,
     refreshOfflineStateSafe,
     renderOfflineManagerSafe, bindOfflineShellEventsSafe, handleOfflineModeChangeSafe,
     refreshApprovedMemoriesSafe, refreshPendingMemoriesSafe, refreshMemoryStatusSafe,
-    renderApprovedMemoryManagerSafe, maybeSuggestMemoryCaptureSafe,
+    renderApprovedMemoryManagerSafe,
     handleApprovedMemorySaveSafe, handleApprovedMemoryDeleteSafe, upsertApprovedMemoryDraftSafe,
     renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe, reconcileChatDockHostSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, getIdeCommandItemsSafe, openIdeHelpOverlaySafe,
-    clearApprovedMemoryDraftSafe, getApprovedMemoryByIdSafe, hasApprovedMemoryDraftChangesSafe, clearDismissedMemorySessionSafe,
-    rekeyDismissedMemorySessionSafe, resetMemorySuggestionStateSafe, refreshCompanionStateSafe, shouldRenderHomePanelSafe,
+    clearApprovedMemoryDraftSafe, getApprovedMemoryByIdSafe, hasApprovedMemoryDraftChangesSafe,
+    refreshCompanionStateSafe, shouldRenderHomePanelSafe,
     renderHomePanelSafe, applyCompanionPayload, getAvailableCompanionDeferPresets, initSetupControllerSafe,
     refreshSetupStateSafe, applySetupBackendStatusSafe, openSetupTileSafe, showSetupFromSettingsSafe,
     showSetupHelpSafe, showFactoryResetSafe, handleRunSetupAgain, buildAttachmentBudget,
@@ -546,9 +544,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     handlePersonalityTabChangeSafe,
     getPersonalityActiveFileSafe, setPersonalityDraftSafe, renderPersonalityEditorSafe, handlePersonalitySaveSafe,
     handlePersonalityResetSafe, handlePersonalityOpenFolderSafe,
-    hasPersonalityUnsavedChangesSafe, refreshMemoryContextFilesSafe, renderMemoryContextFilesSafe,
-    loadMemoryContextFileSafe, setMemoryContextDraftSafe, getMemoryContextActiveFileSafe,
-    saveMemoryContextFileSafe, resetMemoryContextFileSafe, hasMemoryContextUnsavedChangesSafe,
+    hasPersonalityUnsavedChangesSafe,
     showToastMessage, showShellErrorToast, toErrorMessage, reportErrorWhenActive, errorCenterStore, appendClientLog: (...a) => appendClientLog(...a), showSessionActionError,
     getCurrentRuntimePreferences, getRuntimePreferencesFromSession, getRuntimePreferenceSnapshot, runRuntimePreferenceActivity,
     handleWorkspaceRootChoose, clearWorkspaceRoot, getProjectSwitcher, handleRunSetupAgain, showSetupHelpSafe, showFactoryResetSafe,
@@ -593,10 +589,10 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     setChatSendLifecycle, clearChatSendLifecycle, moveChatSendLifecycle, buildInteractiveAnswerPrompt,
     buildInteractiveSelectedAnswers, ensureInteractiveDraft, getInteractiveDraft, persistRuntimePreferences,
     queueInteractiveComposerFocus, getActiveSendPreflight, setComposerStatusNotice,
-    handleWorkspaceActivityStreamEvent, buildInteractiveQuestionBatchVisibleText, toastStore, maybeSuggestMemoryCaptureSafe,
+    handleWorkspaceActivityStreamEvent, buildInteractiveQuestionBatchVisibleText, toastStore,
     mergeMessageReasoning, setActivityChangeListener, handleActivityChange,
     pushIncomingLog, syncBackendActivityFromStatus, getRendererElapsedMs,
-    resetArtifactsState, resetMemorySuggestionStateSafe, openSetupTileSafe, syncThreadScrollState, renderWorkspaceChrome,
+    resetArtifactsState, openSetupTileSafe, syncThreadScrollState, renderWorkspaceChrome,
     toggleInteractiveRoundRecap, toggleContextCompactionDetails, syncThinkingBlockNode, dismissToast, resolveActivity,
     handleFollowUpMessage,
     handleSaveProactiveSuggestionMessage, handleLaterProactiveSuggestionMessage, handleUseProactiveSuggestionMessageSafe,
@@ -620,7 +616,6 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
   } = controllerComposition);
   const {
     contextUsageModule = null,
-    getLogEntryById = () => null,
     ensureLogRowMounted = () => false,
     scrollLogsToBottom = noop,
     navigateToDiagnosticsTrace = noop,
@@ -722,6 +717,8 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     if (project?.name) return project.name;
     return projectId === 'project_general' ? jt('projects.switcher.generalName', 'General') : '';
   };
+  window.rendererSessionMessageRows?.configure?.({ getProjectName: getPaneProjectName }); // row 59 cp4 card headers
+  window.rendererSessionRail?.configure?.({ openSession: (id) => activateWorkspaceSession(id, { mode: 'replace' }) }); // cp5a linked rows
   paneComposition = paneLayoutController && window.rendererAppPaneComposition?.createPaneComposition?.({
     documentRef: document, windowRef: window, state, chatView, layoutController: paneLayoutController,
     resolvePane: (paneRoot) => surfaceDom.chat.resolvePane(paneRoot),
@@ -861,7 +858,6 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       finishSidebarResize: (...a) => finishSidebarResize(...a),
       getCurrentRuntimePreferences,
       getDroppedFilePaths,
-      getLogEntryById,
       ensureLogRowMounted,
       getRendererElapsedMs: (...a) => getRendererElapsedMs(...a),
       getSessionMessages: (...a) => getSessionMessages(...a),
@@ -886,6 +882,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       beginAttachmentToken: (...a) => beginAttachmentToken(...a), cancelAttachmentToken: (...a) => cancelAttachmentToken(...a),
       navigateToDiagnosticsTrace: (...a) => navigateToDiagnosticsTrace(...a),
       openSettingsSection: (...a) => openSettingsSection(...a),
+      openSetupTile: (...a) => openSetupTileSafe(...a),
       persistRuntimePreferences: (...a) => persistRuntimePreferences(...a),
       prepareDroppedAttachments: (...a) => prepareDroppedAttachments(...a),
       queueDeferredStartupTask: (...a) => queueDeferredStartupTask(...a),

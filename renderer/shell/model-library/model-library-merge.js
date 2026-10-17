@@ -413,6 +413,77 @@
     };
   }
 
+  // Row 54: the pinned NInfer artifacts as library cards, only when the NInfer
+  // block reports an eligible card (`source.ninfer`, see model-library-ninfer.js
+  // libraryInput). "Best fit" is the eligibility verdict itself: the pin is
+  // chosen for this GPU, so the card is recommended and fits; its VRAM need is
+  // the artifact size. One owner per message: while the set-up runs the row
+  // offers no Download (`ninferSetupRunning`).
+  function buildNinferCards(source, context, installedByKey) {
+    var ninfer = objectOrEmpty(source.ninfer);
+    var pins = Array.isArray(ninfer.pins) ? ninfer.pins : [];
+    var installed = Array.isArray(ninfer.installed) ? ninfer.installed : [];
+    var manager = objectOrEmpty(ninfer.manager);
+    var settings = objectOrEmpty(ninfer.settings);
+    var budgetMb = nonNegativeNumber(context.hardware.budgetMb);
+    return pins.map(function (entry) {
+      var pin = objectOrEmpty(entry);
+      var tag = String(pin.model_id || pin.id || '').trim();
+      if (!tag) return null;
+      var key = canonicalTag(tag);
+      var present = installed.some(function (item) { return item && item.id === pin.id && item.present === true; });
+      var aliasMatches = managedAliasKey(manager.alias) === managedAliasKey(tag);
+      var serving = manager.state === 'ready' && aliasMatches;
+      var paused = manager.state === 'stopped' && manager.identityRetained === true && aliasMatches;
+      var sizeBytes = nonNegativeNumber(pin.size_bytes);
+      var vramRequiredMb = Math.round(sizeBytes / 1048576);
+      var supportsMtp = pin.supports_mtp === true;
+      return {
+        key: key,
+        tag: tag,
+        displayName: String(pin.display_name || tag),
+        tier: '',
+        params: '',
+        quant: '',
+        contextLength: nonNegativeNumber(pin.default_context_window),
+        sizeBytes: present ? sizeBytes : 0,
+        downloadSizeMb: present ? 0 : vramRequiredMb,
+        vramRequiredMb: vramRequiredMb,
+        ramRequiredMb: 0,
+        installed: present,
+        engineVisible: true,
+        ollamaOnly: false,
+        engineType: 'openai-compatible',
+        available: true,
+        active: key === context.activeKey || serving || Boolean(installedByKey && installedByKey.get(key)?.loaded),
+        preferredLocal: Boolean(context.preferredKey && key === context.preferredKey),
+        recommended: true,
+        reason: '',
+        fitState: 'fits',
+        fitRatio: fitUtils.fitRatioFor(vramRequiredMb, budgetMb, 'fits'),
+        fitLabel: fitUtils.fitLabelFor('fits', vramRequiredMb, budgetMb),
+        fitSource: 'catalog',
+        fitConfidence: 'high',
+        accelerationEligible: false,
+        accelerationHeadroomMb: 0,
+        managedKey: managedModelKey(tag),
+        engines: {
+          ollama: { available: false },
+          llamaServer: { available: false, modelPath: '', drafter: false },
+        },
+        selectedEngine: 'ninfer',
+        mtp: { eligible: supportsMtp, enabled: supportsMtp && settings.mtp !== false, headroomMb: 0 },
+        serving: serving, servingPaused: paused,
+        servingPort: serving ? nonNegativeNumber(manager.port) : 0,
+        customBuild: 0,
+        libraryGguf: false,
+        ninferArtifactId: String(pin.id || ''),
+        ninferSetupRunning: ninfer.settingUp === true,
+        source: present ? 'installed' : 'catalog',
+      };
+    }).filter(Boolean);
+  }
+
   function orderModelCards(cards) {
     var source = Array.isArray(cards) ? cards : [];
     return source.filter(function (card) { return card && card.installed === true; })
@@ -549,8 +620,12 @@
       cards.push(card);
     });
 
+    // The engine lists an installed NInfer model too; its pin card owns that
+    // row (size, context, MTP) rather than a bare "Not in catalog" card.
+    var ninferCards = buildNinferCards(source, context, installedByKey);
+    var ninferKeys = new Set(ninferCards.map(function (card) { return card.key; }));
     installedByKey.forEach(function (entry, key) {
-      if (usedKeys.has(key)) return;
+      if (usedKeys.has(key) || ninferKeys.has(key)) return;
       usedKeys.add(key);
       cards.push(buildInstalledCard(
         entry,
@@ -569,6 +644,11 @@
         displayName: entry.tag,
         sizeBytes: entry.sizeBytes,
       }, true, context, entry, fitEstimatesByKey.get(key) || null));
+    });
+    ninferCards.forEach(function (card) {
+      if (usedKeys.has(card.key)) return;
+      usedKeys.add(card.key);
+      cards.push(card);
     });
 
     // item 1: the failed card carries its failure. An exact key wins; only when no card matches

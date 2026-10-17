@@ -1,16 +1,17 @@
-/* renderer/shell/renderer-diagnostics-issue-card.js - Diagnostics "Recent issues"
- * entries: a plain title, a cause, one action and the evidence folded (UX-007).
- * Pure markup: render-utils reads the open folds from the DOM and paints. */
+/* renderer/shell/renderer-diagnostics-issue-card.js - Diagnostics "Needs attention" entries: a
+ * severity icon, a plain title, a cause, one action and the evidence folded in Details (UX-007).
+ * Pure markup: the Overview reads the open folds from the DOM and paints. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(
       require('../shared/diagnostics-issue-explanations'),
-      require('../inventory/action-button')
+      require('../inventory/action-button'),
+      require('../inventory/state-icon')
     );
     return;
   }
-  root.rendererDiagnosticsIssueCard = factory(root.rendererDiagnosticsIssueExplanations || {}, root.inventoryActionButton);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (explanations, actionButton) {
+  root.rendererDiagnosticsIssueCard = factory(root.rendererDiagnosticsIssueExplanations || {}, root.inventoryActionButton, root.inventoryStateIcon);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (explanations, actionButton, stateIcon) {
   'use strict';
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
@@ -18,6 +19,7 @@
     || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
   var MAX_ISSUES = 20;
   var INSPECT_ACTION = 'inspect-diagnostic-issue';
+  var EMPTY = '\u2014';
 
   function text(value) { return typeof value === 'string' ? value.trim() : ''; }
   function pad(value) { return String(value).padStart(2, '0'); }
@@ -26,30 +28,19 @@
     var number = Number(value);
     return Number.isFinite(number) ? number.toLocaleString(globalThis.jennyI18n && globalThis.jennyI18n.tag && globalThis.jennyI18n.tag()) : identity(value);
   }
-  function dataOf(entry) {
-    if (entry && entry.data && typeof entry.data === 'object') return entry.data;
-    return entry && entry.details && typeof entry.details === 'object' ? entry.details : null;
+
+  function validTime(ts) {
+    return Number.isFinite(new Date(ts).getTime());
   }
 
+  // The default stamp: the clock time, or an em dash for a time that cannot be read (never the raw string).
   function clockTime(ts) {
     var date = new Date(ts);
-    if (!Number.isFinite(date.getTime())) return '';
-    return pad(date.getHours()) + ':' + pad(date.getMinutes());
+    return Number.isFinite(date.getTime()) ? pad(date.getHours()) + ':' + pad(date.getMinutes()) : EMPTY;
   }
 
   function unique(values) {
     return values.filter(function (value, index) { return value && values.indexOf(value) === index; });
-  }
-
-  // The latest WARN/ERROR record behind a group, for data groupIssues drops (durationMs, channel). The match
-  // is the group key (event, component, code) at the group's timestamp, so same-event groups never borrow data.
-  function latestData(group, entries) {
-    var match = (Array.isArray(entries) ? entries : []).find(function (entry) {
-      return entry && entry.event === group.event && identity(entry.ts) === identity(group.ts)
-        && text(entry.component) === text(group.component) && text(entry.error_code) === text(group.error_code)
-        && dataOf(entry);
-    });
-    return match ? dataOf(match) : null;
   }
 
   function countPhrase(merged) {
@@ -59,9 +50,15 @@
     return jtn('diagnostics.issues.countTimes', merged.count, count, '{count} time', '{count} times');
   }
 
+  function showInActivityLabel() {
+    return jt('diagnostics.issues.showInActivity', 'Show in Activity');
+  }
+
+  // data-issue carries the group key (the one groupIssues emits); Activity decodes it and scopes the
+  // records with issueEntryMatches.
   function inspectLink(member) {
     return actionButton({
-      id: INSPECT_ACTION, label: jt('diagnostics.inspectActivity', 'Inspect activity'),
+      id: INSPECT_ACTION, label: showInActivityLabel(),
       plain: true, className: 'diagnostics-issue-link', dataset: { issue: encodeURIComponent(member.key) },
     });
   }
@@ -91,30 +88,26 @@
   }
 
   // The fold links every member the button does not cover: all of them behind a mapped action, the members
-  // after the first behind the Inspect fallback (the button already scopes Activity to the first).
+  // after the first behind the Show in Activity fallback (the button already scopes Activity to the first).
   function techBody(merged, options, buttonIsInspect) {
     var members = merged.members;
     var events = members.map(function (member, index) {
-      return '<span class="diagnostics-issue-event"><code>' + escapeHtml(member.event) + '</code> ×' + escapeHtml(formatNumber(member.count))
+      return '<span class="diagnostics-issue-event"><code>' + escapeHtml(member.event) + '</code> \u00d7' + escapeHtml(formatNumber(member.count))
         + (!buttonIsInspect || index > 0 ? ' ' + inspectLink(member) : '') + '</span>';
-    }).join(' · ');
+    }).join(' \u00b7 ');
     var components = unique(members.map(function (member) { return text(member.component); }));
     var codes = unique(members.map(function (member) { return text(member.error_code); }));
     var message = members.map(function (member) { return text(member.message) !== member.event ? text(member.message) : ''; }).find(Boolean);
     var advice = members.map(function (member) { return text(member.remediation); }).find(Boolean);
-    var data = members[0].data && typeof members[0].data === 'object' ? members[0].data : null;
-    var channel = data && text(data.channel);
-    var detailTime = options.formatDetailTime || identity;
+    var channel = members.map(function (member) { return member.data && text(member.data.channel); }).find(Boolean);
     return '<dl class="diagnostics-issue-tech-body">'
       + row(jtn('diagnostics.issues.tech.events', members.length, {}, 'Event', 'Events'), events)
-      + row(jt('diagnostics.issues.tech.area', 'Area'), components.map(function (component) { return '<code>' + escapeHtml(component) + '</code>'; }).join(' · ') + ' · ' + escapeHtml(merged.explanation.area))
-      + row(jt('diagnostics.issues.tech.code', 'Code'), codes.map(function (code) { return '<code>' + escapeHtml(code) + '</code>'; }).join(' · '))
+      + row(jt('diagnostics.issues.tech.area', 'Area'), escapeHtml(merged.explanation.area)
+        + components.map(function (component) { return ' \u00b7 <code>' + escapeHtml(component) + '</code>'; }).join(''))
+      + row(jt('diagnostics.issues.tech.code', 'Code'), codes.map(function (code) { return '<code>' + escapeHtml(code) + '</code>'; }).join(' \u00b7 '))
       + row(jt('diagnostics.issues.request', 'Request'), channel ? '<code>' + escapeHtml(channel) + '</code>' : '')
-      + row(jt('diagnostics.source.lastSeen', 'Last seen'), merged.ts ? '<span class="diagnostics-issue-mono">' + escapeHtml(detailTime(merged.ts)) + '</span>' : '')
-      + row(jt('diagnostics.issues.recordedMessage', 'Recorded message'), message
-        ? '<span class="diagnostics-issue-raw">' + escapeHtml(message) + '</span>'
-        : '<span class="diagnostics-muted">' + escapeHtml(jt('diagnostics.issues.none', 'None')) + '</span>')
-      + row(jt('diagnostics.issues.recordedAdvice', 'Recorded advice'), advice ? escapeHtml(advice) : '')
+      + row(jt('diagnostics.issues.tech.message', 'Message'), message ? '<span class="diagnostics-issue-raw">' + escapeHtml(message) + '</span>' : '')
+      + row(jt('diagnostics.issues.tech.advice', 'Advice'), advice ? escapeHtml(advice) : '')
       + row(jt('diagnostics.issues.tech.correlation', 'Correlation'), correlationMarkup(members, options))
       + '</dl>';
   }
@@ -127,36 +120,32 @@
     var mapped = Boolean(action && available[action.id] === true);
     var button = actionButton({
       id: mapped ? action.id : INSPECT_ACTION,
-      label: mapped ? action.label : jt('diagnostics.inspectActivity', 'Inspect activity'),
+      label: mapped ? action.label : showInActivityLabel(),
       size: 'sm', className: 'diagnostics-issue-action-button', dataset: { issue: encodeURIComponent(first.key) },
     });
-    var isError = merged.severity === 'ERROR';
-    var when = merged.ts
-      ? '<time datetime="' + escapeHtml(merged.ts) + '" title="' + escapeHtml((options.formatDetailTime || identity)(merged.ts)) + '">' + escapeHtml(clockTime(merged.ts) || merged.ts) + '</time> · '
-      : '';
-    return '<article class="diagnostics-issue" role="listitem" data-severity="' + escapeHtml(merged.severity) + '" data-issue-group="' + escapeHtml(explanation.id) + '">'
-      + '<div class="diagnostics-issue-title">'
-      + '<span class="diagnostics-issue-badge" data-tone="' + (isError ? 'danger' : 'warning') + '">' + escapeHtml(isError ? jt('diagnostics.issues.severity.error', 'Error') : jt('diagnostics.issues.severity.warning', 'Warning')) + '</span>'
-      + '<strong>' + escapeHtml(explanation.title) + '</strong>'
-      + '<span class="diagnostics-issue-when">' + when + escapeHtml(countPhrase(merged)) + '</span></div>'
+    var when = validTime(merged.ts)
+      ? '<time datetime="' + escapeHtml(new Date(merged.ts).toISOString()) + '" title="' + escapeHtml((options.formatDetailTime || identity)(merged.ts)) + '">'
+        + escapeHtml((options.formatWhen || clockTime)(merged.ts)) + '</time>'
+      : '<span>' + EMPTY + '</span>';
+    return '<li class="diagnostics-issue" data-severity="' + escapeHtml(merged.severity) + '" data-issue-group="' + escapeHtml(explanation.id) + '">'
+      + '<span class="diagnostics-issue-mark">' + (stateIcon ? stateIcon.forLevel(merged.severity) : '') + '</span>'
+      + '<div class="diagnostics-issue-body">'
+      + '<div class="diagnostics-issue-top"><span class="diagnostics-issue-title">' + escapeHtml(explanation.title) + '</span>'
+      + '<span class="diagnostics-issue-when">' + when + ' \u00b7 ' + escapeHtml(countPhrase(merged)) + '</span></div>'
       + '<p class="diagnostics-issue-cause">' + escapeHtml(explanation.cause) + '</p>'
       + '<div class="diagnostics-issue-actions">' + button
       + '<details class="diagnostics-issue-tech" data-issue-group="' + escapeHtml(explanation.id) + '">'
-      + '<summary>' + escapeHtml(jt('diagnostics.issues.technicalDetails', 'Technical details')) + '</summary>'
-      + techBody(merged, options, !mapped) + '</details></div></article>';
+      + '<summary>' + escapeHtml(jt('diagnostics.issues.details', 'Details')) + '</summary>'
+      + techBody(merged, options, !mapped) + '</details></div></div></li>';
   }
 
-  // groups: groupIssues output. options: {availableActions: {[actionId]: true}, entries, formatDetailTime,
-  // safeCorrelationValue, statusLabel}. The markup carries content only (no fold state), so the painter's memo
-  // changes only when the content does; open folds are restored on the painted DOM by restoreOpenGroups.
+  // groups: groupIssues output (each carries its latest member's data). options: {availableActions:
+  // {[actionId]: true}, formatWhen, formatDetailTime, safeCorrelationValue, statusLabel}. The markup carries
+  // content only (no fold state), so the painter's memo changes only when the content does; open folds are
+  // restored on the painted DOM by restoreOpenGroups.
   function renderIssueList(groups, options) {
     var settings = options || {};
-    // Explanations read the latest record's data (durationMs), which groupIssues leaves out.
-    var decorated = (Array.isArray(groups) ? groups : []).map(function (group) {
-      var data = group && latestData(group, settings.entries);
-      return data ? Object.assign({}, group, { data: data }) : group;
-    });
-    var merged = typeof explanations.mergeByExplanation === 'function' ? explanations.mergeByExplanation(decorated) : [];
+    var merged = typeof explanations.mergeByExplanation === 'function' ? explanations.mergeByExplanation(groups) : [];
     return merged.slice(0, MAX_ISSUES).map(function (entry) { return renderEntry(entry, settings); }).join('');
   }
 

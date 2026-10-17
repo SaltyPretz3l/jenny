@@ -164,7 +164,10 @@
       setStatusMessage(engineHint === 'openai-compatible'
         && model.selectedEngine === 'llama-server'
         ? jt('models.library.runtime.startingLlamaServerFor', 'Starting llama-server for "{model}"…', { model: modelId })
-        : jt('models.library.runtime.switchingTo', 'Switching to "{model}"…', { model: modelId }));
+        : model && model.selectedEngine === 'ninfer'
+          // C7 (row 54): the switch stops the other managed server first.
+          ? jt('models.library.runtime.switchingToNinfer', 'Switching to {model} on NInfer… llama-server stops first so the GPU is free.', { model: String(model.displayName || modelId) })
+          : jt('models.library.runtime.switchingTo', 'Switching to "{model}"…', { model: modelId }));
       render();
       var payload = engineHint ? { model: model.tag, engine_type: engineHint } : modelId;
       invokeRuntimeAction(

@@ -19,8 +19,14 @@ const verifyTool = require('./builtin/verify-tool');
 const homeTool = require('./builtin/home-tool');
 const taskBoardTool = require('./builtin/task-board-tool');
 const projectNotesTool = require('./builtin/project-notes-tool');
+const { conversationsRecentTool, conversationOpenTool, conversationsSearchTool } = require('./builtin/conversations-tool');
 const exitPlanModeTool = require('./builtin/exit-plan-mode-tool');
 const askUserTool = require('./builtin/ask-user-tool');
+const proposeGitActionTool = require('./builtin/propose-git-action-tool');
+const proposeCommandTool = require('./builtin/propose-command-tool');
+const proposeSessionTool = require('./builtin/propose-session-tool');
+const completeSessionHandoffTool = require('./builtin/complete-session-handoff-tool');
+const sessionMessageTool = require('./builtin/session-message-tool');
 
 const manifestEntriesByName = new Map(toolManifest.tools.map((entry) => [entry.name, entry]));
 
@@ -54,6 +60,11 @@ function createDefaultRegistry(options = {}) {
   for (const tool of require('./builtin/session-runtime-tools')) registry.registerTool(withManifestSchema(tool));
   registry.registerTool(withManifestSchema(exitPlanModeTool));
   registry.registerTool(withManifestSchema(askUserTool));
+  registry.registerTool(withManifestSchema(proposeGitActionTool));
+  registry.registerTool(withManifestSchema(proposeCommandTool));
+  registry.registerTool(withManifestSchema(proposeSessionTool));
+  registry.registerTool(withManifestSchema(completeSessionHandoffTool));
+  registry.registerTool(withManifestSchema(sessionMessageTool));
   if (options.toolsWorktreeEnabled === true) {
     registry.registerTool(withManifestSchema(worktreeListTool));
     registry.registerTool(withManifestSchema(worktreeCreateTool));
@@ -84,6 +95,11 @@ function createDefaultRegistry(options = {}) {
   }
   if (options.toolsProjectNotesEnabled === true) {
     registry.registerTool(withManifestSchema(projectNotesTool));
+  }
+  if (options.toolsConversationsEnabled === true) {
+    registry.registerTool(withManifestSchema(conversationsRecentTool));
+    registry.registerTool(withManifestSchema(conversationOpenTool));
+    registry.registerTool(withManifestSchema(conversationsSearchTool));
   }
   return registry;
 }

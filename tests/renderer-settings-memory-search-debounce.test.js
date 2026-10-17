@@ -24,7 +24,7 @@ test('Settings Memory category debounces search without rebuilding on each keyst
                 id: 2,
                 title: 'Project: Jenny',
                 lesson_text: 'The user is shipping Jenny.',
-                lesson_kind: 'project_context',
+                lesson_kind: 'fact',
                 content_fingerprint: `sha256:${'b'.repeat(64)}`,
               },
             ],
@@ -67,7 +67,7 @@ test('Settings Memory category debounces search without rebuilding on each keyst
     await waitForUi(window, 180);
     const kindFilter = window.document.getElementById('memoryManagerKindFilter');
     kindFilter.focus();
-    kindFilter.value = 'project_context';
+    kindFilter.value = 'fact';
     kindFilter.dispatchEvent(new window.Event('change', { bubbles: true }));
     await waitForUi(window, 30);
     assert.equal(window.document.querySelectorAll('#approvedMemoryList > article').length, 1);
@@ -75,11 +75,11 @@ test('Settings Memory category debounces search without rebuilding on each keyst
     assert.equal(window.document.activeElement, window.document.getElementById('memoryManagerKindFilter'));
 
     const currentKindFilter = window.document.getElementById('memoryManagerKindFilter');
-    currentKindFilter.value = 'goal';
+    currentKindFilter.value = 'routine';
     currentKindFilter.dispatchEvent(new window.Event('change', { bubbles: true }));
     await waitForUi(window, 30);
     assert.equal(window.document.querySelectorAll('#approvedMemoryList > article').length, 0);
-    assert.match(window.document.getElementById('approvedMemoryStatus').textContent, /match these filters/i);
+    assert.match(window.document.getElementById('approvedMemoryStatus').textContent, /no memories match/i);
   } finally {
     await app.dispose();
   }

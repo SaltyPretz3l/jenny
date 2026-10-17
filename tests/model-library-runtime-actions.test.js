@@ -325,3 +325,18 @@ test('dispose clears both unload timers', async (t) => {
   h.actions.dispose();
   assert.equal(h.clock.pending(), 0);
 });
+
+test('Use on an NInfer row says the switch stops llama-server first (C7) and loads through openai-compatible', async (t) => {
+  const h = harness(t, {
+    key: 'qwen3.8-27b-nvfp4',
+    tag: 'qwen3.8-27b-nvfp4',
+    displayName: 'Qwen3.8 27B',
+    engineType: 'openai-compatible',
+    selectedEngine: 'ninfer',
+    engines: { ollama: { available: false }, llamaServer: { available: false } },
+  });
+  h.actions.handleUse('qwen3.8-27b-nvfp4');
+  assert.equal(h.statuses[0], 'Switching to Qwen3.8 27B on NInfer… llama-server stops first so the GPU is free.');
+  await flush();
+  assert.deepEqual(h.loads, [{ model: 'qwen3.8-27b-nvfp4', engine_type: 'openai-compatible' }]);
+});

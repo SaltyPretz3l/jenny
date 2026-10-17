@@ -23,6 +23,7 @@ from sidecar.protocol import (
     CONTENT_LENGTH_HEADER,
     JSONRPC_VERSION,
 )
+from sidecar.runtime import command_proposal_worker as _cmdp
 from sidecar.runtime import request_dispatch_mcp as _mcp_dispatch
 from sidecar.runtime import server_auxiliary_workers as _aux_workers
 from sidecar.runtime import server_chat_workers
@@ -252,6 +253,11 @@ def main() -> None:
                         worker_threads=worker_threads,
                         active_cancel_handles=active_cancel_handles,
                     )
+                    continue
+                elif multiplexer is not None and initialized and _cmdp.is_proposal(method):
+                    _cmdp.start_worker(
+                        message, multiplexer, worker_threads, active_cancel_handles,
+                        _BRAIN_CONTAINER, logger, MAX_ACTIVE_CHAT_WORKERS)
                     continue
                 else:
                     outcome = process_message(

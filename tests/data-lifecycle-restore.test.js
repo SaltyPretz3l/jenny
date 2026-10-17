@@ -146,6 +146,39 @@ describe('restore service', () => {
     }
   });
 
+  it('drops stale derived indexes on promotion and never restores an archived index entry', async () => {
+    const root = makeTempRoot();
+    try {
+      const userDataPath = path.join(root, 'profile');
+      fs.mkdirSync(userDataPath);
+      const derived = ['semantic-catalog.db', 'semantic-catalog.db-wal', 'conversation-index.db', 'conversation-index.db-shm'];
+      for (const name of derived) fs.writeFileSync(path.join(userDataPath, name), 'pre-restore cache');
+      const result = await createArchive({
+        destinationRoot: path.join(root, 'Jenny Archives'),
+        encrypted: false,
+        createdAt: new Date('2026-08-03T00:00:00.000Z'),
+        entries: [
+          { logicalPath: 'sessions/session.json', category: 'chats', data: Buffer.from(sessionExport()),
+            restoreMetadata: { session_id: 'sess_preserved' } },
+          { logicalPath: 'memory/conversation-index.db', category: 'memory', data: Buffer.from('forged index') },
+        ],
+      });
+
+      const staged = await stageRestore({ archivePath: result.archivePath, userDataPath });
+      assert.equal(staged.status, 'restart_required', 'derived caches do not block a fresh-profile restore');
+      const promoted = await promotePendingRestore({ userDataPath });
+      assert.equal(promoted.status, 'promoted');
+      assert.deepEqual(promoted.derivedIndexes, { removed: derived.length, retained: [] });
+      for (const name of derived) assert.equal(fs.existsSync(path.join(userDataPath, name)), false, name);
+      assert.equal(new ElectronSessionStore(path.join(userDataPath, 'sessions.json')).getSession('sess_preserved').title,
+        'Archived Chat');
+      assert.equal(await finalizeRestoredBoot(userDataPath), true);
+      assert.equal(fs.existsSync(path.join(userDataPath, 'conversation-index.db')), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('re-projects restored preferences so edited archives cannot add machine authority or secrets', async () => {
     const root = makeTempRoot();
     try {

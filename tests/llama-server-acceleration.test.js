@@ -273,7 +273,7 @@ test('resolver covers MTP ineligibility and ngram fallback branches', () => {
     },
     {
       name: 'unverified family is not allowed',
-      overrides: { allowUnverified: false },
+      overrides: { allowUnverified: false, modelTag: 'ornith15:9b' },
       mode: 'ngram',
       reason: 'mtp_ineligible:family',
     },
@@ -327,6 +327,18 @@ test('resolver finds a separate drafter for both Gemma 4 prefix forms', () => {
       '--model-draft', expectedPath,
     ], modelTag);
   }
+});
+
+// Gate 2026-10-14 F7: Qwen3.8's stock drafter (unsloth ships it beside the
+// model) was never passed, the family being "unverified" and "native".
+test('resolver pairs Qwen3.8 with its separate mtp drafter, without allowUnverified', () => {
+  const fsImpl = { readdirSync: () => ['Qwen3.8-27B-UD-Q6_K.gguf', 'mtp-Qwen3.8-27B-Q4_0.gguf', 'mmproj-F16.gguf'] };
+  const result = resolve({ modelTag: 'qwen3.8-27b-x', allowUnverified: false, fsImpl });
+  assert.equal(result.mode, 'mtp');
+  assert.equal(result.drafter, 'mtp-Qwen3.8-27B-Q4_0.gguf');
+  assert.deepEqual(result.extraArgs.slice(-2), ['--model-draft', path.join(MODEL_DIR, 'mtp-Qwen3.8-27B-Q4_0.gguf')]);
+  const missing = resolve({ modelTag: 'qwen3.8-27b-x', fsImpl: NO_DRAFTER_FS });
+  assert.deepEqual([missing.mode, missing.reason], ['ngram', 'drafter_missing']);
 });
 
 test('resolver falls back when a separate drafter is missing or its pattern is unsafe', () => {

@@ -126,11 +126,30 @@
     return { html: escapeHtml(parts.join(' · ')), valueClass: '' };
   }
 
+  /* The managed NInfer server when it is what serves runtime.model, so the
+   * engine reads NInfer, not the raw openai-compatible it speaks through
+   * (gate 2026-10-14 F19). llama-server stays byte-identical. */
+  function managedNinferForModel(runtime) {
+    const facet = runtime && runtime.managed_server;
+    if (!facet || typeof facet !== 'object' || facet.kind !== 'ninfer') return null;
+    if (normString(runtime.engine) !== 'openai-compatible') return null;
+    const key = (value) => normString(value).toLowerCase().replace(/:latest$/, '');
+    const alias = key(facet.alias);
+    return alias && alias === key(runtime.model) ? { state: normString(facet.state).toLowerCase() } : null;
+  }
+
+  function engineLabelForRuntime(runtime) {
+    return managedNinferForModel(runtime) ? 'NInfer' : normString(runtime && runtime.engine);
+  }
+
   function formatEngineModel(snapshot) {
     const runtime = snapshot && snapshot.runtime ? snapshot.runtime : null;
-    const engine = normString(runtime && runtime.engine) || jt('healthPill.noEngine', 'no engine');
+    const ninfer = managedNinferForModel(runtime);
+    const engine = engineLabelForRuntime(runtime) || jt('healthPill.noEngine', 'no engine');
     const model = normString(runtime && runtime.model) || jt('healthPill.noModel', 'no model');
-    const loaded = runtime && runtime.model_loaded === true;
+    // A crashed or stopped NInfer no longer holds the model, whatever the last status said.
+    const loaded = runtime && runtime.model_loaded === true
+      && !(ninfer && (ninfer.state === 'crashed' || ninfer.state === 'stopped'));
     const runtimeModel = runtime && runtime.local_runtime && runtime.local_runtime.model;
     // The sidecar's residency wins; before its first status arrives, only the provider engines are named.
     const residency = normString(runtimeModel && runtimeModel.residency)
@@ -150,13 +169,17 @@
     };
   }
 
-  /* Managed llama-server facet (runtime.llama_server). Only a server that is
-   * running, coming up, crashed, or failed to (re)start carries information;
-   * a clean 'stopped' (the normal state while Ollama is the engine) renders
-   * nothing. */
-  function formatLlamaServer(snapshot) {
-    const facet = snapshot && snapshot.runtime && snapshot.runtime.llama_server;
+  /* The managed server facet: runtime.managed_server (llama-server or NInfer,
+   * row 54), else runtime.llama_server from a snapshot that predates it. Only
+   * a server that is running, coming up, crashed, or failed to (re)start
+   * carries information; a clean 'stopped' (the normal state while Ollama is
+   * the engine) renders nothing. */
+  function formatManagedServer(snapshot) {
+    const runtime = snapshot && snapshot.runtime;
+    const managed = runtime && runtime.managed_server;
+    const facet = managed && typeof managed === 'object' ? managed : runtime && runtime.llama_server;
     if (!facet || typeof facet !== 'object' || Array.isArray(facet)) return null;
+    const kind = facet === managed && facet.kind === 'ninfer' ? 'ninfer' : 'llama-server';
     const state = normString(facet.state).toLowerCase();
     const lastError = normString(facet.last_error);
     if (!state || state === 'unknown' || (state === 'stopped' && !lastError)) return null;
@@ -173,6 +196,9 @@
         + (mode && mode !== 'off' && mode !== 'unknown' ? ' · ' + mode : '')
         + (build ? jt('models.library.buildSuffix', ' · build {build}', { build: build[1] }) : '');
       valueClass = 'success';
+    } else if (state === 'crashed' && kind === 'ninfer' && facet.stopped_by === 'watchdog') {
+      detail = jt('healthPill.serverWatchdogStopped', 'stopped by the power watchdog ({watts} W)', { watts: Number(facet.watchdog_watts) || 0 });
+      valueClass = 'danger';
     } else if (state === 'crashed') {
       detail = jt('healthPill.serverStoppedUnexpectedly', 'stopped unexpectedly{alias}', { alias: alias ? ' (' + alias + ')' : '' });
       valueClass = 'danger';
@@ -181,8 +207,9 @@
       valueClass = 'danger';
     }
     return {
-      html: escapeHtml('llama-server · ') + '<em>' + escapeHtml(detail) + '</em>',
+      html: escapeHtml(kind === 'ninfer' ? 'NInfer · ' : 'llama-server · ') + '<em>' + escapeHtml(detail) + '</em>',
       valueClass,
+      kind,
       needsRestart: state === 'crashed' || state === 'stopped',
     };
   }
@@ -389,7 +416,7 @@
     const engine = formatEngineModel(snapshot);
     const issues = formatRecentIssues(snapshot);
     const acquisition = formatModelAcquisition(snapshot);
-    const llamaServer = formatLlamaServer(snapshot);
+    const managedServer = formatManagedServer(snapshot);
     const modelUnavailable = lifecycleFacet?.model_state === 'unavailable';
     const summary = normString(state.toneLabel && state.toneLabel.summary);
     const tone = escapeHtml(state.toneLabel.tone || 'muted');
@@ -443,9 +470,9 @@
         ? '<div class="workbench-health-popover-fact workbench-health-popover-row-value-'
           + acquisition.valueClass + '">' + acquisition.html + '</div>'
         : '')
-      + (llamaServer
+      + (managedServer
         ? '<div class="workbench-health-popover-fact workbench-health-popover-row-value-'
-          + llamaServer.valueClass + '">' + llamaServer.html + '</div>'
+          + managedServer.valueClass + '">' + managedServer.html + '</div>'
         : '')
       + (hasIssues
         ? '<div class="workbench-health-popover-fact workbench-health-popover-row-value-warning">'
@@ -454,9 +481,12 @@
       + buildLoadFact(extras && extras.systemStats)
       + '</div>'
       + buildRecentErrorsSection(extras)
+      + (extras && extras.gpuSection ? extras.gpuSection : '')
       + '<div class="workbench-health-popover-actions">'
-      + (llamaServer && llamaServer.needsRestart
-        ? buildPopoverAction(jt('healthPill.popover.restartLlamaServer', 'Restart llama-server'), 'restart-llama-server')
+      + (managedServer && managedServer.needsRestart
+        ? (managedServer.kind === 'ninfer'
+          ? buildPopoverAction(jt('healthPill.popover.restartNinfer', 'Restart NInfer'), 'restart-ninfer')
+          : buildPopoverAction(jt('healthPill.popover.restartLlamaServer', 'Restart llama-server'), 'restart-llama-server'))
         : '')
       + (modelUnavailable
         ? buildPopoverAction(jt('healthPill.popover.retry', 'Retry'), 'retry-model')
@@ -499,6 +529,7 @@
     formatRelativeTime,
     formatLifecycleDetail,
     formatLoadClock,
+    engineLabelForRuntime,
     formatEngineModel,
     formatModelAcquisition,
     formatRecentIssues,

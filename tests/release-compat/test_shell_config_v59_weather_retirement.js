@@ -75,3 +75,17 @@ test('the shipped v51 fixture also loses its weather slot', () => {
   assert.equal(state.version, 59);
   assert.equal(Object.hasOwn(serializeState(state).home, 'weather'), false);
 });
+
+// memory.captureSuggestions (v41) was retired 2026-10-14 without a version
+// bump: an older profile that still carries it loads and the key is dropped.
+test('the shipped v51 fixture loads and drops the retired memory.captureSuggestions key', () => {
+  const fixture = JSON.parse(fs.readFileSync(V51_FIXTURE_PATH, 'utf8'));
+  assert.equal(fixture.memory.captureSuggestions, true, 'fixture still carries the retired key');
+
+  const state = normalizeState(fixture);
+  assert.equal(state.version, 59);
+  // Memory v2 reuses the section for its switches; the retired key is gone.
+  const memoryDefaults = { takeNotes: true, askBeforeSaving: false, pauseSaving: false, useInChats: true };
+  assert.deepEqual(state.memory, memoryDefaults);
+  assert.deepEqual(serializeState(state).memory, memoryDefaults);
+});

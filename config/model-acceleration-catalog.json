@@ -26,11 +26,12 @@
     {
       "family": "qwen38",
       "matchPrefixes": ["qwen3-8"],
-      "mtp": "unverified",
-      "mtpShape": "native",
+      "mtp": "yes",
+      "mtpShape": "separate",
+      "drafterPattern": "mtp-*.gguf",
       "ngram": true,
       "vramHeadroomMb": 2048,
-      "evidence": ""
+      "evidence": "unsloth Qwen3.8-27B-GGUF ships mtp-Qwen3.8-27B-Q4_0.gguf; on an RTX 5090 (llama.cpp b11513, --spec-type draft-mtp -md) UD-Q6_K drafted at 94% acceptance, 132 tok/s (2026-10-14 gate). A GGUF with an embedded head and no drafter file falls back to ngram"
     },
     {
       "family": "qwen36",

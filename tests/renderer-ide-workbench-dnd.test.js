@@ -113,7 +113,7 @@ test('drag to another stack tab row: pointer capture, root class, source mark, t
   ptr(rig, 'pointerup', rig.win, 380, 415);
   assert.equal(rig.state.commits.length, 1);
   assert.ok(ops.isLayoutEqual(rig.state.layout, ops.moveView(before, 'search', { stackId: 'B1', index: 1 })));
-  assert.deepEqual(views(rig, 'B1'), ['terminal', 'search', 'run', 'test-output']);
+  assert.deepEqual(views(rig, 'B1'), ['terminal', 'search', 'run', 'test-output', 'activity']);
   assert.equal(rig.wb.getActiveView('B1'), 'search');
   assert.equal(rig.doc.activeElement, rig.tab('search'), 'focus lands on the moved tab');
   assertClean(rig, tab);
@@ -124,7 +124,7 @@ test('drag within the same tab row indexes after the view left; the no-op gap co
   begin(rig, rig.tab('terminal'), 350, 410, 480, 415);
   assert.equal(indicator(rig).style.left, '499px', 'after the last tab');
   ptr(rig, 'pointerup', rig.win, 480, 415);
-  assert.deepEqual(views(rig, 'B1'), ['run', 'terminal', 'test-output']);
+  assert.deepEqual(views(rig, 'B1'), ['run', 'terminal', 'test-output', 'activity']);
 
   const same = dragRig();
   begin(same, same.tab('terminal'), 350, 410, 360, 410);
@@ -140,7 +140,7 @@ test('drag onto a stack body appends and the indicator covers the stack', () => 
   assert.equal(ind.getAttribute('data-wb-drop'), 'stack');
   assert.deepEqual([ind.style.left, ind.style.top, ind.style.width, ind.style.height], ['300px', '400px', '600px', '200px']);
   ptr(rig, 'pointerup', rig.win, 600, 500);
-  assert.deepEqual(views(rig, 'B1'), ['terminal', 'run', 'test-output', 'search']);
+  assert.deepEqual(views(rig, 'B1'), ['terminal', 'run', 'test-output', 'activity', 'search']);
 });
 
 test('drag from a strip button onto a stack body moves that view', () => {
@@ -329,12 +329,12 @@ test('RTL mirrors the insertion index and the indicator', () => {
   assert.equal(ind.getAttribute('data-wb-drop'), 'tabs');
   assert.equal(ind.style.left, '799px');
   ptr(rig, 'pointerup', rig.win, 840, 410);
-  assert.deepEqual(views(rig, 'B1'), ['terminal', 'search', 'run', 'test-output'], 'after the first (rightmost) tab');
+  assert.deepEqual(views(rig, 'B1'), ['terminal', 'search', 'run', 'test-output', 'activity'], 'after the first (rightmost) tab');
 
   const left = dragRig({ rtl: true });
-  begin(left, left.tab('search'), 100, 10, 620, 410);
-  ptr(left, 'pointerup', left.win, 620, 410);
-  assert.deepEqual(views(left, 'B1'), ['terminal', 'run', 'test-output', 'search'], 'left of the last tab is the end in RTL');
+  begin(left, left.tab('search'), 100, 10, 520, 410);
+  ptr(left, 'pointerup', left.win, 520, 410);
+  assert.deepEqual(views(left, 'B1'), ['terminal', 'run', 'test-output', 'activity', 'search'], 'left of the last tab is the end in RTL');
 });
 
 test('a window resize re-measures the cached rects', () => {
@@ -504,7 +504,7 @@ test('Move menu: unavailable stacks are not offered and a lone stack has no next
     rig.state.menus.at(-1).items.map((i) => i.label || 'sep').slice(0, 3),
     ['Move next to Terminal', 'Move next to Chat', 'sep'],
   );
-  const lone = setup({ unavailable: ['terminal', 'problems', 'run', 'test-runner', 'test-output', 'chat', 'changes'] });
+  const lone = setup({ unavailable: ['terminal', 'problems', 'run', 'test-runner', 'test-output', 'activity', 'chat', 'changes'] });
   lone.wb.openMoveMenu('explorer');
   assert.equal(lone.state.menus.at(-1).items[0].label, 'Move to left side', 'no separator without next-to items');
 });

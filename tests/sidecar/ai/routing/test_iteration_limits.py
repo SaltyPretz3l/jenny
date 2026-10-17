@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidecar.ai.config import parse_runtime_config
+from sidecar.ai.config import MCPServerConfig, parse_runtime_config
 from sidecar.ai.routing.iteration_limits import (
     AGENT_SURFACE_SUB_AGENT,
     append_sub_agent_finalization_message,
@@ -289,3 +289,46 @@ def test_background_start_timeout_does_not_inherit_job_lifetime(requested):
     call = SimpleNamespace(tool_id="run_command", arguments={
         "timeout_seconds": requested, "run_in_background": True})
     assert tool_timeout_for_runtime(config, None, call) == 30
+
+
+def _mcp_timeout_config(tools_timeout: float = 120) -> SimpleNamespace:
+    return SimpleNamespace(
+        engine_type="ollama", feature_flags={}, tools_execution_timeout_seconds=tools_timeout,
+        host_mode="desktop", mcp_servers=(
+            MCPServerConfig(name="rea", transport="stdio", command="npx", request_timeout_seconds=900.0),
+            MCPServerConfig(name="Slow-Docs", transport="stdio", command="node", request_timeout_seconds=300.0),
+            MCPServerConfig(name="quick", transport="stdio", command="node", request_timeout_seconds=60.0),
+            MCPServerConfig(name="docs", transport="stdio", command="node"),
+            MCPServerConfig(name="jenny_local_tools", transport="stdio", command="python",
+                            request_timeout_seconds=900.0),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "expected"),
+    [
+        ("mcp__rea__analyze_function", 900.0),
+        ("mcp__slow_docs__search", 300.0),
+        ("mcp__quick__search", 120.0),
+        ("mcp__docs__search", 120.0),
+        ("mcp__jenny_local_tools__x", 120.0),
+        ("mcp__unknown__x", 120.0),
+        ("read_file", 120.0),
+    ],
+)
+def test_row_request_timeout_extends_only_its_external_mcp_tools(tool_id: str, expected: float) -> None:
+    call = SimpleNamespace(tool_id=tool_id, arguments={})
+    assert tool_timeout_for_runtime(_mcp_timeout_config(), None, call) == expected
+
+
+def test_unset_row_request_timeout_keeps_a_lower_global_timeout() -> None:
+    call = SimpleNamespace(tool_id="mcp__docs__search", arguments={})
+    assert tool_timeout_for_runtime(_mcp_timeout_config(tools_timeout=10), None, call) == 10
+
+
+def test_row_request_timeout_still_respects_the_remaining_wall_clock() -> None:
+    runtime = SimpleNamespace(remaining_wall_clock_seconds=lambda: 200.0,
+                              tool_timeout_seconds=lambda configured: min(configured, 200.0))
+    call = SimpleNamespace(tool_id="mcp__rea__analyze_function", arguments={})
+    assert tool_timeout_for_runtime(_mcp_timeout_config(), runtime, call) == 200.0

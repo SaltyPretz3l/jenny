@@ -29,19 +29,18 @@ function makeFsDouble({ appendFile, appendFileSync, statSize = 0 } = {}) {
   };
 }
 
-test('write delegates to ordered writeBatch and produces one stream write', () => {
+test('write produces one ordered stream write per entry', () => {
   const writes = [];
   const writer = new ProcessLogWriter({ stream: { write: (chunk) => writes.push(chunk) } });
 
   assert.equal(writer.write({ level: 'INFO', event: 'first' }), true);
-  assert.equal(writer.writeBatch([
-    { level: 'INFO', event: 'second' },
-    { level: 'WARN', event: 'third' },
-  ]), true);
+  assert.equal(writer.write({ level: 'INFO', event: 'second' }), true);
+  assert.equal(writer.write({ level: 'WARN', event: 'third' }), true);
 
-  assert.equal(writes.length, 2);
+  assert.equal(writes.length, 3);
   assert.match(writes[0], /"event":"first"/);
-  assert.ok(writes[1].indexOf('second') < writes[1].indexOf('third'));
+  assert.match(writes[1], /"event":"second"/);
+  assert.match(writes[2], /"event":"third"/);
 });
 
 test('fileMinLevel keeps DEBUG off disk but still on the stream', async () => {
@@ -54,10 +53,8 @@ test('fileMinLevel keeps DEBUG off disk but still on the stream', async () => {
     fsImpl: makeFsDouble({ appendFile(_path, payload, _encoding, done) { appends.push(payload); done(); } }),
   });
 
-  writer.writeBatch([
-    { level: 'DEBUG', event: 'chatter' },
-    { level: 'INFO', event: 'kept' },
-  ]);
+  writer.write({ level: 'DEBUG', event: 'chatter' });
+  writer.write({ level: 'INFO', event: 'kept' });
   writer.write({ level: 'DEBUG', event: 'only-debug' });
   await writer.flush();
 
@@ -67,7 +64,7 @@ test('fileMinLevel keeps DEBUG off disk but still on the stream', async () => {
   assert.match(streamWrites.join(''), /chatter/);
 });
 
-test('writeBatch coalesces one renderer batch into one file append', async () => {
+test('pending writes coalesce into one file append', async () => {
   const appends = [];
   const writer = new ProcessLogWriter({
     stream: { write() { return true; } },
@@ -75,10 +72,8 @@ test('writeBatch coalesces one renderer batch into one file append', async () =>
     fsImpl: makeFsDouble({ appendFile(_path, payload, _encoding, done) { appends.push(payload); done(); } }),
   });
 
-  writer.writeBatch([
-    { level: 'INFO', event: 'first' },
-    { level: 'WARN', event: 'second' },
-  ]);
+  writer.write({ level: 'INFO', event: 'first' });
+  writer.write({ level: 'WARN', event: 'second' });
   const result = await writer.flush();
 
   assert.equal(result.flushed, true);

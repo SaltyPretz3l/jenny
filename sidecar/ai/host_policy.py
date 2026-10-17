@@ -55,7 +55,6 @@ HOST_ALLOWED_RPC_METHODS: frozenset[str] = frozenset(
         "memory.status",
         "memory.list",
         "memory.recall",
-        "memory.recall_recent",
     }
 )
 

@@ -9,6 +9,8 @@ const { estimateModelFit, estimateDivergence, resolveModelFit } = require('./mod
 const { normalizeString } = require('./backend/path-utils');
 
 const DIVERGENCE_LOG_THRESHOLD = 0.25;
+const DIVERGENCE_LOG_LIMIT = 256;
+const divergenceLogKeys = new Set();
 
 function canonicalModelId(value) {
   const modelId = normalizeString(value).toLowerCase();
@@ -78,11 +80,15 @@ function findObservationForModel(observationStore, { modelId, digest, gpu, conte
   };
 }
 
-function emitDivergenceLog(backend, { modelId, estimate, recommendation }) {
+function emitDivergenceLog(backend, { modelId, gpu, estimate, recommendation }) {
   const ratio = estimateDivergence(estimate, recommendation);
   if (!(ratio > DIVERGENCE_LOG_THRESHOLD)) return;
   try {
     if (backend && typeof backend._emitServiceLog === 'function') {
+      const key = JSON.stringify([canonicalModelId(modelId), gpu?.name, gpu?.type, gpu?.vramMb, estimate?.contextLength]);
+      // Stop admitting new keys at the cap so earlier identities never repeat.
+      if (divergenceLogKeys.has(key) || divergenceLogKeys.size >= DIVERGENCE_LOG_LIMIT) return;
+      divergenceLogKeys.add(key);
       backend._emitServiceLog('INFO', 'model_fit.estimate_catalog_divergence', {
         modelId: String(modelId || '').slice(0, 240),
         estimatedVramMb: estimate.vramRequiredMb,
@@ -171,7 +177,7 @@ async function buildModelFitEstimates({
       // when it was measured at the window Jenny loads.
       const catalogFit = sameWindow(recommendation, loadContextLength) ? recommendation : null;
       if (catalogFit) {
-        emitDivergenceLog(backend, { modelId, estimate, recommendation });
+        emitDivergenceLog(backend, { modelId, gpu, estimate, recommendation });
       }
 
       // Wave 4 "record on first load, then self-catalog": an observed

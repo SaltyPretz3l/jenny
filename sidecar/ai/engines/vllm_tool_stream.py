@@ -13,9 +13,11 @@ from typing import Any
 
 from sidecar.ai.engines.engine_events import ENGINE_EVENT_TOOL_CALL_DELTA, EngineEvent
 from sidecar.ai.engines.vllm_sse_stream import (
+    LlamaPrefillStream,
     _decode_sse_chunk,
     _iter_cancel_aware_sse_lines,
     _parse_usage,
+    has_generated_delta,
 )
 from sidecar.ai.routing.provider_stream_normalizer import (
     FINISH_REASON_PROVIDER_ERROR,
@@ -257,6 +259,8 @@ def _stream_tool_response(  # noqa: C901, PLR0912, PLR0913, PLR0915 - bounded SS
     tool_calls: list[ToolCallRequest],
     parser: Any, guard: ThinkingRepetitionGuard | None,
     truncated: list[NormalizedStreamEvent] | None = None,
+    prefill: LlamaPrefillStream | None = None,
+    metrics: Any = None,
 ) -> Generator[
     StreamChunk | EngineEvent, None, tuple[GenerationUsage | None, bool, bool, str]
 ]:
@@ -265,6 +269,8 @@ def _stream_tool_response(  # noqa: C901, PLR0912, PLR0913, PLR0915 - bounded SS
     inband_error = ""
     native_thinking_seen = False
     budget_tripped = budget_trip_check(guard)
+    prefill = prefill or LlamaPrefillStream(engine)
+    yield from prefill.start_events()
     for line in _iter_cancel_aware_sse_lines(response, cancel_handle):
         data = line[len(_SSE_DATA_PREFIX) :].strip() if line.startswith(_SSE_DATA_PREFIX) else ""
         if data == _SSE_DONE_SENTINEL:
@@ -281,6 +287,9 @@ def _stream_tool_response(  # noqa: C901, PLR0912, PLR0913, PLR0915 - bounded SS
                 provider=engine._PROVIDER_LABEL,
                 time_to_first_token_ms=engine._current_time_to_first_token_ms(),
             )
+        yield from prefill.feed(chunk)
+        if metrics is not None:
+            yield from metrics.feed(chunk)
         normalized = list(normalizer.process_chunk(chunk))
         if _collect_normalized_tool_calls(normalized, tool_calls, truncated=truncated):
             # Arguments carry no visible text; without these a large tool call
@@ -299,7 +308,8 @@ def _stream_tool_response(  # noqa: C901, PLR0912, PLR0913, PLR0915 - bounded SS
         delta = first.get("delta")
         if not isinstance(delta, dict):
             continue
-        engine._record_first_chunk()
+        if has_generated_delta(chunk):
+            engine._record_first_chunk()
         reasoning = engine._sanitize_thinking(extract_reasoning_delta(delta))
         if reasoning:
             native_thinking_seen = True

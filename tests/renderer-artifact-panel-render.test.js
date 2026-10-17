@@ -488,6 +488,24 @@ describe('artifact panel v2 provenance popover', () => {
 });
 
 describe('artifact panel v2 empty state', () => {
+  test('mode switches update cached empty titles and accessible names together', (t) => {
+    const h = makeHarness(t);
+    h.state.ui = { artifactReview: { mode: 'artifact' } };
+    const v2 = createArtifactPanelV2({ panelEl: h.panelEl, state: h.state, windowRef: h.dom.window });
+    v2.installed();
+    for (const [mode, title] of [['artifact', 'Artifacts'], ['tasks', 'Tasks'], ['notes', 'Notes'], ['artifact', 'Artifacts'], ['tasks', 'Tasks']]) {
+      h.state.ui.artifactReview.mode = mode;
+      v2.afterRender(null);
+      assert.equal(h.panelEl.querySelector('.artifact-panel-title-text').textContent, title);
+      assert.equal(h.panelEl.querySelector('#artifactReviewDetailTitle').title, title);
+    }
+    // A surface that clears the live title before a same-mode render gets it back.
+    h.panelEl.querySelector('.artifact-panel-title-text').textContent = '';
+    v2.afterRender(null);
+    assert.equal(h.panelEl.querySelector('.artifact-panel-title-text').textContent, 'Tasks');
+    v2.dispose();
+    h.dom.window.close();
+  });
   test('no selection: single "Select an artifact" line, no card markup', (t) => {
     const h = makeHarness(t);
     const v2 = createArtifactPanelV2({

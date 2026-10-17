@@ -10,6 +10,8 @@ const {
 } = require('../tools/structured-diff');
 const { normalizeSubagentMetadata } = require('./subagent-report-metadata');
 const { normalizeHomeResultMetadata } = require('./home-calendar-result-metadata');
+const { normalizeMemoryResultMetadata } = require('./memory-result-metadata');
+const { normalizeProposalResultMetadata } = require('./proposal-result-metadata');
 const { normalizeSandboxResultMetadata } = require('./sandbox-result-metadata');
 const {
   normalizeScriptedChangeReview: normalizeScriptedChangeReviewRecord,
@@ -514,6 +516,20 @@ function normalizeScriptedChangeReview(value) {
   return normalizeScriptedChangeReviewRecord(value, normalizeRelativePath);
 }
 
+function normalizeSessionMessageResultMetadata(value) {
+  if (!value || value.result_kind !== 'session_message' || !['list_targets', 'read', 'send'].includes(value.action)
+    || typeof value.ok !== 'boolean') return null; // the marker keeps other tools' metadata out
+  const result = { result_kind: 'session_message', action: value.action, ok: value.ok };
+  for (const [key, limit] of [['reason', 64], ['operation_id', 256], ['state', 32]]) {
+    if (typeof value[key] === 'string' && value[key].length <= limit) result[key] = value[key];
+  }
+  if (value.destination && typeof value.destination.session_id === 'string'
+    && value.destination.session_id.length <= 256 && typeof value.destination.title === 'string') {
+    result.destination = { session_id: value.destination.session_id, title: value.destination.title.slice(0, 512) };
+  }
+  return result;
+}
+
 function normalizePersistedToolResultMetadata(metadata, options = {}) {
   const source = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
     ? metadata
@@ -522,9 +538,6 @@ function normalizePersistedToolResultMetadata(metadata, options = {}) {
   const diffs = normalizeToolResultDiffsMetadata(source.diffs, options);
   const patch = normalizePatchMetadata(source.patch);
   const files = normalizePatchFilesMetadata(source.files);
-  const subagent = normalizeSubagentMetadata(source);
-  const userQuestions = normalizeUserQuestionsResultMetadata(source);
-  const homeResult = normalizeHomeResultMetadata(source);
   const workspaceChangeSet = normalizeWorkspaceChangeSetMetadata(source.workspace_change_set);
   const scriptedChangeReview = normalizeScriptedChangeReview(source.scripted_change_review);
   const result = {};
@@ -536,10 +549,9 @@ function normalizePersistedToolResultMetadata(metadata, options = {}) {
   if (diffs.length) result.diffs = diffs;
   if (patch) result.patch = patch;
   if (files.length) result.files = files;
-  if (subagent) Object.assign(result, subagent);
-  if (userQuestions) Object.assign(result, userQuestions);
-  if (homeResult) Object.assign(result, homeResult);
-  Object.assign(result, normalizeSandboxResultMetadata(source));
+  for (const normalize of [normalizeSubagentMetadata, normalizeUserQuestionsResultMetadata, normalizeHomeResultMetadata,
+    normalizeMemoryResultMetadata, normalizeProposalResultMetadata, normalizeSessionMessageResultMetadata,
+    normalizeSandboxResultMetadata]) Object.assign(result, normalize(source));
   if (workspaceChangeSet) result.workspace_change_set = workspaceChangeSet;
   if (scriptedChangeReview) result.scripted_change_review = scriptedChangeReview;
   // The shell tool stopped the command at its time limit: the tool row reads
@@ -579,6 +591,7 @@ function normalizeToolResultMetadataForStorage(metadata, options = {}, precomput
 }
 
 module.exports = {
+  normalizeSessionMessageResultMetadata,
   normalizeToolResultMetadataForStorage,
   normalizePersistedToolResultMetadata,
   normalizeScriptedChangeReview,

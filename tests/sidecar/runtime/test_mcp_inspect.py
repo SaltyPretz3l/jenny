@@ -27,6 +27,12 @@ class _Transport:
             raise self.error
         return self.tools
 
+    def list_prompts(self, *, cancel_handle: Any = None) -> list[dict[str, Any]]:
+        return []
+
+    def get_prompt(self, name: str, arguments: dict[str, str], **_kwargs: Any) -> dict[str, Any]:
+        raise NotImplementedError
+
     def close(self) -> None:
         self.closed = True
 
@@ -78,6 +84,9 @@ def test_probe_returns_bounded_surface_and_closes_owned_resources(monkeypatch: A
     assert result["tools"][0]["name"] == "weather"
     assert len(result["tools"][0]["schema_digest"]) == SHA256_HEX_LENGTH
     assert len(result["tools_digest"]) == SHA256_HEX_LENGTH
+    assert {key: result[key] for key in (
+        "prompts", "prompt_count", "malformed_prompt_count", "prompts_digest",
+    )} == {"prompts": [], "prompt_count": 0, "malformed_prompt_count": 0, "prompts_digest": ""}
     assert _Client.last is not None
     assert _Client.last._allow_private_addresses is True
     assert _Client.last.transport.closed is True
@@ -111,7 +120,15 @@ def test_probe_rejects_unbounded_tool_schema_without_hashing_it(monkeypatch: Any
     monkeypatch.setattr(inspection, "MCPClient", OversizedSchemaClient)
     result = inspection.inspect_server(_stdio_params())
     assert result["ok"] is False
-    assert result["failure"] == {"code": "CMP-MCP-0004", "reason": "ValueError"}
+    assert result["failure"] == {
+        "code": "CMP-MCP-0004",
+        "reason": "schema_string_exceeded",
+        "retryable": False,
+        "detail": {
+            "reason": "schema_string_exceeded", "tool": "unsafe",
+            "bound": "schema_string_chars", "limit": 4096, "observed": 5000,
+        },
+    }
     assert "tools_digest" not in result
     assert OversizedSchemaClient.last is not None
     assert OversizedSchemaClient.last.transport.closed is True

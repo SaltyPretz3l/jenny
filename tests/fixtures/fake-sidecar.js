@@ -1,4 +1,4 @@
-const API_VERSION = '2026-08-17';
+const API_VERSION = '2026-10-15';
 const JSONRPC_VERSION = '2.0';
 const {
   buildActiveModelCapabilities,
@@ -8,15 +8,18 @@ const {
   buildToolsStatus,
 } = require('./fake-sidecar-capabilities');
 const {
+  acceptPendingMemory,
   buildMemoryContextLessons,
-  buildMemorySuggestion,
   deleteMemory,
   listApprovedMemories,
   recallMemories,
-  recallRecentMemories,
+  requestSettingsMemory,
   saveMemory,
+  undoMemory,
   updateMemory,
 } = require('./fake-sidecar-memory');
+const { createAuxiliaryHandler } = require('./fake-sidecar-auxiliary');
+const { createReflectionHandler } = require('./fake-sidecar-reflection');
 const delayMs = Number(process.env.FAKE_BACKEND_DELAY_MS || 0);
 const progressIntervalMs = Number(process.env.FAKE_BACKEND_PROGRESS_INTERVAL_MS || 0);
 let progressTimer = null;
@@ -27,7 +30,6 @@ const pendingApprovals = new Map();
 const savedMemories = new Map();
 const pendingMemories = new Map();
 let nextMemoryId = 1;
-let nextPendingMemoryId = 1;
 let currentActiveEngine = 'mock';
 let currentActiveModel = 'mock-v1';
 let currentConfig = {};
@@ -48,6 +50,8 @@ function buildFrame(message) {
 function writeMessage(message) {
   process.stdout.write(buildFrame(message));
 }
+const handleAuxiliaryMessage = createAuxiliaryHandler(writeMessage);
+const handleReflectionMessage = createReflectionHandler(writeMessage);
 
 function notification(method, params) {
   return {
@@ -114,34 +118,6 @@ function normalizeSpaces(value) {
 
 function buildPendingMemoryKey(sessionId, fingerprint) {
   return `${normalizeSpaces(sessionId)}::${normalizeSpaces(fingerprint).toLowerCase()}`;
-}
-
-function upsertPendingMemory(sessionId, candidate) {
-  const normalizedSessionId = normalizeSpaces(sessionId);
-  const fingerprint = normalizeSpaces(candidate?.content_fingerprint).toLowerCase();
-  if (!normalizedSessionId || !fingerprint) {
-    return null;
-  }
-  const now = new Date().toISOString();
-  const key = buildPendingMemoryKey(normalizedSessionId, fingerprint);
-  const existing = pendingMemories.get(key);
-  const nextRecord = {
-    id: existing?.id || nextPendingMemoryId++,
-    session_id: normalizedSessionId,
-    source_request_id: existing?.source_request_id || `request_${Date.now()}`,
-    title: normalizeSpaces(candidate?.title || '').slice(0, 120),
-    lesson_text: normalizeSpaces(candidate?.lesson_text || '').slice(0, 240),
-    lesson_kind: normalizeSpaces(candidate?.lesson_kind || '').toLowerCase(),
-    confidence: Math.max(0, Math.min(Number(candidate?.confidence || 0), 1)),
-    source_excerpt: normalizeSpaces(candidate?.source_excerpt || '').slice(0, 240),
-    content_fingerprint: fingerprint,
-    family_key: normalizeSpaces(candidate?.family_key || '').toLowerCase(),
-    category: normalizeSpaces(candidate?.category || 'suggested').toLowerCase() || 'suggested',
-    created_at: existing?.created_at || now,
-    updated_at: now,
-  };
-  pendingMemories.set(key, nextRecord);
-  return nextRecord;
 }
 
 function listPendingMemories() {
@@ -709,7 +685,7 @@ function handleMessage(message) {
   if (!started) {
     return;
   }
-  if (resolveApproval(message)) {
+  if (resolveApproval(message) || handleAuxiliaryMessage(message) || handleReflectionMessage(message)) {
     return;
   }
   if (message.method === 'initialize') {
@@ -823,16 +799,6 @@ function handleMessage(message) {
     sendChatCompletion(message.id, message.params, { withTool: false });
     return;
   }
-  if (message.method === 'memory.suggest') {
-    const suggestion = buildMemorySuggestion(message.params, savedMemories);
-    if (suggestion && message.params?.session_id) {
-      upsertPendingMemory(message.params.session_id, suggestion);
-    }
-    writeMessage(resultResponse(message.id, {
-      suggestions: suggestion ? [suggestion] : [],
-    }));
-    return;
-  }
   if (message.method === 'background.run') {
     writeMessage(resultResponse(message.id, {
       status: 'started',
@@ -867,6 +833,11 @@ function handleMessage(message) {
       );
     }
     writeMessage(resultResponse(message.id, response.result));
+    return;
+  }
+  const settingsMemory = requestSettingsMemory(message.method, message.params, savedMemories);
+  if (settingsMemory !== undefined) {
+    writeMessage(resultResponse(message.id, settingsMemory));
     return;
   }
   if (message.method === 'memory.list') {
@@ -925,6 +896,20 @@ function handleMessage(message) {
     writeMessage(resultResponse(message.id, response.result));
     return;
   }
+  if (message.method === 'memory.undo') {
+    writeMessage(resultResponse(message.id, undoMemory(message.params, savedMemories)));
+    return;
+  }
+  if (message.method === 'memory.pending.accept') {
+    const key = buildPendingMemoryKey(message.params?.session_id, message.params?.content_fingerprint);
+    const response = acceptPendingMemory(message.params, pendingMemories.get(key), savedMemories, nextMemoryId);
+    nextMemoryId = response.nextMemoryId;
+    if (response.result.accepted) {
+      pendingMemories.delete(key);
+    }
+    writeMessage(resultResponse(message.id, response.result));
+    return;
+  }
   if (message.method === 'memory.pending.delete') {
     const sessionId = String(message.params?.session_id || '').trim();
     const contentFingerprint = String(message.params?.content_fingerprint || '').trim().toLowerCase();
@@ -953,12 +938,6 @@ function handleMessage(message) {
   if (message.method === 'memory.recall') {
     writeMessage(resultResponse(message.id, {
       memories: recallMemories(message.params, savedMemories),
-    }));
-    return;
-  }
-  if (message.method === 'memory.recall_recent') {
-    writeMessage(resultResponse(message.id, {
-      memories: recallRecentMemories(message.params, savedMemories),
     }));
     return;
   }

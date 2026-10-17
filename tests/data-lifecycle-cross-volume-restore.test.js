@@ -96,20 +96,23 @@ test('interrupted promotion recovers on restart and refuses a changed runtime ow
 test('rollback replay preserves originals after interruption following their restore', async (t) => {
   const f = await fixture(t);
   const copy = fs.copyFileSync;
-  const rm = fs.rmSync;
+  const rmdir = fs.rmdirSync;
   let interrupted = false;
   const copyMock = t.mock.method(fs, 'copyFileSync', (source, destination, flags) => {
     if (destination === f.target) throw new Error('copy refused');
     return copy(source, destination, flags);
   });
-  t.mock.method(fs, 'rmSync', (target, options) => {
+  // Rollback removes its root with the no-follow remover; interrupt the first directory removal
+  // inside the profile rollback root, after the originals were renamed back.
+  t.mock.method(fs, 'rmdirSync', (target, ...args) => {
     if (!interrupted && String(target).includes('profile.jenny-restore-rollback-')) {
       interrupted = true;
       throw new Error('interrupted after original restoration');
     }
-    return rm(target, options);
+    return rmdir(target, ...args);
   });
   assert.equal((await startup.promotePendingRestore(f.app)).ok, false);
+  assert.equal(interrupted, true);
   assert.equal(fs.readFileSync(f.target, 'utf8'), 'original');
   assert.equal(JSON.parse(fs.readFileSync(f.journalPath)).status, 'copying');
   assert.equal((await startup.promotePendingRestore(f.app)).ok, false);

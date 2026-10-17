@@ -230,6 +230,8 @@ files:
   - "!node_modules/monaco-editor/dev/**"
   - "!node_modules/monaco-editor/min-maps/**"
 asarUnpack:
+  - services/artifact-open-with-win32.ps1
+  - services/performance/gpu-memory-win32.ps1
   # @lydell/node-pty ships N-API prebuilds + ConPTY runtime files (conpty.dll,
   # OpenConsole.exe) that must live outside the asar. Smart-unpack detects this
   # anyway (proven in PTY_SPIKE_REPORT.md section 4); explicit is deterministic

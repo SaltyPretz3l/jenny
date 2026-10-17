@@ -396,6 +396,8 @@ def execute_sandboxed(  # noqa: PLR0913 - keyword-only sandbox inputs.
 
     proc: subprocess.Popen[str] | None = None
     wrapper_stderr = ""
+    ledger_ticket = None
+    from sidecar.runtime import owned_process_tracking
     try:
         with JobObject(memory_limit_mb=memory_limit_mb, max_processes=5) as job:
             proc = subprocess.Popen(
@@ -416,6 +418,7 @@ def execute_sandboxed(  # noqa: PLR0913 - keyword-only sandbox inputs.
                 preexec_fn=preexec_fn,
                 creationflags=creationflags,
             )
+            ledger_ticket = owned_process_tracking.record(proc.pid, "python_sandbox")
             job.assign(proc)
             job.resume(proc)
             _, wrapper_stderr = _capture_wrapper_output(
@@ -437,6 +440,8 @@ def execute_sandboxed(  # noqa: PLR0913 - keyword-only sandbox inputs.
     except Exception as error:
         _cleanup_failed_execution(proc, work_dir, error)
         raise
+    finally:
+        owned_process_tracking.settle(ledger_ticket, confirmed=False)
 
 
 def _cleanup_failed_execution(

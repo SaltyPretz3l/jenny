@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,16 @@ _SECRET = "hunter2-do-not-leak"
 @pytest.fixture(autouse=True)
 def _reset() -> None:
     tracking._reset_worktree_tracking_for_tests()
+
+
+@pytest.fixture
+def stable_capture_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Content assertions must not depend on parallel CI host contention.
+    # The wall-budget test below exercises expiration with its own clock.
+    monkeypatch.setattr(
+        capture, "build_scripted_diffs",
+        partial(capture.build_scripted_diffs, clock=lambda: 0.0),
+    )
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -62,7 +73,9 @@ def _assert_summary_only(diff: dict[str, object], reason: str) -> None:
     assert diff["hunks"] == []
 
 
-def test_a_clean_tracked_file_gets_its_preimage_from_head(tmp_path: Path) -> None:
+def test_a_clean_tracked_file_gets_its_preimage_from_head(
+    tmp_path: Path, stable_capture_clock: None,
+) -> None:
     repo, guard = _repo(tmp_path)
 
     result = _run_shell(guard, lambda: (repo / "tracked.txt").write_text("edited\n", "utf-8"))
@@ -323,7 +336,9 @@ def test_preimage_capture_caps_file_count_and_skips_sensitive_reads(
     assert preimages[".env"].reason == "sensitive_path"
 
 
-def test_head_blobs_after_an_undecodable_one_are_still_recovered(tmp_path: Path) -> None:
+def test_head_blobs_after_an_undecodable_one_are_still_recovered(
+    tmp_path: Path, stable_capture_clock: None,
+) -> None:
     repo, guard = _repo(tmp_path)
     _commit(repo, {"a.txt": b"caf\xe9 latin-1\n", "b.txt": b"plain\n", "c.txt": b"also\n"})
 

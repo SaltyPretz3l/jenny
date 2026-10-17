@@ -42,13 +42,21 @@
       at: typeof failure.at === 'string' ? failure.at : '',
       engine: String(failure.engine || backend.model_lifecycle?.engine || '').trim(),
       model,
+      // Which managed server the failure belonged to, when Electron stamped one.
+      ...(failure.managed === 'ninfer' || failure.managed === 'llama-server' ? { managed: failure.managed } : {}),
     };
   }
 
-  function engineLabel(engine) {
+  // `managed` (optional): the server the failure record names ('ninfer' or
+  // 'llama-server'), which wins; `snapshot` (optional): the Jenny status
+  // snapshot, consulted only for an unstamped record.
+  function engineLabel(engine, snapshot, managed) {
     const key = String(engine || '').trim().toLowerCase();
     if (key === 'ollama') return 'Ollama';
-    if (key === 'openai-compatible') return 'llama-server';
+    if (key === 'openai-compatible') {
+      const kind = managed === 'ninfer' || managed === 'llama-server' ? managed : snapshot?.runtime?.managed_server?.kind;
+      return kind === 'ninfer' ? 'NInfer' : 'llama-server';
+    }
     return key || jt('loadFailure.engineGeneric', 'The engine');
   }
 
@@ -63,7 +71,7 @@
 
   // Plain words, as a sentence (library note, Diagnostics reason).
   function causeSentence(failure) {
-    const engine = engineLabel(failure?.engine);
+    const engine = engineLabel(failure?.engine, null, failure?.managed);
     switch (failure?.cause) {
       case 'out_of_memory':
         return jt('loadFailure.cause.outOfMemory', 'Not enough memory to load it. A smaller context needs less.');
@@ -80,7 +88,7 @@
 
   // The same cause as a short phrase (the composer line: "qwen3:8b didn't load · not enough memory").
   function causePhrase(failure) {
-    const engine = engineLabel(failure?.engine);
+    const engine = engineLabel(failure?.engine, null, failure?.managed);
     switch (failure?.cause) {
       case 'out_of_memory': return jt('loadFailure.phrase.outOfMemory', 'not enough memory');
       case 'engine_unreachable': return jt('loadFailure.phrase.engineUnreachable', "{engine} isn't responding", { engine });

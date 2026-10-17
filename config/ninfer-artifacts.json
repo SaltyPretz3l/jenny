@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "artifacts": [
+    {
+      "id": "qwen3.8-27b-nvfp4",
+      "display_name": "Qwen3.8 27B",
+      "repo": "neroued/Qwen3.8-27B-nvfp4-NInfer",
+      "revision": "a107ba1b5b0609d9ca90d5ed61439f5f5cc7d64d",
+      "file": "qwen3_8_27b_nvfp4.ninfer",
+      "size_bytes": 23719715844,
+      "sha256": "74d2c57145e6ff11d1d2faa79594477f9bc903a611af1fb20218189fbbb77d82",
+      "model_id": "qwen3.8-27b-nvfp4",
+      "format_version": 3,
+      "supports_mtp": true,
+      "context_windows": [16384, 32768, 65536, 131072, 153600, 262144],
+      "fp8_kv_windows": [153600, 262144],
+      "default_context_window": 153600
+    }
+  ],
+  "_comment": "PROVENANCE MANIFEST. Pinned NInfer model artifacts, never bundled: the main process downloads an artifact only after the user asks for it, from https://huggingface.co/<repo>/resolve/<revision>/<file> (derived from these fields, never read from this file), which redirects once to a Hugging Face CDN host (*.hf.co) that honours HTTP Range. size_bytes and sha256 are verified before the file is used; verified 2026-10-13; revision is the immutable repo commit holding that blob (the v3 artifact landed in 6a534f28, the later commits touched only docs and the chat template). format_version is the NInfer artifact format the pinned runtime in ninfer-runtime.json loads; model_id is the id ninfer-serve reports; context_windows are the choices the Tune drawer offers; fp8_kv_windows (a subset) launch with --kv-dtype fp8. Measured on the 32 GB 5090 2026-10-15 (decode / 10k prefill): bf16 64k 181 / 8.3k tok/s (5.6 GiB VRAM free), bf16 128k 185 / 8.8k (1.5 GiB free), bf16 150k 28-32 / 1.1k (0-86 MiB free: Windows spills to shared memory), fp8 150k 178 / 8.9k (4.8 GiB free), fp8 256k 182 / 8.8k (1.45 GiB free); bf16 at 262,144 does not start. default_context_window is 153,600 (fp8 KV) after the 2026-10-15 tuning run (docs/plans/NINFER_RUNTIME_TUNING_2026-10-15.md): at every fill it decodes as fast or faster than bf16 128k (25k/60k/100k/140k fill: 130/117/112/106 tok/s vs 121/105/96/-), keeps ~5.5 GiB VRAM free, reuses the prefix cache on follow-up turns (0.8-1.6 s) and recalled 10/10 needles at every fill up to 146k tokens, as bf16 did."
+}

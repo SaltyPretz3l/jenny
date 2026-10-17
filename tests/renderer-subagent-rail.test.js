@@ -283,10 +283,11 @@ describe('the subagents rail mode: the pull, the record and the restore', () => 
 
   test('Escape closes the monitor, is defaultPrevented, and does not also dismiss the overlay panel', (t) => {
     const r = rig(t, { prefs: { enabled: true, collapsed: false, userDismissed: false, width: 420 }, messages: { 'session-a': batchMessages('call-a') } });
+    r.byId('workspace').getBoundingClientRect = () => ({ width: 760 });
     r.makeController(0, 'session-a');
     r.byId('cardA').focus();
     r.byId('cardA').click();
-    assert.equal(r.panel.classList.contains('artifact-review-overlay'), true, 'jsdom lays out no width, so the panel is the overlay drawer');
+    assert.equal(r.panel.classList.contains('artifact-review-overlay'), true, 'a 760px stage uses the overlay drawer');
     const event = key(r.dom.window, 'Escape');
     r.panel.querySelector('[data-subagent-select]').dispatchEvent(event);
     assert.equal(event.defaultPrevented, true);
@@ -523,4 +524,31 @@ describe('the Workspace dock host', () => {
     assert.ok(r.byId('subagentInspector').querySelector('.subagent-monitor-shell'));
     assert.equal(r.byId('cardA').getAttribute('aria-controls'), 'subagentInspector');
   });
+});
+
+
+test('production rail repaint keeps selected live text, disclosure, scroll and focus', (t) => {
+  const step = (sequence, text) => ({ toolCallId: 'call-a', childTaskId: 'child', childLabel: 'Inspect',
+    taskType: 'sub_agent', source: 'delegate', status: 'running', summary: 'Working',
+    childActivity: { sequence, text, steps: [], step_count: 0 }, usage: { total_tokens: 14, input_tokens: 10, output_tokens: 4 } });
+  const r = rig(t, { messages: { 'session-a': [{ agent_status_steps: [step(1, 'Selectable live response')] }] } });
+  const controller = r.makeController(0, 'session-a'); r.byId('cardA').click();
+  const answer = r.panel.querySelector('.subagent-answer'); const text = answer.querySelector('p').firstChild;
+  const disclosure = r.panel.querySelector('[data-inv-collapsible]'); disclosure.setAttribute('aria-expanded', 'true'); disclosure.focus();
+  const range = r.doc.createRange(); range.setStart(text, 0); range.setEnd(text, 10);
+  const selection = r.dom.window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+  assert.equal(selection.toString(), 'Selectable');
+  r.panel.querySelector('.subagent-monitor-body').scrollTop = 60;
+  r.state.messagesBySession.set('session-a', [{ agent_status_steps: [step(2, 'Selectable live response extended')] }]);
+  controller.render();
+  assert.equal(r.panel.querySelector('.subagent-answer'), answer);
+  assert.equal(selection.toString(), 'Selectable');
+  assert.equal(r.doc.activeElement, disclosure);
+  assert.equal(disclosure.getAttribute('aria-expanded'), 'true');
+  assert.equal(r.panel.querySelector('.subagent-monitor-body').scrollTop, 60);
+  selection.removeAllRanges();
+  r.doc.dispatchEvent(new r.dom.window.Event('selectionchange'));
+  assert.match(answer.textContent, /extended/);
+  r.state.messagesBySession.set('session-a', [{ agent_status_steps: [step(3, 'Selectable live response extended again')] }]);
+  controller.render(); assert.match(answer.textContent, /extended again/);
 });

@@ -39,6 +39,7 @@
 
   const SHEET_ID = 'changes-undo-sheet';
   const LIST_RETRY_MS = 5000;
+  const RESUMABLE_UNDO_REASONS = new Set(['restore_io_failed', 'restore_path_unsafe', 'restore_workspace_busy']); // older sets wait; the next Undo resumes
 
   function noop() {}
 
@@ -183,20 +184,27 @@
 
     /* ── Undo ── */
 
-    async function prepareUndo(turn, history) {
+    // Finished sets and files of a stopped Undo are not offered again.
+    async function prepareUndo(turn, history, partial) {
+      ensureJournalListing();
+      if (listing) await listing;
       const journal = [];
       for (const changeSetId of list(turn.changeSetIds)) {
+        if ((partial && partial.doneSetIds.includes(changeSetId)) || journalUndoneAt([changeSetId])) continue;
         const result = await call('preflightUndo', { changeSetId });
         if (!result.ok) return { ok: false, reason: result.reason };
         journal.push({ changeSetId, preflight: result });
       }
+      if (partial) turn = { ...turn, files: list(turn.files).filter((item) => partial.files[item.path] !== 'undone') };
       const checkpoints = {};
       for (const request of undoPlan.checkpointPreflights(turn)) {
         const result = await call('preflightCheckpointFiles', request);
         if (!result.ok && result.reason !== 'checkpoint_not_found') return { ok: false, reason: result.reason };
         checkpoints[request.ref] = result;
       }
-      return { ok: true, plan: undoPlan.buildUndoPlan({ turn, history, journal, checkpoints }) };
+      const plan = undoPlan.buildUndoPlan({ turn, history, journal, checkpoints });
+      plan.resumable = journal.some((item) => item.preflight.resume);
+      return { ok: true, plan };
     }
 
     async function openUndo(turn, options = {}) {
@@ -210,7 +218,7 @@
       setBusy(record, 'checking');
       let prepared;
       try {
-        prepared = await prepareUndo(turn, options.history);
+        prepared = await prepareUndo(turn, options.history, record.partial);
       } finally {
         setBusy(record, false);
       }
@@ -232,6 +240,7 @@
         rows: undoSheet.createUndoSheet({ ...sheetDeps(), canPreview: (row) => Boolean(renderDiffBody && previewChange(row)) }).undoRows(plan),
         plan,
         count: (choices) => undoPlan.chosenCount(plan, choices),
+        allowEmpty: plan.resumable,
         renderPreview: (row) => (renderDiffBody && previewChange(row) ? renderDiffBody(previewChange(row)) : ''),
         restoreFocus: options.restoreFocus,
         onConfirm: (choices) => executeUndo(record, turn, plan, choices),
@@ -240,8 +249,11 @@
 
     async function executeUndo(record, turn, plan, choices) {
       setBusy(record, 'working');
+      const partial = record.partial || { doneSetIds: [], swap: [], files: {} };
       const outcome = { journal: [], checkpoint: [] };
+      const doneSetIds = [...partial.doneSetIds];
       let failed = false;
+      let stopped = false;
       try {
         for (const changeSetId of plan.journalSetIds) {
           // Newer change sets ran first, so this one is checked afresh.
@@ -249,14 +261,18 @@
           if (!fresh.ok) {
             // Older change sets would meet this one's edits as conflicts.
             failed = true;
+            stopped = RESUMABLE_UNDO_REASONS.has(fresh.reason);
             break;
           }
           const decisions = undoPlan.journalDecisions(plan, choices, fresh);
           const result = await call('undoChangeSet', { changeSetId, decisions, captureSafetyCopy: true });
           if (!result.ok && result.status !== 'needs_review') failed = true;
           outcome.journal.push(result);
+          if (!result.ok && RESUMABLE_UNDO_REASONS.has(result.reason)) { stopped = true; break; }
+          if (settledUndo(result)) doneSetIds.push(changeSetId);
         }
-        for (const planned of undoPlan.checkpointRestores(plan, choices)) {
+        // Checkpoints wait for a stopped journal undo.
+        for (const planned of stopped ? [] : undoPlan.checkpointRestores(plan, choices)) {
           const fresh = await call('preflightCheckpointFiles', { ref: planned.ref, files: [...planned.paths, ...planned.removePaths].map((path) => ({ path })) });
           const request = undoPlan.recheckRestore(plan, planned, fresh);
           if (request.paths.length + request.removePaths.length < planned.paths.length + planned.removePaths.length) failed = true;
@@ -271,17 +287,29 @@
         record.busy = false;
       }
       const summary = undoPlan.summarizeUndo(plan, choices, outcome);
-      const undone = Object.values(summary.files).filter((state) => state === 'undone').length;
-      const kept = Object.values(summary.files).length - undone;
+      const files = { ...summary.files, ...partial.files };
+      const swapJournal = [...partial.swap, ...(summary.swap ? summary.swap.journal : [])];
+      const swap = swapJournal.length || summary.swap ? { checkpoint: [], journalFirst: true, ...summary.swap, journal: swapJournal } : null;
+      const undone = Object.values(files).filter((state) => state === 'undone').length;
+      const kept = Object.values(files).length - undone;
       if (failed) appendClientLog('WARN', 'changes_undo.undo_partial', { undone, kept });
-      if (!undone) {
+      if (stopped) {
+        const undoneFiles = Object.entries(files).filter(([, state]) => state === 'undone');
+        record.partial = { doneSetIds, swap: swapJournal, files: Object.fromEntries(undoneFiles) };
+        requestRender();
+        showToast(jt('changes.undo.toastStopped', 'Undo stopped partway. Undo again to finish it.'), { tone: 'warning' });
+        return;
+      }
+      record.partial = null;
+      const finished = plan.resumable && !failed;
+      if (!undone && !finished) {
         requestRender();
         showToast(jt('changes.undo.toastNothingUndone', 'Nothing was undone.'), { tone: failed ? 'warning' : 'info' });
         return;
       }
-      Object.assign(record, { status: 'undone', at: now(), files: summary.files, swap: summary.swap });
+      Object.assign(record, { status: 'undone', at: now(), files, swap });
       requestRender();
-      toastUndone(record, turn, undone, kept, failed);
+      if (undone) toastUndone(record, turn, undone, kept, failed);
     }
 
     function toastUndone(record, turn, undone, kept, failed) {
@@ -468,13 +496,23 @@
       return { escapeHtml: deps.escapeHtml, formatTime: deps.formatTime };
     }
 
+    function settledUndo(result) {
+      return Boolean(result && (result.ok || result.status === 'needs_review'));
+    }
+
+    function primaryLabel(sheet, config, count) {
+      return count === 0 && config.allowEmpty
+        ? jt('changes.undo.finishPrimary', 'Finish undo')
+        : sheet.primaryLabel(config.mode, count);
+    }
+
     function updatePrimary() {
       if (!active) return;
       const count = active.config.count(active.choices);
       const primary = active.mountRoot.querySelector('[data-step-modal-action="confirm"]');
       if (!primary) return;
-      primary.textContent = active.sheet.primaryLabel(active.config.mode, count);
-      primary.disabled = count === 0;
+      primary.textContent = primaryLabel(active.sheet, active.config, count);
+      primary.disabled = count === 0 && !active.config.allowEmpty;
     }
 
     // The inventory's document-level handler flips the switch on click (or
@@ -534,7 +572,7 @@
         bodyHtml: sheet.buildBodyHtml(config.rows, { mode: config.mode, choices }),
         actions: [
           { id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'secondary' },
-          { id: 'confirm', label: sheet.primaryLabel(config.mode, count), variant: 'primary', disabled: count === 0 },
+          { id: 'confirm', label: primaryLabel(sheet, config, count), variant: 'primary', disabled: count === 0 && !config.allowEmpty },
         ],
       }));
       const mountRoot = documentRef.querySelector(`[data-step-modal="${SHEET_ID}"]`);

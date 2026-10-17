@@ -93,7 +93,7 @@ test('the tree page: parent row, one treeitem button per child, footer totals', 
   assert.match(parts.body, /Survey &lt;renderer&gt;/);
   assert.match(parts.body, /Completed · <span>41s<\/span> · 7 steps/);
   assert.match(parts.body, /Failed · Reached its work limit/);
-  assert.equal(parts.footer.replace(/<[^>]+>/g, ''), '2 tasks · 7 steps · 1.2k tokens');
+  assert.equal(parts.footer.replace(/<[^>]+>/g, ''), '2 tasks · 7 steps · 1.2k tokens · partially reported');
   assert.doesNotMatch(parts.body, /subagent-monitor-master|subagent-monitor-detail\b/, 'no two-column markup');
 });
 
@@ -191,7 +191,7 @@ test('a running child shows its live stage summary and the pending-steps placeho
   }], key: 'call-1' });
   const parts = view.renderMonitor(live, { page: 'detail' });
   assert.match(parts.body, /Reading the repo/);
-  assert.match(parts.body, /Steps appear when this subagent finishes\./);
+  assert.match(parts.body, /Tool steps appear here as they run\./);
   assert.match(parts.body, /data-subagent-live-elapsed="child:child-1"/);
   assert.doesNotMatch(parts.body, />Answer</, 'no answer section while running');
 });
@@ -208,4 +208,24 @@ test('an error child shows the technical details disclosure; the ids take the pa
 test('old reports without steps fall back to the tool names', () => {
   const parts = view.renderMonitor(batchModel([{ ...CHILDREN[0], budget: { elapsed_ms: 1_000 }, tools_used: ['read_file', 'grep'] }]), { page: 'detail' });
   assert.match(parts.body, /read_file · grep/);
+});
+
+test('a child with unreported usage never shows the batch subtotal as its own', () => {
+  const model = modelUtils.buildMonitorViewModel({
+    terminal: { kind: 'batch', report: {
+      status: 'completed',
+      tasks: [CHILDREN[0], { ...CHILDREN[1], status: 'completed' }],
+      usage: { input_tokens: 1_000, output_tokens: 200, total_tokens: 1_200, partial: true },
+    } },
+    key: 'call-1',
+    selectedKey: 'b',
+  });
+  assert.equal(model.selected.label, 'Survey sidecar');
+  assert.equal(model.selected.usage, null);
+  const parts = view.renderMonitor(model, { page: 'detail' });
+  assert.match(parts.footer, /Tokens not reported/);
+  assert.doesNotMatch(parts.footer, /1\.2k tokens|partially reported/);
+  assert.doesNotMatch(parts.footer, /subagent-usage-grid/);
+  const tree = view.renderMonitor(model, { page: 'tree' });
+  assert.match(tree.footer, /1\.2k tokens · partially reported/, 'the aggregate stays in the tree footer');
 });

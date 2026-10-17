@@ -1,13 +1,14 @@
 'use strict';
 
-// Review finding DPR-008: a project delete whose memory move committed in the
-// sidecar while the reply was lost must not put the project back over memories
-// that already sit in General. The delete is recorded in the project delete
-// journal, stays deleted, and the move is re-issued once the sidecar is back.
+// Review finding DPR-008: a project delete whose memory archive committed in
+// the sidecar while the reply was lost must not put the project back over
+// memories that are already archived. The delete is recorded in the project
+// delete journal, stays deleted, and the archive is re-issued once the sidecar
+// is back (memory v2, row 58: archive replaced the move to General).
 //
-// These tests drive the real mover (backend-memory.js) and a real
+// These tests drive the real archiver (backend-memory.js) and a real
 // SidecarClient against a fake sidecar process that owns a tiny memory table,
-// so "the move committed, then the pipe dropped" is the actual sequence.
+// so "the archive committed, then the pipe dropped" is the actual sequence.
 
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
@@ -16,7 +17,7 @@ const path = require('node:path');
 const { Readable, Writable } = require('node:stream');
 const test = require('node:test');
 
-const { moveProjectMemories } = require('../../services/backend/backend-memory');
+const { archiveProjectMemories } = require('../../services/backend/backend-memory');
 const { ElectronSessionStore } = require('../../services/backend/electron-session-store');
 const { initializeManagedSidecar } = require('../../services/backend/managed-sidecar-lifecycle');
 const { SidecarClient } = require('../../services/backend/sidecar-client');
@@ -34,14 +35,15 @@ test.afterEach(async () => cleanupTrackedResources());
 
 const JOURNAL_FILE = 'project-delete-operations.json';
 
-// The sidecar's side of memory.move_project: rows keyed by project. A move is
-// the same convergent operation as the real store's (a second run finds no
-// source rows). `mode` decides what happens to the reply.
+// The sidecar's side of memory.archive_project: active rows keyed by project.
+// An archive is the same convergent operation as the real store's (a second
+// run finds no active rows). `mode` decides what happens to the reply.
 class FakeSidecar {
   constructor() {
     this.rows = new Map();
+    this.archived = new Map();
     this.mode = 'answer';
-    this.moveRequests = 0;
+    this.archiveRequests = 0;
   }
 
   seed(projectId, count) {
@@ -50,6 +52,10 @@ class FakeSidecar {
 
   count(projectId) {
     return this.rows.get(projectId) || 0;
+  }
+
+  archivedCount(projectId) {
+    return this.archived.get(projectId) || 0;
   }
 
   spawn() {
@@ -79,23 +85,22 @@ class FakeSidecar {
   }
 
   _handle(proc, message) {
-    if (message.method !== 'memory.move_project') return;
-    this.moveRequests += 1;
+    if (message.method !== 'memory.archive_project') return;
+    this.archiveRequests += 1;
     const dropPipe = () => setImmediate(() => proc.emit('exit', 1, null));
     if (this.mode === 'drop_before_commit') return dropPipe();
     if (this.mode === 'refuse') {
       return this._reply(proc, {
         jsonrpc: '2.0', id: message.id,
-        error: { code: -32000, message: 'memory.move_project failed', data: { error_code: 'CMP-MEMORY-0001' } },
+        error: { code: -32000, message: 'memory.archive_project failed', data: { error_code: 'CMP-MEMORY-0001' } },
       });
     }
-    const source = message.params.project_id;
-    const target = message.params.target_project_id;
-    const moved = this.count(source);
-    this.rows.set(target, this.count(target) + moved);
-    this.rows.delete(source);
+    const projectId = message.params.project_id;
+    const archived = this.count(projectId);
+    this.archived.set(projectId, this.archivedCount(projectId) + archived);
+    this.rows.delete(projectId);
     if (this.mode === 'commit_then_drop') return dropPipe();
-    return this._reply(proc, { jsonrpc: '2.0', id: message.id, result: { moved, merged: 0, pending_moved: 0 } });
+    return this._reply(proc, { jsonrpc: '2.0', id: message.id, result: { ok: true, archived, pending_removed: 0 } });
   }
 
   _reply(proc, message) {
@@ -111,7 +116,7 @@ function createProfile() {
 
 // One "app run" over a profile: fresh stores, a fresh journal, and a client
 // attached to the given fake sidecar.
-function startApp(profile, sidecar, { moveMemories = null } = {}) {
+function startApp(profile, sidecar, { archiveMemories = null } = {}) {
   const projectStore = new ProjectStore(path.join(profile, 'projects.json'));
   let created = 0;
   const projectService = new ProjectService({ store: projectStore, idFactory: () => `project_recovery_${++created}` });
@@ -130,8 +135,8 @@ function startApp(profile, sidecar, { moveMemories = null } = {}) {
     sessionStore,
     permissionStore: new ToolPermissionStore(path.join(profile, 'tool-permissions.json')),
     projectDeleteJournal: journal,
-    moveProjectMemories: moveMemories
-      || (({ from_project_id: from, to_project_id: to }) => moveProjectMemories(service, from, to)),
+    archiveProjectMemories: archiveMemories
+      || (({ project_id: projectId }) => archiveProjectMemories(service, projectId)),
     isSessionBusy: () => false,
     resolveWorkspaceRoot: () => '',
   });
@@ -146,7 +151,7 @@ function seedProject(app, sidecar, { memories = 3 } = {}) {
   return { project, chat };
 }
 
-test('a move that committed before the pipe dropped leaves the project deleted and is settled after reconnect', async () => {
+test('an archive that committed before the pipe dropped leaves the project deleted and is settled after reconnect', async () => {
   const sidecar = new FakeSidecar();
   const app = startApp(createProfile(), sidecar);
   const { project, chat } = seedProject(app, sidecar);
@@ -154,11 +159,12 @@ test('a move that committed before the pipe dropped leaves the project deleted a
 
   const result = await app.application.deleteProject({ project_id: project.id });
 
-  assert.equal(sidecar.count(GENERAL_PROJECT_ID), 3, 'the sidecar committed the move');
-  assert.equal(app.projectService.get(project.id), null, 'the project is not restored over memories that moved to General');
+  assert.equal(sidecar.archivedCount(project.id), 3, 'the sidecar committed the archive');
+  assert.equal(sidecar.count(GENERAL_PROJECT_ID), 0, 'nothing moved to General');
+  assert.equal(app.projectService.get(project.id), null, 'the project is not restored over archived memories');
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.memory_outcome, 'pending');
-  assert.equal(result.moved_memories, 0);
+  assert.equal(result.archived_memories, 0);
   assert.equal(app.sessionStore.getSessionSummary(chat.id).project_id, GENERAL_PROJECT_ID);
   assert.deepEqual(app.journal.list().map((operation) => operation.project_id), [project.id]);
 
@@ -167,11 +173,11 @@ test('a move that committed before the pipe dropped leaves the project deleted a
   const settled = await app.application.reconcilePendingProjectDeletes();
   assert.deepEqual(settled, { settled: 1, discarded: 0, pending: 0 });
   assert.deepEqual(app.journal.list(), []);
-  assert.equal(sidecar.count(GENERAL_PROJECT_ID), 3, 'the re-issued move changed nothing');
-  assert.equal(sidecar.moveRequests, 2, 'one lost request, one re-issue; nothing was sent into the dead pipe');
+  assert.equal(sidecar.archivedCount(project.id), 3, 'the re-issued archive changed nothing');
+  assert.equal(sidecar.archiveRequests, 2, 'one lost request, one re-issue; nothing was sent into the dead pipe');
 });
 
-test('a move that never ran is finished on the next start', async () => {
+test('an archive that never ran is finished on the next start', async () => {
   const sidecar = new FakeSidecar();
   const profile = createProfile();
   const app = startApp(profile, sidecar);
@@ -181,8 +187,8 @@ test('a move that never ran is finished on the next start', async () => {
   const result = await app.application.deleteProject({ project_id: project.id });
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.memory_outcome, 'pending');
-  assert.equal(sidecar.count(project.id), 3, 'nothing moved yet');
-  assert.equal(sidecar.count(GENERAL_PROJECT_ID), 0, 'recall scope did not widen while the move is pending');
+  assert.equal(sidecar.count(project.id), 3, 'nothing archived yet');
+  assert.equal(sidecar.count(GENERAL_PROJECT_ID), 0, 'recall scope did not widen while the archive is pending');
 
   // The reconnect did not come back: a re-issue with no answer keeps the record.
   const stillDown = await app.application.reconcilePendingProjectDeletes();
@@ -194,7 +200,8 @@ test('a move that never ran is finished on the next start', async () => {
   assert.equal(nextRun.journal.list().length, 1, 'the record survived the restart');
   assert.deepEqual(await nextRun.application.reconcilePendingProjectDeletes(), { settled: 1, discarded: 0, pending: 0 });
   assert.equal(sidecar.count(project.id), 0);
-  assert.equal(sidecar.count(GENERAL_PROJECT_ID), 3);
+  assert.equal(sidecar.archivedCount(project.id), 3);
+  assert.equal(sidecar.count(GENERAL_PROJECT_ID), 0);
   assert.deepEqual(nextRun.journal.list(), []);
   assert.equal(fs.existsSync(path.join(profile, JOURNAL_FILE)), true);
 });
@@ -230,13 +237,13 @@ test('a delete is refused before anything is removed when the record cannot be w
   assert.equal(result.ok, false);
   assert.equal(result.error.reason, 'project_delete_record_unavailable');
   assert.equal(result.error.record_reason, 'future_schema');
-  assert.equal(sidecar.moveRequests, 0);
+  assert.equal(sidecar.archiveRequests, 0);
   assert.ok(app.projectService.get(project.id));
   assert.equal(app.sessionStore.getSessionSummary(chat.id).project_id, project.id);
   assert.equal(fs.readFileSync(path.join(profile, JOURNAL_FILE), 'utf8'), newer, 'the file is not written over');
 });
 
-test('a memory mover without a journal refuses the delete', async () => {
+test('a memory archiver without a journal refuses the delete', async () => {
   const sidecar = new FakeSidecar();
   const app = startApp(createProfile(), sidecar);
   const { project } = seedProject(app, sidecar);
@@ -246,7 +253,7 @@ test('a memory mover without a journal refuses the delete', async () => {
     projectAuthority: { captureProject: () => ({}) },
     sessionStore: app.sessionStore,
     permissionStore: new ToolPermissionStore(path.join(createProfile(), 'tool-permissions.json')),
-    moveProjectMemories: async () => ({ ok: true, moved: 0 }),
+    archiveProjectMemories: async () => ({ ok: true, archived: 0 }),
     isSessionBusy: () => false,
   });
   const result = await bare.deleteProject({ project_id: project.id });
@@ -266,13 +273,13 @@ test('a damaged project store never reads as "the project is gone"', async () =>
   fs.writeFileSync(path.join(profile, 'projects.json'), '{ not json');
   sidecar.mode = 'answer';
   const nextRun = startApp(profile, sidecar);
-  const before = sidecar.moveRequests;
+  const before = sidecar.archiveRequests;
   assert.deepEqual(await nextRun.application.reconcilePendingProjectDeletes(), { settled: 0, discarded: 0, pending: 1 });
-  assert.equal(sidecar.moveRequests, before, 'no move is issued against a fallback project list');
+  assert.equal(sidecar.archiveRequests, before, 'no archive is issued against a fallback project list');
   assert.equal(nextRun.journal.list().length, 1);
 });
 
-test('a record for a project that still exists is dropped without moving its memories', async () => {
+test('a record for a project that still exists is dropped without archiving its memories', async () => {
   const sidecar = new FakeSidecar();
   const app = startApp(createProfile(), sidecar);
   const { project } = seedProject(app, sidecar);
@@ -280,18 +287,18 @@ test('a record for a project that still exists is dropped without moving its mem
   assert.equal(app.journal.record(project.id).ok, true);
 
   assert.deepEqual(await app.application.reconcilePendingProjectDeletes(), { settled: 0, discarded: 1, pending: 0 });
-  assert.equal(sidecar.moveRequests, 0);
+  assert.equal(sidecar.archiveRequests, 0);
   assert.equal(sidecar.count(project.id), 3);
   assert.deepEqual(app.journal.list(), []);
 });
 
-test('a reconcile during a delete never issues a second move for the delete still in flight', async () => {
+test('a reconcile during a delete never issues a second archive for the delete still in flight', async () => {
   const sidecar = new FakeSidecar();
   let app = null;
   let calls = 0;
   let duringDelete = null;
   app = startApp(createProfile(), sidecar, {
-    moveMemories: async () => {
+    archiveMemories: async () => {
       calls += 1;
       if (calls === 1) duringDelete = await app.application.reconcilePendingProjectDeletes();
       return { ok: false, reason: 'memory_unavailable' };
@@ -312,7 +319,7 @@ test('with nothing recorded, reconcile asks nothing and writes no file', async (
   const profile = createProfile();
   const app = startApp(profile, sidecar);
   assert.deepEqual(await app.application.reconcilePendingProjectDeletes(), { settled: 0, discarded: 0, pending: 0 });
-  assert.equal(sidecar.moveRequests, 0);
+  assert.equal(sidecar.archiveRequests, 0);
   assert.equal(fs.existsSync(path.join(profile, JOURNAL_FILE)), false);
 });
 
@@ -352,8 +359,8 @@ test('a successful sidecar initialize reconciles recorded deletes and logs what 
   await settle();
   assert.equal(calls, 1);
   assert.deepEqual(
-    logs.filter(([, event]) => event === 'projects.delete_memory_move_recovery'),
-    [['INFO', 'projects.delete_memory_move_recovery', { settled: 1, discarded: 0, pending: 0 }]],
+    logs.filter(([, event]) => event === 'projects.delete_memory_archive_recovery'),
+    [['INFO', 'projects.delete_memory_archive_recovery', { settled: 1, discarded: 0, pending: 0 }]],
   );
 });
 
@@ -362,7 +369,7 @@ test('initialize does not wait for the reconcile, survives its failure, and skip
   await initializeManagedSidecar(failing.service, { applyResult: false });
   await settle();
   assert.deepEqual(failing.logs.map(([level, event]) => [level, event]), [
-    ['ERROR', 'projects.delete_memory_move_recovery_failed'],
+    ['ERROR', 'projects.delete_memory_archive_recovery_failed'],
   ]);
 
   let calls = 0;
@@ -383,10 +390,10 @@ test('a second delete of a project whose delete is still in flight is refused, n
   let second = null;
   let calls = 0;
   app = startApp(createProfile(), sidecar, {
-    moveMemories: async ({ from_project_id: projectId }) => {
+    archiveMemories: async ({ project_id: projectId }) => {
       calls += 1;
       second = await app.application.deleteProject({ project_id: projectId });
-      return { ok: true, moved: 2 };
+      return { ok: true, archived: 2 };
     },
   });
   const { project } = seedProject(app, sidecar);

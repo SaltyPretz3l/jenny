@@ -81,7 +81,7 @@ test("addStackBeside 'col' below chat wraps its stack in a col split and keeps t
   assert.equal(fresh.active, 'chat-2');
   assert.equal(fresh.collapsed, false);
   assert.equal(stackOf(next, 'chat-2'), fresh);
-  assert.equal(shape(next.root), 'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output!),col(chat+changes!,chat-2))');
+  assert.equal(shape(next.root), 'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output+activity!),col(chat+changes!,chat-2))');
   assert.equal(shape(base.root).includes('chat-2'), false, 'input untouched');
 });
 
@@ -135,7 +135,7 @@ test('addStackBeside into a split that already runs that way adds a sibling', ()
 test('addStackBeside inserts directly after the near stack, not at the end', () => {
   const base = normalizeLayout({ v: 1, root: spl('r', 'row',
     ch(stk('L', ['explorer', 'search', 'source-control']), 300),
-    ch(spl('c', 'col', ch(editor(), null), ch(stk('B', ['terminal', 'problems', 'run', 'test-runner', 'test-output']), 220), ch(stk('X', ['changes']), 200)), null),
+    ch(spl('c', 'col', ch(editor(), null), ch(stk('B', ['terminal', 'problems', 'run', 'test-runner', 'test-output', 'activity']), 220), ch(stk('X', ['changes']), 200)), null),
     ch(stk('R', ['chat']), 380)) });
   const next = ops.addStackBeside(base, ['chat-2'], 'terminal', 'col', 250);
   const col = next.root.children[1].node;

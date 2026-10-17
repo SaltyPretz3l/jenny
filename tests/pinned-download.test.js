@@ -189,3 +189,24 @@ for (const order of [
     await assertClean(c);
   });
 }
+
+test('a close slower than the bounded wait keeps the error listener until the stream closes', async (t) => {
+  // The downloader waits a bounded time for the destroyed stream to close;
+  // past that, a queued error must still find a listener (never unhandled).
+  const c = fixture(t, { stall: 'drain' });
+  await c.blocked;
+  let finishDestroy = null;
+  c.out._destroy = (error, callback) => { finishDestroy = () => callback(error); };
+  c.cancel();
+  // Settles once the bounded (1 s) close wait elapses, with the close still pending.
+  let guard;
+  const result = await Promise.race([c.outcome, new Promise((resolve) => { guard = setTimeout(() => resolve({ status: 'pending' }), 3000); })]);
+  clearTimeout(guard);
+  assert.equal(result.status, 'rejected');
+  assert.equal(c.out.destroyed, true);
+  assert.equal(c.out.closed, false);
+  assert.equal(c.out.listenerCount('error'), c.baseline.error + 1, 'the downloader listener stays while the close is pending');
+  c.out.emit('error', new Error('late disk error'));
+  finishDestroy();
+  await assertClean(c);
+});

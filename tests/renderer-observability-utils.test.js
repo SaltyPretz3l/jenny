@@ -5,6 +5,8 @@ const { JSDOM } = require('jsdom');
 const { createObservabilityController } = require('../renderer/shell/renderer-observability-utils');
 const {
   buildSlowOperationsMarkup,
+  buildToolLatencyMarkup,
+  buildTraceTimingMarkup,
 } = require('../renderer/shell/renderer-observability-markup-utils');
 
 function deferred() {
@@ -58,7 +60,7 @@ function makeSnapshot(streamId, generatedAt) {
   };
 }
 
-function createHarness(fetcher) {
+function createHarness(fetcher, callbacks) {
   const dom = new JSDOM(
     '<!doctype html><body>'
       + '<div id="latency"></div>'
@@ -84,26 +86,11 @@ function createHarness(fetcher) {
         recentTracesList: window.document.getElementById('traces'),
         usageRecentTurns: window.document.getElementById('usage'),
       },
+      callbacks,
     }),
     traces: window.document.getElementById('traces'),
     slow: window.document.getElementById('slow'),
   };
-}
-
-function createTraceFocusHarness(fetcher, callbacks) {
-  const harness = createHarness(fetcher);
-  harness.controller.dispose();
-  harness.controller = createObservabilityController({
-    window: harness.window,
-    dom: {
-      toolLatencyTable: harness.window.document.getElementById('latency'),
-      slowOperationsList: harness.window.document.getElementById('slow'),
-      recentTracesList: harness.window.document.getElementById('traces'),
-      usageRecentTurns: harness.window.document.getElementById('usage'),
-    },
-    callbacks,
-  });
-  return harness;
 }
 
 test('observability controller rerenders same-size snapshots when generated_at changes', async () => {
@@ -115,34 +102,12 @@ test('observability controller rerenders same-size snapshots when generated_at c
 
   await harness.controller.refresh({ silent: false });
   assert.match(harness.traces.innerHTML, /stream-a/);
-  const traceToggle = harness.traces.querySelector('[data-observability-trace-toggle]');
-  const detailId = traceToggle.getAttribute('aria-controls');
-  assert.ok(detailId);
-  assert.ok(harness.traces.querySelector(`#${detailId}`));
-  assert.equal(harness.window.document.querySelectorAll('#latency th[scope="col"]').length, 7);
+  assert.equal(harness.traces.querySelector('[data-observability-trace]').getAttribute('data-observability-trace'), 'stream-a');
+  assert.equal(harness.window.document.querySelectorAll('#latency th[scope="col"]').length, 6);
 
   await harness.controller.refresh({ silent: false });
   assert.match(harness.traces.innerHTML, /stream-b/);
   assert.doesNotMatch(harness.traces.innerHTML, /stream-a/);
-});
-
-test('traces without stream ids expand independently using their fallback identities', async () => {
-  const snapshot = makeSnapshot('', '2026-05-07T12:00:00.000Z');
-  snapshot.trace_timing.count = 2;
-  snapshot.trace_timing.recent = [
-    { ...snapshot.trace_timing.recent[0], trace_id: 'trace-a', request_id: 'request-a' },
-    { ...snapshot.trace_timing.recent[0], trace_id: 'trace-b', request_id: 'request-b' },
-  ];
-  const harness = createHarness(async () => snapshot);
-  await harness.controller.refresh({ silent: false });
-
-  const toggles = Array.from(harness.traces.querySelectorAll('[data-observability-trace-toggle]'));
-  assert.equal(toggles.length, 2);
-  toggles[0].dispatchEvent(new harness.window.MouseEvent('click', { bubbles: true }));
-
-  const expanded = Array.from(harness.traces.querySelectorAll('[data-observability-trace-toggle]'))
-    .filter((toggle) => toggle.getAttribute('aria-expanded') === 'true');
-  assert.equal(expanded.length, 1, 'one fallback-keyed row expands without opening its sibling');
 });
 
 test('observability controller does not retain disposed in-flight snapshots', async () => {
@@ -300,143 +265,188 @@ test('stale observability continuation guard does not commit a late response', a
   assert.doesNotMatch(harness.traces.innerHTML, /stream-after-session-delete/);
 });
 
-test('observability controller keeps pending trace focus until the row exists', async () => {
-  const snapshots = [
-    makeSnapshot('stream-other', '2026-05-07T12:00:00.000Z'),
-    makeSnapshot('stream-later', '2026-05-07T12:01:00.000Z'),
-  ];
-  let pending = 'stream-later';
-  const cleared = [];
-  const harness = createTraceFocusHarness(async () => snapshots.shift(), {
-    peekPendingTraceFocus() {
-      return pending;
-    },
-    clearPendingTraceFocus(streamId) {
-      cleared.push(streamId);
-      if (streamId === pending) {
-        pending = '';
-      }
-    },
-  });
 
-  await harness.controller.refresh({ silent: false });
-  assert.equal(pending, 'stream-later');
-  assert.deepEqual(cleared, []);
-  assert.doesNotMatch(harness.traces.innerHTML, /aria-expanded="true"/);
-
-  await harness.controller.refresh({ silent: false });
-  assert.equal(pending, '');
-  assert.deepEqual(cleared, ['stream-later']);
-  assert.match(harness.traces.innerHTML, /stream-later/);
-  assert.match(harness.traces.innerHTML, /aria-expanded="true"/);
-});
-
-test('observability controller resets pending trace misses for a new focus target', async () => {
-  const snapshots = [
-    makeSnapshot('stream-other', '2026-05-07T12:00:00.000Z'),
-    makeSnapshot('stream-other', '2026-05-07T12:01:00.000Z'),
-    makeSnapshot('stream-other', '2026-05-07T12:02:00.000Z'),
-    makeSnapshot('stream-other', '2026-05-07T12:03:00.000Z'),
-    makeSnapshot('stream-other', '2026-05-07T12:04:00.000Z'),
-  ];
-  const longPending = 'stream-apiKey=sk-tracesecret123456789-' + 'x'.repeat(120);
-  let pending = 'stream-first';
-  const cleared = [];
-  const harness = createTraceFocusHarness(async () => snapshots.shift(), {
-    peekPendingTraceFocus() {
-      return pending;
-    },
-    clearPendingTraceFocus(streamId) {
-      cleared.push(streamId);
-      if (streamId === pending) {
-        pending = '';
-      }
-    },
-  });
-
-  await harness.controller.refresh({ silent: false });
-  await harness.controller.refresh({ silent: false });
-  assert.equal(harness.traces.textContent.includes('has not appeared'), false);
-  assert.deepEqual(cleared, []);
-
-  pending = longPending;
-  await harness.controller.refresh({ silent: false });
-  assert.equal(harness.traces.textContent.includes('has not appeared'), false);
-  assert.deepEqual(cleared, []);
-
-  await harness.controller.refresh({ silent: false });
-  await harness.controller.refresh({ silent: false });
-  assert.deepEqual(cleared, [longPending]);
-  assert.match(harness.traces.textContent, /has not appeared in recent Runtime Health rows yet/);
-  assert.equal(harness.traces.textContent.includes('sk-tracesecret123456789'), false);
-  assert.equal(harness.traces.textContent.includes(longPending), false);
-});
-
-// ---- UIUX-030: both scrollIntoView call sites must honor prefers-reduced-motion ----
-//
-// renderAll() rebuilds the traces list via innerHTML both on refresh() and on
-// a trace-link click, so any row reference queried before the triggering
-// action is stale by the time scrollIntoView actually fires. Patch the
-// window's Element.prototype once per test instead of stubbing an instance.
-
-function captureScrollIntoView(win) {
-  const calls = [];
-  win.Element.prototype.scrollIntoView = function scrollIntoView(opts) {
-    calls.push({ streamId: this.getAttribute && this.getAttribute('data-trace-stream'), opts });
+function traceFacet(...streams) {
+  return {
+    available: true,
+    count: streams.length,
+    recent: streams.map((stream) => ({
+      stream_id: stream, terminal_status: 'completed', duration_ms: 100, model: 'qwen3', provider_timing: {}, tool_events: { total: 0 },
+    })),
   };
-  return calls;
 }
 
-test('pending-trace-focus auto-scroll is smooth when the OS does not prefer reduced motion', async () => {
-  const harness = createTraceFocusHarness(
-    async () => makeSnapshot('stream-later', '2026-05-07T12:01:00.000Z'),
-    { peekPendingTraceFocus: () => 'stream-later', clearPendingTraceFocus: () => {} }
-  );
-  harness.window.matchMedia = () => ({ matches: false });
-  harness.window.requestAnimationFrame = (cb) => cb();
-  const calls = captureScrollIntoView(harness.window);
+function rowsOf(markup) {
+  const doc = new JSDOM(markup).window.document;
+  return Array.from(doc.querySelectorAll('tbody tr'));
+}
 
-  await harness.controller.refresh({ silent: false });
-
-  assert.equal(calls.length, 1, 'expected scrollIntoView to be called once');
-  assert.equal(calls[0].streamId, 'stream-later');
-  assert.equal(calls[0].opts.behavior, 'smooth');
-});
-
-test('pending-trace-focus auto-scroll degrades to instant under OS prefers-reduced-motion', async () => {
-  const harness = createTraceFocusHarness(
-    async () => makeSnapshot('stream-later', '2026-05-07T12:01:00.000Z'),
-    { peekPendingTraceFocus: () => 'stream-later', clearPendingTraceFocus: () => {} }
-  );
-  harness.window.matchMedia = () => ({ matches: true });
-  harness.window.requestAnimationFrame = (cb) => cb();
-  const calls = captureScrollIntoView(harness.window);
-
-  await harness.controller.refresh({ silent: false });
-
-  assert.equal(calls.length, 1, 'expected scrollIntoView to be called once');
-  assert.equal(calls[0].streamId, 'stream-later');
-  assert.equal(calls[0].opts.behavior, 'auto', 'reduced motion must degrade the pending-trace-focus scroll to instant');
+test('every group builds no markup when its facet has no rows', () => {
+  for (const facet of [null, undefined, {}, { available: false }, { available: true }, { available: true, tools: {}, items: [], recent: [] }]) {
+    assert.equal(buildToolLatencyMarkup(facet), '');
+    assert.equal(buildSlowOperationsMarkup(facet), '');
+    assert.equal(buildTraceTimingMarkup(facet), '');
+  }
+  assert.equal(buildToolLatencyMarkup({ available: true, tools: { idle: { count: 0 } } }), '', 'a tool with no calls is not a row');
 });
 
 test('slow operations markup renders the jenny_status slow-operation contract', () => {
   const html = buildSlowOperationsMarkup({
     available: true,
-    count: 1,
-    items: [{
-      kind: 'tool',
-      id: 'read_file',
-      metric: 'p95',
-      observed_ms: 2400,
-      threshold_ms: 1000,
-      count: 3,
-      error_count: 1,
-    }],
+    count: 2,
+    items: [
+      { kind: 'tool', id: 'read_file', metric: 'p95', observed_ms: 2400, threshold_ms: 1000, count: 3, error_count: 1 },
+      { kind: 'phase', id: 'provider_start', observed_ms: 5000, threshold_ms: null, count: 1 },
+    ],
   });
+  const rows = rowsOf(html);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].cells[0].querySelector('code').textContent, 'provider_start', 'the slowest comes first');
+  assert.equal(rows[0].cells[1].textContent, '5.0 s');
+  assert.equal(rows[0].cells[2].textContent, 'target —', 'a missing threshold is an unknown, not a number');
+  assert.equal(rows[0].cells[3].textContent, '1 time');
+  assert.equal(rows[1].cells[0].textContent, 'read_file tool');
+  assert.equal(rows[1].cells[1].textContent, '2.4 s');
+  assert.equal(rows[1].cells[2].textContent, 'target 1.0 s');
+  assert.equal(rows[1].cells[3].textContent, '3 times');
+});
 
-  assert.match(html, /read_file/);
-  assert.match(html, /2\.40s/);
-  assert.match(html, /threshold 1\.00s/);
-  assert.match(html, /3 samples/);
-  assert.match(html, /1 error/);
+test('Last error is the most recent error code, not the most frequent one', () => {
+  const stats = (extra) => ({ count: 9, error_count: 6, error_rate: 6 / 9, latency_ms: { p50: 1, p95: 2, p99: 3 }, ...extra });
+  const rows = rowsOf(buildToolLatencyMarkup({ available: true, tools: {
+    frequent_then_recent: stats({
+      error_codes: { CMP_TOOL_IO_FAILED: 5, CMP_TOOL_TIMEOUT: 1 },
+      recent_errors: [{ error_code: 'CMP_TOOL_IO_FAILED' }, { error_code: 'CMP_TOOL_IO_FAILED' }, { error_code: 'CMP_TOOL_TIMEOUT' }],
+    }),
+    one_code_only: stats({ error_codes: { CMP_TOOL_DENIED: 4 } }),
+    no_recency: stats({ error_codes: { A: 3, B: 2 } }),
+    never_failed: stats({ error_count: 0, error_rate: 0, error_codes: {} }),
+  } }));
+  const lastError = (name) => rows.find((row) => row.cells[0].textContent === name).cells[5].textContent;
+  assert.equal(lastError('frequent_then_recent'), 'CMP_TOOL_TIMEOUT');
+  assert.equal(lastError('one_code_only'), 'CMP_TOOL_DENIED', 'a single code is necessarily the last');
+  assert.equal(lastError('no_recency'), '—', 'two codes and no recency: nothing honest to name');
+  assert.equal(lastError('never_failed'), '—');
+});
+
+test('tool rows sort by slow time, count failures and show an em dash for none', () => {
+  const rows = rowsOf(buildToolLatencyMarkup({ available: true, tools: {
+    quick: { count: 10, error_count: 0, error_rate: 0, latency_ms: { p50: 5, p95: 12, p99: 20 } },
+    slow: { count: 4, error_count: 1, error_rate: 0.25, latency_ms: { p50: 500, p95: 1500, p99: 2000 }, error_codes: { X: 1 } },
+    unmeasured: { count: 2, error_rate: 1, latency_ms: {} },
+  } }));
+  assert.deepEqual(rows.map((row) => row.cells[0].textContent), ['slow', 'quick', 'unmeasured']);
+  assert.deepEqual(Array.from(rows[0].cells).slice(1, 5).map((cell) => cell.textContent), ['4', '1', '500 ms', '1.5 s']);
+  assert.equal(rows[1].cells[2].textContent, '—');
+  assert.equal(rows[2].cells[2].textContent, '2', 'failures derive from the rate when no count is reported');
+  assert.equal(rows[2].cells[3].textContent, '—');
+  const headers = Array.from(new JSDOM(buildToolLatencyMarkup({ available: true, tools: { quick: { count: 1 } } })).window.document.querySelectorAll('th'));
+  assert.deepEqual(headers.map((th) => th.textContent), ['Tool', 'Calls', 'Failed', 'Typical', 'Slow', 'Last error']);
+  assert.equal(headers[5].classList.contains('diagnostics-col-wide'), true);
+});
+
+test('recent chats list newest first with a Result button that names the chat to open', () => {
+  const doc = new JSDOM(buildTraceTimingMarkup({ available: true, recent: [
+    { stream_id: 'old', terminal_status: 'completed', duration_ms: 1200, model: 'qwen3', provider_timing: { time_to_first_visible_token_ms: 150 }, tool_events: { total: 2 } },
+    { stream_id: 'new', terminal_status: 'error', duration_ms: 90, model: '', provider_timing: {}, tool_events: { total: 0 } },
+    { stream_id: '', terminal_status: 'cancelled', duration_ms: 10, model: 'qwen3', provider_timing: {}, tool_events: {} },
+  ] })).window.document;
+  const rows = Array.from(doc.querySelectorAll('tbody tr'));
+  assert.equal(rows.length, 3);
+  const button = rows[1].querySelector('button[data-observability-trace]');
+  assert.equal(button.getAttribute('data-observability-trace'), 'new');
+  // The visible result names the button (no aria-label override); what it does is the tooltip.
+  assert.equal(button.hasAttribute('aria-label'), false);
+  assert.equal(button.getAttribute('title'), "Show this chat's records");
+  assert.equal(button.type, 'button');
+  assert.equal(button.textContent, 'Failed');
+  assert.ok(button.querySelector('svg.inv-state-icon--error'));
+  assert.equal(rows[2].querySelector('[data-observability-trace]').textContent, 'Completed');
+  assert.equal(rows[2].querySelector('svg'), null, 'completed carries no icon');
+  assert.equal(rows[0].querySelector('button'), null, 'a chat without a stream id has nothing to open');
+  assert.equal(rows[0].cells[0].textContent, 'Cancelled');
+  assert.deepEqual(Array.from(rows[2].cells).slice(1).map((cell) => cell.textContent), ['qwen3', '150 ms', '1.2 s', '2']);
+  assert.deepEqual(Array.from(rows[1].cells).slice(1).map((cell) => cell.textContent), ['—', '—', '90 ms', '—']);
+});
+
+test('recent chats keep unknown durations as an em dash while a real zero stays zero', () => {
+  const rows = rowsOf(buildTraceTimingMarkup({ available: true, recent: [
+    { stream_id: 'zero', duration_ms: 0, provider_timing: { time_to_first_visible_token_ms: 0 } },
+    { stream_id: 'unknown', duration_ms: null, provider_timing: { time_to_first_visible_token_ms: null } },
+  ] }));
+  assert.deepEqual(Array.from(rows[0].cells).slice(2, 4).map((cell) => cell.textContent), ['—', '—']);
+  assert.deepEqual(Array.from(rows[1].cells).slice(2, 4).map((cell) => cell.textContent), ['0 ms', '0 ms']);
+  assert.doesNotMatch(rows[0].textContent, /\b0 ?ms\b|TBD|--/);
+});
+
+test('selecting a chat asks to open its records, and a result without a handler does nothing', async () => {
+  const opened = [];
+  const harness = createHarness(async () => ({ ...makeSnapshot('stream-a', 'g1'), trace_timing: traceFacet('stream-a', 'stream-b') }), { onTraceLink: (stream) => opened.push(stream) });
+  await harness.controller.refresh({ silent: false });
+  harness.traces.querySelector('[data-observability-trace="stream-a"]').click();
+  assert.deepEqual(opened, ['stream-a']);
+  harness.traces.querySelector('tbody td').dispatchEvent(new harness.window.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(opened, ['stream-a'], 'a click outside a Result button opens nothing');
+  const bare = createHarness(async () => makeSnapshot('stream-a', 'g1'));
+  await bare.controller.refresh({ silent: false });
+  assert.doesNotThrow(() => bare.traces.querySelector('[data-observability-trace]').click());
+});
+
+test('a repaint keeps keyboard focus on the same chat, found by its stream id', async () => {
+  let facet = traceFacet('stream-a', 'stream-b');
+  let generated = 1;
+  const harness = createHarness(async () => ({ ...makeSnapshot('x', 'g' + generated), trace_timing: facet }));
+  await harness.controller.refresh({ silent: false });
+  const before = harness.traces.querySelector('[data-observability-trace="stream-a"]');
+  before.focus();
+  assert.equal(harness.window.document.activeElement, before);
+  generated += 1;
+  facet = traceFacet('stream-a', 'stream-b', 'stream-c');
+  await harness.controller.refresh({ silent: false });
+  const after = harness.traces.querySelector('[data-observability-trace="stream-a"]');
+  assert.notEqual(after, before, 'the pane really was repainted');
+  assert.equal(harness.window.document.activeElement, after, 'focus returns to the same chat');
+  assert.equal(harness.traces.querySelectorAll('[data-observability-trace]').length, 3);
+});
+
+test('a repaint that drops the focused chat moves focus to the nearest remaining chat', async () => {
+  let facet = traceFacet('stream-a', 'stream-b');
+  let generated = 1;
+  const harness = createHarness(async () => ({ ...makeSnapshot('x', 'g' + generated), trace_timing: facet }));
+  await harness.controller.refresh({ silent: false });
+  harness.traces.querySelector('[data-observability-trace="stream-a"]').focus();
+  generated += 1;
+  facet = traceFacet('stream-b');
+  await harness.controller.refresh({ silent: false });
+  assert.equal(harness.traces.querySelectorAll('[data-observability-trace]').length, 1);
+  assert.equal(harness.window.document.activeElement?.getAttribute('data-observability-trace'), 'stream-b');
+});
+
+test('an unchanged pane is not repainted when only the snapshot stamp moves', async () => {
+  let generated = 1;
+  const harness = createHarness(async () => makeSnapshot('stream-a', 'g' + generated));
+  await harness.controller.refresh({ silent: false });
+  const table = harness.traces.querySelector('table');
+  generated += 1;
+  await harness.controller.refresh({ silent: false });
+  assert.equal(harness.traces.querySelector('table'), table);
+});
+
+test('the controller reports every new snapshot to the Overview', async () => {
+  const seen = [];
+  const snapshots = [makeSnapshot('stream-a', 'g1'), makeSnapshot('stream-b', 'g2')];
+  const harness = createHarness(async () => snapshots.shift(), { onSnapshot: (snapshot) => seen.push(snapshot) });
+  const first = await harness.controller.refresh({ silent: false });
+  const second = await harness.controller.refresh({ silent: false });
+  assert.deepEqual(seen, [first, second]);
+});
+
+test('a snapshot that changes only whether a facet is available still reaches the Overview', async () => {
+  const seen = [];
+  const facets = (available) => ({ tool_observability: { available }, slow_operations: { available }, trace_timing: { available } });
+  const snapshots = [facets(true), facets(false)];
+  const harness = createHarness(async () => snapshots.shift(), { onSnapshot: (snapshot) => seen.push(snapshot) });
+  await harness.controller.refresh({ silent: false });
+  await harness.controller.refresh({ silent: false });
+  assert.deepEqual(seen.map((snapshot) => snapshot.trace_timing.available), [true, false]);
 });

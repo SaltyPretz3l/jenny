@@ -2,6 +2,26 @@
 
 import argparse
 
+from sidecar.ai.feature_flags import BUILTIN_DEFAULT_ON_FLAGS
+
+# Subprocess defaults when no launcher argv is parsed (tests, in-process use).
+DEFAULT_BUILTIN_FEATURE_FLAGS: dict[str, bool] = {
+    "shell_security": False,
+    "git_tracking": False,
+    **{flag: True for flag in BUILTIN_DEFAULT_ON_FLAGS},
+}
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def builtin_feature_flags(args: argparse.Namespace) -> dict[str, bool]:
+    """Feature flags the subprocess handlers read, from the parsed argv."""
+    flags = {
+        "shell_security": args.shell_security_enabled,
+        "git_tracking": args.git_tracking_enabled,
+        **{flag: getattr(args, f"{flag}_enabled") for flag in BUILTIN_DEFAULT_ON_FLAGS},
+    }
+    return {key: str(value).strip().lower() in _TRUE_VALUES for key, value in flags.items()}
+
 
 def _add_knowledge_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--knowledge-enabled", dest="knowledge_enabled", default="0")
@@ -48,6 +68,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
     # launcher never silently claims guardrails it did not forward.
     parser.add_argument("--shell-security-enabled", dest="shell_security_enabled", default="0")
     parser.add_argument("--git-tracking-enabled", dest="git_tracking_enabled", default="0")
+    # Row 60 behaviour kill switches: default on, so a stale launcher keeps them.
+    for flag in BUILTIN_DEFAULT_ON_FLAGS:
+        parser.add_argument(
+            f"--{flag.replace('_', '-')}-enabled", dest=f"{flag}_enabled", default="1"
+        )
     parser.add_argument("--web-enabled", dest="web_enabled", default="0")
     parser.add_argument("--web-rate-limit-per-min", dest="web_rate_limit_per_min", default="30")
     parser.add_argument("--web-max-fetch-bytes", dest="web_max_fetch_bytes", default="1048576")
@@ -164,6 +189,8 @@ def _add_host_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _add_workspace_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace-root", dest="workspace_root", default=None)
+    parser.add_argument("--owned-process-ledger-path", default="")
+    parser.add_argument("--owned-process-owner-pid", type=int, default=0)
     parser.add_argument(
         "--operation-ledger-root", dest="operation_ledger_root", default=""
     )

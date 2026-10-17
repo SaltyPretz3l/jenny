@@ -22,12 +22,12 @@ const { ensureJennyDirGitignore } = require('./jenny-project-dir');
 const { ArtifactSessionAuthority, createSessionArtifactWorkspaceFacade } = require('./artifact-session-authority');
 const { cloneSessionArtifactsForBranch } = require('./artifact-branch-workspace');
 const { resolveRealPath, assertRealPathInside, assertSessionScratchDirUnredirected } = require('./artifact-scratch-containment');
-const {
-  deleteSessionArtifactsForScope,
-  prepareSessionArtifactDeletion,
-} = require('./artifact-session-cleanup');
+const { deleteSessionArtifactsForScope, prepareSessionArtifactDeletion } = require('./artifact-session-cleanup');
+const { removeFile } = require('./fs-remove-no-follow');
+const { removeTree } = require('./fs-remove-no-follow');
 
 const MAX_EDITABLE_BYTES = 512 * 1024;
+const RASTER_IMAGE_MIMES = new Map([['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.webp', 'image/webp'], ['.gif', 'image/gif'], ['.bmp', 'image/bmp']]);
 const MAX_BINARY_ARTIFACT_BYTES = 10 * 1024 * 1024;
 const MAX_BRANCH_CLONE_TOTAL_BYTES = 128 * 1024 * 1024;
 const MAX_BRANCH_CLONE_ENTRIES = 5000;
@@ -369,7 +369,7 @@ class ArtifactWorkspaceService {
     const realWrittenPath = await this._fs.realpath(absolutePath);
     this._assertSessionScopeCurrent(scope);
     if (!isPathInside(this._path, realScratchDir, realWrittenPath)) {
-      await this._fs.rm(absolutePath, { force: true }).catch(() => {});
+      await removeFile(absolutePath, { fsImpl: this._fs }).catch(() => {});
       throw artifactError(
         ARTIFACT_ERROR_CODES.REAL_PATH_ESCAPES,
         'Artifact real path escaped the session scratch directory.'
@@ -747,7 +747,8 @@ class ArtifactWorkspaceService {
         'Artifact file is unavailable.'
       );
     }
-    if (isDangerousArtifactExtension(artifact.file_name || artifact.absolute_path, this._path)) {
+    if ((artifact.artifact_kind === 'image' && RASTER_IMAGE_MIMES.get(this._path.extname(artifact.absolute_path).toLowerCase()) !== artifact.mime_type)
+      || isDangerousArtifactExtension(artifact.file_name || artifact.absolute_path, this._path)) {
       throw artifactError(
         ARTIFACT_ERROR_CODES.DANGEROUS_EXTENSION,
         `Artifact extension is dangerous and cannot be ${actionName} externally.`
@@ -799,7 +800,7 @@ class ArtifactWorkspaceService {
     const scratchDir = this._buildSessionScratchDir(scope.rootPath, sessionId);
     await this._assertRealPathInside(artifact.absolute_path, scratchDir);
     this._assertSessionScopeCurrent(scope);
-    await this._fs.rm(artifact.absolute_path, { force: true });
+    await removeFile(artifact.absolute_path, { fsImpl: this._fs });
     this._logger('INFO', 'artifacts.file_deleted', {
       sessionId: sanitizeSessionId(sessionId),
       artifactId: String(artifactId || ''),
@@ -938,7 +939,7 @@ class ArtifactWorkspaceService {
       try {
         await this._assertRealPathInside(fullPath, artifactsRoot);
         if (scope) this._assertSessionScopeCurrent(scope);
-        await this._fs.rm(fullPath, { recursive: true, force: true });
+        await removeTree(fullPath, { fsImpl: this._fs });
         removed += 1;
       } catch (_) {
         // Skip entries that resolve outside the artifacts root (e.g. symlinks).
@@ -968,7 +969,7 @@ class ArtifactWorkspaceService {
       await this._fs.rename(tempPath, targetPath);
       if (scope) this._assertSessionScopeCurrent(scope);
     } catch (error) {
-      await this._fs.rm(tempPath, { force: true }).catch(() => {});
+      await removeFile(tempPath, { fsImpl: this._fs }).catch(() => {});
       throw error;
     }
   }
@@ -982,7 +983,7 @@ class ArtifactWorkspaceService {
       await this._fs.rename(tempPath, targetPath);
       if (scope) this._assertSessionScopeCurrent(scope);
     } catch (error) {
-      await this._fs.rm(tempPath, { force: true }).catch(() => {});
+      await removeFile(tempPath, { fsImpl: this._fs }).catch(() => {});
       throw error;
     }
   }
@@ -1004,7 +1005,7 @@ class ArtifactWorkspaceService {
 
 module.exports = {
   DANGEROUS_ARTIFACT_EXTENSIONS,
-  MAX_BINARY_ARTIFACT_BYTES,
+  MAX_BINARY_ARTIFACT_BYTES, RASTER_IMAGE_MIMES,
   MAX_BRANCH_CLONE_TOTAL_BYTES,
   MAX_EDITABLE_BYTES,
   SESSION_ARTIFACT_ROOT,

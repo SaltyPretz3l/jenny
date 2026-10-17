@@ -7,7 +7,7 @@ circular import.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from sidecar.ai.error_codes import (
     CMP_TOOL_BACKGROUND_NOT_FOUND,
@@ -138,6 +138,8 @@ def _execute_check_monitor_tool(
     audit_metadata: dict[str, object] | None,
     runtime: Any | None,
     outcome_type: Any,
+    request_id: str = "",  # uniform synthetic-handler signature; unused here.
+    session_id: str | None = None,
 ) -> ToolExecutionOutcome:
     from sidecar.ai.routing import tool_execution as _te_hub
 
@@ -198,6 +200,8 @@ def _execute_delegate_synthetic_tool(  # mirrors synthetic tool dispatch.
     audit_metadata: dict[str, object] | None,
     runtime: Any | None,
     outcome_type: Any,
+    request_id: str = "",  # uniform synthetic-handler signature; unused here.
+    session_id: str | None = None,
 ) -> ToolExecutionOutcome:
     from sidecar.ai.routing import tool_execution as _te_hub
 
@@ -266,6 +270,32 @@ def _execute_subagent_synthetic_tool(  # shared synthetic settlement fields.
     )
 
 
+def _execute_memory_tool(**kwargs: Any) -> ToolExecutionOutcome:
+    # Loaded on first use so the memory tool stays off the startup import graph.
+    from sidecar.ai.routing import tool_execution_memory as _memory_tool
+
+    return _memory_tool._execute_memory_tool(**kwargs)
+
+
+def _execute_recall_tool(**kwargs: Any) -> ToolExecutionOutcome:
+    from sidecar.runtime.tool_execution_support import execute_recall_tool
+
+    return execute_recall_tool(**kwargs)
+
+
+# Every sidecar-owned synthetic tool the hub dispatches in-process. Each handler
+# takes the same keyword arguments (kernel, call, tool_arguments,
+# visible_tool_arguments, request_id, session_id, audit_metadata, runtime,
+# outcome_type). ``tool_search`` is resolved earlier and is not listed here.
+SYNTHETIC_TOOL_HANDLERS: dict[str, Callable[..., ToolExecutionOutcome]] = {
+    "monitor": _execute_monitor_tool,
+    "check_monitor": _execute_check_monitor_tool,
+    "delegate": _execute_delegate_synthetic_tool,
+    "memory": _execute_memory_tool,
+    "recall_tool_output": _execute_recall_tool,
+}
+
+
 def tool_outcome_from_handler_result(
     tool_name: str,
     result: Any,
@@ -273,9 +303,10 @@ def tool_outcome_from_handler_result(
     call_id: str = "",
     tool_input: dict[str, object] | None = None,
 ) -> ToolExecutionOutcome:
-    from sidecar.ai.routing import router as _router_mod
+    from sidecar.ai.routing import tool_execution as _te_hub
 
-    ToolExecutionOutcome_ = _router_mod.ToolExecutionOutcome
+    # The hub owns the cached lazy router import (router imports this module).
+    ToolExecutionOutcome_ = _te_hub._router().ToolExecutionOutcome
     # WIDE-019: this is the synthetic-tool path (tool_search, monitor digests,
     # replayed handler results). It NEVER admits typed attachments — the field
     # is deliberately left empty and attachment-shaped metadata is stripped —
@@ -302,11 +333,11 @@ def execute_tool_search(
     resolution_context: Any | None,
     runtime: Any | None = None,
 ) -> ToolExecutionOutcome:
-    from sidecar.ai.routing import router as _router_mod
+    from sidecar.ai.routing import tool_execution as _te_hub
 
     if runtime is not None:
         runtime.raise_if_interrupted()
-    ToolExecutionOutcome_ = _router_mod.ToolExecutionOutcome
+    ToolExecutionOutcome_ = _te_hub._router().ToolExecutionOutcome
 
     if resolution_context is None or resolution_context.search_index is None:
         return ToolExecutionOutcome_(

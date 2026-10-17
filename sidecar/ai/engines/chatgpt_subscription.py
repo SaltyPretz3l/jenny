@@ -566,17 +566,23 @@ class ChatGPTSubscriptionEngine(BaseEngine):
         system: str = "",
         messages: list[EngineMessage] | None = None,
         response_format: Any = None,
+        cancel_handle: Any = None,
     ) -> str:
-        return self.generate_with_tools(
-            prompt=prompt,
-            tools=[],
-            max_tokens=max_tokens,
-            temperature=temperature,
-            reasoning_effort=reasoning_effort,
-            prompt_cache_enabled=prompt_cache_enabled,
-            system=system,
-            messages=messages,
-            response_format=response_format,
+        # Drains the same stream generate_with_tools does; a cancel closes the
+        # live response inside that stream.
+        return _drain_stream(
+            self.stream_with_tools(
+                prompt=prompt,
+                tools=[],
+                max_tokens=max_tokens,
+                temperature=temperature,
+                reasoning_effort=reasoning_effort,
+                prompt_cache_enabled=prompt_cache_enabled,
+                system=system,
+                messages=messages,
+                response_format=response_format,
+                cancel_handle=cancel_handle,
+            )
         ).content
 
     def generate_with_tools(  # noqa: PLR0913 - BaseEngine transport contract.

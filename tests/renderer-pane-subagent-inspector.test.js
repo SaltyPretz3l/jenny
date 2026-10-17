@@ -178,7 +178,7 @@ test('pane 1\'s open monitor follows its subagent to the finish in the panel; pa
   const monitor = () => panel.querySelector('.subagent-monitor-shell');
   assert.match(monitor().textContent, /Beta live survey/, 'precondition: the monitor shows the child');
   assert.match(monitor().textContent, /Reading pane one files/, 'and the running child\'s summary');
-  assert.match(monitor().textContent, /Steps appear when this subagent finishes\./);
+  assert.match(monitor().textContent, /Tool steps appear here as they run\./);
 
   // The child finishes while the parent turn is still streaming: the open monitor re-renders in place.
   await emit({

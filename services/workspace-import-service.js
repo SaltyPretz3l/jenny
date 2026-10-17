@@ -17,6 +17,7 @@ const {
   previewExternalSources, scanExternalSources,
 } = require('./workspace-import-scan');
 const { WorkspaceRootOperationManager } = require('./workspace-root-operation');
+const { removeFile } = require('./fs-remove-no-follow');
 
 const COPY_ERROR_CODES = Object.freeze({
   NAME_EXHAUSTED: 'name_exhausted',
@@ -258,7 +259,7 @@ class WorkspaceImportService {
       await this._fs.rename(tempPath, targetPath);
       return;
     }
-    await this._fs.rm(tempPath, { force: true });
+    await removeFile(tempPath, { fsImpl: this._fs });
   }
 
   async _copyFile(
@@ -305,7 +306,7 @@ class WorkspaceImportService {
         }
       }
     } catch (error) {
-      await this._fs.rm(tempPath, { force: true }).catch(() => {});
+      await removeFile(tempPath, { fsImpl: this._fs }).catch(() => {});
       throw error;
     }
     await this._rootOperations.revalidateRoot(root, operation);

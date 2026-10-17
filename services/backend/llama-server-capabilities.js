@@ -216,7 +216,14 @@ function peekCapabilities(binaryPath, { fsImpl = fs } = {}) {
   }
 }
 
+function supportsPrefillProgress(capability) {
+  return capability?.ok === true && capability.build === 11513
+    && /^71ad0590f(?:[0-9a-f]{0,31})$/i.test(capability.commit || "")
+    && "71ad0590f4808b6202f9213d166913858c73b1bc".startsWith(capability.commit.toLowerCase());
+}
+
 module.exports = {
+  supportsPrefillProgress,
   parseSpecTypeValues,
   parseServerBuild,
   peekCapabilities,

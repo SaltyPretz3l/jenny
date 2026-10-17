@@ -72,21 +72,28 @@ class _BoundedTextCapture:
         return f"{value}{_MAX_CAPTURE_MARKER}" if self.truncated else value
 
 
-def _capture_figures(output_dir: Path) -> list[str]:
+_ORIGINAL_CLOSE = plt.close
+
+
+def _capture_figure(fig: Any, output_dir: Path) -> str | None:
     global _FIGURE_COUNTER
+    width, height = fig.get_size_inches()
+    pixel_count = max(0, int(width * 150)) * max(0, int(height * 150))
+    if _FIGURE_COUNTER >= _MAX_IMAGES or pixel_count > _MAX_IMAGE_PIXELS:
+        return None
+    file_name = f"figure_{_FIGURE_COUNTER}.png"
+    fig.savefig(output_dir / file_name, dpi=150, bbox_inches="tight")
+    _FIGURE_COUNTER += 1
+    return file_name
+
+
+def _capture_figures(output_dir: Path) -> list[str]:
     saved: list[str] = []
     for fig_num in list(plt.get_fignums()):
-        fig = plt.figure(fig_num)
-        width, height = fig.get_size_inches()
-        pixel_count = max(0, int(width * 150)) * max(0, int(height * 150))
-        if _FIGURE_COUNTER >= _MAX_IMAGES or pixel_count > _MAX_IMAGE_PIXELS:
-            plt.close(fig)
-            continue
-        file_name = f"figure_{_FIGURE_COUNTER}.png"
-        fig.savefig(output_dir / file_name, dpi=150, bbox_inches="tight")
-        saved.append(file_name)
-        _FIGURE_COUNTER += 1
-    plt.close("all")
+        file_name = _capture_figure(plt.figure(fig_num), output_dir)
+        if file_name:
+            saved.append(file_name)
+    _ORIGINAL_CLOSE("all")
     return saved
 
 
@@ -95,7 +102,41 @@ def _patched_show(*_args, **_kwargs) -> None:
         _SAVED_IMAGES.extend(_capture_figures(_OUTPUT_DIR))
 
 
+def _figures_to_close(fig: object) -> list[Any]:
+    open_numbers = list(plt.get_fignums())
+    if fig is None:
+        return [plt.gcf()] if open_numbers else []
+    if fig == "all":
+        return [plt.figure(number) for number in open_numbers]
+    if hasattr(fig, "savefig"):
+        return [fig]
+    for number in open_numbers:
+        candidate = plt.figure(number)
+        if fig == number or fig == getattr(candidate, "get_label", lambda: None)():
+            return [candidate]
+    return []
+
+
+def _patched_close(fig: object = None) -> None:
+    # A figure saved with savefig and then closed never reached the end-of-run
+    # sweep, so the chart never showed in chat. Snapshot it before it goes.
+    if _OUTPUT_DIR is not None:
+        try:
+            for target in _figures_to_close(fig):
+                if target.get_axes():
+                    file_name = _capture_figure(target, _OUTPUT_DIR)
+                    if file_name:
+                        _SAVED_IMAGES.append(file_name)
+        except Exception:  # noqa: BLE001 - a failed snapshot must not break the user's close.
+            pass
+    if fig is None:
+        _ORIGINAL_CLOSE()
+    else:
+        _ORIGINAL_CLOSE(fig)
+
+
 plt.show = _patched_show
+plt.close = _patched_close
 
 
 def _compile_user_code(source: str) -> tuple[CodeType, CodeType | None]:

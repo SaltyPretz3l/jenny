@@ -82,6 +82,19 @@ describe('registerLlamaServerIpcHandlers', () => {
     assert.deepEqual(result, { ok: true, state: 'ready', alias: 'gemma4-12b-qat' });
   });
 
+  // Gate 2026-10-14 F5: the status poll logged a line every few seconds.
+  test('a successful status poll logs nothing; a failed one still warns', async () => {
+    const ipc = createFakeIpcMain();
+    const logs = [];
+    let manager = { getStatus: () => ({ state: 'ready' }) };
+    registerLlamaServerIpcHandlers(ipc, { getManager: () => manager, log: (...entry) => logs.push(entry) });
+    await ipc.invoke.get(invokeChannel('llamaServer.getStatus'))({}, {});
+    assert.deepEqual(logs, []);
+    manager = null;
+    await ipc.invoke.get(invokeChannel('llamaServer.getStatus'))({}, {});
+    assert.deepEqual(logs, [['WARN', 'llama.server.ipc_get_status', { ok: false, reason: 'manager_unavailable' }]]);
+  });
+
   test('a launch that resolves without reaching ready reports ok:false with the manager error', async () => {
     const ipc = createFakeIpcMain();
     const manager = {

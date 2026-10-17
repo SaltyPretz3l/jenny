@@ -125,6 +125,41 @@
   border-width: 1.25px;
 }
 
+/* ── State icon ──
+   A 16 px stroke glyph in currentColor; the tone sets the colour, text beside it carries the meaning. */
+
+.inv-state-icon {
+  inline-size: 16px;
+  block-size: 16px;
+  flex: 0 0 auto;
+  vertical-align: middle;
+}
+
+.inv-state-icon--sm {
+  inline-size: 14px;
+  block-size: 14px;
+}
+
+.inv-state-icon--md {
+  inline-size: 20px;
+  block-size: 20px;
+}
+
+.inv-state-icon--ok { color: var(--state-success); }
+.inv-state-icon--warn { color: var(--state-warning); }
+.inv-state-icon--error { color: var(--state-danger); }
+.inv-state-icon--muted { color: var(--text-muted); }
+
+/* ── Empty note ──
+   The one empty-state style: a sentence in muted body type where the content would be. */
+
+.inv-empty-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+}
+
 /* ── Collapsible ── */
 
 .inv-collapsible-trigger {
@@ -884,9 +919,9 @@
   font-size: var(--font-size-caption);
   color: var(--text-muted);
 }
-/* Radio rows (item.checked is a boolean): a leading check column so the
-   labels align whether or not a row is the current one. */
-.inv-context-menu-item[role="menuitemradio"]::before {
+/* Radio and checkbox rows (item.checked is a boolean): a leading check column
+   so the labels align whether or not a row is the current one. */
+.inv-context-menu-item[role="menuitemradio"]::before, .inv-context-menu-item[role="menuitemcheckbox"]::before {
   content: "";
   flex: none;
   width: 1em;
@@ -897,12 +932,12 @@
 }
 /* Same specificity as the radio rule above and later, so the checked row
    shows its mark (the bare class lost to the [role] selector). */
-.inv-context-menu-item--checked[role="menuitemradio"]::before {
+.inv-context-menu-item--checked[role="menuitemradio"]::before, .inv-context-menu-item--checked[role="menuitemcheckbox"]::before {
   content: "\2713";
 }
 /* The label (or description wrapper) fills the row, so a radio row without a
    description starts its label at the check column like one with. */
-.inv-context-menu-item[role="menuitemradio"] > span:first-child {
+.inv-context-menu-item[role="menuitemradio"] > span:first-child, .inv-context-menu-item[role="menuitemcheckbox"] > span:first-child {
   flex: 1 1 auto;
   min-width: 0;
 }

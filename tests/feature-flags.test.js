@@ -416,6 +416,14 @@ test('semantic_catalog is an internal DEFAULT-ON flag with an env kill switch (r
   assert.deepEqual(normalizeFeatureOverrides({ semantic_catalog: false }), {});
 });
 
+test('ninfer is an internal DEFAULT-ON flag with an env kill switch (row 54)', () => {
+  assert.equal(buildFeatureFlags({}).ninfer, true);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_NINFER: '0' }).ninfer, false);
+  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('ninfer'));
+  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('ninfer'));
+  assert.deepEqual(normalizeFeatureOverrides({ ninfer: false }), {});
+});
+
 test('buildFeatureFlags treats malformed agent executor env values as the default', () => {
   const flags = buildFeatureFlags({
     JENNY_ENABLE_AGENT_EXECUTOR: 'maybe',
@@ -651,6 +659,45 @@ test('tools_project_notes_enabled is internal, default-on, and rolls back by env
   assert.equal(INTERNAL_FEATURE_FLAG_KEYS.includes('tools_project_notes_enabled'), true);
   assert.equal(FEATURE_OVERRIDE_KEYS.includes('tools_project_notes_enabled'), false);
   assert.deepEqual(normalizeFeatureOverrides({ tools_project_notes_enabled: false }), {});
+});
+
+test('memory_v2_enabled is internal, default-on, and rolls back by env', () => {
+  const defaults = buildFeatureFlags({});
+  const disabled = buildFeatureFlags({ JENNY_ENABLE_MEMORY_V2: '0' });
+
+  assert.equal(defaults.memory_v2_enabled, true);
+  assert.equal(disabled.memory_v2_enabled, false);
+  assert.equal(INTERNAL_FEATURE_FLAG_KEYS.includes('memory_v2_enabled'), true);
+  assert.equal(FEATURE_OVERRIDE_KEYS.includes('memory_v2_enabled'), false);
+  assert.deepEqual(normalizeFeatureOverrides({ memory_v2_enabled: false }), {});
+});
+
+test('row 60 harness fixes are internal, default-on, and roll back by env', () => {
+  const keys = {
+    shell_noninteractive_env: 'JENNY_ENABLE_SHELL_NONINTERACTIVE_ENV',
+    shell_head_tail_output: 'JENNY_ENABLE_SHELL_HEAD_TAIL_OUTPUT',
+    loop_result_aware_signature: 'JENNY_ENABLE_LOOP_RESULT_AWARE_SIGNATURE',
+    edit_match_fallbacks: 'JENNY_ENABLE_EDIT_MATCH_FALLBACKS',
+    compaction_reject_truncated_summary: 'JENNY_ENABLE_COMPACTION_REJECT_TRUNCATED_SUMMARY',
+    compaction_micro_first: 'JENNY_ENABLE_COMPACTION_MICRO_FIRST',
+    compaction_recall_tool: 'JENNY_ENABLE_COMPACTION_RECALL_TOOL',
+    compaction_touched_files: 'JENNY_ENABLE_COMPACTION_TOUCHED_FILES',
+  };
+  const defaults = buildFeatureFlags({});
+  for (const [key, envKey] of Object.entries(keys)) {
+    assert.equal(defaults[key], true, key);
+    assert.equal(buildFeatureFlags({ [envKey]: '0' })[key], false, key);
+    assert.equal(INTERNAL_FEATURE_FLAG_KEYS.includes(key), true, key);
+    assert.equal(FEATURE_OVERRIDE_KEYS.includes(key), false, key);
+  }
+});
+
+test('memory_hybrid_recall is internal, default-off, and turns on by env (row 58 W4)', () => {
+  assert.equal(buildFeatureFlags({}).memory_hybrid_recall, false);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_MEMORY_HYBRID_RECALL: '1' }).memory_hybrid_recall, true);
+  assert.equal(INTERNAL_FEATURE_FLAG_KEYS.includes('memory_hybrid_recall'), true);
+  assert.equal(FEATURE_OVERRIDE_KEYS.includes('memory_hybrid_recall'), false);
+  assert.deepEqual(normalizeFeatureOverrides({ memory_hybrid_recall: true }), {});
 });
 
 // Row 39 (owner, 2026-10-06): these default-ON flags were collapsed to their

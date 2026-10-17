@@ -1,30 +1,32 @@
 'use strict';
 
 // Delete a project (ProjectApplicationService.deleteProject, desktop only):
-// its knowledge folders, idle chats and memories move to General, then the
-// entry is removed. A busy chat anywhere in the project blocks the whole
-// operation. Every step is undone if a later one fails, so a refused delete
-// leaves nothing half-moved, with one exception: a memory move the sidecar
-// never answered. That move may have committed and cannot be undone, so the
-// delete is finished forward instead (see "Memory move outcomes" below). The
-// folder on disk is never touched;
+// its knowledge folders and idle chats move to General, the entry is removed,
+// and its memories are archived with it (memory v2, row 58: archived rows stay
+// restorable from the Memory page, they no longer move to General). A busy
+// chat anywhere in the project blocks the whole operation. Every step is
+// undone if a later one fails, so a refused delete leaves nothing half-done,
+// with one exception: a memory archive the sidecar never answered. That
+// archive may have committed and cannot be undone, so the delete is finished
+// forward instead (see "Memory archive outcomes" below). The folder on disk is
+// never touched;
 // `workspace_bound` tells the caller the configured Workspace folder (by real
 // path) was this project, so the renderer can clear it. Scoped permission
 // grants captured for the project can never match again (the id is gone) and
 // are dropped once the delete has succeeded.
 //
-// Memory move outcomes (review finding DPR-008). The delete is written to the
-// project delete journal before the project entry is removed, then:
+// Memory archive outcomes (review finding DPR-008). The delete is written to
+// the project delete journal before the project entry is removed, then:
 //   answered ok  -> record cleared, delete reported complete.
 //   answered no  -> nothing committed: everything is undone, record cleared.
 //   no answer    -> unknown. The project stays deleted and the record stays;
 //                   the result says `memory_outcome: 'pending'`.
-// reconcile() runs after every sidecar initialize and re-issues the move for
-// each record whose project is gone (the move is idempotent: a second run
-// moves only what is left) until the sidecar answers ok. Until then the
+// reconcile() runs after every sidecar initialize and re-issues the archive
+// for each record whose project is gone (the archive is idempotent: a second
+// run archives only what is left) until the sidecar answers ok. Until then the
 // memories sit under an id no chat belongs to, so recall scope is never wider
 // than the user asked for. A record whose project still exists belongs to a
-// delete that never removed it and is dropped without a move.
+// delete that never removed it and is dropped without an archive.
 
 const { GENERAL_PROJECT_ID } = require('./project-schema');
 const { assignSessionProjectDurably } = require('./session-project-assignment');
@@ -44,7 +46,7 @@ function succeeded(step) {
 class ProjectDeleteOperation {
   constructor({
     projects, projectStore, sessions, shadow = null, permissions, isSessionBusy, sessionIsBusy,
-    knowledge = null, moveMemories = null, journal = null, folderStatus, isCurrentProject, now, fail,
+    knowledge = null, archiveMemories = null, journal = null, folderStatus, isCurrentProject, now, fail,
     onSessionProjectChanged = null,
     onProjectDeleted = null,
   }) {
@@ -56,7 +58,7 @@ class ProjectDeleteOperation {
     this._isSessionBusy = isSessionBusy;
     this._recordIsBusy = sessionIsBusy;
     this._knowledge = knowledge;
-    this._moveMemories = moveMemories;
+    this._archiveMemories = archiveMemories;
     this._journal = journal;
     this._onSessionProjectChanged = typeof onSessionProjectChanged === 'function' ? onSessionProjectChanged : null;
     this._onProjectDeleted = typeof onProjectDeleted === 'function' ? onProjectDeleted : null;
@@ -86,7 +88,7 @@ class ProjectDeleteOperation {
     if (!initial) return fail('project_not_found');
     this._folderStatus.invalidate();
     const workspaceBound = await this._isCurrentProject(initial);
-    // From here to the memory move nothing yields, so no chat can be assigned
+    // From here to the memory archive nothing yields, so no chat can be assigned
     // into (or start work in) the project half-way through the moves.
     const project = this._projects.get(projectId);
     if (!project) return fail('project_not_found');
@@ -107,8 +109,8 @@ class ProjectDeleteOperation {
       movedIds.push(record.id);
     }
     // The record precedes the point of no return. Without it an unanswered
-    // memory move could not be finished later, so the delete is refused.
-    if (this._moveMemories) {
+    // memory archive could not be finished later, so the delete is refused.
+    if (this._archiveMemories) {
       const recorded = this._recordDelete(projectId);
       if (!recorded.ok) {
         return fail('project_delete_record_unavailable', {
@@ -122,20 +124,20 @@ class ProjectDeleteOperation {
       this._clearRecord(projectId);
       return fail(removed?.reason || 'project_update_failed', undone);
     }
-    let movedMemories = 0;
+    let archivedMemories = 0;
     let memoryPending = false;
-    if (this._moveMemories) {
-      const memory = await this._moveProjectMemories(projectId);
+    if (this._archiveMemories) {
+      const memory = await this._archiveProjectMemories(projectId);
       if (memory.ok === true) {
-        movedMemories = memory.moved;
+        archivedMemories = memory.archived;
         this._clearRecord(projectId);
       } else if (memory.uncertain) {
         memoryPending = true;
-        this._log('WARN', 'projects.delete_memory_move_pending', { reason: memory.reason });
+        this._log('WARN', 'projects.delete_memory_archive_pending', { reason: memory.reason });
       } else {
         const undone = this._undo({ movedIds, projectId, knowledge, project });
         // A project that could not be put back stays deleted: keep the record
-        // so its memories still follow it to General.
+        // so its memories are still archived with it.
         if (this._projects.get(projectId)) this._clearRecord(projectId);
         return fail('project_memories_unavailable', { memory_reason: memory.reason, ...undone });
       }
@@ -157,7 +159,7 @@ class ProjectDeleteOperation {
       ok: true,
       project: { id: project.id, name: project.name, root_path: project.root_path },
       moved_sessions: movedIds.length,
-      moved_memories: movedMemories,
+      archived_memories: archivedMemories,
       ...(memoryPending ? { memory_outcome: 'pending' } : {}),
       moved_knowledge: knowledge.moved,
       dropped_grants: droppedGrants,
@@ -165,7 +167,7 @@ class ProjectDeleteOperation {
     };
   }
 
-  // Finish recorded deletes whose memory move was never confirmed. Safe to
+  // Finish recorded deletes whose memory archive was never confirmed. Safe to
   // call at any time and as often as wanted; concurrent calls share one pass.
   reconcile() {
     if (!this._reconciling) {
@@ -176,7 +178,7 @@ class ProjectDeleteOperation {
 
   async _reconcile() {
     const summary = { settled: 0, discarded: 0, pending: 0 };
-    if (!this._journal || !this._moveMemories) return summary;
+    if (!this._journal || !this._archiveMemories) return summary;
     const operations = this._journal.list();
     if (operations.length === 0) return summary;
     // A read-only project store serves a fallback document: an absent entry
@@ -193,12 +195,12 @@ class ProjectDeleteOperation {
         this._clearRecord(projectId);
         summary.discarded += 1;
       } else {
-        const memory = await this._requestMemoryMove(projectId);
+        const memory = await this._requestMemoryArchive(projectId);
         if (memory?.ok === true) {
           this._clearRecord(projectId);
           summary.settled += 1;
-          this._log('INFO', 'projects.delete_memory_move_settled', {
-            moved: positiveCount(memory.moved), attempts: operation.attempts + 1,
+          this._log('INFO', 'projects.delete_memory_archive_settled', {
+            archived: positiveCount(memory.archived), attempts: operation.attempts + 1,
           });
         } else {
           this._journal.noteAttempt(projectId, typeof memory?.reason === 'string' ? memory.reason : 'no_answer');
@@ -220,7 +222,7 @@ class ProjectDeleteOperation {
   }
 
   // A record that could not be cleared is harmless: reconcile drops it when
-  // the project exists and re-issues a move that finds nothing when it is gone.
+  // the project exists and re-issues an archive that finds nothing when it is gone.
   _clearRecord(projectId) {
     try {
       this._journal?.clear(projectId);
@@ -266,25 +268,25 @@ class ProjectDeleteOperation {
     return busy || this._recordIsBusy(record) === true;
   }
 
-  // One request. The mover's contract: a result object means the sidecar
+  // One request. The archiver's contract: a result object means the sidecar
   // answered (`ok: false` is a definite refusal, nothing committed); a throw
   // means there was no answer, reported here as null.
-  _requestMemoryMove(projectId) {
+  _requestMemoryArchive(projectId) {
     return Promise.resolve()
-      .then(() => this._moveMemories({ from_project_id: projectId, to_project_id: GENERAL_PROJECT_ID }))
+      .then(() => this._archiveMemories({ project_id: projectId }))
       .catch(() => null);
   }
 
-  // A lost or timed-out reply does not mean the sidecar rolled back: the move
-  // may have committed. The move is idempotent (a second run moves only what
-  // is left), so one retry settles an uncertain first attempt. `uncertain`
-  // marks a failure where either attempt had no answer at all.
-  async _moveProjectMemories(projectId) {
+  // A lost or timed-out reply does not mean the sidecar rolled back: the
+  // archive may have committed. The archive is idempotent (a second run
+  // archives only what is left), so one retry settles an uncertain first
+  // attempt. `uncertain` marks a failure where either attempt had no answer.
+  async _archiveProjectMemories(projectId) {
     let uncertain = false;
     let last = null;
     for (let tries = 0; tries < 2; tries += 1) {
-      last = await this._requestMemoryMove(projectId);
-      if (last?.ok === true) return { ok: true, moved: positiveCount(last.moved) };
+      last = await this._requestMemoryArchive(projectId);
+      if (last?.ok === true) return { ok: true, archived: positiveCount(last.archived) };
       if (!last) uncertain = true;
     }
     return { ok: false, uncertain, reason: typeof last?.reason === 'string' ? last.reason : null };
@@ -338,7 +340,7 @@ class ProjectDeleteOperation {
   // Best-effort rollback, newest step first. `moved_sessions` reports the
   // chats that were NOT put back; zero means clean. A chat goes back only
   // while it still sits idle in General where the delete left it: one the user
-  // moved again, or that started work, during the memory move keeps its newer
+  // moved again, or that started work, during the memory archive keeps its newer
   // state (a move never touches a busy chat).
   _undo({ movedIds, projectId, knowledge, project = null }) {
     const details = {};

@@ -4,9 +4,11 @@ const { evaluatePolicy } = require('../tools/tool-policy-evaluator');
 const { digest, sandboxError } = require('./sandbox-errors');
 const { captureSandboxAuthority } = require('./sandbox-project-authority');
 const { createToolResourceClaim, projectToolResourceWait } = require('../tools/tool-resource-execution');
+const { getTrustedExecutionBinding } = require('../backend/session-execution-authority');
 // Electron-owned tools that touch no host shell pass through the sandbox bridge unchanged.
 // Seam 17 for a new manifest tool: tests/desktop-command-sandbox-approval.test.js pins this set.
-const ALLOWED = new Set(['run_command', 'ask_user', 'exit_plan_mode', 'home', 'task_board', 'project_notes']);
+const ALLOWED = new Set(['run_command', 'ask_user', 'exit_plan_mode', 'home', 'task_board', 'project_notes', 'propose_command',
+  'propose_session', 'complete_session_handoff', 'conversations_recent', 'conversation_open', 'conversations_search']);
 function sandboxEnabled(service) {
   return service?.commandSandbox?.enabled === true
     || service?.configService?.getState?.()?.commandSandbox?.enabled === true;
@@ -26,6 +28,8 @@ function authorizationPolicy(service, input, authority) {
   });
   const paranoid = service.configService?.getState?.()?.safetyMode === 'paranoid';
   return { decision: !snapshot || decision.decision === 'deny' ? 'deny' : (paranoid ? 'ask' : decision.decision),
+    ordinaryAsk: !paranoid && decision.stage === 'tool_default' && decision.decision === 'ask'
+      && !Object.hasOwn(snapshot?.legacy_policies || {}, 'run_command'),
     digest: digest([snapshot || {}, paranoid, decision.decision]), id: decision.id || '' };
 }
 async function executeSandboxCommand(service, { input, sessionId, streamId, callId, abortSignal,
@@ -45,6 +49,9 @@ async function executeSandboxCommand(service, { input, sessionId, streamId, call
   }
   try {
     const scope = captureSandboxAuthority(service, sessionId, projectAuthority);
+    const trusted = getTrustedExecutionBinding(executionAuthority);
+    if (executionAuthority != null && !trusted) throw sandboxError('sandbox_stale_authority');
+    trusted?.assertCurrent();
     const args = normalizeCommand(input);
     const policy = authorizationPolicy(service, input, scope.authority);
     if (policy.decision === 'deny') return failure('sandbox_policy_denied');
@@ -59,15 +66,18 @@ async function executeSandboxCommand(service, { input, sessionId, streamId, call
     }, async (binding, assertLive, approvalSignal) => {
       assertLive();
       scope.assertCurrent();
+      trusted?.assertCurrent();
       const current = authorizationPolicy(service, input, scope.authority);
       if (current.decision === 'deny') return { approved: false };
-      const approved = current.decision === 'auto' || await authorize({
+      const approved = current.decision === 'auto'
+        || (current.ordinaryAsk && trusted?.autoRun === true) || await authorize({
         tool_name: 'run_command', tool_call_id: callId, tool_input: input,
         reason: 'Run in the offline Docker sandbox. Command-created files are discarded.',
         policy_decision_id: current.id,
       }, approvalSignal);
       assertLive();
       scope.assertCurrent();
+      trusted?.assertCurrent();
       const final = authorizationPolicy(service, input, scope.authority);
       if (approved !== true || final.decision === 'deny'
         || (final.digest !== current.digest && !(current.decision === 'ask' && final.decision === 'auto'))) return { approved: false };
@@ -75,6 +85,7 @@ async function executeSandboxCommand(service, { input, sessionId, streamId, call
         validate: () => {
           assertLive();
           scope.assertCurrent();
+          trusted?.assertCurrent();
           if (authorizationPolicy(service, input, scope.authority).digest !== final.digest) throw sandboxError('sandbox_policy_changed');
         } };
     });

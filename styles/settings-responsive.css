@@ -19,11 +19,6 @@
   .settings-view {
     --settings-rail-width: 200px;
   }
-
-  :root {
-    --content-column-width: min(700px, calc(100vw - var(--sidebar-current-width) - 144px));
-    --composer-width: min(700px, calc(100vw - var(--sidebar-current-width) - 144px));
-  }
 }
 
 @media (max-width: 900px) {
@@ -142,7 +137,7 @@
     max-width: min(100%, calc(100vw - 96px));
   }
 
-  .chat-view .message-attachment-image-preview {
-    width: min(220px, calc(100vw - 112px));
+  .chat-view .inv-artifact-figure--attachment {
+    --inv-image-attachment-size: min(220px, calc(100vw - 112px));
   }
 }

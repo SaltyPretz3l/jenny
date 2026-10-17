@@ -187,6 +187,8 @@ test('side panel opens a detail page with All changes and the unified diff', () 
   assert.equal(mountEl.querySelector('.changes-view').getAttribute('data-changes-mode'), 'detail');
   assert.match(mountEl.querySelector('.changes-detail-position').textContent, /Change 2 of 3/);
   assert.ok(mountEl.querySelector('.changes-detail-diff .diff-line-add'));
+  // The detail diff takes the inline diff body's styles (gutters, colours, mono).
+  assert.ok(mountEl.querySelector('.changes-detail-diff.file-diff-body'));
   mountEl.querySelector('[data-changes-back]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
   assert.equal(mountEl.querySelector('.changes-view').getAttribute('data-changes-mode'), 'history');
 });

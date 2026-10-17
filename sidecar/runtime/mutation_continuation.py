@@ -6,9 +6,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from filelock import Timeout
+
 from sidecar.ai.tools.workspace_mutation_checkpoint import checkpoint_transition, mutation_reference
 from sidecar.ai.tools.workspace_mutation_journal_contract import workspace_identity
 from sidecar.ai.tools.workspace_mutation_journal_store import WorkspaceMutationJournalStore
+from sidecar.ai.tools.workspace_mutation_live_owner import (
+    acquire_live_owner,
+    mutation_ownership_conflict,
+    release_live_owner,
+)
 
 
 def _owner(config: Any, request_context: Any) -> tuple[WorkspaceMutationJournalStore, str]:
@@ -41,6 +48,12 @@ class FrozenMutationCheckpoint:
             completed_effects=json.loads(self.effects_json))
         if not result.ok:
             raise ValueError("mutation_checkpoint_transition_failed")
+        if action in {"confirm", "release"}:
+            scope = json.loads(self.scope_json)
+            ref = self.reference()
+            release_live_owner(
+                self.store.live_owner_path(ref["workspace_id"], ref["change_set_id"]),
+                               session_id=scope["session_id"], turn_id=scope["turn_id"])
 
 
 def prepare_mutation_checkpoint(
@@ -64,6 +77,8 @@ def prepare_mutation_checkpoint(
             and not metadata_present
             and not any(item.tool_name in {"write_file", "edit_file", "delete_file", "move_file"}
                         for item in plan.outcomes)):
+        release_live_owner(store.live_owner_path(identity.workspace_id, change_set_id),
+                           session_id=scope["session_id"], turn_id=scope["turn_id"])
         # Approval freezing reserves an ID before any mutation creates a journal.
         # It is not an executed effect and must not be restored as authority.
         return None
@@ -91,8 +106,18 @@ def claim_mutation_checkpoint(checkpoint: dict, *, config: Any, request_context:
     binding = {"schema_version": 1, "work_id": checkpoint["identity"]["work_id"],
                "decision_id": checkpoint["decision"]["decision_id"],
                "source_attempt": checkpoint["source_attempt"], "mutation_ref": ref}
-    result = checkpoint_transition(store, root, action="claim", scope=checkpoint["identity"],
-        reference=ref, binding=binding, completed_effects=checkpoint["completed_effect_refs"])
-    if not result.ok:
-        raise ValueError("mutation_checkpoint_claim_failed")
+    path = store.live_owner_path(ref["workspace_id"], ref["change_set_id"])
+    session_id, turn_id = checkpoint["identity"]["session_id"], checkpoint["identity"]["turn_id"]
+    acquired = False
+    try:
+        acquire_live_owner(path, session_id=session_id, turn_id=turn_id, timeout=1.0)
+        acquired = True
+        result = checkpoint_transition(store, root, action="claim", scope=checkpoint["identity"],
+            reference=ref, binding=binding, completed_effects=checkpoint["completed_effect_refs"])
+        if not result.ok:
+            raise ValueError("mutation_checkpoint_claim_failed")
+    except (Timeout, OSError, ValueError) as error:
+        if acquired:
+            release_live_owner(path, session_id=session_id, turn_id=turn_id)
+        raise mutation_ownership_conflict("mutation_checkpoint_claim_failed") from error
     return ref["change_set_id"]

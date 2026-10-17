@@ -119,6 +119,12 @@ class _ResourceTransport(MCPTransport):
         self.template_cursors.append(cursor)
         return {"resourceTemplates": self._templates}
 
+    def list_prompts(self, *, cancel_handle: Any = None) -> list[dict[str, Any]]:
+        return []
+
+    def get_prompt(self, name: str, arguments: dict[str, str], **_kwargs: Any) -> dict[str, Any]:
+        raise NotImplementedError
+
     def close(self) -> None:
         self.closed = True
 

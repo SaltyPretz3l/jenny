@@ -129,6 +129,15 @@ const RECOVERY_COPY = Object.freeze({
     title: 'Setup required',
     hint: 'Open Settings to set a workspace root, then try again.',
   }),
+  // A chat request the sidecar rejected as not retryable: the same turn fails the same way.
+  refused: Object.freeze({
+    title: 'Jenny could not run this turn',
+    hint: 'Retrying it unchanged will not help. Change the request, then send it again.',
+  }),
+  model_cannot_read_images: Object.freeze({
+    title: "This model can't read images",
+    hint: 'Pick a model that can read images, or remove the image, then send again.',
+  }),
   runtime: Object.freeze({
     title: 'Model stopped responding',
     hint: 'Usually clears on a retry — open diagnostics if it keeps happening.',
@@ -193,6 +202,10 @@ function isRateLimitPayload(errorPayload) {
 function recoveryCopyKey(recoveryClass, errorPayload, terminalSubcode = '') {
   if (recoveryClass === 'provider' && isRateLimitPayload(errorPayload)) {
     return 'provider_rate_limited';
+  }
+  if (recoveryClass === 'refused'
+    && /does not support image attachments/i.test(String(errorPayload?.message || ''))) {
+    return 'model_cannot_read_images';
   }
   // A turn the app's own shutdown cancelled stays in the calm cancelled class
   // but names its cause (dogfood TR-012).
@@ -291,6 +304,9 @@ function classifyAssistantError(errorPayload, {
   if (category === 'context' || code.startsWith('CMP-CTX-')) {
     return 'context';
   }
+  if (code.startsWith('CMP-CHAT-') && payload.retryable === false) {
+    return 'refused';
+  }
   if (
     category === 'loop'
     || code.startsWith('CMP-LOOP-')
@@ -334,6 +350,8 @@ function recoveryActionIdsForClass(recoveryClass, errorPayload) {
         : ['open_diagnostics'];
     case 'context':
       return ['start_new_session', 'open_diagnostics'];
+    case 'refused':
+      return ['open_diagnostics'];
     case 'setup':
       return ['open_settings', 'open_diagnostics'];
     default:

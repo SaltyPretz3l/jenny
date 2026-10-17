@@ -11,7 +11,8 @@
   const TURN_NODE_SELECTOR = '.chat-thread-node[data-thread-message-id]';
   // Plan-variant gap rows are deliberately actionless (the plan card owns the
   // decision), so they never join the batch Allow all once / Always allow all / Deny all count.
-  const APPROVAL_ROW_SELECTOR = '.approval-gap-row[data-approval-status="pending"]:not([data-approval-variant="plan"])';
+  // Plan cards and exact-content message approvals (`session_message`) are never batch-decided.
+  const APPROVAL_ROW_SELECTOR = '.approval-gap-row[data-approval-status="pending"]:not([data-approval-variant="plan"]):not([data-approval-exact])';
   const BATCH_BANNER_CLASS = 'approval-batch-banner';
   const BATCH_BANNER_DATA = 'data-approval-batch-banner';
 

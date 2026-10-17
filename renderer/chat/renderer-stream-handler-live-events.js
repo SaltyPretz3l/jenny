@@ -1,11 +1,11 @@
 /* renderer/chat/renderer-stream-handler-live-events.js -- non-terminal live stream event handlers (UMD) */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-stream-text-cursor'), require('./renderer-stream-handler-reducer-wiring'));
+    module.exports = factory(require('./renderer-stream-text-cursor'), require('./renderer-stream-handler-reducer-wiring'), require('./renderer-subagent-monitor-model'));
     return;
   }
-  root.rendererStreamHandlerLiveEvents = factory(root.rendererStreamTextCursor || {}, root.rendererStreamHandlerReducerWiring || {});
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (streamTextCursor, segmentIdentityUtils) {
+  root.rendererStreamHandlerLiveEvents = factory(root.rendererStreamTextCursor || {}, root.rendererStreamHandlerReducerWiring || {}, root.rendererSubagentMonitorModel || {});
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (streamTextCursor, segmentIdentityUtils, subagentModel) {
   const {
     createTextCursor,
     resetCursor,
@@ -116,8 +116,10 @@
         childLabel: normalizeString(payload.childLabel || payload.child_label).slice(0, 80),
         childTerminal: payload.childTerminal === true || payload.child_terminal === true,
         childSuccess: payload.childSuccess === true || payload.child_success === true,
-        model: normalizeString(payload.model).slice(0, 96),
+        model: normalizeString(payload.model).slice(0, 138),
         provider: normalizeString(payload.provider).slice(0, 96),
+        reasoningEffort: normalizeString(payload.reasoningEffort).slice(0, 16),
+        childActivity: subagentModel.normalizeChildActivity?.(payload.childActivity) || null,
         usage: payload.usage && typeof payload.usage === 'object' && !Array.isArray(payload.usage)
           ? payload.usage
           : null,
@@ -152,6 +154,8 @@
         childSuccess: snapshot.childSuccess,
         model: snapshot.model,
         provider: snapshot.provider,
+        reasoningEffort: snapshot.reasoningEffort,
+        childActivity: snapshot.childActivity,
         usage: snapshot.usage,
         terminalReason: snapshot.terminalReason,
         streamId: snapshot.streamId,
@@ -164,6 +168,10 @@
         terminal: snapshot.terminal,
         success: snapshot.success,
       });
+      // A rejected child frame must not replace the parallel summary snapshot.
+      if (nextSteps.length === priorSteps.length && nextSteps.every((step, index) => step === priorSteps[index])) {
+        return { buffered: false, terminal: false };
+      }
       const updated = updatePendingMessage(payload, {
         agent_status: snapshot,
         agent_status_steps: nextSteps,

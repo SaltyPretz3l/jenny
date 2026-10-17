@@ -46,13 +46,14 @@ async function withImmediateTimeouts(callback) {
   }
 }
 
-test('malformed JSON frame does not kill the message loop', async () => {
+test('a malformed JSON frame fails the transport even with a parse-error listener', async () => {
   const client = new SidecarClient();
   const proc = createMockProcess();
   client.attachProcess(proc);
 
   const parseErrors = [];
   client.on('parse-error', (err) => parseErrors.push(err));
+  client.on('error', () => {});
 
   const responsePromise = client.request('test.method', { data: 'hello' });
 
@@ -61,8 +62,7 @@ test('malformed JSON frame does not kill the message loop', async () => {
 
   proc.stdout.push(Buffer.concat([malformedFrame, validResponse]));
 
-  const result = await responsePromise;
-  assert.deepEqual(result, { ok: true });
+  await assert.rejects(responsePromise, { message: 'Sidecar transport received a malformed frame.' });
   assert.equal(parseErrors.length, 1);
   assert.ok(parseErrors[0] instanceof SyntaxError);
 });
@@ -208,7 +208,7 @@ test('hardwareVramUsage sends hardware.vram_usage RPC request', async () => {
   const [, body] = written.split('\r\n\r\n');
   const request = JSON.parse(body);
   assert.equal(request.method, 'hardware.vram_usage');
-  assert.equal(request.params.accept_version, '2026-08-17');
+  assert.equal(request.params.accept_version, '2026-10-15');
   assert.equal(payload.available, true);
 });
 

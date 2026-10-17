@@ -5,13 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, build_content_digest
+from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, build_text_digest
 from sidecar.ai.memory.store import MemoryStore
 from sidecar.ai.memory.store_migrations import (
     _execute_schema_script,
     run_migrations,
     v7_schema_script,
 )
+from tests.sidecar.ai.memory.memory_v9_helpers import find_row, pending_rows
 
 
 def _create_v7_database(path: Path) -> None:
@@ -28,7 +29,7 @@ def _create_v7_database(path: Path) -> None:
                 'preference', 0.9, 'I prefer tea', ?, '', 'user_approved',
                 '2026-01-01T00:00:00+00:00', '2026-01-02T00:00:00+00:00')
             """,
-            (build_content_digest("preference", "The user prefers tea."),),
+            (build_text_digest("The user prefers tea."),),
         )
         connection.execute(
             """
@@ -41,7 +42,7 @@ def _create_v7_database(path: Path) -> None:
                 '', 'user', '2026-01-03T00:00:00+00:00',
                 '2026-01-04T00:00:00+00:00')
             """,
-            (build_content_digest("preference", "The user prefers coffee."),),
+            (build_text_digest("The user prefers coffee."),),
         )
         connection.execute(
             """
@@ -49,7 +50,7 @@ def _create_v7_database(path: Path) -> None:
                 content_fingerprint, reason, created_at
             ) VALUES (?, 'dismissed', '2026-01-05T00:00:00+00:00')
             """,
-            (build_content_digest("preference", "The user prefers water."),),
+            (build_text_digest("The user prefers water."),),
         )
         connection.execute(
             """
@@ -80,7 +81,7 @@ def _create_v7_database(path: Path) -> None:
                 'preference', 0.5, '', ?, '', 'unknown_legacy',
                 '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')
             """,
-            (build_content_digest("preference", "Deleted memory."),),
+            (build_text_digest("Deleted memory."),),
         )
         connection.execute(
             """
@@ -92,7 +93,7 @@ def _create_v7_database(path: Path) -> None:
                 'Deleted candidate.', 'preference', 0.5, '', ?, '', '',
                 '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')
             """,
-            (build_content_digest("preference", "Deleted candidate."),),
+            (build_text_digest("Deleted candidate."),),
         )
         connection.execute(
             """
@@ -120,21 +121,23 @@ def test_v7_migration_preserves_rows_scope_and_sequence_highwater(tmp_path: Path
 
     store = MemoryStore(db_path)
     try:
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 8
-        memory = store.get_memory_by_id(7)
+        # The v8 rebuild chains straight into the v9 rebuild and the v10 step on open.
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 10
+        memory = find_row(store, 7, project_id=GENERAL_PROJECT_ID)
         assert memory is not None
         assert memory.project_id == GENERAL_PROJECT_ID
         assert memory.provenance == "user_approved"
-        pending = store.get_pending_candidates("session-1")
+        pending = pending_rows(store, project_id=GENERAL_PROJECT_ID)
         assert [(row.id, row.project_id) for row in pending] == [
             (8, GENERAL_PROJECT_ID)
         ]
+        # v9 drops the extraction-run table and the kind+text suppressions.
         assert store._connection.execute(
-            "SELECT project_id, attempt_count FROM memory_extraction_runs"
-        ).fetchone() == (GENERAL_PROJECT_ID, 2)
+            "SELECT 1 FROM sqlite_master WHERE name = 'memory_extraction_runs'"
+        ).fetchone() is None
         assert store._connection.execute(
-            "SELECT project_id, reason FROM memory_suppressions"
-        ).fetchone()[0] == GENERAL_PROJECT_ID
+            "SELECT COUNT(*) FROM memory_suppressions"
+        ).fetchone()[0] == 0
         sequences = dict(
             store._connection.execute(
                 "SELECT name, seq FROM sqlite_sequence"
@@ -148,8 +151,8 @@ def test_v7_migration_preserves_rows_scope_and_sequence_highwater(tmp_path: Path
 
     reopened = MemoryStore(db_path)
     try:
-        assert reopened.get_memory_by_id(7) is not None
-        assert reopened._connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert find_row(reopened, 7, project_id=GENERAL_PROJECT_ID) is not None
+        assert reopened._connection.execute("PRAGMA user_version").fetchone()[0] == 10
     finally:
         reopened.close()
 

@@ -16,6 +16,10 @@ const { PDF_ADDON_ENV, PdfAddonService, runSidecarProbe } = require('../services
 const { registerPdfAddonIpc } = require('../services/main/pdf-addon-ipc-registration');
 const { assembleZip } = require('./helpers/hostile-archive-builder');
 const { cleanupTrackedResources, createTrackedTempDir } = require('./helpers/resource-cleanup');
+const { holdEventLoopUntilTestsFinish } = require('./helpers/event-loop-hold');
+
+// Service wait timers are unref'd on purpose; Node 22's runner would drain the loop under them.
+holdEventLoopUntilTestsFinish(test);
 const { initializeSessionRuntimeComposition } = require('../services/session-runtime/composition');
 const { captureRuntimeRoute } = require('../services/session-runtime/lanes');
 const { capacityResource } = require('../services/session-runtime/resource-broker');
@@ -347,13 +351,14 @@ test('remove unsets the add-on, restarts the sidecar, and retries a locked delet
   await service.whenSettled();
   const dir = service.sidecarEnv()[PDF_ADDON_ENV];
 
-  const realRm = fs.promises.rm;
-  t.after(() => { fs.promises.rm = realRm; });
-  fs.promises.rm = async (target, options) => {
+  // Removal is removeTree (never Node's rm); the add-on directory itself stays locked past its retries.
+  const realRmdir = fs.promises.rmdir;
+  t.after(() => { fs.promises.rmdir = realRmdir; });
+  fs.promises.rmdir = async (target, ...rest) => {
     if (path.resolve(String(target)) === path.resolve(dir)) {
       throw Object.assign(new Error('locked'), { code: 'EBUSY' });
     }
-    return realRm.call(fs.promises, target, options);
+    return realRmdir.call(fs.promises, target, ...rest);
   };
 
   assert.equal(service.remove().state, 'not_installed');
@@ -361,7 +366,7 @@ test('remove unsets the add-on, restarts the sidecar, and retries a locked delet
   await service.whenSettled();
   assert.deepEqual(backend.restarts, ['pdf_addon_installed', 'pdf_addon_removed']);
   assert.ok(fs.existsSync(dir));
-  fs.promises.rm = realRm;
+  fs.promises.rmdir = realRmdir;
 
   const nextStart = reopen(userDataPath, bytes);
   assert.equal(nextStart.getState().state, 'not_installed');
@@ -409,15 +414,16 @@ test('install from a file uses the main-owned dialog and accepts only the pinned
 
 test('cancel is refused once publishing starts, so a late Cancel never ends in a surprise install', async (t) => {
   const { service, addonRoot } = buildService();
-  const realRm = fs.promises.rm;
-  t.after(() => { fs.promises.rm = realRm; });
+  // The publish step clears the version directory with removeTree, whose first call is lstat on it.
+  const realLstat = fs.promises.lstat;
+  t.after(() => { fs.promises.lstat = realLstat; });
   let atPublish = null;
-  fs.promises.rm = async (target, options) => {
+  fs.promises.lstat = async (target, ...rest) => {
     if (path.resolve(String(target)) === path.resolve(addonRoot, VERSION)) {
       service.cancel();
       atPublish = service.getState();
     }
-    return realRm.call(fs.promises, target, options);
+    return realLstat.call(fs.promises, target, ...rest);
   };
   service.install(ACCEPT);
   await service.whenSettled();
@@ -458,6 +464,42 @@ test('only the pinned version counts as installed; another build\'s add-on is re
   assert.deepEqual(reopened.sidecarEnv(), { [PDF_ADDON_ENV]: '' });
   await reopened.start();
   assert.equal(fs.existsSync(stale), false);
+});
+
+// Node's rm answers a transient Windows EPERM on a junction with stat() and empties the target.
+test('start-up removal never enters a junction under the add-on root, even when unlinking it fails transiently', async (t) => {
+  const bytes = wheel();
+  const { userDataPath, addonRoot } = buildService({ bytes });
+  const outside = createTrackedTempDir('jenny-pdf-addon-outside-');
+  fs.writeFileSync(path.join(outside, 'keep'), 'untouched');
+  const stale = path.join(addonRoot, '1.26.0');
+  fs.mkdirSync(stale, { recursive: true });
+  fs.writeFileSync(path.join(stale, 'manifest.json'), '{}');
+  fs.symlinkSync(outside, path.join(stale, 'nested'), 'junction');
+  fs.symlinkSync(outside, path.join(addonRoot, 'staging-planted'), 'junction');
+  fs.writeFileSync(path.join(addonRoot, 'state.json'), JSON.stringify({ schema: 1, installedVersion: null, probe: 'ok', pendingRemoval: ['1.26.0'] }));
+
+  const failed = new Set();
+  const realRm = fs.promises.rm;
+  const realUnlink = fs.promises.unlink;
+  t.after(() => { fs.promises.rm = realRm; fs.promises.unlink = realUnlink; });
+  fs.promises.rm = async () => { throw new Error('Node rm follows junctions after EPERM'); };
+  fs.promises.unlink = async (file) => {
+    if (fs.lstatSync(file).isSymbolicLink() && !failed.has(file)) {
+      failed.add(file);
+      throw Object.assign(new Error('transient lock'), { code: 'EPERM' });
+    }
+    return realUnlink.call(fs.promises, file);
+  };
+
+  await reopen(userDataPath, bytes).start();
+  fs.promises.rm = realRm;
+  fs.promises.unlink = realUnlink;
+  assert.deepEqual([...failed].sort(), [path.join(addonRoot, 'staging-planted'), path.join(stale, 'nested')].sort());
+  assert.deepEqual(fs.readdirSync(outside), ['keep']);
+  assert.deepEqual(fs.readdirSync(addonRoot), ['state.json']);
+  const record = JSON.parse(fs.readFileSync(path.join(addonRoot, 'state.json'), 'utf8'));
+  assert.deepEqual(record.pendingRemoval, []);
 });
 
 test('whenSettled waits while the install-from-file picker is open', async () => {

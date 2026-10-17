@@ -418,10 +418,10 @@ test('resuming paused work carries the freshly read revision and reports a refus
   assert.match(notice.message, /Diagnostics › Runs/);
 });
 
-test('a calm refusal explains the wait in the composer instead of raising a Send Failed dialog', async t => {
+for (const reason of ['runtime_closing', 'command_sandbox_transition']) test(`a calm ${reason} refusal explains the wait in its composer instead of raising a Send Failed dialog`, async t => {
   const h = createControllerHarness([], { durableRuntime: true, chatInputValue: 'later then', shell: {
     sessionRuntime: { submit: async () => ({ ok: false, acceptance: 'rejected',
-      error: { code: 'CMP-RUNTIME-0005', reason: 'runtime_closing' } }) },
+      error: { code: 'CMP-RUNTIME-0005', reason } }) },
   } }); t.after(h.restore); t.after(() => h.controller.dispose());
   const result = await h.controller.startPromptSend('later then');
   assert.equal(result.acceptanceUnknown, false);
@@ -430,7 +430,8 @@ test('a calm refusal explains the wait in the composer instead of raising a Send
   const notice = h.calls.composerNotices.at(-1);
   assert.equal(notice.options.owner, 'runtime:refusal');
   assert.equal(notice.options.tone, 'warning');
-  assert.match(notice.message, /shutting down/i);
+  assert.equal(notice.options.sessionId, 'session-1', 'keying the notice paints it immediately in the originating pane');
+  assert.match(notice.message, reason === 'runtime_closing' ? /shutting down/i : /sandbox is changing.*send again/i);
   assert.equal(h.state.messagesBySession.get('session-1').length, 0);
 });
 
@@ -473,4 +474,20 @@ test('a durable Send ships renderer send-phase timing with its immutable submiss
   assert.ok(timing.optimistic_rendered_at_ms >= timing.send_started_at_ms);
   assert.equal(timing.local_render_latency_ms, timing.optimistic_rendered_at_ms - timing.send_started_at_ms);
   assert.deepEqual(payloads[1], payloads[0], 'a lost-ack retry resubmits the same timing');
+});
+
+test("onAdmission observes this send's own admission receipt exactly once and never blocks admission", async t => {
+  const ack = deferred(); let submitted; const seen = [];
+  const h = createControllerHarness([], { durableRuntime: true, shell: { sessionRuntime: { submit: async payload => {
+    submitted = payload; return ack.promise; } } } }); t.after(h.restore);
+  const sending = h.controller.startPromptSend('hello', { onAdmission: receipt => { seen.push(receipt); throw new Error('observer failure'); } }); await tick();
+  assert.equal(h.state.runtimeSendController.acceptAdmission(event(submitted, false)), true);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].user_message_id, 'canonical_user_1');
+  assert.equal(seen[0].session_id, submitted.session_id);
+  assert.equal(h.state.messagesBySession.get('session-1')[0].id, 'canonical_user_1', 'a throwing observer never blocks admission');
+  assert.equal(h.state.runtimeSendController.acceptAdmission({ ...event(submitted, true), channel: 'phase' }), true);
+  assert.equal(seen.length, 1, 'later events of the same turn do not re-fire it');
+  ack.resolve(receipt(submitted)); await sending;
+  h.controller.dispose();
 });

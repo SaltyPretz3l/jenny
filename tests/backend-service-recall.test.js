@@ -84,55 +84,6 @@ test('backend service recalls approved memories through the managed sidecar requ
   assert.equal(result.memories[0].lesson_kind, 'preference');
 });
 
-test('backend service recalls recent approved memories by lesson kind through the managed sidecar request path', async () => {
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-userdata-memory-recall-recent-'));
-  trackDirectory(userDataPath);
-
-  const service = new BackendService({
-    userDataPath,
-    repoRoot: process.cwd(),
-    pythonExecutable: process.execPath,
-    safeStorage: createFakeSafeStorage(),
-    defaultModel: 'mock-v1',
-  });
-
-  const captured = [];
-  service.sidecarManager = {
-    getStatus() {
-      return { phase: 'ready' };
-    },
-  };
-  service.sidecarClient = {
-    async request(method, params) {
-      captured.push({ method, params });
-      return {
-        memories: [
-          {
-            title: 'Response style: concise',
-            lesson_text: 'Use concise answers unless the user asks for more detail.',
-            lesson_kind: 'response_style',
-            confidence: 0.93,
-            source_excerpt: 'be concise',
-            content_fingerprint: `sha256:${'a'.repeat(64)}`,
-          },
-        ],
-        next_cursor: '1',
-      };
-    },
-  };
-
-  const result = await service.recallRecentApprovedMemories('response_style', 2);
-
-  assert.equal(captured.length, 1);
-  assert.equal(captured[0].method, 'memory.recall_recent');
-  assert.equal(captured[0].params.project_id, 'project_general');
-  assert.equal(Object.hasOwn(captured[0].params, 'include_general'), false);
-  assert.equal(captured[0].params.lesson_kind, 'response_style');
-  assert.equal(captured[0].params.limit, 2);
-  assert.equal(result.memories.length, 1);
-  assert.equal(result.memories[0].lesson_kind, 'response_style');
-});
-
 test('backend service layers General memories over session-scoped recall', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-userdata-memory-session-recall-'));
   trackDirectory(userDataPath);
@@ -160,9 +111,6 @@ test('backend service layers General memories over session-scoped recall', async
   await service.recallApprovedMemories('project conventions', 4, {
     sessionId: created.data.id,
   });
-  await service.recallRecentApprovedMemories('tool_strategy', 2, {
-    sessionId: created.data.id,
-  });
 
   assert.deepEqual(captured.map(({ method, params }) => ({
     method,
@@ -170,8 +118,8 @@ test('backend service layers General memories over session-scoped recall', async
     include_general: params.include_general,
   })), [
     { method: 'memory.recall', project_id: project.id, include_general: true },
-    { method: 'memory.recall_recent', project_id: project.id, include_general: true },
   ]);
+  assert.equal(typeof service.recallRecentApprovedMemories, 'undefined');
 });
 
 test('backend service lists approved memories through the managed sidecar request path', async () => {
@@ -301,7 +249,7 @@ test('backend service updates approved memories through the managed sidecar requ
     async request(method, params) {
       captured.push({ method, params });
       return {
-        updated: true,
+        status: 'saved',
         memory: {
           id: 7,
           title: 'Preference: green tea',
@@ -319,7 +267,7 @@ test('backend service updates approved memories through the managed sidecar requ
     title: 'Preference: green tea',
     lesson_text: 'The user prefers green tea over coffee.',
   };
-  const result = await service.updateApprovedMemory(7, patch, 'project_garden');
+  const result = await service.updateApprovedMemory(7, patch, 'project_garden', { expectedRevision: 2 });
   await service.updateApprovedMemory(8, patch);
   await assert.rejects(
     service.updateApprovedMemory(9, patch, 'not-a-project'),
@@ -330,7 +278,11 @@ test('backend service updates approved memories through the managed sidecar requ
   assert.equal(captured[0].method, 'memory.update');
   assert.equal(captured[0].params.project_id, 'project_garden');
   assert.equal(captured[0].params.memory_id, 7);
-  assert.equal(captured[0].params.patch.title, 'Preference: green tea');
+  assert.equal(captured[0].params.expected_revision, 2);
+  assert.equal('expected_revision' in captured[1].params, false);
+  assert.equal(captured[0].params.title, 'Preference: green tea');
+  assert.equal(captured[0].params.lesson_text, 'The user prefers green tea over coffee.');
+  assert.equal('patch' in captured[0].params, false, 'memory.update takes flat fields');
   assert.equal(captured[1].params.project_id, 'project_general');
   assert.equal(captured[1].params.memory_id, 8);
   assert.equal(result.updated, true);
@@ -373,7 +325,7 @@ test('backend service deletes approved memories through the managed sidecar requ
   assert.equal(captured[0].params.memory_id, 9);
   assert.equal(captured[1].params.project_id, 'project_general');
   assert.equal(captured[1].params.memory_id, 10);
-  assert.deepEqual(result, { deleted: true, memory_id: 9 });
+  assert.deepEqual(result, { deleted: true, memory_id: 9, memory: null });
 });
 
 test('backend service deletes pending memories through the managed sidecar request path', async () => {
@@ -708,7 +660,9 @@ test('backend service sends one memory policy when the prompt duplicates history
   const chatRequest = capturedRequests.find((entry) => entry.method === 'chat.send');
   assert.deepEqual(chatRequest.params.memory_policy, {
     enabled: true,
-    include_response_style: true,
     project_id: 'project_general',
+    capture: 'auto',
+    recall: true,
+    policy_epoch: 0,
   });
 });

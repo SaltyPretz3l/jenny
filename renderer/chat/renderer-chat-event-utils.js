@@ -110,7 +110,6 @@
       refreshSnapshots,
       refreshApprovedMemories, refreshComposerToolToggles = async () => {},
       resetArtifactsState,
-      resetMemorySuggestionState,
       resetAttachmentQueue,
       closeComposerPopover,
       closeCommandPopover,
@@ -219,6 +218,7 @@
         featureFlags,
         navigate: (sectionId) => openSettingsSection(sectionId, { source: 'ollama_tray_remediation' }),
         appendClientLog,
+        dismissToast,
       });
     }
 
@@ -601,7 +601,7 @@
         contextPreferences: {
           historyScope: 'session',
           includePersonality: true,
-          includeMemory: true,
+          includeMemory: true, memoryOptOut: false,
         },
       };
       state.memoryManager.memories = [];
@@ -613,7 +613,6 @@
       state.memoryManager.searchQuery = '';
       state.memoryManager.draftsById.clear();
       state.memoryManager.pendingActionById.clear();
-      resetMemorySuggestionState?.();
       state.sendReceiptController?.clearFailedPayloads?.();
       globalThis.rendererComposerSessionStateController?.clearAll?.();
       resetAttachmentQueue();
@@ -700,9 +699,7 @@
             logRenderRafId = 0;
           }
         });
-        const subscribeDiagnostics = window.jennyShell.diagnostics?.logs?.onEntry
-          || window.jennyShell.logs.onAppend;
-        addCleanup(subscribeDiagnostics((entry) => {
+        addCleanup(window.jennyShell.diagnostics.logs.onEntry((entry) => {
           pushIncomingLog(entry);
           forwardOllamaTrayConflictLogEntry(entry);
           if (state.ui.activeView === 'logs') {

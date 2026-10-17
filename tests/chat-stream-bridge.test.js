@@ -829,3 +829,34 @@ test('early flush: a stream flushed by its own non-delta event starts counting a
     "a's first delta after its flush does not flush early",
   );
 });
+
+test('chat stream bridge hands the stream terminal inference summaries to the usage record, and a failing source never blocks it', () => {
+  const taken = [];
+  const recorded = [];
+  const summaries = { schema_version: 1, summaries: [], omitted_count: 0 };
+  let failing = false;
+  const bridge = createChatStreamBridge({
+    sendBridgeEvent() {},
+    log() {},
+    usageHistory: { recordTurnUsage(sessionId, usage, metadata) { recorded.push(metadata); } },
+    takeInferencePerformance(streamId) {
+      taken.push(streamId);
+      if (failing) throw new Error('intake unavailable');
+      return streamId === 'stream-perf' ? summaries : null;
+    },
+    now: () => 3000,
+  });
+  const run = (streamId) => {
+    bridge.handleEvent({ type: 'started', sessionId: 'session-perf', streamId, model: 'qwen' });
+    bridge.handleEvent({ type: 'complete', sessionId: 'session-perf', streamId, model: 'qwen', usage: { total_tokens: 3 } });
+  };
+  run('stream-perf');
+  run('stream-plain');
+  failing = true;
+  assert.doesNotThrow(() => run('stream-failing'));
+  assert.deepEqual(taken, ['stream-perf', 'stream-plain', 'stream-failing']);
+  assert.equal(recorded.length, 3, 'every terminal turn still records its usage');
+  assert.equal(recorded[0].inferencePerformance, summaries);
+  assert.equal(Object.hasOwn(recorded[1], 'inferencePerformance'), false, 'no summaries, no field');
+  assert.equal(Object.hasOwn(recorded[2], 'inferencePerformance'), false);
+});

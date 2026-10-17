@@ -14,7 +14,7 @@ const {
 } = require('../services/backend/packaged-sidecar-launch');
 
 // The real API_VERSION used by the module under test — keep in sync with sidecar-client.js
-const API_VERSION = '2026-08-17';
+const API_VERSION = '2026-10-15';
 
 // sha256 of 0 bytes — matches what buildFakeFs produces via readSync returning 0
 const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';

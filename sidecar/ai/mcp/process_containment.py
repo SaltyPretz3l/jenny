@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover - Windows.
     _resource = None  # type: ignore[assignment]
 
 from sidecar.ai.config import MCPServerConfig, read_environment_value
+from sidecar.ai.config_parsing import mcp_env_key_rejection
 from sidecar.ai.mcp.builtin_command_discovery import discover_command_directories
 from sidecar.ai.tools.builtins.python_runtime.job_object import JobObject
 from sidecar.ai.tools.catalog import BUILTIN_MCP_SERVER_NAME
@@ -195,6 +196,11 @@ def _minimal_env(
         # under the job memory cap that allocation fails and numpy cannot
         # import at all. One BLAS thread keeps the OCR stack loadable.
         env["OPENBLAS_NUM_THREADS"] = "1"
+    # Row env is add-only after the scrub; the reserved rule is re-checked here
+    # so a config built outside the parser still cannot steer PATH or loaders.
+    for key, value in config.env:
+        if key not in env and mcp_env_key_rejection(key) is None:
+            env[key] = value
     return env
 
 

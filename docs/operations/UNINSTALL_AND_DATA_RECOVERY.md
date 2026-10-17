@@ -28,6 +28,29 @@ data under `~/.companion`, and Jenny-installed Ollama under
 
 ## Entry points
 
+The one-command installers preserve the same profile and model ownership rules.
+Windows uses the existing Installed apps removal entry. macOS places the
+app bundle in `/Applications` or `~/Applications`; move it to Trash for app-only
+removal, or use Jenny's in-app data assistant first. The standalone uninstall
+helper remains available in the DMG for users who want that entrypoint.
+Both POSIX entrypoints also create `~/.local/share/jenny` for their temporary
+`.install-lock` directory. Normal cleanup removes that empty lock; after an
+interruption, confirm no installer is running before removing only the empty
+lock directory. Windows retains the inert `%LOCALAPPDATA%\Jenny-install.lock`
+file after its exclusive handle closes; it can be removed when no installer is
+running. Never delete the surrounding runtime/profile directory as lock cleanup.
+
+On Debian/Ubuntu, remove the one-command install with `sudo apt remove jenny`.
+For its per-user AppImage route, close Jenny and delete
+`~/.local/share/jenny/app/Jenny.AppImage`, `~/.local/bin/jenny`, and
+`$XDG_DATA_HOME/applications/jenny.desktop` (`~/.local/share/applications` when
+`XDG_DATA_HOME` is unset or not absolute). The latter two contain the marker
+`# Jenny one-command installer`; remove only those owned launchers. A deb install
+over an earlier AppImage retargets those owned launchers to `/opt/Jenny/jenny`;
+delete them as well after `apt remove`. Do not delete
+the surrounding `~/.local/share/jenny` tree: it can contain other Jenny runtime
+data. Removing these app files preserves chats, settings, models and workspaces.
+
 - Settings -> Data & Privacy: create or restore archives and
   open the platform's supported removal entry point. On Windows this opens
   Installed apps; on macOS it identifies the signed disk-image helper; clones
@@ -75,6 +98,8 @@ elsewhere, so remove it by hand with Jenny closed:
 macOS and Linux.
 
 Native image generation now uses an application-owned engine under `<userData>/engines` and disposable `image-engine-scratch` data, which are known profile cleanup targets. Model weights under `<userData>/models` or configured external model paths remain outside cleanup and archive scope. Generated image attachments stay with canonical managed media. This ownership is separate from the retained legacy `.companion/image-gen` directory above.
+
+Two profile files are derived indexes the sidecar rebuilds from canonical data: `semantic-catalog.db` (the Knowledge semantic catalog) and `conversation-index.db` (the chat index), each with its `-wal`/`-shm` files. Archives never include them, profile restore never writes them and removes any left from the pre-restore profile when it promotes, their presence never makes a profile non-fresh, and cleanup and uninstall remove them along with damaged copies the sidecar set aside as `<name>.corrupt-<UTC timestamp>`.
 
 ## Restore behavior
 

@@ -324,10 +324,10 @@
             '{count} chat moves to General. The folder and its files stay on your disk.',
             '{count} chats move to General. The folder and its files stay on your disk.');
         const memories = deleteMemoryCount === null
-          ? jt('settings.projects.deleteConfirmMemories', 'Its memories and knowledge folders move to General.')
+          ? jt('settings.projects.deleteConfirmMemories', 'Its memories are archived with it; its knowledge folders move to General.')
           : jtn('settings.projects.deleteConfirmMemoryCount', deleteMemoryCount, { count: deleteMemoryCount },
-            "{count} memory and the project's knowledge folders move to General.",
-            "{count} memories and the project's knowledge folders move to General.");
+            '{count} memory is archived with it; its knowledge folders move to General.',
+            '{count} memories are archived with it; its knowledge folders move to General.');
         confirm = '<div class="projects-confirm" role="group" aria-labelledby="projectsConfirmHeading">'
           + '<p id="projectsConfirmHeading"><strong>' + escapeHtml(jt('settings.projects.deleteConfirmTitle', 'Delete "{name}"?', { name })) + '</strong></p>'
           + '<p>' + escapeHtml(consequence) + ' ' + escapeHtml(memories) + '</p>'
@@ -668,6 +668,9 @@
       }
       status = jtn('settings.projects.deleted', moved, { name: project.name, count: moved },
         'Deleted "{name}". {count} chat moved to General.', 'Deleted "{name}". {count} chats moved to General.');
+      if (result.memory_outcome === 'pending') {
+        status += ' ' + jt('settings.projects.memoriesPending', 'Its memories will be archived when the engine is back.');
+      }
       statusTone = 'success';
       await syncAfterMutation();
     }
@@ -721,7 +724,7 @@
       flushQueuedRefresh();
     }
 
-    // The confirm names how many memories move (N5). The approved list carries
+    // The confirm names how many memories are archived (N5). The approved list carries
     // each memory's project; a failed or missing read keeps the generic line.
     function readDeleteMemoryCount(projectId) {
       deleteMemoryCount = null;

@@ -6,7 +6,7 @@ import pytest
 
 from sidecar.ai.memory.contracts import (
     MAX_LESSON_TEXT_CHARS,
-    build_content_digest,
+    build_text_digest,
     is_content_digest,
     normalize_positive_limit,
     require_bounded_text,
@@ -15,8 +15,8 @@ from sidecar.ai.memory.contracts import (
 
 
 def test_content_digest_is_stable_normalized_and_non_plaintext() -> None:
-    first = build_content_digest(" Preference ", "The user   prefers tea")
-    second = build_content_digest("preference", "the user prefers tea.")
+    first = build_text_digest("The user   prefers tea")
+    second = build_text_digest("the user prefers tea.")
 
     assert first == second
     assert is_content_digest(first)

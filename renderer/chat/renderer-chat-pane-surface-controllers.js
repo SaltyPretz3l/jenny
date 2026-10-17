@@ -34,6 +34,74 @@
 
   const PIN_PINNABLE_SELECTOR = '.chat-entry[data-message-role="user"]';
   const PIN_TOP_OFFSET = 88;
+  const UTILITY_RESERVE_PROPERTY = '--chat-utility-reserve';
+  const UTILITY_RESERVE_GAP_PX = 4;
+  const SESSION_RAIL_REFLOW_EVENT = 'session-rail-reflow';
+
+  /* Row 59 checkpoint 1: the transcript utilities float over the end of the
+     pane's stage, and the pane-relative gutter (16-40px) is narrower than a
+     labelled button. The pane publishes how far the cluster reaches in from the
+     stage's end edge as --chat-utility-reserve; styles/chat-panes.css makes the
+     one-pane gutter at least that wide on both sides, so the measure clears the
+     cluster and the composer keeps the measure's edges. 0 when the cluster
+     shows nothing. Both nodes arrive in the pane's dom bundle; the property is
+     set on their shared parent, the pane. A hidden view (0-wide stage) keeps the
+     last value, so returning to the chat does not reflow twice; a real change is
+     bracketed by the pane's reader anchor (the coordinator's own capture and
+     restore), so the reader does not drift. Returns a disposer. */
+  function observeUtilityReserve(stage, cluster, windowRef, scrollCoordinator) {
+    const pane = cluster && cluster.parentElement;
+    const Observer = windowRef && windowRef.ResizeObserver;
+    if (!stage || !pane || pane !== stage.parentElement || typeof Observer !== 'function') return noop;
+    let applied = null;
+    function measure() {
+      const edge = stage.getBoundingClientRect();
+      if (!(edge.width > 0)) return;
+      const box = cluster.getBoundingClientRect();
+      const rtl = windowRef.getComputedStyle?.(stage)?.direction === 'rtl';
+      const reach = rtl ? box.right - edge.left : edge.right - box.left;
+      const reserve = box.width > 0 && box.height > 0 ? Math.max(0, Math.ceil(reach) + UTILITY_RESERVE_GAP_PX) : 0;
+      if (reserve === applied) return;
+      const anchored = applied !== null && scrollCoordinator?.captureReaderAnchor?.() === true;
+      applied = reserve;
+      pane.style.setProperty(UTILITY_RESERVE_PROPERTY, `${reserve}px`);
+      if (anchored) {
+        void stage.offsetWidth;
+        scrollCoordinator.restoreReaderAnchor?.();
+      }
+    }
+    const observer = new Observer(measure);
+    observer.observe(cluster);
+    observer.observe(stage);
+    return function disposeUtilityReserve() {
+      observer.disconnect();
+      pane.style.removeProperty(UTILITY_RESERVE_PROPERTY);
+    };
+  }
+
+  /* Row 59 checkpoint 2: the session rail docking in or out changes the pane's reading width.
+     The rail controller (renderer-session-rail.js) brackets that change with a `session-rail-reflow`
+     notice on the pane ({phase: 'before' | 'after'}); this pane's own scroll coordinator captures
+     the reader's anchor before and restores it after, the same capture/restore the utility reserve
+     and the side-panel motion use (no second anchoring path). Returns a disposer. */
+  function observeSessionRailReflow(stage, scrollCoordinator) {
+    const pane = stage && stage.parentElement;
+    if (!pane || typeof pane.addEventListener !== 'function') return noop;
+    let anchored = false;
+    function onReflow(event) {
+      const phase = event && event.detail && event.detail.phase;
+      if (phase === 'before') {
+        anchored = scrollCoordinator?.captureReaderAnchor?.() === true;
+      } else if (phase === 'after') {
+        if (anchored) scrollCoordinator.restoreReaderAnchor?.();
+        anchored = false;
+      }
+    }
+    pane.addEventListener(SESSION_RAIL_REFLOW_EVENT, onReflow);
+    return function disposeSessionRailReflow() {
+      pane.removeEventListener(SESSION_RAIL_REFLOW_EVENT, onReflow);
+    };
+  }
 
   /* The composition destructured the viewport controller with a default for
      every member so a null controller could not crash the shell. That contract
@@ -154,6 +222,8 @@
         })
       : null);
     scrollCoordinator?.setPinController?.(pinToTop);
+    const disposeUtilityReserve = observeUtilityReserve(dom.chatThreadStage, dom.chatTimelineUtilityCluster, opts.windowRef, scrollCoordinator);
+    const disposeSessionRailReflow = observeSessionRailReflow(dom.chatThreadStage, scrollCoordinator);
 
     /* The three used to be separate cleanup-registry entries, each wrapped in its own
        try/catch by renderer/app.js; fused into one dispose() they keep that isolation,
@@ -165,6 +235,8 @@
     function dispose() {
       if (disposed) return;
       disposed = true;
+      safely(disposeUtilityReserve);
+      safely(disposeSessionRailReflow);
       safely(() => pinToTop?.dispose?.());
       safely(() => viewportApi.disposeViewportController?.());
       safely(() => scrollCoordinator?.dispose?.());
@@ -175,5 +247,7 @@
 
   return {
     createChatPaneSurfaceControllers,
+    observeUtilityReserve,
+    observeSessionRailReflow,
   };
 });

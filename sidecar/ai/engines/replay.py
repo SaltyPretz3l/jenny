@@ -394,8 +394,10 @@ class ReplayEngine(BaseEngine):
         system: str = "",
         messages: Optional[List[EngineMessage]] = None,
         response_format: Optional["ResponseFormat"] = None,
+        cancel_handle: Any = None,
     ) -> str:
         _ = (prompt, max_tokens, temperature, reasoning_effort, prompt_cache_enabled, system)
+        _ = cancel_handle  # Scripted text: no transport to sever.
         call = self._resolve_call(messages)
         text = str(call.get("text") or "")
         json_mode = bool(response_format is not None and getattr(response_format, "is_json", False))

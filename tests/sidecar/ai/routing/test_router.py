@@ -188,10 +188,17 @@ class _PromptMemoryStore:
         self.recall_queries: list[str] = []
         self.recall_projects: list[str] = []
 
-    def recall_memories(
-        self, query: str, *, limit: int, project_id: str, include_general: bool = False
+    def recall_memories(  # noqa: PLR0913 - mirrors the store recall contract.
+        self,
+        query: str,
+        *,
+        limit: int,
+        project_id: str,
+        include_general: bool = False,
+        deadline: float | None = None,
+        clock: object = None,
     ) -> list[ApprovedMemory]:
-        _ = limit
+        _ = (limit, deadline, clock)
         assert include_general is True, "prompt recall layers the General project"
         self.recall_queries.append(query)
         self.recall_projects.append(project_id)
@@ -207,19 +214,11 @@ class _PromptMemoryStore:
                 confidence=0.9,
                 source_excerpt="User described an afternoon tea routine.",
                 content_fingerprint="tea-routine",
-                family_key="routine:tea",
                 provenance="test",
                 created_at="2026-08-23T00:00:00Z",
                 updated_at="2026-08-23T00:00:00Z",
             )
         ]
-
-    def get_recent_memories_by_kind(
-        self, lesson_kind: str, limit: int, *, project_id: str, include_general: bool = False
-    ) -> list[ApprovedMemory]:
-        _ = (lesson_kind, limit, include_general)
-        self.recall_projects.append(project_id)
-        return []
 
 
 def _budget_tool_descriptors(count: int = 15) -> dict[str, MCPToolDescriptor]:
@@ -449,7 +448,7 @@ def test_router_excludes_prompt_runtime_overlays_from_compaction_input(monkeypat
     assert "## Recalled Memories" in system_headings
     assert "## Context Pressure Advisory" in system_headings
     assert memory_store.recall_queries == [long_user_content.strip()]
-    assert memory_store.recall_projects == [GENERAL_PROJECT_ID, GENERAL_PROJECT_ID]
+    assert memory_store.recall_projects == [GENERAL_PROJECT_ID]
     started_event = next(
         event for event in events if isinstance(event, ContextCompactionStartedEvent)
     )
@@ -513,7 +512,7 @@ def test_router_returns_terminal_when_runtime_overlays_exceed_post_compaction_bu
     assert decision.terminal_error_retryable is False
     assert engine.last_kwargs == {}
     assert memory_store.recall_queries == ["hello"]
-    assert memory_store.recall_projects == [GENERAL_PROJECT_ID, GENERAL_PROJECT_ID]
+    assert memory_store.recall_projects == [GENERAL_PROJECT_ID]
 
 
 def test_router_streaming_runtime_uses_stream_with_tools() -> None:
@@ -3012,7 +3011,9 @@ def test_router_budget_warning_filters_tool_schemas_and_status_consistently(
     ]
 
     assert decision.response_text == "filtered"
-    assert len(full_schema_names) == 12
+    # Row 60: the stub-named recall tool sits outside the budget cap.
+    assert len(full_schema_names) == 13
+    assert "recall_tool_output" in full_schema_names
     assert "inspect_harness" not in full_schema_names
     assert "tool_search" in full_schema_names
     assert "mcp__budget__tool_14" in deferred_names
@@ -3091,7 +3092,8 @@ def test_router_budget_pressure_caps_tighten_with_level(
         schema["name"] for schema in engine.calls[0]["tools"] if "parameters" in schema
     ]
 
-    assert len(full_schema_names) == expected_full_schema_count
+    assert len(full_schema_names) == expected_full_schema_count + 1  # + recall (row 60)
+    assert "recall_tool_output" in full_schema_names
     assert "tool_search" in full_schema_names
     assert "mcp__budget__tool_14" not in full_schema_names
 
@@ -3197,9 +3199,10 @@ def test_router_tool_search_expands_budget_filtered_tool_schema() -> None:
         outcome for outcome in decision.tool_results if outcome.tool_name == "tool_search"
     )
     assert tool_search_outcome.metadata["discovered_tools"] == ["mcp__budget__tool_14"]
-    # Whole-prompt meter units: the 47,250 trigger plus 13 schemas x 500 reserve.
-    assert decision.compact_threshold_tokens == 47_250 + 13 * 500
-    assert decision.context_tool_overhead_tokens == 13 * 500
+    # Whole-prompt meter units: the trigger plus 14 schemas x 500 reserve (13 plus the
+    # row 60 recall tool, outside the cap); the extra schema lowers the 90% trigger by 450.
+    assert decision.compact_threshold_tokens == (47_250 - 450) + 14 * 500
+    assert decision.context_tool_overhead_tokens == 14 * 500
 
 
 def test_router_unavailable_tool_search_reports_plain_unavailable_result() -> None:
@@ -3614,7 +3617,9 @@ def test_router_sorts_tool_schemas_globally_by_name() -> None:
 
     assert decision.response_text == "Sorted."
     names = [schema["name"] for schema in engine.calls[0]["tools"]]
-    assert names == ["delegate", "glob_files", "mcp__alpha__tool", "read_file"]
+    assert names == [
+        "delegate", "glob_files", "mcp__alpha__tool", "memory", "read_file", "recall_tool_output",
+    ]
 
 
 def test_router_uses_engine_window_for_auto_deferral_when_config_is_unset(

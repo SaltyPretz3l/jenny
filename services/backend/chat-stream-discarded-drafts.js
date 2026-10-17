@@ -20,33 +20,48 @@ function normalizeDiscardedDrafts(value) {
   return { count: value.count, latest_reason: normalizeReason(value.latest_reason) };
 }
 
+// Persisted boundary completion (cp5a): completion_reason + completion_proposal_id.
+function completionMessageFields(completion) {
+  return completion?.reason && completion?.proposalId
+    ? { completion_reason: completion.reason, completion_proposal_id: completion.proposalId } : {};
+}
+
+// The same pair on the live chat-stream complete event.
+function completionEventFields(completion) {
+  return completion?.reason && completion?.proposalId
+    ? { completionReason: completion.reason, proposalId: completion.proposalId } : {};
+}
+
 // Terminal assistant-message fields shared by every final-message write.
-function buildTerminalMessageExtras({ resumableStop, discardedDrafts } = {}) {
+function buildTerminalMessageExtras({ resumableStop, discardedDrafts, completion } = {}) {
   const drafts = normalizeDiscardedDrafts(discardedDrafts);
   return {
     ...(resumableStop ? { resumable_stop: resumableStop } : {}),
     ...(drafts ? { discarded_drafts: drafts } : {}),
+    ...completionMessageFields(completion),
   };
 }
 
 // No text-bearing final assistant message was written (empty or reasoning-only
 // trailing slice): attach the receipt to the last persisted segment that has
 // text, since the receipt renders under an assistant text row.
-function patchLastSegmentDiscardedDrafts(store, sessionId, segmentIds, discardedDrafts) {
+function patchLastSegmentDiscardedDrafts(store, sessionId, segmentIds, discardedDrafts, completion = null) {
   const drafts = normalizeDiscardedDrafts(discardedDrafts);
+  const patch = { ...(drafts ? { discarded_drafts: drafts } : {}), ...completionMessageFields(completion) };
   const ids = Array.isArray(segmentIds) ? segmentIds : [];
-  if (!drafts || !ids.length || typeof store?.updateMessage !== 'function') return;
+  if (!Object.keys(patch).length || !ids.length || typeof store?.updateMessage !== 'function') return;
   const messages = typeof store.getSessionMessages === 'function' ? store.getSessionMessages(sessionId) : null;
   const contentById = new Map((Array.isArray(messages) ? messages : []).map((message) => [message?.id, message?.content]));
   const targetId = Array.isArray(messages)
     ? [...ids].reverse().find((id) => String(contentById.get(id) || '').trim())
     : ids[ids.length - 1];
-  if (targetId) store.updateMessage(sessionId, targetId, { discarded_drafts: drafts });
+  if (targetId) store.updateMessage(sessionId, targetId, patch);
 }
 
 module.exports = {
   noteDiscardedDraft,
   normalizeDiscardedDrafts,
   buildTerminalMessageExtras,
+  completionEventFields,
   patchLastSegmentDiscardedDrafts,
 };

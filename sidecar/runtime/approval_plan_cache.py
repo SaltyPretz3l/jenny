@@ -61,6 +61,7 @@ class ApprovalPlanCacheEntry:
     expires_at_monotonic: float
     session_id: str
     size_bytes: int
+    on_discard: Any = None
 
     def is_expired(self, *, now: float) -> bool:
         return now >= self.expires_at_monotonic
@@ -97,9 +98,8 @@ class ApprovalPlanCache:
     def _key(request_id: str, call_id: str) -> tuple[str, str]:
         return (str(request_id or "").strip(), str(call_id or "").strip())
 
-    def put(self, plan: Any, *, ttl_seconds: float) -> Any:
+    def put(self, plan: Any, *, ttl_seconds: float, on_discard: Any = None) -> Any:
         with self._lock:
-            self._purge_expired_locked()
             request_id = str(plan.request_id or "").strip()
             call_id = str(plan.call_id or "").strip()
             if not call_id:
@@ -114,7 +114,10 @@ class ApprovalPlanCache:
                     limit_bytes=self._max_bytes,
                 )
             key = (request_id, call_id)
-            self._remove_locked(key)
+            previous = self._remove_locked(key)
+            if on_discard is None and previous is not None:
+                on_discard = previous.on_discard
+            self._purge_expired_locked()
             session_id = str(getattr(plan, "session_id", None) or request_id).strip()
             self._entries[key] = ApprovalPlanCacheEntry(
                 plan=plan,
@@ -123,6 +126,7 @@ class ApprovalPlanCache:
                 ),
                 session_id=session_id,
                 size_bytes=size_bytes,
+                on_discard=on_discard,
             )
             self._total_bytes += size_bytes
             self._enforce_bounds_locked(session_id)
@@ -134,9 +138,16 @@ class ApprovalPlanCache:
             entry = self._remove_locked(self._key(request_id, call_id))
             return entry.plan if entry is not None else None
 
-    def evict(self, request_id: str, call_id: str) -> Any | None:
+    def take_for_handoff(self, request_id: str, call_id: str) -> Any | None:
+        """Transfer the named plan before expiry callbacks can terminate it."""
         with self._lock:
             entry = self._remove_locked(self._key(request_id, call_id))
+            self._purge_expired_locked()
+            return entry.plan if entry is not None else None
+
+    def evict(self, request_id: str, call_id: str) -> Any | None:
+        with self._lock:
+            entry = self._remove_locked(self._key(request_id, call_id), discard=True)
             return entry.plan if entry is not None else None
 
     def _purge_expired_locked(self) -> int:
@@ -151,6 +162,7 @@ class ApprovalPlanCache:
         key: tuple[str, str],
         *,
         reason: str | None = None,
+        discard: bool = False,
     ) -> ApprovalPlanCacheEntry | None:
         entry = self._entries.pop(key, None)
         if entry is None:
@@ -158,6 +170,8 @@ class ApprovalPlanCache:
         self._total_bytes = max(0, self._total_bytes - entry.size_bytes)
         if reason is not None:
             self._evictions[reason] += 1
+        if (discard or reason is not None) and callable(entry.on_discard):
+            entry.on_discard()
         return entry
 
     def _enforce_bounds_locked(self, session_id: str) -> None:

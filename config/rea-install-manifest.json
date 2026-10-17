@@ -1,0 +1,15 @@
+{
+  "package": "rea-agents",
+  "version": "6.4.0",
+  "tarballUrl": "https://registry.npmjs.org/rea-agents/-/rea-agents-6.4.0.tgz",
+  "tarballBytes": 1825761,
+  "sha256": "59eb1604b8db75f522d4a975c36ce6b4a2ad465e43bad165f9a8f728391db9b8",
+  "integrity": "sha512-Vj1zWfSlna5bphGoaoI/TcVBuYvze9u+OyPC3Shz8YkBqaCTqB4COnnRoX7XDwMpwI24ZlFEel2yEj0k8LTWEQ==",
+  "installedBytesApprox": 107000000,
+  "nodeRange": "^22.19.0 || ^24.11.0 || >=26.0.0",
+  "nodeRoot": "C:\\Program Files\\nodejs",
+  "skill": "reverse-engineer-anything",
+  "manualUrl": "https://www.npmjs.com/package/rea-agents",
+  "source": "registry.npmjs.org",
+  "pinnedAt": "2026-10-14"
+}

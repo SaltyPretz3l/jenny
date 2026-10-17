@@ -30,7 +30,14 @@ DESKTOP_SANDBOX_TYPED_FILE_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 DESKTOP_SANDBOX_ELECTRON_TOOL_NAMES: frozenset[str] = frozenset(
-    {"ask_user", "exit_plan_mode", "run_command"}
+    {
+        "ask_user",
+        "exit_plan_mode",
+        "propose_command",
+        "propose_session",
+        "complete_session_handoff",
+        "run_command",
+    }
 )
 DESKTOP_SANDBOX_ALLOWED_TOOL_NAMES: frozenset[str] = (
     DESKTOP_SANDBOX_TYPED_FILE_TOOL_NAMES | DESKTOP_SANDBOX_ELECTRON_TOOL_NAMES
@@ -211,6 +218,9 @@ def desktop_tool_uses_electron_bridge(tool_name: str, config: Any = None) -> boo
         "run_command",
         "ask_user",
         "exit_plan_mode",
+        "propose_command",
+        "propose_session",
+        "complete_session_handoff",
     }
 
 

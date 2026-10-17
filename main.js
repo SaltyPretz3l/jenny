@@ -11,7 +11,6 @@ const { createSuggestionCache, clearSuggestionCache } = require('./services/back
 const { ensureDesktopShortcut, ensureDevStartMenuShortcut, resolveAppUserModelId } = require('./services/desktop-shortcut');
 const { createFeatureSettingsFacade } = require('./services/main/feature-settings-facade');
 const { stopRuntimeWithDependencies } = require('./services/runtime-stop');
-const { normalizeLogEntry, toPersistedMainLog } = require('./services/log-entry-normalizer');
 const { createMainErrorHardening } = require('./services/main-error-hardening');
 const { normalizeCrashDetail, readSidecarLogTail, showSidecarCrashDialog } = require('./services/sidecar-crash-dialog');
 const { getBridgeChannel } = require('./services/ipc-contract');
@@ -79,6 +78,7 @@ let skillsService;
 let knowledgeService;
 let setupService;
 let ollamaInstallService;
+let reaInstallService;
 let mcpDiscoveryService;
 let attachmentAssetStore;
 let artifactService;
@@ -162,7 +162,8 @@ const getLogRedactionPrefixes = createLogRedactionPrefixesProvider({
 
 function log(level, event, details = {}) {
   const redactionPrefixes = getLogRedactionPrefixes();
-  const entry = normalizeLogEntry({
+  // DiagnosticLogService owns normalizeLogEntry, persistence, and broadcast.
+  return logStore.append({
     layer: 'electron',
     component: 'electron.main',
     level,
@@ -172,17 +173,7 @@ function log(level, event, details = {}) {
     message: String(details && details.message || '').trim() || String(details && details.error || '').trim() || (details && typeof details.line === 'string' ? details.line.trim() : '') || String(event || '').trim() || 'main event',
     status: String(details && details.status || '').trim() || 'ok',
     redaction_mode: 'redacted',
-    redaction_prefixes: redactionPrefixes,
-  });
-  const persisted = logStore.append(toPersistedMainLog(level, entry));
-  if (typeof logStore.getSnapshot === 'function') {
-    return persisted;
-  }
-  if (processLogWriter && typeof processLogWriter.write === 'function') {
-    processLogWriter.write(persisted);
-  }
-  sendBridgeEvent('logs.onAppend', persisted);
-  return persisted;
+  }, { defaults: { redaction_prefixes: redactionPrefixes } });
 }
 
 function getMainWindowStatePayload() {
@@ -274,6 +265,7 @@ const createBackendService = () => {
     getMainWindow: () => mainWindow,
     getPackagedSmokeController: () => packagedSmokeController,
     getLlamaServerManager: () => getRuntimeShutdownController().getLlamaServerManager(),
+    getNinferManager: () => getRuntimeShutdownController().getNinferManager(),
     buildEffectiveFeatureFlags,
     buildFeatureStatePayload,
     refreshGpuMemorySample,
@@ -329,12 +321,15 @@ const createRuntimeServices = () => {
   windowStateService = created.windowStateService;
   windowStateDisplayUnsubscribe = created.windowStateDisplayUnsubscribe;
   updateService = created.updateService;
+  updateService.authorizeQuit = () => workspaceProcessServices.windowExitGuard?.authorizeNextQuit?.();
+  updateService.revokeQuitAuthorization = () => workspaceProcessServices.windowExitGuard?.revokeQuitAuthorization?.();
   shellConfigService = created.shellConfigService;
   skillsService = created.skillsService;
   knowledgeService = created.knowledgeService;
   mcpDiscoveryService = created.mcpDiscoveryService;
   setupService = created.setupService;
   ollamaInstallService = created.ollamaInstallService;
+  reaInstallService = created.reaInstallService;
   attachmentAssetStore = created.attachmentAssetStore;
   personalityWorkspace = created.personalityWorkspace;
   artifactService = created.artifactService;
@@ -402,6 +397,7 @@ const registerIpcHandlers = () => mainIpcRegistration.registerMainIpcHandlers({
   nativeImage,
   log,
   getLlamaServerManager: () => getRuntimeShutdownController().getLlamaServerManager(),
+  getNinferManager: () => getRuntimeShutdownController().getNinferManager(),
   getMainLifecycle: () => mainLifecycle,
   getWindowState: getMainWindowStatePayload,
   // A Retry after a failed boot must also finish a pending restore promotion.
@@ -414,6 +410,7 @@ const registerIpcHandlers = () => mainIpcRegistration.registerMainIpcHandlers({
   usageHistory,
   setupService,
   ollamaInstallService,
+  reaInstallService,
   mcpDiscoveryService,
   schedulerService,
   linkStatusService,
@@ -433,7 +430,6 @@ const registerIpcHandlers = () => mainIpcRegistration.registerMainIpcHandlers({
   sendBridgeEvent,
   workspaceSnapshotStore: workspaceIdeSnapshotStore,
   getDisplayMediaSourceHandler: () => displayMediaSourceHandler,
-  getProcessLogWriter: () => processLogWriter,
   getDiagnosticLogService: () => logStore,
   getLogRedactionPrefixes,
 });
@@ -611,6 +607,7 @@ function startMainProcess() {
             appExit: (exitCode = 0) => app.exit(exitCode),
             stopRuntime: (context) => stopRuntimeBeforeQuit(context),
             onEmergencyShutdown: runEmergencyRuntimeShutdownSync,
+            quitPreflight: () => workspaceProcessServices.windowExitGuard?.requestQuitPreflight?.() ?? true,
             log,
           });
           registerMainProcessLifecycleHandlers(app, mainLifecycle);

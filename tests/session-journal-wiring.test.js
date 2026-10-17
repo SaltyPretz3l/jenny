@@ -145,7 +145,7 @@ test('dispose leaves a complete v24 base file', () => {
   store.dispose();
 
   const base = readBase(profile, id);
-  assert.equal(base.schema_version, 24);
+  assert.equal(base.schema_version, 25);
   assert.ok(base.journal_epoch >= 1);
   assert.equal(base.session.messages.length, 6);
   assert.equal(JSON.stringify(Object.keys(base)), JSON.stringify(['journal_epoch', 'schema_version', 'session']));
@@ -414,7 +414,7 @@ test('a journaled chat found under an older index is migrated with its journaled
   assert.deepEqual(messageIds(second, id), ['base_0', 'tail_0', 'tail_1', 'tail_2']);
   assert.equal(second.flushSession(id), true);
   assert.deepEqual(messageIds(open(profile), id), ['base_0', 'tail_0', 'tail_1', 'tail_2']);
-  assert.equal(JSON.parse(fs.readFileSync(indexPath, 'utf8')).schema_version, 24);
+  assert.equal(JSON.parse(fs.readFileSync(indexPath, 'utf8')).schema_version, 25);
 });
 
 test('the legacy prune removes only old journals that no read can reach', async () => {

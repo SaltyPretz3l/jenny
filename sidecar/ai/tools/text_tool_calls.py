@@ -4,8 +4,11 @@ Qwen3-Coder-style chat templates render a call as
 ``<tool_call><function=NAME><parameter=KEY>value</parameter></function></tool_call>``.
 The server parses that back into native ``tool_calls`` only when the request
 offers tools; on a tools-less leg (the turn's tool budget is spent) the markup
-comes back verbatim as content (HB-031). This module only finds and strips it.
-Nothing here dispatches a call: running one would bypass the per-turn tool cap.
+comes back verbatim as content (HB-031), and so does a call to a tool the
+request did not offer (deferred or budget-filtered). This module only finds
+and strips it; nothing here dispatches a call. On a leg that still has tools,
+``tool_loop_text_tool_calls.recover_text_tool_calls`` hands complete calls to the
+normal dispatch path, where the per-turn cap and approvals still apply.
 
 Only names in ``known_names`` count, markdown code (fenced blocks and inline
 backticks) is skipped, and an opener that never closes counts only when it is

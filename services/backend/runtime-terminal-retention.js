@@ -7,8 +7,10 @@ function createRuntimeTerminalRetention(service, runtime) {
   let afterSequence = 0;
   let running = false;
   function settled(work, cutoff) {
-    if (work.input?.schema_version !== 1 || !['immediate_chat', 'root_chat', 'child_chat'].includes(work.input.kind)
-      || work.input.request?.sessionId !== work.session_id
+    // An exact-command Run (command_proposal) is retained and compacted like a settled chat turn.
+    const chatShaped = ['immediate_chat', 'root_chat', 'child_chat'].includes(work.input?.kind)
+      && work.input.request?.sessionId === work.session_id;
+    if (work.input?.schema_version !== 1 || !(chatShaped || work.input.kind === 'command_proposal')
       || !TERMINAL.has(work.status) || Date.parse(work.transition.at) > cutoff) return false;
     if (runtime.scheduler.hasSessionActiveWork(work.session_id)
       || service.sessionTurnActors?.getQueuedSubmissionBlock(work.session_id)

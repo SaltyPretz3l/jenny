@@ -97,6 +97,127 @@ def _dropped_records(caplog) -> list[logging.LogRecord]:
     ]
 
 
+_RESUME_PROSE = "Let me first check how the offline note renders, then run the previews."
+# Trimmed from the 2026-10-15 resume leak: grep_search was budget-filtered out of
+# the request, so vLLM returned the call as content and the turn ended on it.
+_GREP_LEAK = (
+    f"{_RESUME_PROSE}\n\n<tool_call>\n<function=grep_search>\n"
+    "<parameter=pattern>\noffline|lastSeen\n</parameter>\n"
+    "<parameter=path>\ngames/green-perch/index.html\n</parameter>\n"
+    "<parameter=context_lines>\n2\n</parameter>\n"
+    "</function>\n</tool_call>"
+)
+
+
+def _grep_search_descriptor() -> MCPToolDescriptor:
+    return MCPToolDescriptor(
+        name="grep_search",
+        description="Search files.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string"},
+                "path": {"type": "string"},
+                "context_lines": {"type": "integer"},
+            },
+        },
+        side_effecting=False,
+        server_name="stub",
+    )
+
+
+def _decide_text_call(plans: list[_ToolPlan], runtime: LoopRuntime, mcp_client: _StubMCPClient):
+    engine = _ToolLoopEngine(plans=plans)
+    decision = _build_router(
+        engine=engine,
+        mcp_client=mcp_client,
+        extra_snapshot_tools=("grep_search",),
+        engine_type="openai-compatible",
+    ).build_chat_decision(
+        request_id=runtime.request_id,
+        messages=[{"role": "user", "content": "resume"}],
+        latest_user_content="resume",
+        mode="assist",
+        approvals_pre_granted=True,
+        runtime=runtime,
+    )
+    return decision, engine
+
+
+def test_text_call_on_a_tools_leg_is_recovered_and_dispatched(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="sidecar.ai.routing.tool_loop")
+    mcp_client = _StubMCPClient((_grep_search_descriptor(),))
+    events: list[object] = []
+    runtime = LoopRuntime(
+        emit=events.append, request_id="req_text_call_recovered", max_iterations=4, streaming=True
+    )
+
+    decision, engine = _decide_text_call(
+        [
+            _ToolPlan(result=GenerationResult(content=_GREP_LEAK, finish_reason="stop")),
+            _ToolPlan(result=GenerationResult(content="The note renders.", finish_reason="stop")),
+        ],
+        runtime,
+        mcp_client,
+    )
+
+    assert mcp_client.executions == [
+        (
+            "grep_search",
+            {"pattern": "offline|lastSeen", "path": "games/green-perch/index.html", "context_lines": 2},
+        )
+    ]
+    assert engine.call_count == 2, "the turn continues after the recovered call"
+    assert decision.response_text.endswith("The note renders.")
+    _assert_no_markup(decision.response_text)
+    resets = [index for index, event in enumerate(events) if isinstance(event, StreamResetEvent)]
+    replaced = next(i for i in resets if events[i].reason == "deterministic_replacement")
+    following = [i for i in resets if i > replaced]
+    window = events[replaced + 1 : following[0] if following else len(events)]
+    streamed = "".join(event.delta for event in window if isinstance(event, TokenDeltaEvent))
+    assert streamed == _RESUME_PROSE, "the live row keeps the prose, not the markup"
+    (record,) = [
+        record for record in caplog.records
+        if record.__dict__.get("event") == "ai.router.text_tool_call_recovered"
+    ]
+    assert record.__dict__["data"] == {"tools": ["grep_search"], "shape": "qwen_xml"}
+
+
+def test_truncated_text_call_is_not_recovered() -> None:
+    mcp_client = _StubMCPClient((_grep_search_descriptor(),))
+    runtime = LoopRuntime(emit=lambda _event: None, request_id="req_text_call_truncated", max_iterations=4)
+
+    _decision, engine = _decide_text_call(
+        [_ToolPlan(result=GenerationResult(content=_GREP_LEAK[:-40], finish_reason="stop"))],
+        runtime,
+        mcp_client,
+    )
+
+    assert mcp_client.executions == []
+    assert engine.call_count == 1
+
+
+def test_text_call_after_the_cap_is_still_dropped_not_recovered() -> None:
+    mcp_client = _StubMCPClient((_grep_search_descriptor(),))
+    runtime = LoopRuntime(
+        emit=lambda _event: None,
+        request_id="req_text_call_capped",
+        max_iterations=3,
+        tool_call_limit=1,
+        tool_calls_consumed=1,
+    )
+
+    decision, _engine = _decide_text_call(
+        [_ToolPlan(result=GenerationResult(content=_GREP_LEAK, finish_reason="stop"))],
+        runtime,
+        mcp_client,
+    )
+
+    assert mcp_client.executions == []
+    assert decision.resumable_stop == "tool_cap"
+    _assert_no_markup(decision.response_text)
+
+
 def test_resumed_leg_with_a_spent_tool_budget_ends_as_tool_cap() -> None:
     # The approval / continuation resume builds a new run without the
     # tools-stripped flag; the spent runtime budget alone must arm the ending.

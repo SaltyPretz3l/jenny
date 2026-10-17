@@ -39,6 +39,7 @@
   const turnRowBubbleUtils = resolveTurnRowModule('rendererTurnRowBubbleUtils', './renderer-turn-row-bubble-utils');
   const resumeTurnAffordance = resolveTurnRowModule('rendererResumeTurnAffordance', './renderer-resume-turn-affordance');
   const toolCallUtils = resolveTurnRowModule('toolCallUtils', './tool-call-utils');
+  const interactiveCards = resolveTurnRowModule('rendererTurnRowInteractiveCards', './renderer-turn-row-interactive-cards');
   const planDocumentUtils = resolveTurnRowModule('rendererPlanDocument', '../features/renderer-plan-document');
 
   // Class-E projected-row call-id resolver (2-key subset, payload-first), shared with
@@ -279,6 +280,9 @@
       normalizeId,
       normalizeReasoningPhase,
     } = turnRowModelUtils;
+    const { buildInteractiveCardMarkup } = interactiveCards.createInteractiveCards({
+      escapeHtml, normalizeId, renderUserQuestionsBlock, renderUserQuestionsReceipt,
+    });
     const {
       buildApprovalGapMarkup,
       buildToolCallRowMarkup: buildDefaultToolCallRowMarkup,
@@ -341,9 +345,11 @@
       const bubbleMarkup = text.trim()
         ? (() => {
             const bubbleClassName = `chat-bubble chat-bubble-markdown${isStreaming ? ' chat-bubble-streaming' : ''}`;
-            const bubbleBodyHtml = isStreaming
+            const renderedHtml = isStreaming
               ? buildStreamingBubbleHtml(text, renderOptions)
               : renderMarkdown(stripCitationMarkersForDisplay(text));
+            const imageReferences = resolveTurnRowModule('rendererArtifactImageReferences', './renderer-artifact-image-references');
+            const bubbleBodyHtml = imageReferences?.createRewriter(messages, sourceMessage, renderOptions.sessionId, globalThis.document)(renderedHtml) ?? renderedHtml;
             const streamingAttrs = isStreaming
               ? ` data-streaming-bubble="true" role="status" aria-live="polite" aria-atomic="false" aria-label="${escapeHtml(jt('chat.turnRow.streamingAssistantResponse', 'Assistant response (streaming)'))}"`
               : '';
@@ -511,52 +517,6 @@
       };
     }
 
-    function buildUserQuestionsMarkup(toolCallMessage, row) {
-      const toolCall = toolCallMessage && toolCallMessage.tool_call && typeof toolCallMessage.tool_call === 'object'
-        ? toolCallMessage.tool_call : {};
-      const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
-      const status = normalizeId(payload.state || toolCall.status);
-      const toolName = normalizeId(payload.tool_name || toolCall.tool_name);
-      const questions = Array.isArray(payload.user_questions) ? payload.user_questions : toolCall.user_questions;
-      if (toolName !== 'ask_user') {
-        return '';
-      }
-      // Stale demotion is client-side (dead waiter) — no tool_result event ever
-      // lands, so the projector keeps deriving payload.state='pending_user_input'
-      // from the unsettled event stream. The persisted stale mark must therefore
-      // outrank the pending state, or a full row re-render (scroll recycle,
-      // resize, later stream event) resurrects the interactive dead card.
-      const staleKind = normalizeId(payload.user_questions_result_kind || toolCall.user_questions_result_kind);
-      if (status === 'pending_user_input' && staleKind !== 'user_questions_stale') {
-        return renderUserQuestionsBlock ? renderUserQuestionsBlock({
-          toolCallId: normalizeId(payload.tool_call_id || toolCall.call_id),
-          questionRef: normalizeId(payload.question_ref || toolCall.question_ref),
-          questions: Array.isArray(questions) ? questions : [],
-        }, { escapeHtml }) : '';
-      }
-      if (staleKind === 'user_questions_stale') {
-        return renderUserQuestionsReceipt && Array.isArray(questions) ? renderUserQuestionsReceipt({
-          toolCallId: normalizeId(payload.tool_call_id || toolCall.call_id),
-          questions,
-          stale: true,
-        }, { escapeHtml }) : '';
-      }
-      const resultKind = normalizeId(payload.user_questions_result_kind);
-      const answered = resultKind === 'user_questions_answered';
-      if (!renderUserQuestionsReceipt
-        || !Array.isArray(questions)
-        || (answered && !Array.isArray(payload.user_questions_answers))
-        || (!answered && resultKind !== 'user_questions_declined')) {
-        return '';
-      }
-      return renderUserQuestionsReceipt({
-        toolCallId: normalizeId(payload.tool_call_id || toolCall.call_id),
-        questions,
-        resultKind,
-        answers: Array.isArray(payload.user_questions_answers) ? payload.user_questions_answers : [],
-      }, { escapeHtml });
-    }
-
     function buildToolBlockOptions(row, renderOptions, extra) {
       return {
         projectedToolRow: row,
@@ -584,7 +544,7 @@
     function buildToolCallRowMarkup(row, messages, options) {
       const renderOptions = options || {};
       const toolCallMessage = buildToolCallMessage(row, messages, renderOptions);
-      return buildUserQuestionsMarkup(toolCallMessage, row)
+      return buildInteractiveCardMarkup(toolCallMessage, row, messages, renderOptions)
         || buildSubagentSummaryRowMarkup(toolCallMessage, row, messages, renderOptions)
         || buildDefaultToolCallRowMarkup(row, messages, renderOptions);
     }
@@ -592,7 +552,7 @@
     function buildToolStepRowMarkup(row, messages, options) {
       const renderOptions = options || {};
       const toolCallMessage = buildToolCallMessage(row, messages, renderOptions);
-      const questionMarkup = buildUserQuestionsMarkup(toolCallMessage, row);
+      const questionMarkup = buildInteractiveCardMarkup(toolCallMessage, row, messages, renderOptions);
       if (questionMarkup) {
         return questionMarkup;
       }

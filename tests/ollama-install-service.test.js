@@ -80,8 +80,14 @@ function makeService(opts = {}) {
     unlinkSync(p) {
       fsState.unlinked.push(p);
     },
-    rmSync(p) {
+    // Temp cleanup goes through removeTreeSync (never Node's rm): an empty fake temp directory.
+    lstatSync: () => ({ isDirectory: () => true, isSymbolicLink: () => false }),
+    readdirSync: () => [],
+    rmdirSync(p) {
       fsState.unlinked.push(p);
+    },
+    rmSync() {
+      throw new Error('cleanup must not use Node rm: it follows junctions after EPERM');
     },
     existsSync: opts.fileExists || (() => false),
   };
@@ -401,7 +407,8 @@ test('installOllama fails closed on hash mismatch and never runs the installer',
   assert.equal(result.status, 'failed');
   assert.equal(result.code, 'hash_mismatch');
   assert.equal(getSpawnCalls(), 0, 'must not spawn installer on hash mismatch');
-  assert.equal(fsState.unlinked.length, 1, 'temp installer must be deleted');
+  assert.deepEqual(fsState.unlinked.map((p) => path.resolve(p)), [path.resolve('C:/temp/jenny-ollama-test')],
+    'temp installer directory must be deleted');
 });
 
 test('installOllama reports installer_failed on a non-zero exit', async () => {

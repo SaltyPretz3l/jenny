@@ -1,12 +1,13 @@
 'use strict';
 
 const { SessionExecutionAuthority } = require('../backend/session-execution-authority');
+const { externalMcpExecutionDescriptor } = require('../backend/execution-tool-descriptors');
 const { ProjectApplicationService } = require('./project-application-service');
 const { GENERAL_PROJECT_ID } = require('./project-schema');
 const { RuntimeApplicationService } = require('../session-runtime/application-service');
 const { ensureWorkspaceProject } = require('./workspace-project-provisioner');
 const { getConfiguredToolsWorkspaceRoot } = require('../backend/managed-sidecar-config');
-const { moveProjectMemories } = require('../backend/backend-memory');
+const { archiveProjectMemories } = require('../backend/backend-memory');
 const { resolveSessionToolDenyList } = require('../backend/backend-service-utils');
 
 function isSessionBusy(service, sessionId) {
@@ -44,6 +45,11 @@ function initializeSessionExecutionAuthority(service) {
         : service.sessionStore.getSession(sessionId),
       service.currentStatus?.tools_status
     ),
+    resolveExternalToolDescriptor: (toolName) => externalMcpExecutionDescriptor(toolName, {
+      statusEntry: service.currentStatus?.tools_status?.[toolName],
+      approvedServerNames: new Set((service.mcpDiscoveryService?.getSidecarConfig?.()?.mcp_servers || [])
+        .map((row) => String(row?.name || '').trim()).filter(Boolean)),
+    }),
   });
   // The Workspace folder is the project: the root commit and the "use this
   // folder" affordance both resolve through this one seam.
@@ -59,16 +65,15 @@ function initializeSessionExecutionAuthority(service) {
       getConfiguredToolsWorkspaceRoot(service), 'session_adopt_workspace'
     ),
     resolveWorkspaceRoot: () => getConfiguredToolsWorkspaceRoot(service),
-    // Deleting a project moves its knowledge folders and memories to General.
+    // Deleting a project moves its knowledge folders to General and archives its memories.
     knowledgeService: service.knowledgeService || null,
-    moveProjectMemories: ({ from_project_id: from, to_project_id: to }) => (
-      moveProjectMemories(service, from, to)
-    ),
+    archiveProjectMemories: ({ project_id: projectId }) => archiveProjectMemories(service, projectId),
     projectDeleteJournal: service.projectDeleteJournal || null,
     // Agent tasks follow their chat between projects (and back on Undo).
-    onSessionProjectChanged: ({ sessionId, projectId }) => (
-      service.configService?.restampAgentTasksForSession?.(sessionId, projectId)
-    ),
+    onSessionProjectChanged: ({ sessionId, projectId }) => {
+      service.chatWorkspace?.notifyCoordinationChanged?.(sessionId);
+      return service.configService?.restampAgentTasksForSession?.(sessionId, projectId);
+    },
     // A deleted project takes its note with it (nothing restores a deleted project);
     // its remaining agent tasks (rail-added, or from chats deleted earlier) move to General.
     // Each step runs on its own: a task re-stamp failure must not keep the note alive, nor the reverse.

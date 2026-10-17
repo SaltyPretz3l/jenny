@@ -51,6 +51,7 @@
     // keeps focus, entrance animations, and screen-reader announcements from
     // being destroyed every time an unrelated toast arrives or leaves.
     const nodesById = new Map();
+    const toastIdsByDedupeKey = new Map();
     let overflowNode = null;
 
     function enqueueToast(input) {
@@ -346,10 +347,21 @@
       renderOverflowLine(getOverflowCount());
     }
 
-    function dismissToast(toastId) {
+    function dismissToast(ref, options = {}) {
+      // A toast id, or the dedupeKey it was shown with (the store dismisses by
+      // id only; ids are generated, keys are `source:...`, so they never clash).
+      // With options.shownBefore (a Date.now() value) a keyed toast shown or
+      // re-shown at or after that moment stays: a turn's completion clears the
+      // failure before it, never one a queued send raised meanwhile.
+      const keyed = toastIdsByDedupeKey.get(ref) || null;
+      if (keyed && Number.isFinite(options.shownBefore) && keyed.shownAt >= options.shownBefore) return;
+      const toastId = keyed ? keyed.id : ref;
       // The store emits, the reconcile pass notices the departure, and
       // beginNodeExit animates the node out.
       toastStore.dismiss(toastId);
+      toastIdsByDedupeKey.forEach((entry, key) => {
+        if (entry.id === toastId) toastIdsByDedupeKey.delete(key);
+      });
       renderToastViewport();
     }
 
@@ -399,6 +411,9 @@
         payload.durationMs = options.durationMs;
       }
       const toastId = enqueueToast(payload);
+      if (payload.dedupeKey) {
+        toastIdsByDedupeKey.set(payload.dedupeKey, { id: toastId, shownAt: Date.now() });
+      }
       registerToastActions(toastId, actions);
       return toastId;
     }

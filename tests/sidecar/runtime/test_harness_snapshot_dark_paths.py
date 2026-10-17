@@ -55,6 +55,7 @@ from sidecar.runtime.harness_snapshot import (
     _sanitize_lsp_unavailable_reason,
     _section_error_payload,
 )
+from tests.sidecar.ai.memory.memory_v9_helpers import save_row
 
 # ---------------------------------------------------------------------------
 # Helpers shared across tests
@@ -1020,7 +1021,8 @@ def test_build_memories_section_remaps_unknown_provenance(
     ms = MemoryStore(user_data / "sidecar-memory.db")
     try:
         # Save a memory then patch serialize_approved_memory to return invalid provenance
-        ms.save_memory(
+        save_row(
+            ms,
             session_id="sess_x",
             title="Test memory",
             lesson_text="Something to remember.",

@@ -29,7 +29,7 @@ function fixture(t, { count = 2, allowedProviderIds = ['ollama'] } = {}) {
   const options = { lanes, route, requestId: 'request_1', sessionId: 'session_1',
     authorityRevision: 'authority_1', budget, assertCurrent: () => { if (!live) throw new Error('revoked'); } };
   const gateway = new InferenceOperations(options);
-  const base = { schema_version: 1, api_version: '2026-08-17', kind: 'inference',
+  const base = { schema_version: 1, api_version: '2026-10-15', kind: 'inference',
     request_id: 'request_1', session_id: 'session_1', authority_revision: 'authority_1' };
   const admit = (id = 'operation_1', target = gateway) => target.handle({ ...base,
     operation_id: id, phase: 'admit', engine_type: 'ollama' });
@@ -178,7 +178,7 @@ test('budgeted wire admission requires closed per-operation maxima and never acc
   const budget = createInferenceBudget({ store: h.store, rootRunId: 'root_1', workId: 'work_1',
     attemptId: 'attempt_1', providerId: 'ollama', authorityFingerprint: fingerprint });
   const gateway = new InferenceOperations({ ...h.options, budget });
-  const params = { schema_version: 1, api_version: '2026-08-17', kind: 'inference', phase: 'admit',
+  const params = { schema_version: 1, api_version: '2026-10-15', kind: 'inference', phase: 'admit',
     request_id: 'request_1', session_id: 'session_1', authority_revision: 'authority_1',
     operation_id: 'operation_1', engine_type: 'ollama', maxima: h.maxima };
   for (const patch of [{ maxima: undefined }, { maxima: { ...h.maxima, cost: 0 } },

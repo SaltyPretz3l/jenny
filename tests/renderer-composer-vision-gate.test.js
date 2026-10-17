@@ -221,6 +221,21 @@ test('resolveActiveModelVision fails open while no model is resolved or loaded',
     assert.equal(evaluateComposerVisionGate({ state, runtimePreferences: {} }).notice, '');
   });
 
+  await t.test('a not-yet-loaded model the catalog marks text-only blocks before the send', () => {
+    // Gate 2026-10-14 F10: the image was sent and refused after the fact.
+    const state = stateWithImages(1, {
+      model: 'm',
+      local_runtime: { model: { id: 'm', loaded: false }, capabilities: { vision: { available: false, source: 'unsupported' } } },
+    });
+    state.modelList.data = [{ id: 'm', capabilities: { vision: false } }];
+    assert.equal(evaluateComposerVisionGate({ state, runtimePreferences: {} }).blocked, true);
+    // Unknown is never treated as "no": a row without the flag still fails open.
+    state.modelList.data = [{ id: 'm', capabilities: { thinking: true } }];
+    assert.equal(evaluateComposerVisionGate({ state, runtimePreferences: {} }).blocked, false);
+    state.modelList.data = [{ id: 'm' }];
+    assert.equal(resolveActiveModelVision(state, {}).supported, null);
+  });
+
   await t.test('a loaded model with an unsupported entry still blocks', () => {
     const state = stateWithImages(1, {
       model: 'text-only',

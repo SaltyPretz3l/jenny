@@ -160,10 +160,7 @@ test('the panel stays with the chat that opened it: focusing the other pane keep
   assert.equal(state.artifacts.selectedSessionId, 'session-a', 'the panel still shows pane 0\'s artifact');
   assert.equal(ownerLine(doc), line, 'the same line node: nothing it names changed, so it was not rebuilt');
   assert.equal(ownerTitle(doc), 'Alpha chat', 'and it still names pane 0\'s chat');
-  assert.ok(
-    doc.getElementById('contextArtifactList').querySelector('[data-orbit-card-id="art_session-a"]'),
-    'the context panel lists the owner\'s artifacts too'
-  );
+  assert.equal(doc.getElementById('chatContextPanel').querySelector('.orbit-card'), null, 'the context panel no longer lists artifacts');
   const contextPanel = doc.getElementById('chatContextPanel');
   const contextLine = contextPanel.querySelector(':scope > .side-panel-owner-line');
   assert.ok(contextLine, 'and carries its own From line');
@@ -184,7 +181,7 @@ test('expanding the context panel from the focused pane claims the side panel fo
   await waitForUi(window, 80);
   assert.equal(contextPanel.classList.contains('collapsed'), false);
   assert.equal(state.ui.sidePanelOwnerSessionId, 'session-b', 'the open claimed the owner');
-  assert.ok(doc.getElementById('contextArtifactList').querySelector('[data-orbit-card-id="art_session-b"]'), 'it lists pane 1\'s artifacts');
+  assert.equal(contextPanel.querySelector('.orbit-card'), null, 'the context panel no longer lists artifacts');
   assert.equal(contextPanel.querySelector(':scope > .side-panel-owner-line .side-panel-owner-title').textContent, 'Beta chat');
 });
 
@@ -319,21 +316,22 @@ test('closing the pane whose monitor holds the panel restores what the monitor d
   assert.equal(stored.enabled, true, 'no close was saved');
 });
 
-// W3 review P2-1: the context panel shows the owner's list; a row click or expand never claims.
-test('a context-panel artifact click while pane 1 is focused keeps the owner and shows the clicked artifact', async (t) => {
+// W3 review P2-1 (row 59 checkpoint 2: the context panel's Artifacts list is gone): a click on the
+// context panel's own controls while pane 1 is focused never claims the panel.
+test('a context-panel control click while pane 1 is focused keeps the owner and the shown artifact', async (t) => {
   const { window, doc, pane1, state } = await openTwoPanes(t);
   await clickInPane(window, placeChip(doc.getElementById('chatTimeline'), 'art_session-a'));
   assert.equal(state.ui.sidePanelOwnerSessionId, 'session-a');
   pane1.dom.chatInput.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
   await waitForUi(window, 120);
   assert.equal(state.currentSessionId, 'session-b');
-  const row = doc.getElementById('contextArtifactList').querySelector('[data-orbit-card-id="art_session-a"]');
-  assert.ok(row, 'context panel lists owner artifact');
-  row.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
-  row.click();
+  const disclosure = doc.getElementById('contextLogDisclosure');
+  assert.ok(disclosure, 'the context panel keeps its Diagnostic log');
+  disclosure.dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
+  disclosure.click();
   await waitForUi(window, 120);
   assert.equal(state.ui.sidePanelOwnerSessionId, 'session-a', 'owner must not move');
-  assert.equal(state.artifacts.selectedArtifactId, 'art_session-a', 'the clicked artifact is shown');
+  assert.equal(state.artifacts.selectedArtifactId, 'art_session-a', 'the shown artifact did not change');
 });
 
 // W3 open item: the owner closing collapses an open CONTEXT panel too (without saving the preference).

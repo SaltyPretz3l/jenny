@@ -145,6 +145,29 @@
       target?.focus();
     }
 
+    // Linked chats: Right expands a collapsed parent or enters its first child; Left collapses an
+    // expanded parent or goes to the parent row. Focus moves; selection and the row menu are untouched.
+    function handleLinkedTreeKey(event, card, buttons, currentIndex) {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || card.classList.contains('sidebar-bulk-selecting')) return false;
+      const rtl = card.ownerDocument?.documentElement?.dir === 'rtl';
+      const hasChildren = card.dataset.treeHasChildren === 'true';
+      const expanded = card.dataset.treeExpanded === 'true';
+      if (event.key === (rtl ? 'ArrowLeft' : 'ArrowRight')) {
+        if (!hasChildren) return false;
+        if (!expanded) card.querySelector('[data-session-toggle]')?.click();
+        else if (buttons[currentIndex + 1]?.closest('.conversation-item')?.dataset.treeParentId === card.dataset.sessionId) focusConversationButtonAt(currentIndex + 1);
+        return true;
+      }
+      if (hasChildren && expanded) {
+        card.querySelector('[data-session-toggle]')?.click();
+        return true;
+      }
+      const parentIndex = card.dataset.treeParentId ? buttons.findIndex((button) => button.dataset.sessionId === card.dataset.treeParentId) : -1;
+      if (parentIndex < 0) return false;
+      focusConversationButtonAt(parentIndex);
+      return true;
+    }
+
     async function handleConversationCardKeydown(event) {
       const openButton = event.target.closest('[data-session-open]');
       if (!openButton) {
@@ -172,6 +195,10 @@
       if (event.key === 'ArrowUp') {
         event.preventDefault();
         focusConversationButtonAt(currentIndex - 1);
+        return;
+      }
+      if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && handleLinkedTreeKey(event, card, buttons, currentIndex)) {
+        event.preventDefault();
         return;
       }
       if (event.key === 'Home') {
@@ -237,6 +264,8 @@
             scrollLogsToBottom,
             ensureLogRowMounted,
             chooseWorkspaceRoot,
+            openLocalEngine: () => deps.callbacks.openSetupTile?.('ollamaEngine'),
+            openModels: () => deps.callbacks.openSettingsSection?.('models'),
             // The failed engine rides along so the retry does not land on the live engine pin.
             retryModelLoad: (model, engine) => Promise.resolve(window.jennyShell?.models?.load?.(engine ? { model, engine_type: engine } : model) ?? null),
           },

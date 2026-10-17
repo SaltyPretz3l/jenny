@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { archiveError } = require('./archive-format');
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
+const { removeTreeSync } = require('../fs-remove-no-follow');
 
 function invalid() {
   return archiveError(DATA_ERROR_CODES.UNSAFE_PATH, 'unsafe_restore_path',
@@ -127,7 +128,7 @@ function rollbackPromotion(actions, rollbackRoot, ensureSafeDestination, removeT
       }
     }
     if (removeTargets || fs.existsSync(backupPath)) {
-      fs.rmSync(action.targetPath, { recursive: true, force: true });
+      removeTreeSync(action.targetPath);
     }
     if (fs.existsSync(backupPath)) {
       fs.mkdirSync(path.dirname(action.targetPath), { recursive: true });
@@ -135,7 +136,7 @@ function rollbackPromotion(actions, rollbackRoot, ensureSafeDestination, removeT
     }
   }
   for (const root of new Set([rollbackRoot, ...actions.map((action) => action.rollbackRoot).filter(Boolean)])) {
-    fs.rmSync(root, { recursive: true, force: true });
+    removeTreeSync(root);
   }
 }
 

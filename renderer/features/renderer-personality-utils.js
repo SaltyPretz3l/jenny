@@ -13,7 +13,6 @@
       require('./renderer-personality-counters'),
       require('../inventory/action-button'),
       require('../inventory/collapsible'),
-      require('./renderer-memory-notes-utils'),
       require('../shared/async-fence')
     );
     return;
@@ -23,7 +22,6 @@
     root.rendererPersonalityCounters,
     root.inventoryActionButton,
     root.inventoryCollapsible,
-    root.rendererMemoryNotesUtils,
     root.rendererAsyncFence
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (
@@ -31,7 +29,6 @@
   counters,
   actionButtonModule,
   collapsibleModule,
-  memoryNotes,
   asyncFence
 ) {
   'use strict';
@@ -672,10 +669,6 @@
   }
 
   return {
-    NOTES_CLEAR_CONFIRM: memoryNotes && memoryNotes.NOTES_CLEAR_CONFIRM,
-    // Re-exported so the shell registry keeps resolving both editors through
-    // `personalityEditorUtils`; the notes controller itself lives next door.
-    createMemoryContextEditor: memoryNotes && memoryNotes.createMemoryContextEditor,
     createPersonalityEditor: createPersonalityEditor,
   };
 });

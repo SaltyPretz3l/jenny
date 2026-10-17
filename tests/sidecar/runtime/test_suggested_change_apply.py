@@ -27,6 +27,7 @@ from sidecar.protocol import (
     API_VERSION,
     INBOUND_VERSIONED_REQUEST_METHODS,
     WORKSPACE_APPLY_SUGGESTED_CHANGES_METHOD,
+    WORKSPACE_LIST_CHANGE_SETS_METHOD,
 )
 from sidecar.runtime import suggested_change_apply
 from sidecar.runtime.server_auxiliary_workers import AUXILIARY_FAMILY_BY_METHOD
@@ -435,6 +436,42 @@ def test_applied_change_set_is_visible_to_preflight_and_undo(env: _Env) -> None:
     assert not (env.root / "fresh" / "new.txt").exists()
 
 
+def test_listed_change_set_names_the_session_and_apply_id(env: _Env) -> None:
+    # Electron finds an apply whose receipt never saved by these two ids (A19-F4).
+    result = env.apply([_create("s-1", "named.txt", "named\n")], apply_id="apply-named")
+
+    listed = list_change_sets(env.store, env.root)["change_sets"]
+    assert [(item["change_set_id"], item["session_id"], item["turn_id"]) for item in listed] == [
+        (result["workspace_change_set"]["change_set_id"], "session-propose", "apply-named")
+    ]
+
+
+def _list_with(env: _Env, **params: Any) -> dict[str, Any]:
+    outcome = process_workspace_recovery_method(
+        WORKSPACE_LIST_CHANGE_SETS_METHOD, 12, {"accept_version": API_VERSION, **params}, True, env.container, LOGGER
+    )
+    assert outcome is not None
+    return outcome.response
+
+
+def test_listing_names_the_workspace_by_its_root_authority(env: _Env, tmp_path: Path) -> None:
+    result = env.apply([_create("s-1", "elsewhere.txt", "here\n")], apply_id="apply-elsewhere")
+    change_set_id = result["workspace_change_set"]["change_set_id"]
+    identity = workspace_identity(env.root)
+    other = tmp_path / "other-project"
+    other.mkdir()
+    env.config.tools_workspace_root = str(other)  # the app now has another project configured
+
+    assert _list_with(env)["result"]["change_sets"] == []
+    named = _list_with(env, workspace_root=str(env.root), device_id=identity.device_id, inode=identity.file_id)
+    assert [item["change_set_id"] for item in named["result"]["change_sets"]] == [change_set_id]
+
+    stale = _list_with(env, workspace_root=str(env.root), device_id=identity.device_id, inode="1")
+    assert stale["error"]["data"]["reason"] == "workspace_root_changed"
+    gone = _list_with(env, workspace_root=str(tmp_path / "missing"), device_id="1", inode="1")
+    assert gone["error"]["data"]["reason"] == "workspace_root_changed"
+
+
 def test_root_identity_mismatch_is_refused_before_anything(env: _Env) -> None:
     target = env.root / "r.txt"
     target.write_text("r\n", encoding="utf-8")
@@ -621,3 +658,22 @@ def test_strings_over_the_edit_cap_are_invalid(
     monkeypatch.setattr(suggested_change_apply, "current_max_edit_file_bytes", lambda: 8)
     response = env.call(env.params([_create("c-1", "a.txt", "123456789")]))
     assert response["error"]["data"]["reason"] == "item_too_large"
+
+
+def test_suggested_writer_holds_live_owner_until_finalization(env, monkeypatch):
+    from sidecar.ai.tools import workspace_mutation_live_owner as live
+    original = suggested_change_apply._write_one
+    observed = []
+    def write_owned(plan, guard, attribution, snapshot):
+        path = env.store.live_owner_path(workspace_identity(env.root).workspace_id,
+                                        attribution["_jenny_change_set_id"])
+        with live.recovery_ownership(path) as abandoned:
+            assert not abandoned
+        observed.append(path)
+        return original(plan, guard, attribution, snapshot)
+    monkeypatch.setattr(suggested_change_apply, "_write_one", write_owned)
+    result = env.apply([_create("new", "new.txt", "new content")])
+    assert result["status"] == "applied"
+    assert observed
+    with live.recovery_ownership(observed[0]) as abandoned:
+        assert abandoned

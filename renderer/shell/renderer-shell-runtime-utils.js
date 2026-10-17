@@ -786,13 +786,14 @@
       if (!action) {
         return;
       }
+      const showArtifactActionUnavailable = () => showToastMessage(jt('shell.runtime.artifactActionUnavailableMessage', 'This artifact action is unavailable for the selected entry.'), {
+        title: jt('shell.runtime.artifactActionUnavailableTitle', 'Artifact Action Unavailable'),
+        tone: 'info',
+        source: TOAST_SOURCE.chatStream,
+        dedupeKey: `${TOAST_SOURCE.chatStream}:artifact-action-unavailable`,
+      });
       if (!artifactId) {
-        showToastMessage(jt('shell.runtime.artifactActionUnavailableMessage', 'This artifact action is unavailable for the selected entry.'), {
-          title: jt('shell.runtime.artifactActionUnavailableTitle', 'Artifact Action Unavailable'),
-          tone: 'info',
-          source: TOAST_SOURCE.chatStream,
-          dedupeKey: `${TOAST_SOURCE.chatStream}:artifact-action-unavailable`,
-        });
+        showArtifactActionUnavailable();
         return;
       }
       const currentSessionId = String(payload?.sessionId || state.currentSessionId || '').trim();
@@ -832,8 +833,8 @@
         });
         return;
       }
-      if (action === 'panel') {
-        await openArtifactTarget(artifactId, { source: 'inline-open-panel' });
+      if (action === 'panel' && (await openArtifactTarget(artifactId, { source: 'inline-open-panel' })) === false) {
+        showArtifactActionUnavailable();
       }
     }
 

@@ -1,4 +1,4 @@
-"""Unit tests for sidecar.runtime.memory extraction, normalization, and validation."""
+"""Unit tests for sidecar.runtime.memory: request validation, v9 writes, pages, serializers."""
 
 from __future__ import annotations
 
@@ -7,23 +7,30 @@ from pathlib import Path
 
 import pytest
 
+from sidecar.ai.error_codes import CMP_MEMORY_FAILED, CMP_MEMORY_INVALID_KIND
+from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, MEMORY_KINDS, build_text_digest
+from sidecar.ai.memory.service import MemoryService
 from sidecar.ai.memory.store import MemoryStore
+from sidecar.exceptions import MemoryStoreError
 from sidecar.runtime.memory import (
-    GENERIC_CAPTURE_VALUES,
-    MAX_CAPTURE_LENGTH,
-    _build_fingerprint,
-    _normalize_capture,
-    _normalize_lesson_text,
-    _normalize_title,
-    _sanitize_source_excerpt,
-    _validate_capture,
+    MemoryRequestError,
+    archive_project_memories,
+    clear_memory_suppressions,
+    delete_memory,
     delete_pending_memory,
     list_memories_page,
     list_pending_memories_page,
+    memory_error_payload,
+    purge_session_memories,
+    request_operation_id,
+    restore_memory,
     save_memory_candidate,
-    suggest_memories,
+    serialize_write_result,
+    undo_memory_operation,
     update_memory,
 )
+from sidecar.runtime.memory_text import _normalize_title, _sanitize_source_excerpt
+from tests.sidecar.ai.memory.memory_v9_helpers import find_row, pending_rows, save_row
 
 
 def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors schema.
@@ -44,9 +51,9 @@ def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors s
         """
         INSERT INTO pending_memory_candidates (
             session_id, source_request_id, title, lesson_text, lesson_kind,
-            confidence, source_excerpt, content_fingerprint, family_key,
+            confidence, source_excerpt, content_fingerprint,
             category, created_at, updated_at, project_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             session_id,
@@ -56,7 +63,7 @@ def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors s
             lesson_kind,
             confidence,
             source_excerpt,
-            _build_fingerprint(lesson_kind, lesson_text),
+            build_text_digest(lesson_text),
             category,
             timestamp,
             timestamp,
@@ -68,104 +75,36 @@ def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors s
     return int(cursor.lastrowid)
 
 
-# ---------------------------------------------------------------------------
-# _normalize_capture
-# ---------------------------------------------------------------------------
+@pytest.fixture()
+def empty_store(tmp_path: Path) -> MemoryStore:
+    store = MemoryStore(tmp_path / "memory.db")
+    yield store
+    store.close()
 
 
-def test_normalize_capture_removes_please_and_thanks() -> None:
-    assert _normalize_capture("please use dark mode thanks") == "use dark mode"
-
-
-def test_normalize_capture_strips_trailing_punctuation() -> None:
-    assert _normalize_capture("use dark mode!!!") == "use dark mode"
-
-
-def test_normalize_capture_normalizes_whitespace() -> None:
-    assert _normalize_capture("  use   dark\tmode  ") == "use dark mode"
-
-
-def test_normalize_capture_handles_empty_string() -> None:
-    assert _normalize_capture("") == ""
-
-
-# ---------------------------------------------------------------------------
-# _validate_capture
-# ---------------------------------------------------------------------------
-
-
-def test_validate_capture_rejects_too_short() -> None:
-    assert _validate_capture("ab") is False
-
-
-def test_validate_capture_rejects_too_long() -> None:
-    assert _validate_capture("a " * (MAX_CAPTURE_LENGTH + 1)) is False
-
-
-def test_validate_capture_rejects_generic_values() -> None:
-    for generic in GENERIC_CAPTURE_VALUES:
-        assert _validate_capture(generic) is False
-
-
-def test_validate_capture_rejects_too_many_words() -> None:
-    assert (
-        _validate_capture("one two three four five six seven eight nine ten eleven twelve") is False
+def _save(store: MemoryStore | MemoryService, text: str, **extra) -> object:
+    result = save_memory_candidate(
+        session_id=extra.pop("session_id", "session-1"),
+        candidate={
+            "title": extra.pop("title", None),
+            "lesson_text": text,
+            "lesson_kind": extra.pop("lesson_kind", "preference"),
+            "source_excerpt": extra.pop("source_excerpt", ""),
+        },
+        memory_store=store,
+        **extra,
     )
-
-
-def test_validate_capture_accepts_valid_value() -> None:
-    assert _validate_capture("dark mode") is True
-
-
-def test_validate_capture_accepts_value_at_min_length() -> None:
-    assert _validate_capture("tea") is True
+    assert result.status == "saved", result
+    return result
 
 
 # ---------------------------------------------------------------------------
-# _build_fingerprint
-# ---------------------------------------------------------------------------
-
-
-def test_build_fingerprint_normalizes_and_prefixes() -> None:
-    fp = _build_fingerprint("preference", "The user prefers tea.")
-    assert fp.startswith("sha256:")
-    assert len(fp) == 71
-    assert " " not in fp
-
-
-def test_build_fingerprint_truncates_at_160() -> None:
-    long_text = "word " * 100
-    fp = _build_fingerprint("profile", long_text)
-    assert len(fp) == 71
-
-
-def test_build_fingerprint_is_lowercase() -> None:
-    fp = _build_fingerprint("preference", "The User PREFERS Tea.")
-    assert fp == fp.lower()
-
-
-# ---------------------------------------------------------------------------
-# _normalize_title / _normalize_lesson_text
+# text helpers
 # ---------------------------------------------------------------------------
 
 
 def test_normalize_title_truncates_to_120() -> None:
-    result = _normalize_title("x" * 200)
-    assert len(result) == 120
-
-
-def test_normalize_lesson_text_appends_period_if_missing() -> None:
-    assert _normalize_lesson_text("The user likes tea").endswith(".")
-
-
-def test_normalize_lesson_text_does_not_double_period() -> None:
-    result = _normalize_lesson_text("The user likes tea.")
-    assert not result.endswith("..")
-
-
-def test_normalize_lesson_text_truncates_to_240() -> None:
-    result = _normalize_lesson_text("x" * 300)
-    assert len(result) == 240
+    assert len(_normalize_title("x" * 200)) == 120
 
 
 def test_source_provenance_sanitization_bounds_input_before_redaction() -> None:
@@ -185,75 +124,280 @@ def test_source_provenance_sanitization_bounds_input_before_redaction() -> None:
 
 
 # ---------------------------------------------------------------------------
-# suggest_memories — profile / preference patterns
+# operation ids and error payloads
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
-def empty_store(tmp_path: Path) -> MemoryStore:
-    store = MemoryStore(tmp_path / "memory.db")
-    yield store
-    store.close()
+def test_request_operation_id_generates_rpc_ids_and_validates_supplied_ones() -> None:
+    generated = request_operation_id(None)
+    assert generated.startswith("rpc:") and generated != request_operation_id(None)
+    assert request_operation_id("client.op-1:a_b") == "client.op-1:a_b"
+    for bad in ("", "has space", "x" * 129, 3, "op/slash"):
+        with pytest.raises(ValueError, match="operation_id is invalid"):
+            request_operation_id(bad)
 
 
-def test_suggest_profile_my_name_is(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "my name is Brendan"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "profile"
-    assert "Brendan" in suggestions[0]["lesson_text"]
+def test_memory_error_payload_keeps_request_and_store_codes() -> None:
+    assert memory_error_payload(MemoryRequestError(CMP_MEMORY_INVALID_KIND, "bad"))[
+        "code"
+    ] == CMP_MEMORY_INVALID_KIND
+    assert memory_error_payload(ValueError("plain"))["code"] == CMP_MEMORY_FAILED
+    store_error = MemoryStoreError("CMP-MEM-0007", "x" * 500, retryable=True)
+    payload = memory_error_payload(store_error)
+    assert payload["code"] == "CMP-MEM-0007" and len(str(payload["detail"])) == 240
 
 
-def test_suggest_profile_call_me(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "call me Bren"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "profile"
-    assert "Bren" in suggestions[0]["lesson_text"]
+# ---------------------------------------------------------------------------
+# memory.save
+# ---------------------------------------------------------------------------
 
 
-def test_suggest_preference_i_prefer(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "I prefer dark mode for coding"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "preference"
+@pytest.mark.parametrize("kind", MEMORY_KINDS)
+def test_save_accepts_every_v9_kind(empty_store: MemoryStore, kind: str) -> None:
+    result = _save(empty_store, f"The user has a {kind} worth keeping.", lesson_kind=kind)
+
+    assert result.memory.lesson_kind == kind
+    assert result.memory.origin == "user"
+    assert result.memory.provenance == "user_approved"
+    assert result.undoable is True
 
 
-def test_suggest_preference_i_like(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "I like TypeScript"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "preference"
+@pytest.mark.parametrize("kind", ["tool_strategy", "profile", "commitment", "", None, 3])
+def test_save_rejects_kinds_outside_the_v9_vocabulary(empty_store: MemoryStore, kind) -> None:
+    with pytest.raises(MemoryRequestError) as caught:
+        _save(empty_store, "The user prefers tea.", lesson_kind=kind)
+
+    assert caught.value.code == CMP_MEMORY_INVALID_KIND
+    assert empty_store.get_all_memories() == []
 
 
-def test_suggest_preference_i_dislike(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "I dislike verbose code"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "preference"
+def test_save_bounds_text_and_requires_a_session(empty_store: MemoryStore) -> None:
+    with pytest.raises(ValueError, match="exceeds 400"):
+        _save(empty_store, "x" * 401)
+    with pytest.raises(ValueError, match="candidate must be an object"):
+        save_memory_candidate(session_id="s", candidate=[], memory_store=empty_store)
+    with pytest.raises(ValueError, match="session_id"):
+        _save(empty_store, "The user prefers tea.", session_id="  ")
 
 
-def test_suggested_provenance_is_redacted_before_it_can_be_persisted(
-    empty_store: MemoryStore,
-) -> None:
-    messages = [{
-        "role": "user",
-        "content": r"my goal is to use C:\Users\Alice\private\notes api_key=sk-test-secret-value",
-    }]
+def test_save_refuses_credential_shaped_text(empty_store: MemoryStore) -> None:
+    with pytest.raises(ValueError, match="credential"):
+        save_memory_candidate(
+            session_id="s1",
+            candidate={"lesson_text": "password: hunter2", "lesson_kind": "fact"},
+            memory_store=empty_store,
+        )
+    assert empty_store.list_active(project_id=GENERAL_PROJECT_ID)[0] == []
 
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
 
-    assert len(suggestions) == 1
-    excerpt = str(suggestions[0]["source_excerpt"])
-    assert "Alice" not in excerpt
-    assert "sk-test-secret-value" not in excerpt
+def test_save_title_is_optional_and_derived(empty_store: MemoryStore) -> None:
+    result = _save(empty_store, "The user prefers tea.")
+
+    assert result.memory.title == "The user prefers tea."
+
+
+def test_save_replays_one_operation_id(empty_store: MemoryStore) -> None:
+    first = _save(empty_store, "The user prefers tea.", operation_id="op-1")
+    replay = _save(empty_store, "The user prefers tea.", operation_id="op-1")
+
+    assert replay.replayed is True and replay.memory.id == first.memory.id
+    assert len(empty_store.get_all_memories()) == 1
+
+
+def test_save_chat_scope_and_always_on(empty_store: MemoryStore) -> None:
+    scoped = _save(empty_store, "The user is drafting a toast.", scope_session_id="chat-1")
+    pinned = _save(empty_store, "The user's name is Sam.", always_on=True)
+
+    assert scoped.memory.scope_session_id == "chat-1"
+    assert pinned.memory.always_on is True
+    with pytest.raises(ValueError, match="always_on"):
+        _save(empty_store, "The user likes jazz.", scope_session_id="chat-1", always_on=True)
+    with pytest.raises(ValueError, match="always_on must be a boolean"):
+        _save(empty_store, "The user likes jazz.", always_on="yes")
+
+
+def test_save_bounds_and_redacts_source_provenance(empty_store: MemoryStore) -> None:
+    source = (
+        r"C:\Users\Alice\secret.txt \\server\private\note.txt /workspace/jenny/plan.md "
+        "alice@example.com api_key=sk-test-secret "
+        + ("private detail " * 40)
+    )
+
+    result = _save(empty_store, "The user prefers concise replies.", source_excerpt=source)
+
+    excerpt = result.memory.source_excerpt
+    assert len(excerpt) <= 240
+    for leaked in ("Alice", "server", "workspace", "alice@example.com", "sk-test-secret"):
+        assert leaked not in excerpt
     assert "[LOCAL_PATH_REDACTED]" in excerpt
+    assert "[EMAIL_REDACTED]" in excerpt
 
 
-def test_list_memories_redacts_legacy_source_provenance(
-    empty_store: MemoryStore,
-) -> None:
-    empty_store.save_memory(
+def test_save_clears_matching_pending_candidate(empty_store: MemoryStore) -> None:
+    _insert_pending_candidate(
+        empty_store,
+        session_id="session-approved",
+        source_request_id="request-approved",
+        title="Goal: finish the garden",
+        lesson_text="The user's goal is to finish the garden.",
+        lesson_kind="fact",
+        confidence=0.9,
+        source_excerpt="finish the garden",
+        category="user",
+    )
+
+    _save(
+        empty_store,
+        "The user's goal is to finish the garden.",
+        lesson_kind="fact",
+        session_id="session-approved",
+    )
+
+    assert pending_rows(empty_store, project_id=GENERAL_PROJECT_ID) == []
+
+
+def test_save_works_through_the_memory_service(empty_store: MemoryStore) -> None:
+    result = _save(MemoryService(empty_store), "The user prefers tea.")
+
+    assert find_row(empty_store, result.memory.id, project_id=GENERAL_PROJECT_ID) == result.memory
+
+
+# ---------------------------------------------------------------------------
+# memory.update / delete / undo / restore
+# ---------------------------------------------------------------------------
+
+
+def test_update_can_remove_source_without_deleting_memory(empty_store: MemoryStore) -> None:
+    saved = _save(
+        empty_store, "The user prefers tea.", source_excerpt="I prefer tea while working."
+    ).memory
+
+    result = update_memory(
+        memory_id=saved.id, changes={"remove_provenance": True}, memory_store=empty_store
+    )
+
+    updated = result.memory
+    assert updated.id == saved.id and updated.lesson_text == saved.lesson_text
+    assert updated.source_excerpt == "" and updated.provenance == "source_removed"
+    assert find_row(empty_store, saved.id, project_id=GENERAL_PROJECT_ID) == updated
+
+
+@pytest.mark.parametrize(
+    ("changes", "match"),
+    [
+        ({}, "needs one of"),
+        ({"lesson_text": 42}, "lesson_text must be a string"),
+        ({"lesson_text": None, "title": None}, "needs one of"),
+        ({"title": 7}, "title must be a string"),
+        ({"always_on": 1}, "always_on must be a boolean"),
+        ({"remove_provenance": "yes"}, "remove_provenance must be a boolean"),
+    ],
+)
+def test_update_rejects_invalid_changes(empty_store: MemoryStore, changes, match: str) -> None:
+    saved = _save(empty_store, "The user prefers tea.").memory
+
+    with pytest.raises(ValueError, match=match):
+        update_memory(memory_id=saved.id, changes=changes, memory_store=empty_store)
+
+
+def test_update_rejects_a_bad_kind_with_its_code(empty_store: MemoryStore) -> None:
+    saved = _save(empty_store, "The user prefers tea.").memory
+
+    with pytest.raises(MemoryRequestError) as caught:
+        update_memory(
+            memory_id=saved.id, changes={"lesson_kind": "goal"}, memory_store=empty_store
+        )
+    assert caught.value.code == CMP_MEMORY_INVALID_KIND
+
+
+def test_update_in_another_project_is_not_found(empty_store: MemoryStore) -> None:
+    saved = _save(empty_store, "The user prefers tea.", project_id="project_alpha").memory
+
+    result = update_memory(
+        memory_id=saved.id,
+        changes={"title": "Wrong scope"},
+        memory_store=empty_store,
+        project_id="project_beta",
+    )
+
+    assert result.status == "refused" and result.reason == "not_found"
+
+
+def test_delete_undo_and_restore_round_trip(empty_store: MemoryStore) -> None:
+    saved = _save(empty_store, "The user prefers tea.").memory
+
+    deleted = delete_memory(memory_id=str(saved.id), memory_store=empty_store)
+    assert deleted.status == "saved" and deleted.memory.status == "archived"
+    undone = undo_memory_operation(operation_id=deleted.operation_id, memory_store=empty_store)
+    assert undone.status == "saved" and undone.memory.status == "active"
+
+    again = delete_memory(memory_id=saved.id, memory_store=empty_store)
+    restored = restore_memory(memory_id=saved.id, memory_store=empty_store)
+    assert again.status == "saved" and restored.memory.status == "active"
+
+    with pytest.raises(ValueError, match="operation_id is required"):
+        undo_memory_operation(operation_id=None, memory_store=empty_store)
+    for bad_id in (0, -1, True, "x", None):
+        with pytest.raises(ValueError, match="memory_id"):
+            delete_memory(memory_id=bad_id, memory_store=empty_store)
+    with pytest.raises(ValueError, match="expected_revision"):
+        delete_memory(memory_id=saved.id, memory_store=empty_store, expected_revision=0)
+
+
+def test_serialize_write_result_carries_reason_code_and_lines(empty_store: MemoryStore) -> None:
+    saved = _save(empty_store, "The user prefers tea.").memory
+    stale = update_memory(
+        memory_id=saved.id,
+        changes={"title": "Tea"},
+        memory_store=empty_store,
+        expected_revision=saved.revision + 5,
+    )
+
+    payload = serialize_write_result(stale)
+
+    assert payload["status"] == "conflict" and payload["reason"] == "stale_revision"
+    assert payload["code"] == "CMP-MEM-0012"
+    assert payload["memory"]["revision"] == saved.revision
+    assert "always_on_lines" not in payload
+    assert "family_key" not in payload["memory"]
+
+
+# ---------------------------------------------------------------------------
+# lifecycle helpers
+# ---------------------------------------------------------------------------
+
+
+def test_archive_purge_and_clear_suppressions(empty_store: MemoryStore) -> None:
+    _save(empty_store, "The user writes Rust.", project_id="project_alpha")
+    _save(empty_store, "The user is drafting a toast.", scope_session_id="chat-1")
+    forgotten = _save(empty_store, "Forget me.").memory
+    delete_memory(memory_id=forgotten.id, memory_store=empty_store)
+
+    assert archive_project_memories(memory_store=empty_store, project_id="project_alpha") == {
+        "ok": True,
+        "archived": 1,
+        "pending_removed": 0,
+    }
+    with pytest.raises(ValueError):
+        archive_project_memories(memory_store=empty_store, project_id=GENERAL_PROJECT_ID)
+    assert purge_session_memories(session_id="chat-1", memory_store=empty_store) == {
+        "ok": True,
+        "removed": 1,
+    }
+    for bad_session in (None, "  ", 5):
+        with pytest.raises(ValueError, match="session_id"):
+            purge_session_memories(session_id=bad_session, memory_store=empty_store)
+    assert clear_memory_suppressions(memory_store=empty_store, project_id=None) == {"cleared": 1}
+
+
+# ---------------------------------------------------------------------------
+# pages
+# ---------------------------------------------------------------------------
+
+
+def test_list_memories_redacts_legacy_source_provenance(empty_store: MemoryStore) -> None:
+    save_row(
+        empty_store,
         session_id="legacy-session",
         title="Preference: concise replies",
         lesson_text="The user prefers concise replies.",
@@ -270,579 +414,85 @@ def test_list_memories_redacts_legacy_source_provenance(
     assert "[LOCAL_PATH_REDACTED]" in excerpt
 
 
-# ---------------------------------------------------------------------------
-# suggest_memories — response style patterns
-# ---------------------------------------------------------------------------
-
-
-def test_suggest_response_style_concise(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "be concise please"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "response_style"
-    assert "concise" in suggestions[0]["lesson_text"].lower()
-
-
-def test_suggest_response_style_step_by_step(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "walk me through this step by step"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "response_style"
-
-
-# ---------------------------------------------------------------------------
-# suggest_memories — tool strategy patterns
-# ---------------------------------------------------------------------------
-
-
-def test_suggest_tool_strategy_prefer_ripgrep(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "prefer rg for searching code"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "tool_strategy"
-    assert "ripgrep" in suggestions[0]["lesson_text"].lower()
-
-
-def test_suggest_tool_strategy_plan_before_implementation(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "plan before implementation"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "tool_strategy"
-
-
-# ---------------------------------------------------------------------------
-# suggest_memories — working preference patterns
-# ---------------------------------------------------------------------------
-
-
-def test_suggest_working_preference_root_cause(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "diagnose the root cause first"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "working_preference"
-
-
-def test_suggest_working_preference_schema_migrations(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "treat schema changes as migrations"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "working_preference"
-
-
-# ---------------------------------------------------------------------------
-# suggest_memories — project context patterns
-# ---------------------------------------------------------------------------
-
-
-def test_suggest_project_context_no_git(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "this workspace has no .git metadata"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "project_context"
-
-
-def test_suggest_project_context_no_vector_db(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "do not use a vector db for memory"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "project_context"
-
-
-# ---------------------------------------------------------------------------
-# suggest_memories — routine / goal / important person patterns
-# ---------------------------------------------------------------------------
-
-
-def test_suggest_routine_morning(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "Every morning I stretch, journal, and make tea."}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "routine"
-    assert "stretch, journal, and make tea" in suggestions[0]["lesson_text"]
-
-
-def test_suggest_goal_working_toward(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "I'm working toward finishing my portfolio by summer."}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "goal"
-    assert "finishing my portfolio by summer" in suggestions[0]["title"]
-
-
-def test_suggest_important_person_generic_relationship(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "My coworker Alex helped me prep for the demo."}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "important_person"
-    assert suggestions[0]["title"] == "Important person: Alex (coworker)"
-    assert suggestions[0]["lesson_text"] == "The user's coworker is Alex."
-
-
-def test_suggest_important_person_explicit_relationship_stops_at_sentence_continuation(
-    empty_store: MemoryStore,
-) -> None:
-    messages = [{"role": "user", "content": "my partner alex is very supportive."}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "important_person"
-    assert suggestions[0]["title"] == "Important person: Alex (partner)"
-    assert suggestions[0]["lesson_text"] == "The user's partner is Alex."
-
-
-@pytest.mark.parametrize(
-    "content",
-    [
-        "Morning routines are hard to keep.",
-        "Goals can change over time.",
-        "My friend is visiting this weekend.",
-    ],
-)
-def test_suggest_new_memory_kinds_ignore_near_misses(
-    empty_store: MemoryStore, content: str
-) -> None:
-    messages = [{"role": "user", "content": content}]
-    assert suggest_memories(messages=messages, memory_store=empty_store) == []
-
-
-# ---------------------------------------------------------------------------
-# suggest_memories — deduplication and edge cases
-# ---------------------------------------------------------------------------
-
-
-def test_suggest_skips_already_saved_fingerprints(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "my name is Alice"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-
-    # Save the suggestion, then re-suggest — should return empty
-    empty_store.save_memory(
-        session_id="s1",
-        title=suggestions[0]["title"],
-        lesson_text=suggestions[0]["lesson_text"],
-        lesson_kind=suggestions[0]["lesson_kind"],
-        confidence=suggestions[0]["confidence"],
-        source_excerpt=suggestions[0]["source_excerpt"],
-    )
-    second = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(second) == 0
-
-
-def test_suggest_ignores_assistant_messages(empty_store: MemoryStore) -> None:
-    messages = [{"role": "assistant", "content": "my name is Jenny"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 0
-
-
-def test_suggest_returns_at_most_one(empty_store: MemoryStore) -> None:
-    messages = [
-        {"role": "user", "content": "my name is Alice"},
-        {"role": "user", "content": "I prefer dark mode"},
-    ]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) <= 1
-
-
-def test_suggest_rejects_generic_captures(empty_store: MemoryStore) -> None:
-    messages = [{"role": "user", "content": "I prefer it"}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 0
-
-
-@pytest.mark.parametrize(
-    "content, expected_kind",
-    [
-        ("Every morning I read for twenty minutes.", "routine"),
-        ("My goal is to finish the garden this spring.", "goal"),
-        ("my partner alex is very supportive.", "important_person"),
-    ],
-)
-def test_suggest_new_kinds_skip_saved_fingerprints(
-    empty_store: MemoryStore,
-    content: str,
-    expected_kind: str,
-) -> None:
-    messages = [{"role": "user", "content": content}]
-    suggestions = suggest_memories(messages=messages, memory_store=empty_store)
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == expected_kind
-
-    empty_store.save_memory(
-        session_id="s1",
-        title=suggestions[0]["title"],
-        lesson_text=suggestions[0]["lesson_text"],
-        lesson_kind=suggestions[0]["lesson_kind"],
-        confidence=suggestions[0]["confidence"],
-        source_excerpt=suggestions[0]["source_excerpt"],
-    )
-
-    assert suggest_memories(messages=messages, memory_store=empty_store) == []
-
-
-@pytest.mark.parametrize(
-    ("lesson_kind", "title", "lesson_text"),
-    [
-        (
-            "routine",
-            "Routine: morning routine",
-            "The user's morning routine includes stretching and tea.",
-        ),
-        ("goal", "Goal: finish the garden", "The user's goal is to finish the garden."),
-        ("important_person", "Important person: Alex (partner)", "The user's partner is Alex."),
-    ],
-)
-def test_save_memory_candidate_accepts_new_kinds(
-    empty_store: MemoryStore,
-    lesson_kind: str,
-    title: str,
-    lesson_text: str,
-) -> None:
-    result = save_memory_candidate(
-        session_id="session-new-kind",
-        candidate={
-            "title": title,
-            "lesson_text": lesson_text,
-            "lesson_kind": lesson_kind,
-            "confidence": 0.92,
-            "source_excerpt": title,
-        },
-        memory_store=empty_store,
-    )
-
-    assert result.created is True
-    assert result.memory.lesson_kind == lesson_kind
-    assert result.memory.family_key == ""
-
-
-def test_save_memory_candidate_rejects_unsupported_commitment_kind(
-    empty_store: MemoryStore,
-) -> None:
-    with pytest.raises(ValueError, match="CMP-MEM-0003"):
-        save_memory_candidate(
-            session_id="session-unsupported-kind",
-            candidate={
-                "title": "Commitment: school pickup",
-                "lesson_text": "Pick up Sam from school at 3 PM.",
-                "lesson_kind": "commitment",
-                "confidence": 0.95,
-                "source_excerpt": "school pickup",
-            },
-            memory_store=empty_store,
-        )
-
-
-def test_save_memory_candidate_bounds_and_redacts_source_provenance(
-    empty_store: MemoryStore,
-) -> None:
-    source = (
-        r"C:\Users\Alice\secret.txt \\server\private\note.txt /workspace/jenny/plan.md "
-        "alice@example.com api_key=sk-test-secret "
-        + ("private detail " * 40)
-    )
-
-    result = save_memory_candidate(
-        session_id="session-provenance",
-        candidate={
-            "title": "Preference: concise replies",
-            "lesson_text": "The user prefers concise replies.",
-            "lesson_kind": "preference",
-            "confidence": 0.9,
-            "source_excerpt": source,
-        },
-        memory_store=empty_store,
-    )
-
-    excerpt = result.memory.source_excerpt
-    assert len(excerpt) <= 240
-    assert "Alice" not in excerpt
-    assert "server" not in excerpt
-    assert "workspace" not in excerpt
-    assert "alice@example.com" not in excerpt
-    assert "sk-test-secret" not in excerpt
-    assert "[LOCAL_PATH_REDACTED]" in excerpt
-    assert "[EMAIL_REDACTED]" in excerpt
-
-
-def test_update_memory_can_remove_source_without_deleting_memory(
-    empty_store: MemoryStore,
-) -> None:
-    saved = save_memory_candidate(
-        session_id="session-remove-source",
-        candidate={
-            "title": "Preference: tea",
-            "lesson_text": "The user prefers tea.",
-            "lesson_kind": "preference",
-            "confidence": 0.9,
-            "source_excerpt": "I prefer tea while working.",
-        },
-        memory_store=empty_store,
+def test_list_archived_and_chat_scope_use_the_v9_lister(empty_store: MemoryStore) -> None:
+    kept = _save(empty_store, "The user prefers tea.", project_id="project_alpha").memory
+    scoped = _save(
+        empty_store, "The user is drafting a toast.", project_id="project_alpha",
+        scope_session_id="chat-1",
     ).memory
+    gone = _save(empty_store, "Forget me.", project_id="project_alpha").memory
+    delete_memory(memory_id=gone.id, memory_store=empty_store, project_id="project_alpha")
 
-    updated = update_memory(
-        memory_id=saved.id,
-        patch={
-            "title": saved.title,
-            "lesson_text": saved.lesson_text,
-            "remove_provenance": True,
-        },
-        memory_store=empty_store,
+    archived = list_memories_page(
+        cursor=None, limit=10, memory_store=empty_store, project_id="project_alpha",
+        status="archived",
+    )
+    chat = list_memories_page(
+        cursor=None, limit=10, memory_store=empty_store, project_id="project_alpha",
+        scope_session_id="chat-1",
     )
 
-    assert updated.id == saved.id
-    assert updated.title == saved.title
-    assert updated.lesson_text == saved.lesson_text
-    assert updated.source_excerpt == ""
-    assert updated.provenance == "source_removed"
-    assert empty_store.get_memory_by_id(saved.id) == updated
+    assert [row["id"] for row in archived["memories"]] == [gone.id]
+    assert {row["id"] for row in chat["memories"]} == {kept.id, scoped.id}
+    for bad in ({"status": "deleted"}, {"status": "archived", "all_projects": True},
+                {"status": "archived", "cursor": "v1:bogus"}, {"status": "archived", "cursor": 5}):
+        with pytest.raises(ValueError):
+            list_memories_page(cursor=bad.pop("cursor", None), limit=10,
+                               memory_store=empty_store, **bad)
 
 
-def test_suggest_raises_on_non_list_messages(empty_store: MemoryStore) -> None:
-    with pytest.raises(ValueError, match="messages must be a list"):
-        suggest_memories(messages="not a list", memory_store=empty_store)
+def test_the_archived_list_includes_forgotten_chat_notes(empty_store: MemoryStore) -> None:
+    # The Settings page lists a project's chat notes while active, so its
+    # Forgotten fold must list them too (Restore and Erase now).
+    shared = _save(empty_store, "The user prefers tea.", project_id="project_alpha").memory
+    scoped = _save(
+        empty_store, "The user is drafting a toast.", project_id="project_alpha",
+        scope_session_id="chat-1",
+    ).memory
+    for row in (shared, scoped):
+        delete_memory(memory_id=row.id, memory_store=empty_store, project_id="project_alpha")
 
-
-def test_suggest_memories_prefers_pending_session_candidates(empty_store: MemoryStore) -> None:
-    _insert_pending_candidate(
-        empty_store,
-        session_id="session-1",
-        source_request_id="request-1",
-        title="Preference: tea",
-        lesson_text="The user prefers tea.",
-        lesson_kind="preference",
-        confidence=0.9,
-        source_excerpt="I prefer tea",
-        category="user",
+    archived = list_memories_page(
+        cursor=None, limit=10, memory_store=empty_store, project_id="project_alpha",
+        status="archived",
     )
 
-    suggestions = suggest_memories(
-        session_id="session-1",
-        messages=[{"role": "user", "content": "my name is Alice"}],
-        memory_store=empty_store,
-    )
-
-    assert len(suggestions) == 1
-    assert suggestions[0]["title"] == "Preference: tea"
-    assert suggestions[0]["category"] == "user"
-
-
-def test_suggest_memories_deletes_stale_pending_candidates_and_falls_back(
-    empty_store: MemoryStore,
-) -> None:
-    _insert_pending_candidate(
-        empty_store,
-        session_id="session-1",
-        source_request_id="request-1",
-        title="Preference: tea",
-        lesson_text="The user prefers tea.",
-        lesson_kind="preference",
-        confidence=0.9,
-        source_excerpt="I prefer tea",
-        category="user",
-    )
-    empty_store.save_memory(
-        session_id="session-1",
-        title="Preference: tea",
-        lesson_text="The user prefers tea.",
-        lesson_kind="preference",
-        confidence=0.9,
-        source_excerpt="I prefer tea",
-    )
-
-    suggestions = suggest_memories(
-        session_id="session-1",
-        messages=[{"role": "user", "content": "my name is Alice"}],
-        memory_store=empty_store,
-    )
-
-    assert len(suggestions) == 1
-    assert suggestions[0]["lesson_kind"] == "profile"
-    assert empty_store.get_pending_candidates("session-1") == []
-
-
-def test_suggestion_cleanup_and_suppression_are_project_scoped(
-    empty_store: MemoryStore,
-) -> None:
-    for project_id in ("project_alpha", "project_beta"):
-        _insert_pending_candidate(
-            empty_store,
-            session_id="session-1",
-            source_request_id=f"request-{project_id}",
-            title="Preference: tea",
-            lesson_text="The user prefers tea.",
-            lesson_kind="preference",
-            confidence=0.9,
-            source_excerpt="I prefer tea",
-            project_id=project_id,
-        )
-    empty_store.save_memory(
-        session_id="session-1",
-        title="Preference: tea",
-        lesson_text="The user prefers tea.",
-        lesson_kind="preference",
-        confidence=0.9,
-        source_excerpt="I prefer tea",
-        project_id="project_alpha",
-    )
-
-    suggestions = suggest_memories(
-        session_id="session-1",
-        messages=[],
-        memory_store=empty_store,
-        project_id="project_beta",
-    )
-
-    assert [item["project_id"] for item in suggestions] == ["project_beta"]
-    assert empty_store.get_pending_candidates(
-        "session-1", project_id="project_alpha"
-    ) == []
-    assert len(
-        empty_store.get_pending_candidates("session-1", project_id="project_beta")
-    ) == 1
-
-
-def test_delete_pending_memory_removes_matching_candidate(empty_store: MemoryStore) -> None:
-    fingerprint = _build_fingerprint("preference", "The user prefers tea.")
-    _insert_pending_candidate(
-        empty_store,
-        session_id="session-delete",
-        source_request_id="request-delete",
-        title="Preference: tea",
-        lesson_text="The user prefers tea.",
-        lesson_kind="preference",
-        confidence=0.9,
-        source_excerpt="I prefer tea",
-        category="user",
-    )
-
-    deleted = delete_pending_memory(
-        session_id="session-delete",
-        content_fingerprint=fingerprint.upper(),
-        memory_store=empty_store,
-    )
-
-    assert deleted is True
-    assert empty_store.get_pending_candidates("session-delete") == []
-
-
-def test_save_memory_candidate_clears_matching_pending_candidate(empty_store: MemoryStore) -> None:
-    _insert_pending_candidate(
-        empty_store,
-        session_id="session-approved",
-        source_request_id="request-approved",
-        title="Goal: finish the garden",
-        lesson_text="The user's goal is to finish the garden.",
-        lesson_kind="goal",
-        confidence=0.9,
-        source_excerpt="finish the garden",
-        category="user",
-    )
-
-    result = save_memory_candidate(
-        session_id="session-approved",
-        candidate={
-            "title": "Goal: finish the garden",
-            "lesson_text": "The user's goal is to finish the garden.",
-            "lesson_kind": "goal",
-            "confidence": 0.9,
-            "source_excerpt": "finish the garden",
-        },
-        memory_store=empty_store,
-    )
-
-    assert result.created is True
-    assert empty_store.get_pending_candidates("session-approved") == []
+    assert {row["id"] for row in archived["memories"]} == {shared.id, scoped.id}
 
 
 def test_approved_memory_cursor_is_snapshot_stable_during_concurrent_changes(
     empty_store: MemoryStore,
 ) -> None:
-    initial_ids: list[int] = []
-    for index in range(4):
-        memory, _ = empty_store.save_memory(
-            session_id="session-1",
-            title=f"Memory {index}",
-            lesson_text=f"The user prefers item {index}.",
-            lesson_kind="preference",
-            confidence=0.8,
-            source_excerpt=f"item {index}",
-        )
-        initial_ids.append(memory.id)
+    initial_ids = [
+        _save(empty_store, f"The user prefers item {index}.").memory.id for index in range(4)
+    ]
 
     first_page = list_memories_page(cursor=None, limit=2, memory_store=empty_store)
     first_ids = [int(row["id"]) for row in first_page["memories"]]
     cursor = first_page["next_cursor"]
     assert isinstance(cursor, str) and cursor.startswith("v1:")
 
-    empty_store.update_memory(
+    update_memory(
         memory_id=initial_ids[0],
-        title="Updated oldest memory",
-        lesson_text="The user still prefers item zero.",
-    )
-    inserted, _ = empty_store.save_memory(
-        session_id="session-1",
-        title="New memory",
-        lesson_text="The user prefers the newly inserted item.",
-        lesson_kind="preference",
-        confidence=0.8,
-        source_excerpt="new item",
-    )
-
-    second_page = list_memories_page(
-        cursor=cursor,
-        limit=2,
+        changes={"lesson_text": "The user still prefers item zero."},
         memory_store=empty_store,
     )
+    inserted = _save(empty_store, "The user prefers the newly inserted item.").memory
+
+    second_page = list_memories_page(cursor=cursor, limit=2, memory_store=empty_store)
     second_ids = [int(row["id"]) for row in second_page["memories"]]
     assert set(first_ids).isdisjoint(second_ids)
     assert set(first_ids + second_ids) == set(initial_ids)
     assert inserted.id not in second_ids
 
-    legacy_page = list_memories_page(cursor="2", limit=2, memory_store=empty_store)
-    assert len(legacy_page["memories"]) == 2
+
+@pytest.mark.parametrize("lister", [list_memories_page, list_pending_memories_page])
+def test_numeric_offset_cursors_are_invalid(empty_store: MemoryStore, lister) -> None:
+    with pytest.raises(ValueError, match="cursor is invalid"):
+        lister(cursor="2", limit=2, memory_store=empty_store)
 
 
-def test_all_project_memory_pages_keep_snapshot_and_legacy_cursor_semantics(
-    empty_store: MemoryStore,
-) -> None:
-    expected_projects = {"project_general", "project_alpha", "project_beta"}
-    for project_id in expected_projects:
-        empty_store.save_memory(
-            session_id=f"session-{project_id}",
-            title=f"Layered memory {project_id}",
-            lesson_text=f"Layered tea preference for {project_id}.",
-            lesson_kind="preference",
-            confidence=0.9,
-            source_excerpt="layered tea preference",
-            project_id=project_id,
-        )
-
-    first_rows, cursor = empty_store.get_memories_page(
-        limit=2,
-        project_id="ignored-with-all-projects",
-        all_projects=True,
-    )
-    assert isinstance(cursor, tuple)
-    second_rows, next_cursor = empty_store.get_memories_page(
-        limit=2,
-        snapshot_max_id=cursor[0],
-        after_id=cursor[1],
-        all_projects=True,
-    )
-    assert next_cursor is None
-    assert {row.project_id for row in [*first_rows, *second_rows]} == expected_projects
-
-    legacy_rows, legacy_cursor = empty_store.get_memories_page(
-        limit=2, legacy_offset=0, all_projects=True
-    )
-    assert legacy_cursor == 2
-    legacy_tail, _ = empty_store.get_memories_page(
-        limit=2, legacy_offset=legacy_cursor, all_projects=True
-    )
-    assert {row.project_id for row in [*legacy_rows, *legacy_tail]} == expected_projects
-
-
-def test_all_project_pending_pages_serialize_project_scope(
-    empty_store: MemoryStore,
-) -> None:
+def test_all_project_pending_pages_serialize_project_scope(empty_store: MemoryStore) -> None:
     for project_id in ("project_general", "project_alpha", "project_beta"):
         _insert_pending_candidate(
             empty_store,
@@ -857,16 +507,10 @@ def test_all_project_pending_pages_serialize_project_scope(
         )
 
     first_page = list_pending_memories_page(
-        cursor=None,
-        limit=2,
-        memory_store=empty_store,
-        all_projects=True,
+        cursor=None, limit=2, memory_store=empty_store, all_projects=True
     )
     second_page = list_pending_memories_page(
-        cursor=first_page["next_cursor"],
-        limit=2,
-        memory_store=empty_store,
-        all_projects=True,
+        cursor=first_page["next_cursor"], limit=2, memory_store=empty_store, all_projects=True
     )
 
     candidates = [*first_page["candidates"], *second_page["candidates"]]
@@ -875,53 +519,27 @@ def test_all_project_pending_pages_serialize_project_scope(
         "project_alpha",
         "project_beta",
     }
+    assert all("family_key" not in candidate for candidate in candidates)
 
 
-def test_layered_recall_includes_general_but_never_other_projects(
-    empty_store: MemoryStore,
-) -> None:
-    for project_id in ("project_general", "project_alpha", "project_beta"):
-        empty_store.save_memory(
-            session_id=f"session-{project_id}",
-            title=f"Layered tea {project_id}",
-            lesson_text=f"Layered tea guidance for {project_id}.",
-            lesson_kind="response_style",
-            confidence=0.9,
-            source_excerpt="layered tea guidance",
-            project_id=project_id,
-        )
-
-    alpha_only = empty_store.recall_memories(
-        "layered tea", limit=5, project_id="project_alpha"
-    )
-    layered = empty_store.recall_memories(
-        "layered tea",
-        limit=5,
-        project_id="project_alpha",
-        include_general=True,
-    )
-    recent = empty_store.get_recent_memories_by_kind(
-        "response_style",
-        5,
-        project_id="project_alpha",
-        include_general=True,
-    )
-    prompt = empty_store.recall_memories_for_prompt(
-        "layered tea",
-        limit=5,
-        max_prompt_tokens=10_000,
-        project_id="project_alpha",
-        include_general=True,
-    )
-    general = empty_store.recall_memories(
-        "layered tea",
-        limit=5,
-        project_id="project_general",
-        include_general=True,
+def test_delete_pending_memory_removes_matching_candidate(empty_store: MemoryStore) -> None:
+    _insert_pending_candidate(
+        empty_store,
+        session_id="session-delete",
+        source_request_id="request-delete",
+        title="Preference: tea",
+        lesson_text="The user prefers tea.",
+        lesson_kind="preference",
+        confidence=0.9,
+        source_excerpt="I prefer tea",
+        category="user",
     )
 
-    assert {row.project_id for row in alpha_only} == {"project_alpha"}
-    assert {row.project_id for row in layered} == {"project_alpha", "project_general"}
-    assert {row.project_id for row in recent} == {"project_alpha", "project_general"}
-    assert {row.project_id for row in prompt} == {"project_alpha", "project_general"}
-    assert {row.project_id for row in general} == {"project_general"}
+    deleted = delete_pending_memory(
+        session_id="session-delete",
+        content_fingerprint=build_text_digest("The user prefers tea.").upper(),
+        memory_store=empty_store,
+    )
+
+    assert deleted is True
+    assert pending_rows(empty_store, project_id=GENERAL_PROJECT_ID) == []

@@ -250,12 +250,67 @@ with the `media` extra keeps PyMuPDF for local PDF reads.
 
 ## Distributing Jenny
 
+### One-command packaged installation
+
+These commands are **pending public export and desktop qualification**. Until
+those gates clear, use [release downloads](https://github.com/SaltyPretz3l/jenny/releases/latest).
+
+Windows x64 (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/SaltyPretz3l/jenny/main/install.ps1 | iex
+```
+
+Linux x64 / Apple Silicon macOS (desktop terminal; experimental):
+
+```sh
+curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/SaltyPretz3l/jenny/main/install.sh | sh
+```
+
+No source checkout or developer toolchain is needed. Complete workspace/model
+selection in onboarding. Close Jenny before rerunning to install the latest
+stable version. Existing chats, settings and models remain in place.
+[Removal instructions](operations/UNINSTALL_AND_DATA_RECOVERY.md).
+
+Root `install.ps1` and `install.sh` are public entrypoints, distinct from the
+developer `setup.*` scripts. They need only native OS utilities: Windows x64
+uses the NSIS package; Linux x64 chooses apt/deb for Debian/Ubuntu with sudo
+and apt available, otherwise a per-user AppImage; Apple Silicon macOS installs the DMG's app. Both POSIX
+platforms remain experimental. A desktop session is required.
+
+Both entrypoints resolve GitHub's latest stable release redirect over HTTPS,
+checking every redirect before following it. Both pin the selected tag and
+verify the exact package against `SHA256SUMS-windows.txt`, `SHA256SUMS-linux.txt`,
+or `SHA256SUMS-mac.txt`. Missing packages/checksums fail closed; there is no
+fallback to an older release. HTTPS plus release hashes provide download
+integrity, not independent publisher authentication. Existing unsigned-build
+security prompts remain, including download-origin/quarantine marking.
+
+Direct replacements stage beside the target and retain the previous app until
+replacement succeeds; failed restoration leaves an explicitly reported recovery
+copy. Native package managers own their installation recovery. Installer locks
+serialize these scripts per user, and active Jenny processes block installation.
+If a POSIX installer is killed without cleanup, inspect/remove only its empty
+`~/.local/share/jenny/.install-lock` directory after confirming no installer runs.
+The Windows lock file is inert when its exclusive handle closes.
+
+Run `python -m pytest --noconftest -o addopts= tests/sidecar/test_install_bootstrap.py`
+for isolated fixtures. `.github/workflows/installers.yml` runs them on native
+Windows, Ubuntu and Apple Silicon runners. Real installs of the latest public
+release run only on disposable machines: `bash scripts/packaging/install-native-linux.sh
+--route all --from-release v1.3.1` drives both Linux routes in Docker containers
+(install, boot, running-app refusal, rerun, upgrade), and the dispatch-only
+`real_install` jobs in `installers.yml` run that plus
+`scripts/packaging/install-native-windows.ps1` and `install-native-macos.sh` on
+GitHub-hosted runners. Never run those two on a developer desktop. See the
+release activation checklist for what each platform has proven.
+
 Two ways someone can get Jenny running. Pick per audience.
 
 | Path | For | What they need |
 | --- | --- | --- |
 | **Clone + setup script** | Developer friends | git, then `setup.ps1` / `setup.sh` (installs Node/Python/Ollama with consent) |
-| **Packaged installer** | Non-technical friends | One download: `.exe` (Windows) or `.dmg` (macOS) |
+| **Packaged installer** | Desktop users | One command or download: Windows `.exe`, experimental macOS `.dmg`, or experimental Linux `.deb` / AppImage |
 
 Both paths download the default model (Ornith 1.5 9B, pulled as
 `hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M`, ~5.6 GB) from the model

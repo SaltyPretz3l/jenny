@@ -78,7 +78,24 @@ test('saveAs copies the resolved file to the selected destination with a live pa
     ['dialog', win, {
       defaultPath: 'generated.png', filters: [{ name: 'PNG image', extensions: ['png'] }],
     }],
+    ['resolve', 'session-a', 'artifact-a'],
   ]);
+});
+
+test('saveAs re-resolves after the dialog and refuses an artifact that moved, vanished or fails to resolve', async () => {
+  for (const later of [{ ...artifact, absolute_path: path.join(os.tmpdir(), 'elsewhere.png') },
+    { ...artifact, status: 'missing' }, null]) {
+    let resolves = 0;
+    const { actions, calls } = createHarness({ artifactService: { async resolveArtifact() {
+      resolves += 1;
+      if (resolves === 1) return artifact;
+      if (!later) throw new Error('gone');
+      return later;
+    } } });
+    assert.deepEqual(await actions.saveAs('session-a', 'artifact-a'), { ok: false, reason: 'artifact_unavailable' });
+    assert.equal(resolves, 2);
+    assert.equal(calls.some((call) => call[0] === 'copy'), false);
+  }
 });
 
 test('saveAs cancellation or a missing destination copies nothing', async () => {
@@ -168,6 +185,39 @@ test('saveAs reports a copy failure without the paths from the Node error', asyn
   const error = new Error("EPERM: operation not permitted, copyfile 'C:/scratch/img.png' -> 'D:/out.png'");
   const { actions } = createHarness({ fs: { promises: { copyFile: async () => { throw error; } } } });
   assert.deepEqual(await actions.saveAs('session-a', 'artifact-a'), { ok: false, reason: 'copy_failed' });
+});
+
+test('openWith resolves identifiers and hands only validated raster image paths to the adapter', async () => {
+  const { actions, calls } = createHarness({ openWithAdapter: {
+    capabilities: () => ({ openWith: true }),
+    openWith: async (filePath) => { calls.push(['open-with', filePath]); return { ok: false, canceled: true }; },
+  } });
+  assert.deepEqual(actions.capabilities(), { openWith: true });
+  assert.deepEqual(await actions.openWith('source-session', 'image-id'), { ok: false, canceled: true });
+  assert.deepEqual(calls, [['resolve', 'source-session', 'image-id'], ['open-with', artifact.absolute_path]]);
+});
+
+test('openWith refuses unavailable, dangerous, mismatched or non-raster metadata', async () => {
+  for (const override of [
+    { status: 'missing' }, { artifact_kind: 'text' }, { absolute_path: path.join(os.tmpdir(), 'image.exe') },
+    { file_name: 'image.svg', mime_type: 'image/svg+xml' }, { mime_type: 'application/octet-stream' },
+    { absolute_path: path.join(os.tmpdir(), 'image.cmd') },
+  ]) {
+    let opened = false;
+    const { actions } = createHarness({ artifactService: { resolveArtifact: async () => ({ ...artifact, ...override }) },
+      openWithAdapter: { capabilities: () => ({ openWith: true }), openWith: () => { opened = true; } } });
+    assert.deepEqual(await actions.openWith('s', 'a'), { ok: false, reason: override.status ? 'artifact_unavailable' : 'not_an_image' });
+    assert.equal(opened, false);
+  }
+});
+
+test('openWith reports unsupported platforms and redacts native errors', async () => {
+  const unsupported = createHarness({ openWithAdapter: { capabilities: () => ({ openWith: false }) } });
+  assert.deepEqual(await unsupported.actions.openWith('s', 'a'), { ok: false, reason: 'unsupported' });
+  assert.deepEqual(unsupported.calls, []);
+  const failed = createHarness({ openWithAdapter: { capabilities: () => ({ openWith: true }),
+    openWith: async () => { throw new Error('native failure C:/private/image.png'); } } });
+  assert.deepEqual(await failed.actions.openWith('s', 'a'), { ok: false, reason: 'open_with_failed' });
 });
 
 test('preload artifact actions invoke the registered main handlers with session and artifact IDs', async () => {

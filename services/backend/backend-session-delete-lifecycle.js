@@ -1,8 +1,28 @@
 const { deleteSession } = require('./backend-sessions');
+const { purgeSessionMemories } = require('./backend-memory');
+const { purgeConversationIndex } = require('./conversation-index-pump');
 const {
   CANCEL_REASON_SESSION_DELETE,
   createCancellationError,
 } = require('./chat-stream-terminal-utils');
+
+// Memory v2 (row 58): a deleted chat takes its chat-scope memories with it,
+// once the delete has committed (a refused or retained delete keeps the live
+// chat's memory). A missing sidecar or a failed request is logged (reason
+// only); startup reconciliation retries a failed purge.
+async function purgeChatMemories(service, sessionId) {
+  let reason = '';
+  try {
+    const purged = await purgeSessionMemories(service, sessionId);
+    if (purged?.ok !== true) reason = String(purged?.reason || 'purge_refused');
+  } catch (error) {
+    reason = String(error?.error_code || error?.category || 'sidecar_request_failed').slice(0, 80);
+  }
+  if (reason) {
+    service._emitServiceLog(reason === 'sidecar_unavailable' ? 'INFO' : 'WARN',
+      'lifecycle.session_memory_purge_skipped', { reason });
+  }
+}
 
 async function deleteSessionWithQuiescence(service, sessionId, options = {}) {
   const normalizedSessionId = String(sessionId || '').trim();
@@ -88,6 +108,11 @@ async function deleteSessionWithQuiescence(service, sessionId, options = {}) {
         object: 'session', id: normalizedSessionId, deleted: false,
         reason: committed.reason || 'delete_refused',
       };
+    }
+    if (committed.result?.deleted !== false) {
+      await purgeChatMemories(service, normalizedSessionId);
+      // Row 58 W4: the derived conversation index; not awaited, never fails the delete.
+      void purgeConversationIndex(service, normalizedSessionId);
     }
     return committed.result;
   } catch (error) {

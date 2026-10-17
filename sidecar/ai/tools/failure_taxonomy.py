@@ -88,6 +88,9 @@ TAXONOMY: Mapping[str, str] = {
     error_codes.CMP_TOOL_APPLY_PATCH_PREIMAGE_MISMATCH: "conflict",
     error_codes.CMP_TOOL_APPLY_PATCH_TARGET_EXISTS: "conflict",
     error_codes.CMP_MEMORY_FINGERPRINT_CONFLICT: "conflict",
+    error_codes.CMP_MEMORY_STALE_REVISION: "conflict",
+    error_codes.CMP_MEMORY_OPERATION_MISMATCH: "conflict",
+    error_codes.CMP_MEMORY_OPERATION_EXPIRED: "conflict",
     error_codes.CMP_PLUGIN_EPOCH_REGRESSION: "conflict",
     error_codes.CMP_PLUGIN_EXPECTED_GENERATION_CONFLICT: "conflict",
     error_codes.CMP_PROTO_DUPLICATE_REQUEST_ID: "conflict",
@@ -105,6 +108,12 @@ TAXONOMY: Mapping[str, str] = {
     error_codes.CMP_PLUGIN_ADVISORY_BLOCKED: "denied",
     error_codes.CMP_WEB_SSRF_BLOCKED: "denied",
     error_codes.CMP_WEB_REDIRECT_BLOCKED: "denied",
+    # Memory write refusals: the user's "forget", an edit the user owns, an
+    # archived project or a deleted chat fence the write (row 58).
+    error_codes.CMP_MEMORY_SUPPRESSED: "denied",
+    error_codes.CMP_MEMORY_PROTECTED: "denied",
+    error_codes.CMP_MEMORY_PROJECT_ARCHIVED: "denied",
+    error_codes.CMP_MEMORY_SESSION_PURGED: "denied",
     # The unattended guard paused Auto run before this call started; the same
     # call is re-issued through the approval scan, which now asks.
     error_codes.CMP_TOOL_PAUSED_UNATTENDED: "transient",
@@ -140,6 +149,7 @@ TAXONOMY: Mapping[str, str] = {
     error_codes.CMP_TOOL_RICH_FILES_TOO_LARGE: "limit_exceeded",
     error_codes.CMP_MEMORY_CAPACITY_EXCEEDED: "limit_exceeded",
     error_codes.CMP_MEMORY_BACKGROUND_TIMEOUT: "limit_exceeded",
+    error_codes.CMP_MEMORY_ALWAYS_ON_FULL: "limit_exceeded",
     error_codes.CMP_CTX_BUDGET_EXHAUSTED: "limit_exceeded",
     error_codes.CMP_LOOP_WALL_CLOCK_EXCEEDED: "limit_exceeded",
     error_codes.CMP_LOOP_BUDGET_EXCEEDED: "limit_exceeded",
@@ -171,7 +181,6 @@ TAXONOMY: Mapping[str, str] = {
     error_codes.CMP_TOOL_APPLY_PATCH_PARTIAL_ROLLBACK: "internal_error",
     error_codes.CMP_MEMORY_FAILED: "internal_error",
     error_codes.CMP_MEMORY_SCHEMA_MIGRATION: "internal_error",
-    error_codes.CMP_MEMORY_FAMILY_UNRESOLVED: "internal_error",
     error_codes.CMP_MEMORY_ROW_QUARANTINED: "internal_error",
     # Semantic catalog (row 41): wire-only codes; knowledge_search falls back softly.
     error_codes.CMP_CATALOG_EMBEDDER_UNAVAILABLE: "transient",

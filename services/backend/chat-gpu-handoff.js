@@ -8,12 +8,14 @@
 //   suspend(owner)          lease -> busy check -> evict (identity kept) -> verify
 //   restoreAndRelease()     relaunch the chat engine, then release (once)
 //   reconcile()             confirm an orphan cleanup, then release a retained lease
+//   forceClear()            the owner's confirmed release of a lease no reconcile could prove
 //   close()                 shutdown latch: cancel the render, never restore
 //
 // Identity matters: the parked chat turn keeps its engine stack, so a managed
 // llama-server comes back on the same port with the same api key (the manager's
-// stop({ retainIdentity }) / ensureRunning(null, { reuseIdentity })), and Ollama
-// is evicted over HTTP directly, never through the sidecar's unload (which
+// stop({ retainIdentity }) / ensureRunning(null, { reuseIdentity }); a managed
+// NInfer server is parked and relaunched the same way through its own manager),
+// and Ollama is evicted over HTTP directly, never through the sidecar's unload (which
 // resets the engine's bound-model state and the turn's next call would fail).
 
 const { t } = require('../i18n-main');
@@ -74,12 +76,20 @@ function createChatGpuHandoff({
   backendService,
   coordinator,
   getLlamaServerManager = () => null,
+  // The managed NInfer runtime: it owns the GPU only while the llama-server
+  // manager is stopped, so a ready NInfer server is the engine to park.
+  getNinferManager = () => null,
   probeVram = probeNvidiaSmiVram,
   fetchImpl = globalThis.fetch,
   ollamaBaseUrl = DEFAULT_OLLAMA_BASE_URL,
   // Kills any render recorded by the engine runner's pidfile and confirms
   // every pid is gone: () => Promise<{ confirmed: boolean }> (S4 supplies it).
   reconcileRenderProcesses = null,
+  // The Model Library's confirmed "Clear anyway": drops the render record with
+  // no proof and kills nothing: () => { cleared, record?, reason? }; the summary
+  // reads it for the section: () => { started_at, unresolved } | null.
+  clearRenderRecordUnproven = null,
+  renderRecordSummary = null,
   pendingInferenceCount = pendingRuntimeInferenceCount,
   isProcessAliveImpl = isProcessAlive,
   sleep = wait,
@@ -101,6 +111,8 @@ function createChatGpuHandoff({
     settled: null,
     // The render the tool registered so close() can cancel it.
     render: null,
+    // Unconfirmed reconcile attempts against the retained lease.
+    cleanup: { attempts: 0, lastUnconfirmedAt: null },
   };
 
   function emit(level, event, payload = {}) {
@@ -128,7 +140,22 @@ function createChatGpuHandoff({
       retained: Boolean(state.retained),
       closing: state.closing,
       admission: admissionState(),
+      ...(state.retained ? { cleanup: cleanupState() } : {}),
     };
+  }
+
+  function cleanupState() {
+    let record = null;
+    try {
+      record = typeof renderRecordSummary === 'function' ? renderRecordSummary() || null : null;
+    } catch (_error) { /* the section falls back to its generic line */ }
+    return { attempts: state.cleanup.attempts, last_unconfirmed_at: state.cleanup.lastUnconfirmedAt, record };
+  }
+
+  // Every retain or release of the lease starts its attempt count over.
+  function setRetained(retained) {
+    state.retained = retained;
+    state.cleanup = { attempts: 0, lastUnconfirmedAt: null };
   }
 
   function busyReason(owner) {
@@ -161,12 +188,29 @@ function createChatGpuHandoff({
     });
   }
 
+  // A managed server (llama-server or NInfer) stops with its identity kept so
+  // the restore relaunches it on the same port and key.
+  async function parkManagedServer(manager, plan, unconfirmedReason) {
+    // Recorded before the stop so a failure past this point still restores.
+    state.active.plan = plan;
+    const stopped = await manager.stop({ retainIdentity: true });
+    if (stopped?.identityRetained !== true) {
+      throw new ChatGpuHandoffError(CODES.EVICTION_UNVERIFIED, unconfirmedReason, { lastError: stopped?.lastError || '' });
+    }
+    return plan;
+  }
+
   // Step 4: evict without touching the engine's logical state. Returns the
   // restore plan, or throws EVICTION_UNVERIFIED when the engine cannot be
   // evicted with proof (external endpoints, adopted servers, unknown state).
   async function evict() {
     const engineType = String(backendService?.currentEngineType || '').trim().toLowerCase();
     if (engineType === 'openai-compatible') {
+      const ninfer = getNinferManager();
+      const ninferStatus = ninfer?.getStatus?.() || null;
+      if (ninferStatus?.state === 'ready' && Number(ninferStatus.pid) > 0) {
+        return parkManagedServer(ninfer, { engine: 'ninfer', pid: ninferStatus.pid }, 'ninfer_stop_unconfirmed');
+      }
       const manager = getLlamaServerManager();
       const status = manager?.getStatus?.() || null;
       if (!manager || !status || status.state !== 'ready') {
@@ -175,14 +219,7 @@ function createChatGpuHandoff({
       if (status.reused || !status.pid) {
         throw new ChatGpuHandoffError(CODES.EVICTION_UNVERIFIED, 'llama_server_not_owned');
       }
-      const plan = { engine: 'llama-server', pid: status.pid };
-      // Recorded before the stop so a failure past this point still restores.
-      state.active.plan = plan;
-      const stopped = await manager.stop({ retainIdentity: true });
-      if (stopped?.identityRetained !== true) {
-        throw new ChatGpuHandoffError(CODES.EVICTION_UNVERIFIED, 'llama_server_stop_unconfirmed', { lastError: stopped?.lastError || '' });
-      }
-      return plan;
+      return parkManagedServer(manager, { engine: 'llama-server', pid: status.pid }, 'llama_server_stop_unconfirmed');
     }
     if (engineType === 'ollama') {
       const model = String(backendService?.currentModel || '').trim();
@@ -210,17 +247,17 @@ function createChatGpuHandoff({
     return { engine: 'none' };
   }
 
-  // Step 5: process gone (llama-server) / nothing resident (Ollama), then the
-  // largest device shows the free VRAM the render needs. Polled briefly: the
+  // Step 5: process gone (llama-server / NInfer) / nothing resident (Ollama),
+  // then the largest device shows the free VRAM the render needs. Polled briefly: the
   // driver reclaims memory a beat after the process exits.
   async function verifyEviction(plan, requiredFreeMb) {
     const deadline = now() + EVICTION_SETTLE_TIMEOUT_MS;
     let reason = 'vram_not_freed';
     while (true) {
       let evicted = true;
-      if (plan.engine === 'llama-server') {
+      if (plan.engine === 'llama-server' || plan.engine === 'ninfer') {
         evicted = !isProcessAliveImpl(plan.pid);
-        if (!evicted) reason = 'llama_server_still_alive';
+        if (!evicted) reason = plan.engine === 'ninfer' ? 'ninfer_still_alive' : 'llama_server_still_alive';
       } else if (plan.engine === 'ollama') {
         const verdict = await verifyOllamaGpuEvicted({ fetchImpl, url: `${ollamaBaseUrl}/api/ps` });
         evicted = verdict.ok === true;
@@ -240,10 +277,10 @@ function createChatGpuHandoff({
   // Step 7: bring the chat engine back exactly. Ollama reloads on its next
   // request; a GPU-free engine needs nothing.
   async function restore(plan) {
-    if (plan.engine !== 'llama-server') {
+    if (plan.engine !== 'llama-server' && plan.engine !== 'ninfer') {
       return { restored: true };
     }
-    const manager = getLlamaServerManager();
+    const manager = plan.engine === 'ninfer' ? getNinferManager() : getLlamaServerManager();
     let status = null;
     try {
       status = await manager?.ensureRunning?.(null, { reuseIdentity: true });
@@ -365,7 +402,7 @@ function createChatGpuHandoff({
         } else {
           // `recorded: false` means the runner could not write the pidfile, so
           // a later reconcile has no record to prove anything with.
-          state.retained = { leaseId: active.leaseId, owner: active.owner, recorded: recorded !== false };
+          setRetained({ leaseId: active.leaseId, owner: active.owner, recorded: recorded !== false });
           emit('WARN', 'lease_retained', { reason });
         }
         return {
@@ -404,12 +441,21 @@ function createChatGpuHandoff({
     } else if (retained) {
       confirmed = false;
     }
+    // The proof was awaited: a force clear, a settle or a new handoff may have
+    // replaced the lease meanwhile, and this outcome belongs to the old one.
+    if (state.retained !== retained || state.active) {
+      emit('INFO', 'reconcile_stale', { confirmed });
+      return { confirmed, released: false, reason: 'lease_replaced' };
+    }
     if (retained && confirmed) {
-      state.retained = null;
+      setRetained(null);
       releaseActive(retained, 'reconciled');
       replayDeferredRefresh();
     } else if (!retained && !confirmed) {
       await retainOrphanLease();
+    }
+    if (!confirmed && state.retained) {
+      state.cleanup = { attempts: state.cleanup.attempts + 1, lastUnconfirmedAt: now() };
     }
     emit(confirmed ? 'INFO' : 'WARN', 'reconciled', { confirmed, released: Boolean(retained && confirmed) });
     return { confirmed, released: Boolean(retained && confirmed) };
@@ -424,11 +470,43 @@ function createChatGpuHandoff({
     try {
       const { leaseId } = await coordinator.acquireExclusiveLease({ owner });
       coordinator.markPrivilegedResident(leaseId, owner);
-      state.retained = { leaseId, owner, recorded: true };
+      setRetained({ leaseId, owner, recorded: true });
       emit('WARN', 'orphan_lease_retained', {});
     } catch (error) {
       emit('WARN', 'orphan_lease_unavailable', { code: String(error?.code || error?.message || error) });
     }
+  }
+
+  /**
+   * The owner's confirmed "Clear anyway" (Model Library), offered only after a
+   * reconcile came back unconfirmed: drops the render record without proof and
+   * releases the retained lease. Kills nothing. Never throws.
+   */
+  async function forceClear({ confirmed } = {}) {
+    if (confirmed !== true) return { ok: false, reason: 'confirmation_required' };
+    if (state.active) return { ok: false, reason: 'handoff_active' };
+    const retained = state.retained;
+    if (!retained) return { ok: false, reason: 'nothing_retained' };
+    if (state.cleanup.attempts === 0) return { ok: false, reason: 'cleanup_not_attempted' };
+    let outcome = null;
+    try {
+      outcome = typeof clearRenderRecordUnproven === 'function' ? await clearRenderRecordUnproven() : null;
+    } catch (error) {
+      emit('WARN', 'force_clear_failed', { message: String(error?.message || error) });
+    }
+    if (outcome?.cleared !== true) {
+      const reason = outcome?.reason || 'image_engine_record_locked';
+      emit('WARN', 'force_clear_refused', { reason });
+      return { ok: false, reason };
+    }
+    const unresolved = Number(outcome.record?.unresolved) || 0;
+    // A reconcile that proved the render gone meanwhile already released it.
+    if (state.retained !== retained) return { ok: true, released: false, unresolved };
+    setRetained(null);
+    releaseActive(retained, 'force_cleared');
+    replayDeferredRefresh();
+    emit('WARN', 'force_cleared', { unresolved });
+    return { ok: true, released: true, unresolved };
   }
 
   // A sidecar config refresh dropped while the lease was held runs once now,
@@ -477,6 +555,7 @@ function createChatGpuHandoff({
     get closing() { return state.closing; },
     close,
     markClosing,
+    forceClear,
     getState,
     launchRefusal,
     reconcile,

@@ -119,6 +119,8 @@ const {
 } = require('./shell-config-followups-schema');
 const { normalizeCommandSandbox } = require('./shell-config-command-sandbox');
 const { normalizeSessionRuntime } = require('./shell-config-session-runtime');
+const { normalizePerformanceTelemetry } = require('./shell-config-performance');
+const { normalizeSubagentRouting } = require('./subagent-routing-settings');
 const CONFIG_VERSION = 59;
 const RETIRED_ENGINE_TUNING_KEYS = Object.freeze([
   'maxLoopIterations',
@@ -391,9 +393,9 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     migrated.featureOverrides = normalizeFeatureOverrides(nextOverrides);
     delete migrated.feature_overrides;
   }
-  if (version < 41) {
-    migrated.memory = normalizeMemorySettings(source.memory);
-  }
+  // v41 introduced memory.captureSuggestions; retired 2026-10-14 without a
+  // version bump, the key is dropped on load. The memory section now carries
+  // the memory v2 switches; normalizeMemorySettings defaults a missing one.
   if (version < 42) {
     const rawOverrides = migrated.featureOverrides || source.featureOverrides || source.feature_overrides;
     const overrideSource = rawOverrides && typeof rawOverrides === 'object'
@@ -596,6 +598,9 @@ function normalizeState(value = {}, options = {}) {
     version: CONFIG_VERSION,
     commandSandbox: normalizeCommandSandbox(source.commandSandbox),
     sessionRuntime: normalizeSessionRuntime(source.sessionRuntime || source.session_runtime),
+    // Additive (row 59 cp6): no CONFIG_VERSION bump; a newer nested schema survives untouched.
+    performanceTelemetry: normalizePerformanceTelemetry(source.performanceTelemetry),
+    subagentRouting: normalizeSubagentRouting(source.subagentRouting),
     toolsWorkspaceRoot: normalizeWorkspaceRoot(source.toolsWorkspaceRoot || source.tools_workspace_root),
     // maxBudgetUsd is stored in the owned engineTuning block like every other
     // tuning knob, but stays readable at the top level because callers (and the
@@ -656,6 +661,8 @@ function cloneState(state) {
   return {
     ...state,
     sessionRuntime: normalizeSessionRuntime(state.sessionRuntime),
+    performanceTelemetry: normalizePerformanceTelemetry(state.performanceTelemetry),
+    subagentRouting: normalizeSubagentRouting(state.subagentRouting),
     maxBudgetUsd: normalizeMaxBudgetUsd(state.maxBudgetUsd ?? state.max_budget_usd),
     modelTuning: cloneModelTuning(state.modelTuning),
     compactionTuning: normalizeCompactionTuning(state.compactionTuning),
@@ -732,6 +739,8 @@ function serializeState(state) {
     version: CONFIG_VERSION,
     commandSandbox: normalizeCommandSandbox(state.commandSandbox),
     session_runtime: normalizeSessionRuntime(state.sessionRuntime),
+    performanceTelemetry: normalizePerformanceTelemetry(state.performanceTelemetry),
+    subagentRouting: normalizeSubagentRouting(state.subagentRouting),
     toolsWorkspaceRoot: state.toolsWorkspaceRoot,
     modelTuning: cloneModelTuning(state.modelTuning),
     compactionTuning: normalizeCompactionTuning(state.compactionTuning),

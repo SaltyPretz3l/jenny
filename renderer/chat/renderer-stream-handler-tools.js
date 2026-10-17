@@ -27,10 +27,17 @@
     'python_execute',
     'mermaid_generate',
     'monitor',
-    // The spawn chip is markup the field-only live patch cannot inject, so task_board takes the full re-render path.
+    // task_board results keep the full re-render path (the retired spawn strip is gone; the board itself refreshes on notifyMutation).
     'task_board',
     // The notes row (Open / Undo) likewise.
     'project_notes',
+    // And the memory chip (Undo).
+    'memory',
+    // And the proposal cards (Commit / Test first / Run).
+    'propose_git_action',
+    'propose_command',
+    'propose_session',
+    'complete_session_handoff',
     'web_search',
   ]);
 

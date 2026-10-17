@@ -335,7 +335,6 @@ test('reconcileSessionCaches routes stale sessions through canonical removeSessi
         state.interactiveDraftsBySession.delete(sessionId);
         state.sessionMessageAccessOrder.delete(sessionId);
       },
-      clearDismissedMemorySession() {},
       pruneSessionArtifacts(validSessionIds) {
         calls.pruned.push([...validSessionIds]);
       },
@@ -395,7 +394,6 @@ test('reconcileSessionCaches treats stale Composer V2 session maps as cleanup ro
         state.ui.composerV2.lifecycleBySession.delete(sessionId);
         state.ui.composerV2.modeListeners.delete(sessionId);
       },
-      clearDismissedMemorySession() {},
       pruneSessionArtifacts() {},
     },
   });
@@ -442,7 +440,6 @@ test('a stale sessions.list snapshot cannot resurrect a tombstoned (deleted) ses
     },
     callbacks: {
       removeSessionState() {},
-      clearDismissedMemorySession() {},
       pruneSessionArtifacts() {},
       evictPretextArticlePredictions() {},
       syncRuntimeDraftFromActiveSession() {},
@@ -510,7 +507,6 @@ test('an EXPIRED tombstone no longer filters the listed session', async () => {
     },
     callbacks: {
       removeSessionState() {},
-      clearDismissedMemorySession() {},
       pruneSessionArtifacts() {},
       evictPretextArticlePredictions() {},
       syncRuntimeDraftFromActiveSession() {},
@@ -542,7 +538,7 @@ function createListRaceHarness({ evictColdSessionCaches = async () => {} } = {})
     sessionCacheController: { async clearSessionStreamState() {}, evictColdSessionCaches },
     jennyShell: { sessions: { list: () => new Promise((resolve, reject) => lists.push({ resolve, reject })) } },
     callbacks: {
-      removeSessionState() {}, clearDismissedMemorySession() {}, pruneSessionArtifacts() {},
+      removeSessionState() {}, pruneSessionArtifacts() {},
       evictPretextArticlePredictions() {}, syncRuntimeDraftFromActiveSession() {},
     },
   });

@@ -216,6 +216,9 @@ def test_builtin_and_read_only_precedence_matches_electron_policy_mirror() -> No
         {"action": "list"},
         empty,
     )
+    for name in ("conversations_recent", "conversation_open", "conversations_search"):
+        decision = _evaluate(_descriptor(name=name, side_effecting=False), {}, empty)
+        assert (decision.decision, decision.reason) == ("auto", f"built-in default for {name}")
     read_file = _evaluate(
         _descriptor(name="read_file", side_effecting=False, read_only=True),
         {"path": "notes.txt"},

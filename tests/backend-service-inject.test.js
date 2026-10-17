@@ -119,8 +119,10 @@ test('backend service forwards memory policy without request-time recall', async
   assert.ok(chatSendRequest);
   assert.deepEqual(chatSendRequest.params.memory_policy, {
     enabled: true,
-    include_response_style: true,
     project_id: 'project_general',
+    capture: 'auto',
+    recall: true,
+    policy_epoch: 0,
   });
   assert.equal(chatSendRequest.params.learning_context, undefined);
 });
@@ -806,8 +808,10 @@ test('backend service injects recalled tool-strategy memories without adding rec
   assert.equal(recentRecallRequests.length, 0);
   assert.deepEqual(chatSendRequest.params.memory_policy, {
     enabled: true,
-    include_response_style: true,
     project_id: 'project_general',
+    capture: 'auto',
+    recall: true,
+    policy_epoch: 0,
   });
   assert.equal(chatSendRequest.params.learning_context, undefined);
 });
@@ -898,4 +902,76 @@ test('backend service injects working-preference and project-context memories th
   assert.equal(capturedRequests.some((entry) => entry.method === 'memory.recall'), false);
   assert.equal(chatSendRequest.params.memory_policy.enabled, true);
   assert.equal(chatSendRequest.params.learning_context, undefined);
+});
+
+// Memory v2 (row 58 W1 S4): the wire policy reads the global memory settings and
+// the chat's memory_opt_out; the epoch counter moves on every policy change.
+async function sendOnceAndCapturePolicy(service, sessionId, prompt) {
+  let policy = null;
+  const done = new Promise((resolve) => {
+    const onEvent = (event) => {
+      if (event.type === 'complete' || event.type === 'error') { service.off('chat-stream', onEvent); resolve(event.type); }
+    };
+    service.on('chat-stream', onEvent);
+  });
+  service.sidecarClient = {
+    async request(method) { throw new Error(`Unexpected method: ${method}`); },
+    async chatSend(params, { onNotification }) {
+      policy = params.memory_policy;
+      const ids = { request_id: params.request_id, session_id: params.session_id };
+      onNotification({ method: 'chat.token', params: { ...ids, delta: 'ok' } });
+      onNotification({ method: 'chat.done', params: ids });
+      return { status: 'completed' };
+    },
+  };
+  await service.startChatStream({ sessionId, prompt });
+  assert.equal(await done, 'complete');
+  return policy;
+}
+
+test('memory policy carries capture, recall and an epoch that moves with every policy change', async () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-userdata-memory-policy-'));
+  trackDirectory(userDataPath);
+  const service = new BackendService({
+    userDataPath,
+    repoRoot: process.cwd(),
+    pythonExecutable: process.execPath,
+    safeStorage: createFakeSafeStorage(),
+    defaultModel: 'mock-v1',
+  });
+  markManagedSidecarReady(service);
+  service._resolveModel = async () => 'mock-v1';
+  let memorySettings = {};
+  service.configService = { getState: () => ({ memory: memorySettings }) };
+  const created = await service.createSession({ title: 'Memory Policy Session' });
+  const sessionId = created.data.id;
+
+  assert.equal(service.memoryPolicyEpoch(), 0);
+  assert.deepEqual(await sendOnceAndCapturePolicy(service, sessionId, 'first'), {
+    enabled: true, project_id: 'project_general', capture: 'auto', recall: true, policy_epoch: 0,
+  });
+
+  memorySettings = { askBeforeSaving: true };
+  assert.deepEqual(await sendOnceAndCapturePolicy(service, sessionId, 'second'), {
+    enabled: true, project_id: 'project_general', capture: 'ask', recall: true, policy_epoch: 1,
+  });
+
+  memorySettings = { askBeforeSaving: true, useInChats: false };
+  const recallOff = await sendOnceAndCapturePolicy(service, sessionId, 'third');
+  assert.deepEqual([recallOff.enabled, recallOff.recall, recallOff.capture, recallOff.policy_epoch], [false, false, 'ask', 2]);
+
+  await service.setSessionPreferences(sessionId, { context_preferences: { memory_opt_out: true } });
+  assert.equal(service.memoryPolicyEpoch(), 3, 'opting a chat out bumps the epoch');
+  await service.setSessionPreferences(sessionId, { context_preferences: { memory_opt_out: true } });
+  assert.equal(service.memoryPolicyEpoch(), 3, 'an unchanged opt-out does not');
+  const optedOut = await sendOnceAndCapturePolicy(service, sessionId, 'fourth');
+  assert.deepEqual([optedOut.capture, optedOut.policy_epoch], ['off', 3]);
+
+  memorySettings = { pauseSaving: true };
+  await service.setSessionPreferences(sessionId, { context_preferences: { memory_opt_out: false } });
+  const paused = await sendOnceAndCapturePolicy(service, sessionId, 'fifth');
+  assert.deepEqual([paused.recall, paused.capture, paused.policy_epoch], [true, 'off', 5]);
+
+  assert.equal(service.bumpMemoryPolicyEpoch('test'), 6);
+  assert.equal(service.memoryPolicyEpoch(), 6);
 });

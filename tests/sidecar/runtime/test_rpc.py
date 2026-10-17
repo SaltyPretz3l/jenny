@@ -8,6 +8,7 @@ from sidecar.runtime.rpc import InvalidNotificationMethodError, error_response, 
 
 
 def test_notification_accepts_every_declared_method() -> None:
+    assert "inference.performance" in ALLOWED_NOTIFICATION_METHODS
     for method in ALLOWED_NOTIFICATION_METHODS:
         envelope = notification(method, {})
         assert envelope["method"] == method

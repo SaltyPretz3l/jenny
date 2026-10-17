@@ -163,8 +163,8 @@ test('Windows production wiring uses the private contained helper launch', async
    child.stdin.once('data', chunk => {
     const body = chunk.toString('utf8').split('\r\n\r\n')[1];
     const request = JSON.parse(body);
-    child.stdout.write(encodeFrame({ jsonrpc: '2.0', api_version: '2026-08-17', id: request.id,
-     result: { api_version: '2026-08-17', schema_version: 1, operation_id: request.id,
+    child.stdout.write(encodeFrame({ jsonrpc: '2.0', api_version: '2026-10-15', id: request.id,
+     result: { api_version: '2026-10-15', schema_version: 1, operation_id: request.id,
       status: 'passed', exit_code: 0, duration_ms: 1, stdout_tail: '', stderr_tail: '',
       cleanup: { cleanup: 'confirmed', process_tree_terminated: true,
        output_readers_terminated: true, reason: null } } }).frame);

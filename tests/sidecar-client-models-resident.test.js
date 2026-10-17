@@ -51,7 +51,7 @@ test('modelsResident sends models.resident RPC request', async () => {
   const [, body] = written.split('\r\n\r\n');
   const request = JSON.parse(body);
   assert.equal(request.method, 'models.resident');
-  assert.equal(request.params.accept_version, '2026-08-17');
+  assert.equal(request.params.accept_version, '2026-10-15');
   assert.equal(payload.available, true);
   assert.equal(payload.models.length, 1);
 });

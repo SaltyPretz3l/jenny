@@ -75,6 +75,7 @@ function createHarness(root, overrides = {}) {
     fsImpl: fs,
     tmpDirProvider: () => downloadsDir,
     fetchImpl: fetchOnce(),
+    probePortImpl: async () => ({ state: 'free', port: 11434 }),
     extractImpl: async ({ destinationDir, onProgress }) => {
       fs.mkdirSync(path.join(destinationDir, 'bin'), { recursive: true });
       fs.writeFileSync(path.join(destinationDir, 'bin', 'ollama'), 'fake binary');
@@ -428,6 +429,119 @@ test('reconcileArchiveInstall is a no-op off the Linux archive plan and never th
     });
     const { service } = createHarness(root, { fsImpl });
     assert.doesNotThrow(() => service.reconcileArchiveInstall());
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Linux install refuses occupied or unknown ports before temporary files or download', async () => {
+  for (const state of ['occupied', 'unknown']) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-linux-port-guard-'));
+    try {
+      let fetched = false;
+      let temporary = false;
+      const { service } = createHarness(root, {
+        detectImpl: async () => ({ installed: true, running: false, upgradeRequired: false }),
+        probePortImpl: async () => ({ state, port: 11434 }),
+        fetchImpl: async () => { fetched = true; throw new Error('must not download'); },
+        tmpDirProvider: () => { temporary = true; return root; },
+      });
+      const result = await service.installOllama({ confirmed: true });
+      assert.equal(result.status, 'failed');
+      assert.equal(result.code, state === 'occupied' ? 'port_held_external' : 'port_state_unknown');
+      assert.equal(fetched, false);
+      assert.equal(temporary, false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('Linux install restarts Jenny\'s released engine after any unfinished outcome, once after success', async () => {
+  for (const [label, overrides, expected] of [
+    ['download failure', { fetchImpl: async () => { throw new Error('offline'); } }, 'failed'],
+    ['occupied port', { probePortImpl: async () => ({ state: 'occupied', port: 11434 }) }, 'failed'],
+    ['success', {}, 'completed'],
+  ]) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-linux-release-'));
+    try {
+      let released = 0;
+      const { service, getRestartCalls } = createHarness(root, {
+        releaseOwnedImpl: async () => { released++; return true; }, ...overrides,
+      });
+      const result = await service.installOllama({ confirmed: true });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(result.status, expected, label);
+      assert.equal(released, 1, label);
+      assert.equal(getRestartCalls(), 1, label);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('a cancel that outlives the pending engine release still restores Jenny\'s engine exactly once', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-linux-late-release-'));
+  try {
+    let finishRelease;
+    let probed = false;
+    const { service, getRestartCalls } = createHarness(root, {
+      terminationTimeoutMs: 5,
+      releaseOwnedImpl: () => new Promise((resolve) => { finishRelease = resolve; }),
+      probePortImpl: async () => { probed = true; return { state: 'free', port: 11434 }; },
+    });
+    const install = service.installOllama({ confirmed: true });
+    while (!finishRelease) await new Promise((resolve) => setImmediate(resolve));
+    const cancel = await service.cancelOllamaInstall({ requestId: 'linux-install' });
+    assert.equal(cancel.code, 'termination_failed');
+    assert.equal(getRestartCalls(), 0, 'nothing was released yet');
+    // The operation keeps its lifecycle latch while Jenny's engine is still being stopped.
+    const retry = await service.installOllama({ confirmed: true, requestId: 'second' });
+    assert.equal(retry.requestId, 'linux-install');
+    finishRelease(true);
+    const result = await install;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(result.status, 'failed');
+    assert.equal(getRestartCalls(), 1);
+    assert.equal(probed, false, 'a finished operation does not continue into the port probe');
+    await service.cancelOllamaInstall({ requestId: 'linux-install' });
+    assert.equal(getRestartCalls(), 1);
+    assert.equal((await service.installOllama({ confirmed: true, requestId: 'third' })).requestId, 'third');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a cancel whose release settles before the deadline keeps retries coalesced until restoration settles', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-linux-early-release-'));
+  try {
+    let finishRelease;
+    let finishRestart;
+    let restartCalls = 0;
+    const { service } = createHarness(root, {
+      terminationTimeoutMs: 60_000,
+      releaseOwnedImpl: () => new Promise((resolve) => { finishRelease = resolve; }),
+      restartImpl: () => {
+        restartCalls += 1;
+        return new Promise((resolve) => { finishRestart = resolve; });
+      },
+    });
+    const install = service.installOllama({ confirmed: true });
+    while (!finishRelease) await new Promise((resolve) => setImmediate(resolve));
+    const cancel = service.cancelOllamaInstall({ requestId: 'linux-install' });
+    finishRelease(true);
+    const result = await install;
+    assert.equal(result.status, 'cancelled');
+    assert.equal((await cancel).code, 'cancelled');
+    assert.equal(restartCalls, 1);
+    // The terminal response is published, but restoration of Jenny's engine still owns the lifecycle.
+    for (const requestId of ['second', 'third']) {
+      assert.equal((await service.installOllama({ confirmed: true, requestId })).requestId, 'linux-install');
+    }
+    finishRestart({ ok: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(restartCalls, 1);
+    assert.equal((await service.installOllama({ confirmed: true, requestId: 'fourth' })).requestId, 'fourth');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

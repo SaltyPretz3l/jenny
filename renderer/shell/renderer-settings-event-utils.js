@@ -69,12 +69,6 @@
       handlePersonalitySave,
       handlePersonalityReset,
       handlePersonalityOpenFolder,
-      renderMemoryContextFiles,
-      loadMemoryContextFile,
-      setMemoryContextDraft,
-      getMemoryContextActiveFile,
-      saveMemoryContextFile,
-      resetMemoryContextFile,
       showShellErrorToast,
       showToastMessage,
       toErrorMessage,
@@ -371,6 +365,8 @@
       if (!settingsRegistry.has('chatUi')) {
         [createChatUiAdapter, createFeaturesAdapter, createEnginesAdapter, createRuntimePreferencesAdapter, createAppearanceAdapter, createWindowUiAdapter]
           .forEach((create) => settingsRegistry.register(create()));
+        // Row 59 cp6: the performance rows write through window.jennyShell.performance, not through state.
+        if (globalThis.rendererPerformanceSettings) settingsRegistry.register(globalThis.rendererPerformanceSettings.createAdapter({ confirmError }));
       }
       return fieldBinding.bindSettingFields({
         container,
@@ -523,12 +519,6 @@
           handlePersonalitySave,
           handlePersonalityReset,
           handlePersonalityOpenFolder,
-          renderMemoryContextFiles,
-          loadMemoryContextFile,
-          setMemoryContextDraft,
-          getMemoryContextActiveFile,
-          saveMemoryContextFile,
-          resetMemoryContextFile,
           showShellErrorToast,
           toErrorMessage,
           appendClientLog,
@@ -538,6 +528,13 @@
           openSkillsScopeFolder,
           handleOfflineModeChange,
           applyFeatureSettings,
+          refreshFeatureState,
+          applyRoutingFeatureState: (payload) => {
+            const routing = normalizeFeatureState(payload);
+            state.features = { ...state.features, subagentRouting: routing.subagentRouting,
+              subagentModelCatalogs: routing.subagentModelCatalogs };
+            renderSettings();
+          },
           renderLogs,
           openSession,
           setActiveView,
@@ -550,6 +547,12 @@
           getProjectSwitcher: deps.callbacks.getProjectSwitcher,
         },
       }) || null;
+      // Tools is an eager section: its controller binds with the common fields,
+      // while its script is still loaded only when the Settings page opens.
+      sectionBinders?.bindSection('tools', {
+        registerSectionListener: registerListener, finalizeSectionBindings: () => true,
+        markSectionBound() {}, addCleanup,
+      });
       // Diagnostics › Runs attaches through this binder set, so its poll ends with it.
       addCleanup(() => sectionBinders?.dispose?.());
 
@@ -589,7 +592,7 @@
       // (one write path for contextPreferences, so a queued write never carries a
       // stale scope); its row is mounted by renderSettings, so the card delegates.
       bindDescriptorFields(contextSettingsSection, ['contextHistoryScopeSelect']);
-      bindDescriptorFields(contextSourcesList, ['contextIncludePersonalityToggle', 'contextIncludeMemoryToggle']);
+      bindDescriptorFields(contextSourcesList, ['contextIncludePersonalityToggle', 'contextIncludeMemoryToggle', 'contextMemoryOptOutToggle']);
       bindDescriptorFields(contextRuntimeList, ['contextCompactionToggle']);
       bindDescriptorFields(modelStartupLoadList, ['modelStartupLoadToggle']);
 

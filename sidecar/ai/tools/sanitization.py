@@ -413,6 +413,15 @@ def _has_secret_pattern(text: str) -> bool:
     return any(pattern.search(text) is not None for pattern in _SECRET_PATTERNS)
 
 
+def scrub_memory_text(text: str) -> tuple[str, bool]:
+    """Memory text as it may be stored and rendered (row 58): surrogates,
+    invisible Unicode, control characters and model control tokens dropped.
+    The flag is True when a credential shape remains; callers refuse the write."""
+    cleaned = drop_special_tokens(strip_invisible_chars(strip_surrogates(str(text or ""))))
+    cleaned = _CONTROL_CHAR_RE.sub("", cleaned).strip()
+    return cleaned, _has_secret_pattern(cleaned)
+
+
 def _argument_preview(arguments: object) -> str:
     try:
         return json.dumps(arguments, ensure_ascii=False, sort_keys=True, default=str)

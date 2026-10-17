@@ -124,7 +124,6 @@ function buildEnv({ chatInputText = '' } = {}) {
       isInteractiveOtherTrigger: () => false,
       getActiveSession: () => null,
       patchSessionSummary: () => {},
-      rekeyDismissedMemorySession: () => {},
       rekeySessionArtifacts: () => {},
       clearProjectionContextCacheForSession: () => {},
       rekeyProjectionContextCache: () => {},

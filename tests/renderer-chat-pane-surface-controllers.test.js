@@ -331,3 +331,86 @@ test('the module is UMD and registers the rendererChatPaneSurfaceControllers glo
   assert.match(source, /root\.rendererChatPaneSurfaceControllers\s*=\s*factory\(\)/);
   assert.match(source, /module\.exports\s*=\s*factory\(\)/);
 });
+
+/* Row 59 checkpoint 1: the floating transcript utilities publish their reach
+   into the pane as --chat-utility-reserve; the one-pane gutter holds it. */
+test('observeUtilityReserve publishes the cluster reach, follows resizes and clears on dispose', () => {
+  const { observeUtilityReserve } = require('../renderer/chat/renderer-chat-pane-surface-controllers.js');
+  const dom = new JSDOM('<div class="chat-pane" id="pane"><div class="chat-thread-stage" id="stage"></div><div data-chat-node="chatTimelineUtilityCluster" id="cluster"></div></div>');
+  const { document } = dom.window;
+  const pane = document.getElementById('pane');
+  const stage = document.getElementById('stage');
+  const cluster = document.getElementById('cluster');
+  const rect = (left, right, height = 28) => () => ({ left, right, width: right - left, height, top: 0, bottom: height });
+  stage.getBoundingClientRect = rect(100, 800, 600);
+  cluster.getBoundingClientRect = rect(700, 790);
+  const observers = [];
+  const windowRef = {
+    getComputedStyle: () => ({ direction: 'ltr' }),
+    ResizeObserver: class {
+      constructor(callback) { this.callback = callback; this.targets = []; this.disconnected = false; observers.push(this); }
+      observe(target) { this.targets.push(target); if (this.targets.length === 1) this.callback([]); }
+      disconnect() { this.disconnected = true; }
+    },
+  };
+  const dispose = observeUtilityReserve(stage, cluster, windowRef);
+  assert.deepEqual(observers[0].targets, [cluster, stage]);
+  assert.equal(pane.style.getPropertyValue('--chat-utility-reserve'), '104px', 'stage end 800 - cluster start 700 + 4px gap');
+  cluster.getBoundingClientRect = rect(0, 0, 0);
+  observers[0].callback([]);
+  assert.equal(pane.style.getPropertyValue('--chat-utility-reserve'), '0px', 'a cluster that shows nothing reserves nothing (the stage is still laid out)');
+  dispose();
+  assert.equal(observers[0].disconnected, true);
+  assert.equal(pane.style.getPropertyValue('--chat-utility-reserve'), '');
+  dom.window.close();
+});
+
+test('observeUtilityReserve keeps its value while the view is hidden and brackets a real change with the reader anchor', () => {
+  const { observeUtilityReserve } = require('../renderer/chat/renderer-chat-pane-surface-controllers.js');
+  const dom = new JSDOM('<div class="chat-pane" id="pane"><div class="chat-thread-stage" id="stage"></div><div data-chat-node="chatTimelineUtilityCluster" id="cluster"></div></div>');
+  const { document } = dom.window;
+  const pane = document.getElementById('pane');
+  const stage = document.getElementById('stage');
+  const cluster = document.getElementById('cluster');
+  const rect = (left, right, height = 28) => () => ({ left, right, width: right - left, height, top: 0, bottom: height });
+  stage.getBoundingClientRect = rect(100, 800, 600);
+  cluster.getBoundingClientRect = rect(700, 790);
+  let callback = null;
+  const log = [];
+  const coordinator = {
+    captureReaderAnchor: () => { log.push(`capture ${pane.style.getPropertyValue('--chat-utility-reserve')}`); return true; },
+    restoreReaderAnchor: () => { log.push(`restore ${pane.style.getPropertyValue('--chat-utility-reserve')}`); },
+  };
+  const windowRef = { getComputedStyle: () => ({ direction: 'ltr' }), ResizeObserver: class { constructor(cb) { callback = cb; } observe() { callback([]); } disconnect() {} } };
+  observeUtilityReserve(stage, cluster, windowRef, coordinator);
+  assert.equal(pane.style.getPropertyValue('--chat-utility-reserve'), '104px');
+  assert.deepEqual(log, [], 'the first publish is the initial layout, not a reflow under a reader');
+  stage.getBoundingClientRect = rect(0, 0, 0);
+  cluster.getBoundingClientRect = rect(0, 0, 0);
+  callback([]);
+  assert.equal(pane.style.getPropertyValue('--chat-utility-reserve'), '104px', 'a hidden chat view keeps the last reserve');
+  stage.getBoundingClientRect = rect(100, 800, 600);
+  cluster.getBoundingClientRect = rect(740, 790);
+  callback([]);
+  assert.deepEqual(log, ['capture 104px', 'restore 64px'], 'a real change is bracketed by the reader anchor');
+  dom.window.close();
+});
+
+test('observeUtilityReserve is inert without a cluster or a ResizeObserver', () => {
+  const { observeUtilityReserve } = require('../renderer/chat/renderer-chat-pane-surface-controllers.js');
+  const dom = new JSDOM('<div class="chat-pane"><div class="chat-thread-stage" id="stage"></div><div id="cluster"></div></div><div id="elsewhere"></div>');
+  const stage = dom.window.document.getElementById('stage');
+  const pane = stage.parentElement;
+  let constructed = 0;
+  const Observer = class { constructor() { constructed += 1; } observe() {} disconnect() {} };
+  const disposers = [
+    observeUtilityReserve(stage, null, { ResizeObserver: Observer }),
+    observeUtilityReserve(stage, dom.window.document.getElementById('elsewhere'), { ResizeObserver: Observer }),
+    observeUtilityReserve(stage, dom.window.document.getElementById('cluster'), {}),
+    observeUtilityReserve(null, null, {}),
+  ];
+  assert.equal(constructed, 0, 'no observer without a cluster in the stage pane or without ResizeObserver');
+  disposers.forEach((dispose) => assert.equal(dispose(), undefined));
+  assert.equal(pane.style.getPropertyValue('--chat-utility-reserve'), '', 'nothing is published');
+  dom.window.close();
+});

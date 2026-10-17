@@ -234,20 +234,6 @@ test('shell config v20 exposes setup, assistant identity, and Codex CLI defaults
   });
 });
 
-test('shell config v41 migrates and persists the durable memory suggestion preference', () => {
-  assert.deepEqual(normalizeState({ version: 40 }).memory, { captureSuggestions: true });
-  assert.deepEqual(normalizeState({ version: 40, memory: { captureSuggestions: false } }).memory, { captureSuggestions: false });
-  for (const malformed of [null, 0, 'false', [], {}]) {
-    const normalized = normalizeState({ version: 40, memory: { captureSuggestions: malformed } });
-    assert.deepEqual(normalized.memory, { captureSuggestions: true });
-  }
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-config-memory-v41-'));
-  trackDirectory(userDataPath);
-  const service = new ShellConfigService({ userDataPath, env: {} });
-  assert.equal(service.updateFeatureSettings({ memory: { captureSuggestions: false } }).memory.captureSuggestions, false);
-  assert.equal(new ShellConfigService({ userDataPath, env: {} }).getState().memory.captureSuggestions, false);
-});
-
 test('shell config service persists setup and assistant identity contract updates', () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-config-setup-'));
   trackDirectory(userDataPath);

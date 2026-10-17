@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "pilot_ids": [
+    "Q01",
+    "Q17",
+    "Q37",
+    "Q39",
+    "Q43",
+    "Q45",
+    "Q49",
+    "Q53",
+    "Q55",
+    "Q56",
+    "Q57",
+    "Q58",
+    "Q59",
+    "Q60"
+  ],
+  "frozen_before_full_run": true,
+  "source_recall_answerable_min": 0.8,
+  "expanded_term_coverage_answerable_min": 0.8,
+  "retrieval_expansion_p95_ms_max": 3000,
+  "catalog_bytes_max": 8388608,
+  "scope_leaks_max": 0,
+  "stale_deleted_source_max": 0,
+  "fabricated_numeric_answers_max": 0,
+  "notes": "Pilot: 14 cases, no hard failures; one answerable source miss; 0.4-1.9s search+view. Quality failures are baseline findings, never a reason to silently relax thresholds. Recall/coverage do not prove answer fidelity. Subsequent comparisons must also not regress the frozen per-case baseline."
+}

@@ -56,7 +56,7 @@ def test_runtime_operation_uses_tool_call_identity_and_visible_arguments(tmp_pat
     ))
     params = sent[0]["params"]
     assert params["operation_id"] == "call_7"
-    assert params["api_version"] == "2026-08-17"
+    assert params["api_version"] == "2026-10-15"
     assert params["arguments"] == {"path": "a.txt"}
     assert "root_path" not in params
     assert reader is not None and reader.closed

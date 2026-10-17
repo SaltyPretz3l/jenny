@@ -1,59 +1,55 @@
 'use strict';
 
-// The Diagnostics issue card (UX-007): one entry per explanation group with a
-// plain title, a cause, one action and the evidence folded under details.
+// The Diagnostics issue card (UX-007): one entry per explanation group with a severity icon, a plain
+// title, a cause, one action and the evidence folded under Details.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 const { renderIssueList, openGroupsIn, restoreOpenGroups, focusedControlIn, restoreFocus } = require('../renderer/shell/renderer-diagnostics-issue-card');
+const { groupIssues } = require('../renderer/shared/diagnostics-issue-utils');
 
 const ROOTLESS = "Error invoking remote method 'workspace-fs:watch-start': WorkspaceFsError: No workspace root is configured; choose a workspace folder first.";
 
 function group(overrides) {
   const base = {
     component: 'renderer.lifecycle', event: 'ide.watch_start_failed', error_code: '', count: 1, severity: 'WARN',
-    message: ROOTLESS, ts: '2026-10-07T13:59:32.291Z', remediation: '', correlations: {},
+    message: ROOTLESS, ts: '2026-10-07T13:59:32.291Z', remediation: '', correlations: {}, data: {}, entry_ids: [],
   };
   const merged = { ...base, ...overrides };
-  merged.key = [merged.component, merged.event, merged.error_code].join('\u0000');
+  merged.key = [merged.component, merged.event, merged.error_code, merged.severity, '', ''].join('\u0000');
   return merged;
 }
 
 const WATCH = group({});
 const TREE = group({ event: 'ide.tree_list_failed', ts: '2026-10-07T13:59:32.273Z', correlations: { request_id: 'req-1' } });
-const SLOW = group({ component: 'electron.main', event: 'ipc.handler_slow', count: 5, message: 'ipc.handler_slow', ts: '2026-10-07T13:53:00.363Z' });
+const SLOW = group({
+  component: 'electron.main', event: 'ipc.handler_slow', count: 5, message: 'ipc.handler_slow', ts: '2026-10-07T13:53:00.363Z',
+  data: { channel: 'models:list', durationMs: 5200 },
+});
 const MEMORY = group({
   component: 'sidecar.memory.index', event: 'memory.index_write_failed', error_code: 'CMP-MEM-0042', severity: 'ERROR',
   message: 'index write failed: database is locked', ts: '2026-10-07T14:02:00.000Z', remediation: 'Retry after the lock clears.',
   correlations: { session_id: 's-1', trace_id: '' },
 });
-const ENTRIES = [
-  { component: 'electron.main', event: 'ipc.handler_slow', ts: SLOW.ts, level: 'WARN', data: { channel: 'models:list', durationMs: 5200 } },
-  // Same event id and stamp in another area: never borrowed by the group above.
-  { component: 'other.area', event: 'ipc.handler_slow', ts: SLOW.ts, level: 'WARN', data: { channel: 'wrong:channel', durationMs: 1 } },
-];
 const AVAILABLE = { 'choose-workspace-folder': true, 'show-diagnostics-performance': true };
 
 function render(groups, options) {
-  const dom = new JSDOM('<div id="host">' + renderIssueList(groups, options) + '</div>');
+  const dom = new JSDOM('<ul id="host">' + renderIssueList(groups, options) + '</ul>');
   return dom.window.document.getElementById('host');
 }
 
 test('groups that share an explanation merge into one entry with the evidence folded', () => {
-  const host = render([WATCH, TREE, SLOW, MEMORY], { availableActions: AVAILABLE, entries: ENTRIES, formatDetailTime: (ts) => 'full ' + ts });
-  const entries = Array.from(host.querySelectorAll('.diagnostics-issue'));
+  const host = render([WATCH, TREE, SLOW, MEMORY], { availableActions: AVAILABLE, formatDetailTime: (ts) => 'full ' + ts, formatWhen: () => '13:59' });
+  const entries = Array.from(host.querySelectorAll(':scope > li'));
   assert.deepEqual(entries.map((node) => node.dataset.issueGroup), ['fallback:memory.index_write_failed', 'noWorkspaceFolder', 'slowRequest'], 'ERROR first, then newest');
-  assert.equal(host.querySelector('.diagnostics-issue-header'), null);
-  assert.equal(host.querySelectorAll('[data-label]').length, 0);
+  assert.equal(host.querySelector('.diagnostics-issue-badge'), null, 'severity is an icon, never a badge');
 
   const workspace = entries[1];
-  assert.equal(workspace.getAttribute('role'), 'listitem');
   assert.equal(workspace.dataset.severity, 'WARN');
-  assert.equal(workspace.querySelector('.diagnostics-issue-badge').textContent, 'Warning');
-  assert.equal(workspace.querySelector('.diagnostics-issue-badge').dataset.tone, 'warning');
-  assert.equal(workspace.querySelector('.diagnostics-issue-title strong').textContent, 'No workspace folder is open');
-  assert.match(workspace.querySelector('.diagnostics-issue-when').textContent, /2 events$/);
+  assert.ok(workspace.querySelector('.diagnostics-issue-mark svg.inv-state-icon--warn'));
+  assert.equal(workspace.querySelector('.diagnostics-issue-title').textContent, 'No workspace folder is open');
+  assert.equal(workspace.querySelector('.diagnostics-issue-when').textContent, '13:59 · 2 events');
   assert.equal(workspace.querySelector('.diagnostics-issue-when time').getAttribute('title'), 'full ' + WATCH.ts);
   assert.match(workspace.querySelector('.diagnostics-issue-cause').textContent, /no folder is chosen/);
   const button = workspace.querySelector('.diagnostics-issue-actions > button');
@@ -63,36 +59,49 @@ test('groups that share an explanation merge into one entry with the evidence fo
   const fold = workspace.querySelector('details.diagnostics-issue-tech');
   assert.equal(fold.dataset.issueGroup, 'noWorkspaceFolder');
   assert.equal(fold.hasAttribute('open'), false, 'closed by default');
-  assert.equal(fold.querySelector('summary').textContent, 'Technical details');
+  assert.equal(fold.querySelector('summary').textContent, 'Details');
   const body = fold.querySelector('dl.diagnostics-issue-tech-body').textContent;
   assert.match(body, /Events.*ide\.watch_start_failed.*×1.*ide\.tree_list_failed.*×1/s);
-  assert.match(body, /Area.*renderer\.lifecycle.*Workspace/s);
-  assert.match(body, /Recorded message.*No workspace root is configured/s);
-  assert.doesNotMatch(body, /Code|Recorded advice/);
+  assert.match(body, /Area.*Workspace.*renderer\.lifecycle/s);
+  assert.match(body, /Message.*No workspace root is configured/s);
+  assert.doesNotMatch(body, /Code|Advice|Last seen|Recorded/);
   const links = Array.from(fold.querySelectorAll('[data-action="inspect-diagnostic-issue"][data-issue]'));
-  assert.deepEqual(links.map((node) => decodeURIComponent(node.dataset.issue)), [WATCH.key, TREE.key], 'one Inspect link per member event');
-  assert.ok(links.every((node) => node.classList.contains('diagnostics-issue-link') && !node.classList.contains('btn')));
+  assert.deepEqual(links.map((node) => decodeURIComponent(node.dataset.issue)), [WATCH.key, TREE.key], 'one Show in Activity link per member event');
+  assert.ok(links.every((node) => node.classList.contains('diagnostics-issue-link') && !node.classList.contains('btn') && node.textContent === 'Show in Activity'));
   assert.deepEqual(Array.from(workspace.querySelectorAll('.diagnostics-issue-correlations code')).map((node) => node.textContent), ['req-1']);
 });
 
-test('the slow-request entry interpolates the duration and shows the channel', () => {
-  const host = render([SLOW], { availableActions: AVAILABLE, entries: ENTRIES });
+test('the slow-request entry interpolates the duration from the group data and shows the channel', () => {
+  const host = render([SLOW], { availableActions: AVAILABLE });
   const entry = host.querySelector('.diagnostics-issue');
-  assert.equal(entry.querySelector('strong').textContent, 'A background request was slow');
+  assert.equal(entry.querySelector('.diagnostics-issue-title').textContent, 'A background request was slow');
   assert.match(entry.querySelector('.diagnostics-issue-cause').textContent, /took 5\.2 s/);
   assert.match(entry.querySelector('.diagnostics-issue-when').textContent, /5 times$/);
   assert.equal(entry.querySelector('.diagnostics-issue-actions > button').dataset.action, 'show-diagnostics-performance');
   const body = entry.querySelector('.diagnostics-issue-tech-body').textContent;
   assert.match(body, /Request.*models:list/s);
-  assert.match(body, /Recorded message.*None/s, 'a message equal to the event id counts as none');
+  assert.doesNotMatch(body, /Message/, 'a message equal to the event id is no recorded message');
 });
 
-test('an unmapped action falls back to Inspect activity as the button; the fold links only the members the button misses', () => {
+test('the slow-request duration is the data groupIssues put on the group, with no entries to re-match', () => {
+  const stamp = '2026-10-07T13:53:00.000Z';
+  const entries = [
+    { entry_id: 'a', run_id: 'r', sequence: 1, ts: stamp, level: 'WARN', layer: 'electron', component: 'electron.main', event: 'ipc.handler_slow', data: { durationMs: 1 } },
+    { entry_id: 'b', run_id: 'r', sequence: 2, ts: stamp, level: 'WARN', layer: 'electron', component: 'electron.main', event: 'ipc.handler_slow', data: { channel: 'models:list', durationMs: 5200 } },
+  ];
+  const groups = groupIssues(entries);
+  assert.equal(groups[0].data.durationMs, 5200);
+  const host = render(groups, { entries, availableActions: AVAILABLE });
+  assert.match(host.querySelector('.diagnostics-issue-cause').textContent, /took 5\.2 s/);
+});
+
+test('an unmapped action falls back to Show in Activity as the button; the fold links only the members the button misses', () => {
   for (const options of [{}, { availableActions: {} }]) {
     const host = render([WATCH, TREE, MEMORY], options);
     for (const entry of host.querySelectorAll('.diagnostics-issue')) {
       const inspects = Array.from(entry.querySelectorAll('[data-action="inspect-diagnostic-issue"][data-issue]'));
       assert.equal(inspects[0], entry.querySelector('.diagnostics-issue-actions > button'));
+      assert.equal(inspects[0].textContent, 'Show in Activity');
       const members = entry.querySelectorAll('.diagnostics-issue-event').length;
       assert.equal(inspects.length, members, entry.dataset.issueGroup + ': one way into Activity per member');
       assert.deepEqual(inspects.slice(1).map((node) => node.closest('.diagnostics-issue-tech-body') !== null), new Array(members - 1).fill(true));
@@ -100,16 +109,23 @@ test('an unmapped action falls back to Inspect activity as the button; the fold 
     assert.deepEqual(Array.from(host.querySelectorAll('[data-issue-group="noWorkspaceFolder"] [data-action="inspect-diagnostic-issue"]'))
       .map((node) => decodeURIComponent(node.dataset.issue)), [WATCH.key, TREE.key], 'the button scopes the first member, the fold link the second');
     const memory = host.querySelector('[data-issue-group="fallback:memory.index_write_failed"]');
-    assert.equal(memory.querySelector('.diagnostics-issue-badge').textContent, 'Error');
-    assert.equal(memory.querySelector('.diagnostics-issue-badge').dataset.tone, 'danger');
-    assert.equal(memory.querySelector('strong').textContent, 'Memory reported an error');
+    assert.equal(memory.dataset.severity, 'ERROR');
+    assert.ok(memory.querySelector('.diagnostics-issue-mark svg.inv-state-icon--error'));
+    assert.equal(memory.querySelector('.diagnostics-issue-title').textContent, 'Memory reported an error');
     assert.match(memory.querySelector('.diagnostics-issue-when').textContent, /once$/);
-    assert.equal(decodeURIComponent(memory.querySelector('[data-action="inspect-diagnostic-issue"]').dataset.issue), MEMORY.key);
+    assert.equal(decodeURIComponent(memory.querySelector('[data-action="inspect-diagnostic-issue"]').dataset.issue), MEMORY.key, 'data-issue is the group key');
     const body = memory.querySelector('.diagnostics-issue-tech-body').textContent;
     assert.match(body, /Code.*CMP-MEM-0042/s);
-    assert.match(body, /Recorded advice.*Retry after the lock clears\./s);
+    assert.match(body, /Advice.*Retry after the lock clears\./s);
     assert.deepEqual(Array.from(memory.querySelectorAll('.diagnostics-issue-correlations code')).map((node) => node.textContent), ['s-1'], 'empty correlation values are skipped');
   }
+});
+
+test('a time that cannot be read is an em dash, never the raw string', () => {
+  const host = render([group({ ts: '2026-10-07T99:99:99.000Z' })], {});
+  assert.equal(host.querySelector('.diagnostics-issue-when').textContent, '— · once');
+  assert.doesNotMatch(host.textContent, /99:99/);
+  assert.equal(host.querySelector('.diagnostics-issue-when time'), null, 'no time element without a time');
 });
 
 test('the markup carries no fold state; open folds are read back from the live DOM and restored after a repaint', () => {
@@ -128,7 +144,7 @@ test('the markup carries no fold state; open folds are read back from the live D
 });
 
 test('the focused control is found again after the list is repainted for new content', () => {
-  const dom = new JSDOM('<div id="host">' + renderIssueList([WATCH, TREE, SLOW], { availableActions: AVAILABLE }) + '</div>');
+  const dom = new JSDOM('<ul id="host">' + renderIssueList([WATCH, TREE, SLOW], { availableActions: AVAILABLE }) + '</ul>');
   const host = dom.window.document.getElementById('host');
   assert.equal(focusedControlIn(host), '', 'nothing focused');
   host.querySelector('[data-issue-group="slowRequest"] summary').focus();

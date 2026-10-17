@@ -107,9 +107,6 @@ function createService({ sessionSummary, sessionMessages, linkedMessages }) {
     async recallApprovedMemories() {
       return { memories: [] };
     },
-    async recallRecentApprovedMemories() {
-      return { memories: [] };
-    },
     async setSessionPreferences() {},
     async renameSession() {},
     async _restartManagedSidecar() {},

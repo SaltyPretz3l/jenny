@@ -51,15 +51,18 @@ class _RecallStore:
     def __init__(self) -> None:
         self.calls = 0
 
-    def recall_memories(
+    def recall_memories(  # noqa: PLR0913 - mirrors the store recall contract.
         self,
         query: str,
         *,
         limit: int,
         project_id: str,
         include_general: bool = False,
+        scope_session_id: str | None = None,
+        deadline: float | None = None,
+        clock: object = None,
     ) -> list[ApprovedMemory]:
-        _ = (limit, include_general)
+        _ = (limit, include_general, scope_session_id, deadline, clock)
         self.calls += 1
         assert project_id == GENERAL_PROJECT_ID
         if query != "tea":
@@ -74,25 +77,11 @@ class _RecallStore:
                 lesson_kind="routine",
                 source_excerpt="",
                 content_fingerprint=f"sha256:{1:064x}",
-                family_key="",
                 provenance="user_approved",
                 created_at="2026-01-01T00:00:00+00:00",
                 updated_at="2026-01-01T00:00:00+00:00",
             )
         ]
-
-    def get_recent_memories_by_kind(
-        self,
-        _kind: str,
-        _limit: int,
-        *,
-        project_id: str,
-        include_general: bool = False,
-    ) -> list[ApprovedMemory]:
-        _ = include_general
-        self.calls += 1
-        assert project_id == GENERAL_PROJECT_ID
-        return []
 
 
 def _routed_messages(

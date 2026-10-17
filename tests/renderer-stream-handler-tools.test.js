@@ -363,6 +363,25 @@ test('tool_result with structural UI payload uses message render', async () => {
   assert.equal(harness.renderCalls[0].flags.messages, true);
 });
 
+test('a memory tool_result takes the full render so its chip (Undo) appears live', async () => {
+  const harness = createToolHandlerHarness({ patchAccepted: true, initialToolName: 'memory' });
+
+  await harness.handlers.handleToolResult({
+    type: 'tool_result',
+    sessionId: 'session-1',
+    streamId: 'stream-1',
+    callId: 'call-1',
+    toolName: 'memory',
+    content: 'Remembered.',
+    summary: 'Remembered.',
+    metadata: { result_kind: 'memory', action: 'remember', status: 'saved', operation_id: 'tool:s1:call-1', undoable: true },
+  });
+
+  assert.equal(harness.scheduledPatches.length, 0);
+  assert.equal(harness.renderCalls.length, 1);
+  assert.equal(harness.renderCalls[0].flags.messages, true);
+});
+
 test('tool_result with shell metadata uses message render for specialized body chrome', async () => {
   const harness = createToolHandlerHarness({ patchAccepted: true });
 

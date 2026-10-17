@@ -23,6 +23,9 @@ function projectCompactRow(prepared) {
   return compactMessage;
 }
 
+// Addressed session messages (role context) stay out of the summarizer's input: a summary travels
+// as trusted history, and a received body must never be paraphrased into it. A message folded
+// into a compacted prefix leaves the model's history; the transcript keeps it for the user.
 function prepareRows(rows) {
   return buildPreparedContextHistory(rows, SESSION_SCOPE).map(projectCompactRow);
 }

@@ -329,13 +329,16 @@
       // W2-2b: the session's own queue (pane 0's live array, or another pane's record).
       const sessionQueue = globalThis.rendererComposerSessionState || require('./renderer-composer-session-state');
       const hasNewerComposerWork = Boolean(String(chatInput?.value || '').trim())
-        || sessionQueue.getQueuedAttachments(state, sessionId).length > 0;
+        || sessionQueue.getQueuedAttachments(state, sessionId).length > 0
+        || Boolean(deps.getImageEditDraftController?.()?.snapshot(sessionId));
       if (hasNewerComposerWork) {
         getOrCreateSendOutbox(state).replace(queuedSend, { status: 'needs_review' });
         renderComposerState();
         renderMessages();
         return null;
       }
+      const imageEdit = queuedSend.meta?.imageEditSnapshot;
+      if (imageEdit?.sessionId === sessionId) deps.getImageEditDraftController?.()?.restore(imageEdit);
       chatInput.value = String(queuedSend.prompt || '');
       sessionQueue.setQueuedAttachments(state, sessionId, cloneQueuedAttachments(queuedSend.attachments));
       clearQueuedSendInState(state, sessionId, queuedSend);

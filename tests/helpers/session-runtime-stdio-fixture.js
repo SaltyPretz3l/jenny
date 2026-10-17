@@ -40,6 +40,7 @@ function createBackend(profile, workspace, seen, logs, kind, launchArgs) {
     assert.ok(['list_dir', 'read_file', 'ask_user'].every(name => result.tools_available?.includes(name)), JSON.stringify(result.tools_available));
     assert.equal(result.runtime_continuation_version, 1);
     assert.equal(protocol.assertRuntimeContinuationProtocol(backend.sidecarClient), true);
+    assert.equal(protocol.supportsSessionMessageContext(backend.sidecarClient), true);
     return result;
   };
   backend.on('chat-stream', event => seen.push(event));

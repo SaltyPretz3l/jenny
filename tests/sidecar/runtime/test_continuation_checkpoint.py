@@ -196,7 +196,7 @@ def test_checkpoint_request_is_exact_and_returns_only_normalized_reference() -> 
     assert checkpoint_ref is not _checkpoint_ref()
     assert set(sent[0]) == {"jsonrpc", "api_version", "id", "method", "params"}
     assert sent[0]["jsonrpc"] == "2.0"
-    assert sent[0]["api_version"] == "2026-08-17"
+    assert sent[0]["api_version"] == "2026-10-15"
     assert sent[0]["method"] == "runtime.operation"
     params = sent[0]["params"]
     assert set(params) == {

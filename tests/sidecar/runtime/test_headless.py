@@ -268,44 +268,36 @@ def test_headless_auto_readonly_denies_side_effecting_request(
     assert call_count["value"] == 1
 
 
-def test_headless_auto_tools_regex_allows_matching_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_headless_auto_tools_regex_allows_only_frozen_matching_tool(monkeypatch):
     _patch_runtime_plumbing(monkeypatch)
-    call_count = {"value": 0}
+    plan = object()
+    resumes = []
 
     def _fake_build(*args, **kwargs):
-        call_count["value"] += 1
-        if call_count["value"] == 1:
-            assert kwargs["approvals_pre_granted"] is False
-            return ChatResponse(
-                request_id="req_test",
-                result={"request_id": "req_test", "status": "awaiting_approval"},
-                notifications=[],
-                approval_request={
-                    "request_id": "req_test",
-                    "tool_name": "write_file",
-                    "reason": "Needs approval",
-                    "tool_input": {"path": "notes.txt"},
-                    "mode": "assist",
-                },
-            )
-        assert kwargs["approvals_pre_granted"] is True
-        return _completed_response()
+        assert kwargs["approvals_pre_granted"] is False
+        return ChatResponse(
+            request_id="req_test", result={"status": "awaiting_approval"}, notifications=[],
+            approval_request={"tool_name": "write_file", "tool_input": {"path": "notes.txt"}},
+            approval_plan=plan,
+        )
+
+    def _resume(frozen_plan, **kwargs):
+        assert frozen_plan is plan
+        assert "approvals_pre_granted" not in kwargs
+        resumes.append(frozen_plan)
+        return ChatResponse(
+            request_id="req_test", result={"status": "awaiting_approval"}, notifications=[],
+            approval_request={"tool_name": "fetch_url", "tool_input": {"url": "https://example.com"}},
+            approval_plan=object(),
+        )
 
     monkeypatch.setattr(headless, "build_chat_send_response", _fake_build)
-
-    exit_code = headless.run_headless(
-        [
-            "--prompt",
-            "hello",
-            "--output-format",
-            "json",
-            "--auto-approve-tools",
-            "^write_file$",
-        ]
-    )
-
-    assert exit_code == 0
-    assert call_count["value"] == 2
+    monkeypatch.setattr(headless, "resume_chat_send_response_from_approval_plan", _resume)
+    exit_code = headless.run_headless([
+        "--prompt", "hello", "--output-format", "json", "--auto-approve-tools", "^write_file$",
+    ])
+    assert exit_code == 1
+    assert resumes == [plan]
 
 
 def test_headless_dangerous_mode_requires_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:

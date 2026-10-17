@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 # ── Constants ───────────────────────────────────────────────────────
 
@@ -26,6 +26,7 @@ MAX_QUERY_LENGTH = 512
 MAX_QUERY_TERMS = 32
 MAX_RESULTS = 25
 MIN_ID_PREFIX_LENGTH = 3
+MAX_DERIVED_SEARCH_HINT_CHARS = 160
 TOOL_SEARCH_TOOL_NAME = "tool_search"
 
 # Scoring weights
@@ -322,6 +323,19 @@ class ToolSearchIndex:
 # ── Deferral set computation ────────────────────────────────────────
 
 
+def preset_starter_tool_names(descriptors: Iterable[Any]) -> frozenset[str]:
+    """Starter tools of every preset MCP server (exact name) present in *descriptors*.
+
+    Row 53: these stay un-deferred and survive the budget filter's schema cap so a
+    small-context model sees their full schemas. Lazy import keeps the preset
+    table off the ``sidecar.server`` import path.
+    """
+    from sidecar.ai.mcp.presets import starter_tool_names
+
+    server_names = {str(getattr(d, "server_name", "") or "") for d in descriptors}
+    return frozenset(name for server in server_names for name in starter_tool_names(server))
+
+
 def compute_deferral_set(
     mode: DeferralMode,
     all_descriptors: Sequence[Any],
@@ -333,12 +347,14 @@ def compute_deferral_set(
     """Return tool names that should be deferred (schema hidden from model).
 
     Built-in tools are never deferred.  The ``tool_search`` tool itself
-    is never deferred.
+    is never deferred, nor are the starter tools of a preset MCP server.
     """
     if mode == DeferralMode.STANDARD:
         return frozenset()
 
-    never_defer = builtin_names | {TOOL_SEARCH_TOOL_NAME}
+    never_defer = (
+        builtin_names | {TOOL_SEARCH_TOOL_NAME} | preset_starter_tool_names(all_descriptors)
+    )
     candidates = [d for d in all_descriptors if d.name not in never_defer]
 
     if mode == DeferralMode.TST:
@@ -422,22 +438,39 @@ def scan_history_for_undeferrals(
 
 # ── Search index builder ────────────────────────────────────────────
 
+_FIRST_SENTENCE_END = re.compile(r"\. |\n")
+
+
+def _derived_search_hint(description: str) -> str:
+    """The description's first sentence (to the first ``. `` or newline), capped."""
+    first = _FIRST_SENTENCE_END.split(description, maxsplit=1)[0].strip()
+    return first[:MAX_DERIVED_SEARCH_HINT_CHARS].strip()
+
 
 def build_search_index(
     deferred_names: frozenset[str],
     all_descriptors: Sequence[Any],
 ) -> ToolSearchIndex:
-    """Build a search index over the deferred tool set."""
+    """Build a search index over the deferred tool set.
+
+    An MCP tool without its own ``search_hint`` gets its description's first
+    sentence as one, so it earns the hint weight builtin hints already earn.
+    """
     entries: list[_IndexEntry] = []
     for d in all_descriptors:
         if d.name not in deferred_names:
             continue
+        description = getattr(d, "description", "") or ""
+        is_mcp = _is_mcp_tool_name(d.name)
+        search_hint = getattr(d, "search_hint", "") or ""
+        if not search_hint and is_mcp:
+            search_hint = _derived_search_hint(description)
         entries.append(
             _IndexEntry(
                 name=d.name,
-                description=getattr(d, "description", "") or "",
-                search_hint=getattr(d, "search_hint", "") or "",
-                is_mcp=_is_mcp_tool_name(d.name),
+                description=description,
+                search_hint=search_hint,
+                is_mcp=is_mcp,
                 aliases=tuple(getattr(d, "aliases", ()) or ()),
             )
         )

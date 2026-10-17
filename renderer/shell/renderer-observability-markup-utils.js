@@ -1,235 +1,194 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../shared/string-utils'), require('../shared/log-view-utils'));
+    module.exports = factory(require('../shared/string-utils'), require('../inventory/state-icon'), require('../inventory/action-button'));
     return;
   }
-  root.rendererObservabilityMarkupUtils = factory(root.stringUtils, root.logViewUtils);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, logViewUtils) {
+  root.rendererObservabilityMarkupUtils = factory(root.stringUtils, root.inventoryStateIcon, root.inventoryActionButton);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, stateIcon, actionButton) {
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const escapeHtml = stringUtils.escapeHtml;
   const normString = stringUtils.normalizeString;
-  const formatRelativeTimestamp = logViewUtils.formatRelativeTime;
 
-  function formatMs(value) {
-    if (value == null || String(value).trim() === '') return '\u2014';
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) return '--';
-    if (numeric >= 1000) return (numeric / 1000).toFixed(2) + 's';
-    return Math.round(numeric) + 'ms';
+  // This script loads before the shared formatters, so they are resolved when markup is built.
+  function format() {
+    return globalThis.rendererDiagnosticsFormat || (typeof require === 'function' ? require('./renderer-diagnostics-format') : null);
   }
 
-  function formatPercent(value) {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) return '--';
-    return (numeric * 100).toFixed(1) + '%';
+  // classNames: one class or a list of class tokens.
+  function headerCell(label, title, classNames) {
+    var className = [].concat(classNames || []).join(' ');
+    return '<th scope="col"' + (className ? ' class="' + className + '"' : '') + (title ? ' title="' + escapeHtml(title) + '"' : '') + '>' + escapeHtml(label) + '</th>';
   }
 
-  function formatNumber(value) {
-    const n = Number(value);
-    if (!Number.isFinite(n)) return '0';
-    return n.toLocaleString(globalThis.jennyI18n?.tag?.());
+  /* ── The rows each group would show; a facet with none hides its group ── */
+
+  // The tool the slowest calls belong to comes first.
+  function toolRows(facet) {
+    if (!facet || facet.available !== true) return [];
+    const tools = facet.tools && typeof facet.tools === 'object' ? facet.tools : {};
+    return Object.entries(tools)
+      .map(([name, stats]) => ({ name, stats: stats || {} }))
+      .filter((row) => Number.isFinite(Number(row.stats.count)) && Number(row.stats.count) > 0)
+      .sort((a, b) => (Number(b.stats.latency_ms?.p95) || 0) - (Number(a.stats.latency_ms?.p95) || 0));
   }
 
-  function formatCost(value) {
-    if (value === null || value === undefined || value === '') return 'Unavailable';
-    const n = Number(value);
-    if (!Number.isFinite(n)) return 'Unavailable';
-    if (n === 0) return '$0.00';
-    if (n < 0.01) return '$' + n.toFixed(4);
-    return '$' + n.toFixed(2);
+  function slowRows(facet) {
+    if (!facet || facet.available !== true || !Array.isArray(facet.items)) return [];
+    return facet.items.slice().sort((a, b) => Number(b?.observed_ms || 0) - Number(a?.observed_ms || 0));
   }
 
-  function plural(value, singular, pluralForm) {
-    return Number(value) === 1 ? singular : (pluralForm || singular + 's');
+  // Newest first: the facet keeps them oldest first.
+  function traceRows(facet) {
+    if (!facet || facet.available !== true || !Array.isArray(facet.recent)) return [];
+    return facet.recent.filter((trace) => trace && typeof trace === 'object').reverse();
   }
 
-  function buildEmptyState(copy) {
-    return ''
-      + '<div class="observability-empty-state">'
-      + '<p class="observability-empty-copy">' + escapeHtml(copy) + '</p>'
-      + '</div>';
+  /* ── Tools ── */
+
+  // The most RECENT error code: `recent_errors` is kept oldest first. Without it, a tool that has only ever
+  // failed one way still names that code; otherwise there is no recency to report.
+  function lastErrorCode(stats) {
+    const recent = Array.isArray(stats.recent_errors) ? stats.recent_errors : [];
+    for (let index = recent.length - 1; index >= 0; index -= 1) {
+      const code = normString(recent[index] && recent[index].error_code);
+      if (code) return code;
+    }
+    const codes = Object.keys(stats.error_codes && typeof stats.error_codes === 'object' ? stats.error_codes : {});
+    return codes.length === 1 ? codes[0] : '';
   }
 
-  /* ── Tool latency table ── */
+  function failedCount(stats) {
+    const reported = Number(stats.error_count);
+    if (Number.isFinite(reported) && reported >= 0) return reported;
+    const derived = Math.round(Number(stats.error_rate) * Number(stats.count));
+    return Number.isFinite(derived) && derived > 0 ? derived : 0;
+  }
 
   function buildToolLatencyMarkup(facet) {
-    if (!facet || facet.available !== true) {
-      return buildEmptyState(jt('diagnostics.observability.toolUnavailable', 'Tool observability is unavailable.'));
-    }
-    const tools = facet.tools && typeof facet.tools === 'object' ? facet.tools : {};
-    const entries = Object.entries(tools)
-      .map(([name, stats]) => ({ name, stats: stats || {} }))
-      .filter((row) => Number.isFinite(Number(row.stats.count)) && Number(row.stats.count) > 0);
-    if (entries.length === 0) {
-      return buildEmptyState(jt('diagnostics.observability.noToolCalls', 'No tool calls recorded yet.'));
-    }
-    entries.sort((a, b) => {
-      const ap = Number(a.stats.latency_ms?.p95) || 0;
-      const bp = Number(b.stats.latency_ms?.p95) || 0;
-      return bp - ap;
-    });
+    const entries = toolRows(facet);
+    if (!entries.length) return '';
+    const fmt = format();
     const rows = entries.map((row) => {
       const stats = row.stats;
       const latency = stats.latency_ms || {};
-      const lastError = (() => {
-        const codes = stats.error_codes && typeof stats.error_codes === 'object' ? stats.error_codes : {};
-        const list = Object.entries(codes).sort((a, b) => b[1] - a[1]);
-        return list.length > 0 ? list[0][0] : '';
-      })();
-      const errorRateClass = (Number(stats.error_rate) > 0.05)
-        ? 'observability-cell-warn'
-        : (Number(stats.error_rate) > 0 ? 'observability-cell-warn-soft' : '');
-      return ''
-        + '<tr>'
-        + '<td class="observability-cell-tool"><code>' + escapeHtml(row.name) + '</code></td>'
-        + '<td class="observability-cell-num">' + formatNumber(stats.count) + '</td>'
-        + '<td class="observability-cell-num ' + errorRateClass + '">' + formatPercent(stats.error_rate) + '</td>'
-        + '<td class="observability-cell-num">' + escapeHtml(formatMs(latency.p50)) + '</td>'
-        + '<td class="observability-cell-num">' + escapeHtml(formatMs(latency.p95)) + '</td>'
-        + '<td class="observability-cell-num">' + escapeHtml(formatMs(latency.p99)) + '</td>'
-        + '<td class="observability-cell-code">' + (lastError ? '<code>' + escapeHtml(lastError) + '</code>' : '<span class="observability-cell-muted">--</span>') + '</td>'
+      const failed = failedCount(stats);
+      const code = lastErrorCode(stats);
+      return '<tr>'
+        + '<td><code class="diagnostics-mono">' + escapeHtml(row.name) + '</code></td>'
+        + '<td class="diagnostics-num">' + escapeHtml(fmt.formatNumber(stats.count)) + '</td>'
+        + '<td class="diagnostics-num' + (failed > 0 ? ' diagnostics-num--warn' : ' diagnostics-muted') + '">' + escapeHtml(failed > 0 ? fmt.formatNumber(failed) : fmt.EMPTY) + '</td>'
+        + '<td class="diagnostics-num">' + escapeHtml(fmt.formatMs(latency.p50)) + '</td>'
+        + '<td class="diagnostics-num">' + escapeHtml(fmt.formatMs(latency.p95)) + '</td>'
+        + '<td class="diagnostics-col-wide">' + (code ? '<code class="diagnostics-mono">' + escapeHtml(code) + '</code>' : '<span class="diagnostics-muted">' + escapeHtml(fmt.EMPTY) + '</span>') + '</td>'
         + '</tr>';
     }).join('');
-    return ''
-      + '<table class="observability-table">'
-      + '<thead><tr>'
-      + '<th scope="col" class="observability-cell-tool">Tool</th>'
-      + '<th scope="col" class="observability-cell-num">Calls</th>'
-      + '<th scope="col" class="observability-cell-num">Err %</th>'
-      + '<th scope="col" class="observability-cell-num">p50</th>'
-      + '<th scope="col" class="observability-cell-num">p95</th>'
-      + '<th scope="col" class="observability-cell-num">p99</th>'
-      + '<th scope="col" class="observability-cell-code">' + escapeHtml(jt('diagnostics.observability.lastError', 'Last error')) + '</th>'
-      + '</tr></thead>'
-      + '<tbody>' + rows + '</tbody>'
-      + '</table>';
+    return '<table class="diagnostics-table"><thead><tr>'
+      + headerCell(jt('diagnostics.performance.tool', 'Tool'))
+      + headerCell(jt('diagnostics.performance.calls', 'Calls'), '', 'diagnostics-num')
+      + headerCell(jt('diagnostics.performance.failed', 'Failed'), '', 'diagnostics-num')
+      + headerCell(jt('diagnostics.performance.typical', 'Typical'), 'P50', 'diagnostics-num')
+      + headerCell(jt('diagnostics.performance.slow', 'Slow'), 'P95', 'diagnostics-num')
+      + headerCell(jt('diagnostics.observability.lastError', 'Last error'), '', 'diagnostics-col-wide')
+      + '</tr></thead><tbody>' + rows + '</tbody></table>';
   }
 
-  /* ── Slow operations ── */
+  /* ── Over target ── */
 
   function buildSlowOperationsMarkup(facet) {
-    if (!facet || facet.available !== true) {
-      return buildEmptyState(jt('diagnostics.observability.slowOperationsUnavailable', 'Slow operations facet unavailable.'));
-    }
-    const items = Array.isArray(facet.items) ? facet.items : [];
-    if (items.length === 0) {
-      return buildEmptyState(jt('diagnostics.observability.noSlowOperations', 'No slow operations recorded.'));
-    }
-    const rows = items.slice().sort((a, b) => Number(b?.observed_ms || 0) - Number(a?.observed_ms || 0)).map((item) => {
-      const kind = normString(item && item.kind) || 'operation';
-      const id = normString(item && item.id) || 'unknown';
-      const metric = normString(item && item.metric);
-      const observed = formatMs(item && item.observed_ms);
-      const threshold = formatMs(item && item.threshold_ms);
+    const items = slowRows(facet);
+    if (!items.length) return '';
+    const fmt = format();
+    const rows = items.map((item) => {
+      const kind = normString(item && item.kind);
+      const id = normString(item && item.id) || kind || jt('diagnostics.performance.operation', 'Operation');
       const count = Math.max(Number(item && item.count) || 0, 0);
-      const errorCount = Math.max(Number(item && item.error_count) || 0, 0);
-      const meta = [
-        threshold !== '--' ? 'threshold ' + threshold : '',
-        count > 0 ? formatNumber(count) + ' ' + plural(count, 'sample') : '',
-        errorCount > 0 ? formatNumber(errorCount) + ' ' + plural(errorCount, 'error') : '',
-        metric,
-      ].filter(Boolean).map((part) => '<span class="observability-list-meta">' + escapeHtml(part) + '</span>').join('');
-      return ''
-        + '<li class="observability-list-row">'
-        + '<span class="observability-list-time">' + escapeHtml(kind) + '</span>'
-        + '<code class="observability-list-tool">' + escapeHtml(id) + '</code>'
-        + '<span class="observability-list-duration">' + escapeHtml(observed) + '</span>'
-        + (meta ? '<span class="observability-list-link-cell">' + meta + '</span>' : '')
-        + '</li>';
+      return '<tr>'
+        + '<td><code class="diagnostics-mono">' + escapeHtml(id) + '</code>' + (kind && kind !== id ? ' <small class="diagnostics-muted">' + escapeHtml(kind) + '</small>' : '') + '</td>'
+        + '<td class="diagnostics-num diagnostics-num--warn">' + escapeHtml(fmt.formatMs(item && item.observed_ms)) + '</td>'
+        + '<td class="diagnostics-num diagnostics-muted">' + escapeHtml(jt('diagnostics.performance.targetValue', 'target {value}', { value: fmt.formatMs(item && item.threshold_ms) })) + '</td>'
+        + '<td class="diagnostics-num diagnostics-muted diagnostics-col-wide">'
+        + escapeHtml(count > 0 ? jtn('diagnostics.performance.times', count, { count: fmt.formatNumber(count) }, '{count} time', '{count} times') : '') + '</td>'
+        + '</tr>';
     }).join('');
-    return '<ul class="observability-list">' + rows + '</ul>';
+    return '<table class="diagnostics-table"><thead class="sr-only"><tr>'
+      + headerCell(jt('diagnostics.performance.operation', 'Operation'))
+      + headerCell(jt('diagnostics.performance.observed', 'Observed'))
+      + headerCell(jt('diagnostics.performance.target', 'Target'))
+      + headerCell(jt('diagnostics.performance.count', 'Count'))
+      + '</tr></thead><tbody>' + rows + '</tbody></table>';
   }
 
-  /* ── Recent traces ── */
+  /* ── Recent chats ── */
 
-  function buildTraceTimingMarkup(facet, expandedStreams) {
-    if (!facet || facet.available !== true) {
-      return buildEmptyState(jt('diagnostics.observability.traceTimingUnavailable', 'Trace timing facet unavailable.'));
+  // Tone and icon follow the terminal status value, never the words shown for it.
+  function describeResult(status) {
+    switch (status) {
+      case 'completed': return { word: jt('diagnostics.performance.resultCompleted', 'Completed'), icon: '' };
+      case 'error':
+      case 'runtime_error': return { word: jt('diagnostics.performance.resultFailed', 'Failed'), icon: 'error' };
+      case 'timeout': return { word: jt('diagnostics.performance.resultTimedOut', 'Timed out'), icon: 'error' };
+      case 'cancelled': return { word: jt('diagnostics.performance.resultCancelled', 'Cancelled'), icon: 'warn' };
+      case 'preempted': return { word: jt('diagnostics.performance.resultPreempted', 'Preempted'), icon: 'warn' };
+      case 'denied': return { word: jt('diagnostics.performance.resultDenied', 'Denied'), icon: 'warn' };
+      case 'question_batch': return { word: jt('diagnostics.performance.resultQuestions', 'Waiting for answers'), icon: '' };
+      default: return { word: status ? format().humanize(status) : format().EMPTY, icon: status ? 'warn' : '' };
     }
-    const items = Array.isArray(facet.recent) ? facet.recent : [];
-    if (items.length === 0) {
-      return buildEmptyState(jt('diagnostics.observability.noTurns', 'No turns recorded yet.'));
+  }
+
+  function resultCell(trace) {
+    const result = describeResult(normString(trace.terminal_status));
+    const streamId = normString(trace.stream_id);
+    const tone = result.icon === 'error' ? 'error' : 'warn';
+    const content = (result.icon ? stateIcon(result.icon, { tone, size: 'sm' }) : '') + escapeHtml(result.word);
+    const verdict = trace.terminal_status === 'completed' ? 'completed' : (result.icon || 'neutral');
+    if (!streamId) {
+      return '<span class="diagnostics-verdict" data-verdict="' + verdict + '">' + content + '</span>';
     }
-    const expandedSet = expandedStreams instanceof Set ? expandedStreams : new Set();
-    const rows = items.slice().reverse().map((trace, index) => {
-      const stream = normString(trace && trace.stream_id);
-      const terminal = normString(trace && trace.terminal_status) || 'unknown';
-      const tone = ({
-        completed: 'success', error: 'danger', timeout: 'warning',
-        cancelled: 'warning', preempted: 'warning', denied: 'warning',
-        runtime_error: 'danger', question_batch: 'pending',
-      })[terminal] || 'muted';
-      const duration = formatMs(trace && trace.duration_ms);
-      const provider = trace && trace.provider_timing ? trace.provider_timing : {};
-      const ttfc = formatMs(provider.time_to_first_chunk_ms);
-      const ttfvt = formatMs(provider.time_to_first_visible_token_ms);
-      const tools = trace && trace.tool_events ? trace.tool_events : {};
+    // A plain button so a keyboard user reaches each chat; it opens the chat's records in Activity. The visible
+    // result is its name; what it does is the tooltip.
+    return actionButton({
+      plain: true,
+      className: 'diagnostics-row-link diagnostics-verdict',
+      title: jt('diagnostics.performance.showRecords', "Show this chat's records"),
+      trustedHtml: content,
+      dataset: { 'observability-trace': streamId, verdict },
+    });
+  }
+
+  function buildTraceTimingMarkup(facet) {
+    const items = traceRows(facet);
+    if (!items.length) return '';
+    const fmt = format();
+    const rows = items.map((trace) => {
+      const provider = trace.provider_timing && typeof trace.provider_timing === 'object' ? trace.provider_timing : {};
+      const tools = trace.tool_events && typeof trace.tool_events === 'object' ? trace.tool_events : {};
       const toolCount = Number(tools.total) || 0;
-      const isExpanded = expandedSet.has(stream);
-      const expandedDetail = isExpanded ? buildTraceDetailMarkup(trace) : '';
-      const detailId = 'diagnostics-trace-detail-' + index + '-' + stream.replace(/[^a-zA-Z0-9_-]/g, '-');
-      return ''
-        + '<li class="observability-trace-row" data-trace-stream="' + escapeHtml(stream) + '">'
-        + '<button type="button" class="observability-trace-row-header"'
-        + ' aria-expanded="' + (isExpanded ? 'true' : 'false') + '"'
-        + ' aria-controls="' + escapeHtml(detailId) + '"'
-        + ' aria-label="' + escapeHtml('Trace ' + (stream || jt('diagnostics.observability.withoutIdentifier', 'without an identifier')) + ', ' + terminal + ', ' + duration) + '"'
-        + ' data-observability-trace-toggle="' + escapeHtml(stream) + '">'
-        + '<span class="observability-trace-status observability-trace-status-' + escapeHtml(tone) + '">' + escapeHtml(terminal) + '</span>'
-        + '<span class="observability-trace-duration">' + escapeHtml(duration) + '</span>'
-        + '<span class="observability-trace-model">' + escapeHtml(normString(trace.model) || 'no-model') + '</span>'
-        + '<span class="observability-trace-mode">' + escapeHtml(normString(trace.mode) || 'chat') + '</span>'
-        + '<span class="observability-trace-meta">TTFC ' + escapeHtml(ttfc) + ' · vis ' + escapeHtml(ttfvt) + '</span>'
-        + '<span class="observability-trace-meta">' + toolCount + ' tool' + (toolCount === 1 ? '' : 's') + '</span>'
-        + '<span class="observability-trace-caret" aria-hidden="true"></span>'
-        + '</button>'
-        + '<div class="observability-trace-detail" id="' + escapeHtml(detailId) + '"' + (isExpanded ? '' : ' hidden') + '>' + expandedDetail + '</div>'
-        + '</li>';
+      return '<tr>'
+        + '<td>' + resultCell(trace) + '</td>'
+        + '<td>' + escapeHtml(normString(trace.model) || fmt.EMPTY) + '</td>'
+        + '<td class="diagnostics-num">' + escapeHtml(fmt.formatMs(provider.time_to_first_visible_token_ms)) + '</td>'
+        + '<td class="diagnostics-num">' + escapeHtml(fmt.formatMs(trace.duration_ms)) + '</td>'
+        + '<td class="diagnostics-num diagnostics-col-wide">' + escapeHtml(toolCount > 0 ? fmt.formatNumber(toolCount) : fmt.EMPTY) + '</td>'
+        + '</tr>';
     }).join('');
-    return '<ul class="observability-trace-list">' + rows + '</ul>';
-  }
-
-  function buildTraceDetailMarkup(trace) {
-    if (!trace || typeof trace !== 'object') return '';
-    const provider = trace.provider_timing || {};
-    const tools = trace.tool_events || {};
-    const ids = [
-      ['stream', normString(trace.stream_id)],
-      ['session', normString(trace.session_id)],
-      ['trace', normString(trace.trace_id)],
-      ['request', normString(trace.request_id)],
-    ].filter((pair) => pair[1]);
-    const idsMarkup = ids.map((pair) => '<span class="observability-trace-id"><span class="observability-trace-id-label">' + escapeHtml(pair[0]) + '</span><code>' + escapeHtml(pair[1]) + '</code></span>').join('');
-    const providerRows = [
-      [jt('diagnostics.observability.requestStart', 'Request start'), formatMs(provider.time_to_provider_request_start_ms)],
-      [jt('diagnostics.observability.firstChunk', 'First chunk'), formatMs(provider.time_to_first_chunk_ms)],
-      [jt('diagnostics.observability.firstVisibleToken', 'First visible token'), formatMs(provider.time_to_first_visible_token_ms)],
-      [jt('diagnostics.observability.totalRequest', 'Total request'), formatMs(provider.request_duration_ms)],
-      ['Tokens / sec', Number.isFinite(Number(provider.visible_tokens_per_second_estimate))
-        ? Number(provider.visible_tokens_per_second_estimate).toFixed(1)
-        : '--'],
-    ].map(([label, value]) => '<div class="observability-trace-detail-row"><span>' + escapeHtml(label) + '</span><span>' + escapeHtml(value) + '</span></div>').join('');
-    const phaseEntries = tools.by_phase && typeof tools.by_phase === 'object' ? Object.entries(tools.by_phase) : [];
-    const phaseMarkup = phaseEntries.length
-      ? phaseEntries.map(([phase, count]) => '<span class="observability-trace-phase"><code>' + escapeHtml(phase) + '</code><span>' + escapeHtml(String(count)) + '</span></span>').join('')
-      : '<span class="observability-cell-muted">' + escapeHtml(jt('diagnostics.observability.noToolEvents', 'no tool events')) + '</span>';
-    return ''
-      + '<div class="observability-trace-detail-ids">' + idsMarkup + '</div>'
-      + '<div class="observability-trace-detail-grid">' + providerRows + '</div>'
-      + '<div class="observability-trace-detail-phases">' + phaseMarkup + '</div>';
+    return '<table class="diagnostics-table"><thead><tr>'
+      + headerCell(jt('diagnostics.performance.result', 'Result'))
+      + headerCell(jt('diagnostics.performance.model', 'Model'))
+      + headerCell(jt('diagnostics.performance.firstToken', 'First token'), '', 'diagnostics-num')
+      + headerCell(jt('diagnostics.performance.total', 'Total'), '', 'diagnostics-num')
+      + headerCell(jt('diagnostics.performance.toolsColumn', 'Tools'), '', ['diagnostics-num', 'diagnostics-col-wide'])
+      + '</tr></thead><tbody>' + rows + '</tbody></table>';
   }
 
   return {
     buildToolLatencyMarkup,
     buildSlowOperationsMarkup,
     buildTraceTimingMarkup,
-    formatMs,
-    formatPercent,
-    formatRelativeTimestamp,
-    formatNumber,
-    formatCost,
-    escapeHtml,
+    slowRows,
+    toolRows,
+    traceRows,
   };
 });

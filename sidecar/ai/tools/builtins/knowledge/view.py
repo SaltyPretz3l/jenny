@@ -3,11 +3,17 @@
 Text files stream line-windows directly; rich formats (pdf/docx/xlsx/pptx/
 ipynb) dispatch to the rich-file inspect adapters injected at registration
 time (see registry.py), each validated against the owning root's guard.
+Every view carries the source's current ``source_hash``. An optional ``locator``
+(``L10-12``, ``p2``, ``para3``) is checked against the file's kind before any
+read, sets the read window when none is given, and is range-checked against the
+extent the read reports.
 """
 
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Callable
 from pathlib import Path
 
 from sidecar.ai.error_codes import (
@@ -16,9 +22,9 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_IO_FAILED,
     CMP_TOOL_RICH_FILES_DEPENDENCY_MISSING,
 )
+from sidecar.ai.semantic.evidence import locator_check, pdf_evidence, source_hash
 from sidecar.ai.tools.argument_coercion import bounded_int as _bounded_int
-from sidecar.ai.tools.builtins.file_state import open_regular_file
-from sidecar.ai.tools.builtins.filesystem import is_binary_file
+from sidecar.ai.tools.builtins.file_state import is_binary_file, open_regular_file
 from sidecar.ai.tools.builtins.knowledge.roots import (
     KnowledgeRoot,
     bound_snippet,
@@ -34,6 +40,10 @@ MAX_LINE_CHARS = 500
 MAX_OUTPUT_BYTES = 20_000
 # Mirrors the rich-file source ceiling so text and rich reads degrade alike.
 MAX_TEXT_FILE_BYTES = 25 * 1024 * 1024
+MAX_LOCATOR_ECHO_CHARS = 64
+# The summary field each rich adapter reports a locator kind's extent in. Docx
+# paragraph_count counts every paragraph, an upper bound on catalog ``para<N>``.
+_EXTENT_KEYS = {"pages": "page_count", "paragraphs": "paragraph_count"}
 
 _ADAPTER_BY_EXTENSION: dict[str, str] = {
     ".pdf": "pdf",
@@ -60,15 +70,118 @@ def knowledge_view_tool(
             retryable=False,
         )
     adapter_key = _ADAPTER_BY_EXTENSION.get(resolved.suffix.lower())
-    if adapter_key is not None:
-        return _view_rich(
-            root,
-            resolved,
-            display,
-            adapter_key=adapter_key,
-            arguments=arguments,
-        )
-    return _view_text(root, resolved, display, arguments=arguments)
+    requested = arguments.get("locator")
+    locator, verdict, kind = locator_check(requested, resolved)
+    if verdict != "ok":
+        return _invalid_locator(display, verdict, requested, kind)
+    window = arguments
+    if locator is not None:
+        window = _locator_window(arguments, adapter_key, locator.start, locator.end)
+
+    def read() -> ToolHandlerResult:
+        if adapter_key is not None:
+            return _view_rich(root, resolved, display, adapter_key=adapter_key, arguments=window)
+        return _view_text(root, resolved, display, arguments=window,
+                          count_to_eof=locator is not None)
+
+    try:
+        result = _view_with_identity(root, resolved, display, arguments, read)
+    except ToolExecutionFailure as error:
+        # A page window derived from the locator ran past the PDF's last page.
+        if window is not arguments and adapter_key == "pdf" and "references page" in error.message:
+            return _invalid_locator(display, "locator_out_of_range", requested, kind)
+        raise
+    if locator is None or not result.success:
+        return result
+    extent = _reported_extent(result, kind, adapter_key)
+    _, verdict, _ = locator_check(requested, resolved, extent=extent)
+    return result if verdict == "ok" else _invalid_locator(display, verdict, requested, kind)
+
+
+def _locator_window(
+    arguments: dict[str, object], adapter_key: str | None, start: int, end: int,
+) -> dict[str, object]:
+    """The locator's own read window, unless the caller passed an explicit one."""
+    if adapter_key is None and arguments.get("offset") is None and arguments.get("limit") is None:
+        return {**arguments, "offset": start - 1, "limit": min(end - start + 1, MAX_VIEW_LIMIT)}
+    if adapter_key == "pdf" and arguments.get("pages") is None and arguments.get("cursor") is None:
+        return {**arguments, "pages": f"{start}-{end}"}
+    return arguments
+
+
+def _reported_extent(result: ToolHandlerResult, kind: str, adapter_key: str | None) -> int | None:
+    """The line/page/paragraph count the read reported, when it reported one."""
+    payload = json.loads(result.output)
+    value: object = None
+    if adapter_key is None:
+        value = payload.get("total_lines")
+    elif isinstance(payload.get("summary"), dict) and kind in _EXTENT_KEYS:
+        value = payload["summary"].get(_EXTENT_KEYS[kind])
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _invalid_locator(
+    display: str, reason: str, requested: object, expected_kind: str,
+) -> ToolHandlerResult:
+    return ToolHandlerResult(output=json.dumps({"path": display, "reason": reason,
+        "locator": str(requested)[:MAX_LOCATOR_ECHO_CHARS],
+        "expected_locator_kind": expected_kind, "status": "unavailable", "sources": [],
+        "missing_source_metadata": True,
+        "message": (f"This locator does not fit this file; use the {expected_kind} locator "
+                    "knowledge_search returned for it, or omit locator.")}),
+        success=False, error_code=CMP_TOOL_INVALID_PATH)
+
+
+def _changed_source(display: str) -> ToolHandlerResult:
+    return ToolHandlerResult(output=json.dumps({"path": display, "reason": "source_changed",
+        "status": "unavailable", "sources": [], "missing_source_metadata": True,
+        "message": "The source changed since retrieval. Search again before citing it."}),
+        success=False, error_code=CMP_TOOL_EXECUTION_FAILED)
+
+
+def _view_with_identity(
+    root: KnowledgeRoot, resolved: Path, display: str, arguments: dict[str, object],
+    read: Callable[[], ToolHandlerResult],
+) -> ToolHandlerResult:
+    expected = arguments.get("expected_source_hash")
+    if expected is not None and (
+        not isinstance(expected, str) or not re.fullmatch(r"[a-f0-9]{64}", expected)
+    ):
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_INVALID_PATH,
+            message="expected_source_hash must be a SHA-256 hash", retryable=False)
+    is_pdf = resolved.suffix.lower() == ".pdf"
+    before = source_hash(resolved, root.guard)
+    if expected is not None and before != expected:
+        return _changed_source(display)
+    result = read()
+    if source_hash(resolved, root.guard) != before:
+        return _changed_source(display)
+    payload = json.loads(result.output)
+    payload["source_hash"] = before
+    for source in payload.get("sources", []):
+        source["source_hash"] = before
+    if is_pdf:
+        summary = payload.get("summary", {})
+        pages = summary.get("pages", [])
+        missing = [p["page"] for p in pages if not p.get("text_layer")]
+        ocr = [{"page": p["page"], "engine": p.get("ocr_engine")}
+               for p in pages if p.get("ocr") and p.get("text_excerpt")]
+        has_text = any(p.get("text_layer") for p in pages) or bool(ocr)
+        info = pdf_evidence(source_hash=before, total_pages=summary.get("page_count"),
+                            examined_pages=len(pages), pages_without_text=missing,
+                            budget_truncation="view_window" if summary.get("truncated") else None,
+                            unavailable="needs_ocr" if pages and not has_text else
+                            "pdf_unreadable" if not pages else None)
+        if ocr:
+            info["content_kind"] = "pdf_text_with_ocr"
+            info["supplemental_ocr"] = ocr
+        payload["extraction"] = info
+        for source in payload.get("sources", []):
+            source["extraction"] = info
+    return ToolHandlerResult(output=json.dumps(payload, ensure_ascii=False), success=result.success,
+                             error_code=result.error_code, metadata=result.metadata,
+                             generated_artifacts=result.generated_artifacts)
 
 
 def _view_text(
@@ -77,6 +190,7 @@ def _view_text(
     display: str,
     *,
     arguments: dict[str, object],
+    count_to_eof: bool = False,
 ) -> ToolHandlerResult:
     if is_binary_file(resolved):
         raise ToolExecutionFailure(
@@ -136,6 +250,10 @@ def _view_text(
                     break
                 lines.append(content)
                 output_bytes += encoded_bytes
+            if count_to_eof and not scanned_to_eof:
+                # A cited locator is range-checked against the whole file.
+                total_lines += sum(1 for _ in handle)
+                scanned_to_eof = True
     except OSError as error:
         raise ToolExecutionFailure(
             code=CMP_TOOL_IO_FAILED,

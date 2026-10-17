@@ -123,3 +123,33 @@ test('successful hydration keeps the persisted resumable stop value', async (t) 
 
   assert.equal(getAssistantMessage(harness, streamId).resumable_stop, 'max_iterations');
 });
+
+test('row 59 cp5a: complete stamps a valid proposal boundary and drops a malformed one', async (t) => {
+  const { harness, hydration } = createDeferredHydrationHarness(t);
+  const proposalId = `proposal_${'a'.repeat(64)}`;
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId: 'stream-boundary' });
+  const completePromise = harness.emit({
+    type: 'complete', sessionId: 'session-1', streamId: 'stream-boundary', content: '', completionReason: 'awaiting_proposal', proposalId,
+  });
+  await flushMicrotasks(20);
+  const local = getAssistantMessage(harness, 'stream-boundary');
+  assert.equal(local.completion_reason, 'awaiting_proposal');
+  assert.equal(local.completion_proposal_id, proposalId);
+  assert.equal(local.resumable_stop, undefined, 'a proposal boundary is not a Resume stop');
+  hydration.resolve({ data: [local] });
+  await completePromise;
+});
+
+test('row 59 cp5a: an unknown completion reason or a bad proposal id stamps nothing', async (t) => {
+  const { harness, hydration } = createDeferredHydrationHarness(t);
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId: 'stream-bad' });
+  const completePromise = harness.emit({
+    type: 'complete', sessionId: 'session-1', streamId: 'stream-bad', content: 'x', completionReason: 'awaiting_proposal', proposalId: 'proposal_nope',
+  });
+  await flushMicrotasks(20);
+  const local = getAssistantMessage(harness, 'stream-bad');
+  assert.equal(local.completion_reason, undefined);
+  assert.equal(local.completion_proposal_id, undefined);
+  hydration.resolve({ data: [local] });
+  await completePromise;
+});

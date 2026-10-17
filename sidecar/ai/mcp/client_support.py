@@ -98,9 +98,22 @@ def call_transport_resource(
     return operation(*args, **call_kwargs)
 
 
+def claims_read_only(annotations: Any) -> bool:
+    """Owner decision 9 (row 53): an untrusted MCP ``readOnlyHint`` qualifies only
+    when the server claims neither ``openWorldHint`` nor ``destructiveHint``."""
+    return (
+        isinstance(annotations, dict)
+        and annotations.get("readOnlyHint") is True
+        and annotations.get("openWorldHint") is not True
+        and annotations.get("destructiveHint") is not True
+    )
+
+
 def descriptor_from_payload(
     server_name: str,
     payload: dict[str, Any],
+    *,
+    read_only_auto_allow: bool = False,
 ) -> MCPToolDescriptor | None:
     raw_name = payload.get("name")
     if not isinstance(raw_name, str) or not raw_name.strip():
@@ -113,8 +126,13 @@ def descriptor_from_payload(
     if not isinstance(input_schema, dict):
         input_schema = {"type": "object", "properties": {}}
     actions = parse_tool_actions(payload.get("actions"))
+    # An opted-in row reads the claim from the raw annotations or from the
+    # approved digest row that recorded it; a declared write action still wins.
+    read_only = read_only_auto_allow and (
+        payload.get("read_only_claim") is True or claims_read_only(payload.get("annotations"))
+    )
     side_effecting = coerce_scalar_side_effecting(
-        payload.get("side_effecting") is not False,
+        payload.get("side_effecting") is not False and not read_only,
         actions,
     )
     server_tool_name = raw_name.strip()

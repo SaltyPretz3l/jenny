@@ -130,19 +130,29 @@
   --sidebar-current-width: var(--sidebar-width);
   --context-panel-width: 320px;
   --sidebar-resizer-width: 10px;
-  /* Chat reading measure. --chat-measure-max is the user-selectable cap
-     (Appearance > Chat layout > Chat width); --chat-measure-fit is the viewport
-     clamp that stops any cap from overflowing a narrow window. The wide-mode
-     override lives in the :root[data-chat-width="standard"] block further down.
-     --chat-card-max-width caps the standalone cards that sit inside the
-     column but do not stretch to it (slash output, proactive suggestions,
-     interactive recap). */
-  --chat-measure-max: 760px;
-  --chat-measure-fit: calc(100vw - var(--sidebar-current-width) - 172px);
-  --content-column-width: min(var(--chat-measure-max), var(--chat-measure-fit));
-  --composer-width: min(var(--chat-measure-max), var(--chat-measure-fit));
+  /* Chat reading measure. The user-selectable width (Appearance > Chat layout
+     > Chat width) is a line length: --chat-measure-cap-ch characters of the
+     prose font (68 Narrow, 92 Standard; the Standard override is further
+     down). --chat-measure-cap is that length resolved ONCE at the root, as
+     px, so the timeline column and the composer, which sit on different
+     font sizes, read the same value; it grows with --font-scale and keeps the
+     characters per line. The per-pane measure (--content-column-width for the
+     timeline, --composer-width for the composer) is built from it in
+     chat-panes.css. --chat-card-max-width caps the standalone cards that sit
+     inside the column but do not stretch to it (slash output, proactive
+     suggestions, interactive recap). */
+  --chat-measure-cap-ch: 68;
+  --chat-measure-cap: calc(var(--chat-measure-cap-ch) * 1ch * (var(--font-size-prose) / 1em));
   --chat-user-bubble-max-width: clamp(410px, 34vw, 560px);
   --chat-card-max-width: 760px;
+  /* Page widths for the wide pages that lay out groups (Settings, Diagnostics): the page stops at
+     --page-shell-max; groups flow in tracks of at least --page-group-min with --page-group-gap between
+     them (two per row at the default window, three maximized); anything spanning the row stops at
+     --page-wide-max. */
+  --page-shell-max: 1760px;
+  --page-group-min: 500px;
+  --page-group-gap: 64px;
+  --page-wide-max: 1120px;
   --chat-sprite-size: 30px;
   --chat-sprite-rail-offset: clamp(56px, 4.4vw, 64px);
   --composer-dock-bottom: clamp(20px, 3vh, 30px);
@@ -618,20 +628,20 @@
   --font-family-mono: "Cascadia Code", ui-monospace, Consolas, monospace;
 }
 
-/* Chat width = Standard, the default since 2026-10-02 (owner). 8df910a0
-   reverted an AUTOMATIC 920px widening at ultra-wide viewports; this is the
-   user-facing setting instead, and Narrow keeps the 760px base measure.
-   The width tokens are re-declared here rather than left to inherit from
-   --chat-measure-max on purpose: at (0,2,0) this block outranks the bare
-   `:root` overrides in settings-responsive.css (<=1280px -> 700px) and
-   chat-media-queries.css (>=2000px composer), so Standard wins at every viewport.
-   --chat-measure-fit still clamps, so it can never overflow the window.
-   Do NOT scope this as `:root[data-chat-width="standard"] .chat-view` -- at
-   (0,2,1) it would beat the .chat-view mobile breakpoints and break <=700px. */
+/* The cap is a length computed where it is declared (:root), so `ch` and the
+   prose-size ratio resolve against the document font once, not per consumer. */
+@property --chat-measure-cap {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 640px;
+}
+
+/* Chat width = Standard, the default since 2026-10-02 (owner). The preference
+   only changes the line length in characters; the pane-relative geometry in
+   chat-panes.css is the same for both. 8df910a0 reverted an AUTOMATIC 920px
+   widening at ultra-wide viewports; this is the user-facing setting instead. */
 :root[data-chat-width="standard"] {
-  --chat-measure-max: 1100px;
-  --content-column-width: min(var(--chat-measure-max), var(--chat-measure-fit));
-  --composer-width: min(var(--chat-measure-max), var(--chat-measure-fit));
+  --chat-measure-cap-ch: 92;
   /* 49vw / 810px is the narrow 34vw / 560px ratio scaled by 1100/760, so the
      bubble keeps roughly the same proportion of the measure. */
   --chat-user-bubble-max-width: clamp(410px, 49vw, 810px);
@@ -931,9 +941,6 @@ button {
   .file-diff-counts,
   .ide-statusbar-branch-count,
   .model-library-row-size,
-  td.observability-cell-num,
-  .observability-list-duration,
-  .observability-trace-duration,
   .tool-call-duration,
   .tool-result-duration,
   td.usage-cell-num,

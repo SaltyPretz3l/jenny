@@ -19,8 +19,10 @@ _COUNT_TABLES = {
     "approved": "memories",
     "pending": "pending_memory_candidates",
     "suppressions": "memory_suppressions",
+    "operations": "memory_operations",
     "quarantined": "memory_quarantine",
-    "extraction_runs": "memory_extraction_runs",
+    # Schema v10: derived embeddings for hybrid recall (row 58 W4).
+    "vectors": "memory_vectors",
 }
 _MAX_IMPORT_ROWS = MAX_QUARANTINE_ROWS
 
@@ -53,6 +55,25 @@ def _table_exists(connection: sqlite3.Connection, table: str) -> bool:
     return row is not None
 
 
+def _count(connection: sqlite3.Connection, table: str) -> int:
+    if not _table_exists(connection, table):
+        return 0
+    return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+
+
+def _memory_status_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    """Split memories into active/archived; pre-v9 rows have no status and are all active."""
+
+    if not _table_exists(connection, "memories"):
+        return {"active": 0, "archived": 0}
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(memories)").fetchall()}
+    if "status" not in columns:
+        return {"active": _count(connection, "memories"), "archived": 0}
+    rows = connection.execute("SELECT status, COUNT(*) FROM memories GROUP BY status").fetchall()
+    by_status = {str(status): int(count) for status, count in rows}
+    return {"active": by_status.get("active", 0), "archived": by_status.get("archived", 0)}
+
+
 def inspect_store(db_path: Path) -> dict[str, Any]:
     """Inspect without creating, migrating, checkpointing, or exposing content."""
 
@@ -61,14 +82,8 @@ def inspect_store(db_path: Path) -> dict[str, Any]:
     try:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         integrity_rows = connection.execute("PRAGMA quick_check(1)").fetchall()
-        counts = {
-            label: (
-                int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
-                if _table_exists(connection, table)
-                else 0
-            )
-            for label, table in _COUNT_TABLES.items()
-        }
+        counts = {label: _count(connection, table) for label, table in _COUNT_TABLES.items()}
+        counts.update(_memory_status_counts(connection))
         fts_available = _table_exists(connection, "memory_fts")
     finally:
         connection.close()

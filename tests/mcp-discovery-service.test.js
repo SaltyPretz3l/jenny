@@ -8,27 +8,10 @@ const test = require('node:test');
 
 const { McpDiscoveryService } = require('../services/mcp-discovery-service');
 const { configurationDigest, pendingTrust } = require('../services/mcp-config-store');
-const { cleanupTrackedResources, trackDirectory } = require('./helpers/resource-cleanup');
+const { cleanupTrackedResources } = require('./helpers/resource-cleanup');
+const { userData, writeConfig, approvedServer, REA_ROW } = require('./helpers/mcp-discovery-fixtures');
 
 test.afterEach(cleanupTrackedResources);
-
-function userData() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-mcp-discovery-'));
-  trackDirectory(directory);
-  return directory;
-}
-
-function writeConfig(directory, servers, extra = {}) {
-  fs.writeFileSync(path.join(directory, 'mcp-servers.json'), `${JSON.stringify({
-    mcp_config_schema_version: 1, mcp_sse_enabled: false, mcp_servers: servers, ...extra,
-  }, null, 2)}\n`, 'utf8');
-}
-
-function approvedServer(config, { enabled = true, toolsDigest = 'a'.repeat(64) } = {}) {
-  return { ...config, enabled, trust: { status: 'approved',
-    configuration_digest: configurationDigest(config), advertised_tools_digest: toolsDigest,
-    reviewed_at: '2026-08-17T00:00:00.000Z' } };
-}
 
 function fakeSecureStore(initial = {}) {
   const secrets = new Map(Object.entries(initial));
@@ -216,7 +199,7 @@ test('tool-surface drift disables the row and returns it to pending review', () 
 test('future schemas are read-only and mutations preserve the original bytes', async () => {
   const directory = userData();
   const file = path.join(directory, 'mcp-servers.json');
-  const bytes = '{"mcp_config_schema_version":2,"mcp_sse_enabled":false,"mcp_servers":[]}\n';
+  const bytes = '{"mcp_config_schema_version":3,"mcp_sse_enabled":false,"mcp_servers":[]}\n';
   fs.writeFileSync(file, bytes, 'utf8');
   const service = new McpDiscoveryService({ userDataPath: directory });
   assert.equal(service.getState().readOnly, true);
@@ -399,6 +382,7 @@ test('creating, approving, or disabling an SSE server does not enable its transp
   assert.equal(service.configStore.getState().document.mcp_sse_enabled, false);
   service.lastInspections.set('remote', {
     configurationDigest: configurationDigest(server), toolsDigest: 'a'.repeat(64),
+    promptsDigest: '', prompts: [],
   });
   assert.equal((await service.approveServer({ name: 'remote' })).ok, true);
   assert.equal(service.configStore.getState().document.mcp_sse_enabled, false);
@@ -427,6 +411,59 @@ test('server updates still reject an empty editable definition', async () => {
   assert.equal(service.configStore.getState().document.mcp_servers[0].enabled, true);
 });
 
+test('inspection waits for the row inspect timeout and forwards the row to the sidecar', async () => {
+  const directory = userData();
+  writeConfig(directory, [
+    { ...REA_ROW, enabled: false, trust: pendingTrust(REA_ROW) },
+    { name: 'docs', transport: 'stdio', command: 'node', args: [], enabled: false,
+      trust: pendingTrust({ name: 'docs', transport: 'stdio', command: 'node', args: [] }) },
+  ]);
+  const requests = [];
+  const backendService = { currentStatus: {}, sidecarClient: { connected: true,
+    async request(method, params, options) {
+      requests.push({ params, options });
+      return { ok: false };
+    } } };
+  const service = new McpDiscoveryService({ userDataPath: directory, backendService });
+  await service.testServer({ name: 'rea', confirmed: true });
+  await service.testServer({ name: 'docs', confirmed: true });
+  assert.equal(requests[0].options.timeoutMs, 95_000);
+  assert.equal(requests[0].params.server.inspect_timeout_seconds, 90);
+  assert.deepEqual(requests[0].params.server.env, { REA_LOG_LEVEL: 'debug' });
+  assert.equal(requests[1].options.timeoutMs, 20_000);
+  assert.equal('inspect_timeout_seconds' in requests[1].params.server, false);
+});
+
+test('approved rows forward env, limits and timeouts to the sidecar', () => {
+  const directory = userData();
+  writeConfig(directory, [approvedServer(REA_ROW)]);
+  const service = new McpDiscoveryService({ userDataPath: directory });
+  const [row] = service.getSidecarConfig().mcp_servers;
+  assert.deepEqual(row.env, { REA_LOG_LEVEL: 'debug' });
+  assert.equal(row.memory_limit_mb, 2048);
+  assert.equal(row.max_processes, 16);
+  assert.equal(row.inspect_timeout_seconds, 90);
+  assert.equal(row.request_timeout_seconds, 900);
+});
+
+test('an edit that omits the row extensions keeps them for the same transport', async () => {
+  const directory = userData();
+  writeConfig(directory, [approvedServer(REA_ROW)]);
+  const service = new McpDiscoveryService({ userDataPath: directory });
+  assert.equal((await service.updateServer({ name: 'rea', server: { name: 'rea', transport: 'stdio',
+    command: 'npx', args: ['-y', 'rea-agents@6.4.1', 'mcp'] } })).ok, true);
+  const [row] = service.configStore.getState().document.mcp_servers;
+  assert.deepEqual(row.env, { REA_LOG_LEVEL: 'debug' });
+  assert.equal(row.memory_limit_mb, 2048);
+  assert.equal(row.request_timeout_seconds, 900);
+  assert.equal(row.trust.status, 'pending');
+  assert.equal((await service.updateServer({ name: 'rea', server: { name: 'rea', transport: 'sse',
+    url: 'https://mcp.example.test/sse' } })).ok, true);
+  const [remote] = service.configStore.getState().document.mcp_servers;
+  assert.equal('env' in remote, false);
+  assert.equal(remote.inspect_timeout_seconds, 90);
+});
+
 
 test('runtime-only discovery preserves empty auth and non-secret summaries', () => {
   const { buildDiscoveryState } = require('../services/mcp-discovery-service');
@@ -442,4 +479,33 @@ test('runtime-only discovery preserves empty auth and non-secret summaries', () 
   assert.deepEqual(state.servers.find((row) => row.name === 'remote').auth,
     { kind: 'bearer', secretRef: 'mcp:remote', token_url: '', client_id: '', scope: '' });
   assert.equal(JSON.stringify(state).includes('hidden'), false);
+});
+
+test('read_only_auto_allow is forwarded and kept across an editor update on either transport', async () => {
+  const directory = userData();
+  writeConfig(directory, [approvedServer({ ...REA_ROW, read_only_auto_allow: true })]);
+  const service = new McpDiscoveryService({ userDataPath: directory });
+  assert.equal(service.getSidecarConfig().mcp_servers[0].read_only_auto_allow, true);
+  assert.equal((await service.updateServer({ name: 'rea', server: { name: 'rea', transport: 'stdio',
+    command: 'npx', args: ['-y', 'rea-agents@6.4.1', 'mcp'] } })).ok, true);
+  const [row] = service.configStore.getState().document.mcp_servers;
+  assert.equal(row.read_only_auto_allow, true);
+  assert.equal(row.trust.status, 'pending');
+  assert.equal((await service.updateServer({ name: 'rea', server: { name: 'rea', transport: 'sse',
+    url: 'https://mcp.example.test/sse' } })).ok, true);
+  assert.equal(service.configStore.getState().document.mcp_servers[0].read_only_auto_allow, true);
+  assert.equal((await service.updateServer({ name: 'rea', server: { name: 'rea', transport: 'sse',
+    url: 'https://mcp.example.test/sse', read_only_auto_allow: false } })).ok, true);
+  assert.equal(service.configStore.getState().document.mcp_servers[0].read_only_auto_allow, false);
+});
+
+test('discovery rows expose the read-only auto-allow switch state', () => {
+  const directory = userData();
+  writeConfig(directory, [approvedServer({ ...REA_ROW, read_only_auto_allow: true }),
+    approvedServer({ name: 'docs', transport: 'stdio', command: 'node', args: ['server.js'] })]);
+  const rows = new McpDiscoveryService({ userDataPath: directory }).getState().servers;
+  const flag = (name) => rows.find((row) => row.name === name).readOnlyAutoAllow;
+  assert.equal(flag('rea'), true);
+  assert.equal(flag('docs'), false);
+  assert.equal(flag('jenny_local_tools'), false);
 });

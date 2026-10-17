@@ -7,6 +7,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { PassThrough } = require('node:stream');
 const test = require('node:test');
+const { holdEventLoopUntilTestsFinish } = require('./helpers/event-loop-hold');
+
+// Service wait timers are unref'd on purpose; Node 22's runner would drain the loop under them.
+holdEventLoopUntilTestsFinish(test);
 
 const { createContainedProcessRunner } = require('../services/backend/contained-process-runner');
 const { encodeFrame } = require('../services/backend/sidecar-client-transport-codec');
@@ -50,8 +54,8 @@ function observableFakeHelper(onRequest) {
 }
 
 function response(id, status, cleanup = 'confirmed') {
-  return { jsonrpc: '2.0', api_version: '2026-08-17', id, result: {
-    api_version: '2026-08-17', schema_version: 1, operation_id: 'operation-1',
+  return { jsonrpc: '2.0', api_version: '2026-10-15', id, result: {
+    api_version: '2026-10-15', schema_version: 1, operation_id: 'operation-1',
     status, exit_code: status === 'passed' ? 0 : -1, duration_ms: 4,
     stdout_tail: 'ok\n', stderr_tail: '', cleanup: {
       cleanup,
@@ -152,8 +156,8 @@ test('uncertain target cleanup retains the helper for an exact retry', async () 
       child.stdout.write(encodeFrame(response(request.id, 'passed', 'uncertain')).frame);
     } else if (request.method === 'workspace_test.cleanup') {
       cleanupRequests += 1;
-      child.stdout.write(encodeFrame({ jsonrpc: '2.0', api_version: '2026-08-17', id: request.id,
-        result: { api_version: '2026-08-17', schema_version: 1,
+      child.stdout.write(encodeFrame({ jsonrpc: '2.0', api_version: '2026-10-15', id: request.id,
+        result: { api_version: '2026-10-15', schema_version: 1,
           operation_id: 'operation-1', cleanup: response('', '', 'confirmed').result.cleanup } }).frame);
     } else if (request.method === 'workspace_test.close') {
       child.close();
@@ -284,8 +288,8 @@ test('confirmed cleanup is retained when helper exit needs a later exact retry',
           child.stdout.write(encodeFrame(response(request.id, 'passed', 'uncertain')).frame);
         } else if (request.method === 'workspace_test.cleanup') {
           cleanupRequests += 1;
-          child.stdout.write(encodeFrame({ jsonrpc: '2.0', api_version: '2026-08-17', id: request.id,
-            result: { api_version: '2026-08-17', schema_version: 1,
+          child.stdout.write(encodeFrame({ jsonrpc: '2.0', api_version: '2026-10-15', id: request.id,
+            result: { api_version: '2026-10-15', schema_version: 1,
               operation_id: 'operation-1', cleanup: response('', '', 'confirmed').result.cleanup } }).frame);
         }
       });

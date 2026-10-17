@@ -2,6 +2,8 @@
 import os
 from pathlib import Path
 
+import pytest
+
 from sidecar.ai.config import MCPServerConfig
 from sidecar.ai.mcp import builtin_command_discovery as discovery
 from sidecar.ai.mcp import process_containment
@@ -114,3 +116,74 @@ def test_hosted_and_external_keep_their_existing_minimal_path(tmp_path, monkeypa
         MCPServerConfig(name="jenny_local_tools", transport="stdio", args=("--host-mode=server",)),
     ):
         assert process_containment._minimal_path(config, command).split(os.pathsep) == [str(command.parent), "system-bin"]
+
+
+@pytest.mark.parametrize("command", ["rustc", "cargo", "dotnet", "cmake"])
+def test_added_tools_prefer_path_and_skip_private_runtime(tmp_path, command):
+    private = executable(tmp_path / "private", command + ".exe")
+    preferred = executable(tmp_path / "preferred", command + ".exe")
+    second = executable(tmp_path / "second", command + ".exe")
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+    result = discovery.discover_command_directories(
+        parent_path=os.pathsep.join(map(str, [
+            unrelated, private.parent, preferred.parent, second.parent,
+        ])),
+        windows=True, read_env=lambda _: "", commands=(command,),
+        excluded_directories=(private.parent,),
+    )
+    assert result == [str(preferred.parent)]
+
+
+def test_reduced_path_finds_verified_standard_windows_build_tools(tmp_path, monkeypatch):
+    profile, programs, local = [tmp_path / name for name in ("profile", "programs", "local")]
+    rust = profile / ".cargo/bin"
+    dotnet = programs / "dotnet"
+    cmake = programs / "CMake/bin"
+    for directory, name in (
+        (rust, "rustc.exe"), (rust, "cargo.exe"),
+        (dotnet, "dotnet.exe"), (cmake, "cmake.exe"),
+    ):
+        executable(directory, name)
+    monkeypatch.setattr(discovery, "registered_pythons", lambda: [])
+    values = {"USERPROFILE": str(profile), "ProgramFiles": str(programs),
+              "LOCALAPPDATA": str(local)}
+    monkeypatch.setattr(process_containment, "_is_windows", lambda: True)
+    monkeypatch.setattr(process_containment, "read_environment_value",
+                        lambda key: values.get(key, ""))
+    config = MCPServerConfig(name="jenny_local_tools", transport="stdio")
+    env = process_containment._minimal_env(config, command_path=None)
+    assert env["PATH"].split(os.pathsep) == [str(rust), str(dotnet), str(cmake)]
+    assert "ProgramFiles" not in env, "discovery inputs do not become ambient child authority"
+
+
+def test_dotnet_script_install_and_visual_studio_cmake_candidates(tmp_path):
+    local, programs = tmp_path / "local", tmp_path / "programs"
+    dotnet = executable(local / "Microsoft/dotnet", "dotnet.exe")
+    cmake = executable(
+        programs / "Microsoft Visual Studio/2022/BuildTools/Common7/IDE/"
+        "CommonExtensions/Microsoft/CMake/CMake/bin", "cmake.exe",
+    )
+    values = {"LOCALAPPDATA": str(local), "ProgramFiles": str(programs)}
+    assert discovery.discover_command_directories(
+        parent_path="", windows=True, read_env=lambda key: values.get(key, ""),
+        commands=("dotnet", "cmake"),
+    ) == [str(dotnet.parent), str(cmake.parent)]
+
+
+def test_missing_standard_build_tools_leave_path_empty(tmp_path):
+    assert discovery.discover_command_directories(
+        parent_path=str(tmp_path), windows=True, read_env=lambda _: str(tmp_path),
+        commands=("rustc", "cargo", "dotnet", "cmake"),
+    ) == []
+
+
+def test_standard_installation_discovery_is_bounded(tmp_path):
+    for number in range(discovery.MAX_STANDARD_INSTALLATIONS + 1):
+        executable(
+            tmp_path / f"Microsoft Visual Studio/2022/edition-{number}/Common7/IDE/"
+            "CommonExtensions/Microsoft/CMake/CMake/bin", "cmake.exe",
+        )
+    assert len(discovery.windows_candidates(
+        "cmake", lambda key: str(tmp_path) if key == "ProgramFiles" else "",
+    )) == discovery.MAX_STANDARD_INSTALLATIONS + 1  # One fixed installer candidate.

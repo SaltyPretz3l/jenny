@@ -195,7 +195,7 @@ test('import preflight rejects future canonical stores, malformed payloads and d
     let archivePath = validArchive;
     if (scenario === 'future-store') backend.sessionStore.hasNewerSchema = () => true;
     if (scenario === 'future-payload' || scenario === 'malformed') {
-      const payload = scenario === 'malformed' ? '{bad' : JSON.stringify({ ...JSON.parse(source.payload), format_version: 2 });
+      const payload = scenario === 'malformed' ? '{bad' : JSON.stringify({ ...JSON.parse(source.payload), format_version: 99 });
       archivePath = await createPortableArchive(root, [{ ...source, payload }], { name: `${scenario}.jenny-archive` });
     }
     const result = await importConversations({ backend, userDataPath, archivePath,
@@ -248,23 +248,27 @@ test('failed import-stage cleanup is diagnosed and retried on an exact receipt r
   t.after(() => closeBackend(backend));
   const logs = [];
   backend._emitServiceLog = (level, event, fields) => logs.push({ level, event, fields });
-  const remove = fs.promises.rm;
-  let injected = false;
-  fs.promises.rm = async (target, options) => {
-    if (!injected && path.resolve(target) === path.resolve(staleStage)) {
-      injected = true;
+  // Stage cleanup goes through the no-follow remover (fs.promises.lstat/readdir/unlink/rmdir), so a
+  // persistent denial on the stale stage's contents outlasts its retries for this first import only.
+  const unlink = fs.promises.unlink;
+  let injected = 0;
+  fs.promises.unlink = async (target, ...args) => {
+    if (path.resolve(target).startsWith(path.resolve(staleStage) + path.sep)) {
+      injected += 1;
       throw Object.assign(new Error('simulated cleanup denial'), { code: 'EPERM' });
     }
-    return remove(target, options);
+    return unlink(target, ...args);
   };
   let imported;
   try {
     imported = await importConversations({ backend, userDataPath, archivePath });
   } finally {
-    fs.promises.rm = remove;
+    fs.promises.unlink = unlink;
   }
+  assert.ok(injected > 0, 'the stale-stage cleanup reached the injected unlink');
   assert.equal(imported.ok, true);
   assert.equal(fs.existsSync(staleStage), true);
+  assert.equal(fs.existsSync(path.join(staleStage, 'leftover')), true);
   assert.deepEqual(logs.filter((entry) => entry.event === 'host.import_staging_cleanup_failed'), [{
     level: 'WARN', event: 'host.import_staging_cleanup_failed',
     fields: { phase: 'retry', reason: 'remove_failed' },

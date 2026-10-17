@@ -1,6 +1,5 @@
 const { buildFeatureFlags } = require('../feature-flags');
 const { getBridgeChannel } = require('../ipc-contract');
-const { normalizeLogEntry } = require('../log-entry-normalizer');
 
 const MAX_BATCH_ENTRIES = 200;
 
@@ -19,7 +18,6 @@ function createLogRedactionPrefixesProvider({ app, rootDir, getShellConfigServic
 
 function createClientLogBatchHandler({
   getDiagnosticLogService = () => null,
-  getProcessLogWriter = () => null,
   getRedactionPrefixes = () => [],
   env = process.env,
   log = () => {},
@@ -29,13 +27,7 @@ function createClientLogBatchHandler({
 
   return function handleClientLogBatch(_event, batch) {
     const diagnosticLogService = getDiagnosticLogService();
-    const writer = getProcessLogWriter();
-    const hasCanonicalService = diagnosticLogService
-      && typeof diagnosticLogService.append === 'function';
-    if (!hasCanonicalService
-      && (!writer || (typeof writer.writeBatch !== 'function' && typeof writer.write !== 'function'))) {
-      return;
-    }
+    if (!diagnosticLogService) return;
     const rawEntries = Array.isArray(batch?.entries) ? batch.entries : [];
     const entries = rawEntries.slice(0, MAX_BATCH_ENTRIES);
     const droppedCount = Number(batch?.dropped_count) || 0;
@@ -46,12 +38,10 @@ function createClientLogBatchHandler({
         message: 'Renderer log forwarding buffer overflowed; oldest entries were dropped.',
       });
     }
-    if (droppedCount > 0 && hasCanonicalService
-      && typeof diagnosticLogService.recordDrop === 'function') {
+    if (droppedCount > 0) {
       diagnosticLogService.recordDrop('renderer', droppedCount);
     }
     const redactionPrefixes = getRedactionPrefixes();
-    const normalizedEntries = [];
     let rejectedCount = Math.max(rawEntries.length - entries.length, 0);
     for (const entry of entries) {
       // Per-entry isolation: one malformed entry must not suppress the rest.
@@ -64,35 +54,19 @@ function createClientLogBatchHandler({
         if (level === 'DEBUG' && !debugForwardingEnabled) {
           continue;
         }
-        const normalized = normalizeLogEntry(entry, {
-          layer: 'renderer',
-          redaction_prefixes: redactionPrefixes,
-        });
         // The renderer payload is untrusted across the IPC seam: pin the
         // layer/source so a crafted entry cannot impersonate another layer.
-        normalized.layer = 'renderer';
-        normalized.source = 'renderer';
-        normalizedEntries.push(normalized);
+        diagnosticLogService.append({ ...entry, layer: 'renderer', source: 'renderer' }, {
+          broadcast: false,
+          defaults: { layer: 'renderer', redaction_prefixes: redactionPrefixes },
+        });
       } catch (_error) {
         // Best-effort: the log path never throws back across the seam.
         rejectedCount += 1;
       }
     }
-    if (rejectedCount > 0 && hasCanonicalService
-      && typeof diagnosticLogService.recordDrop === 'function') {
+    if (rejectedCount > 0) {
       diagnosticLogService.recordDrop('renderer', rejectedCount);
-    }
-    try {
-      if (normalizedEntries.length === 0) return;
-      if (hasCanonicalService) {
-        normalizedEntries.forEach((entry) => diagnosticLogService.append(entry, {
-          broadcast: false,
-          persist: true,
-        }));
-      } else if (typeof writer.writeBatch === 'function') writer.writeBatch(normalizedEntries);
-      else normalizedEntries.forEach((entry) => writer.write(entry));
-    } catch (_error) {
-      // Best-effort: sink failures never escape the renderer IPC seam.
     }
   };
 }

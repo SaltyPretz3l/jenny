@@ -16,7 +16,7 @@
   }
 
   function isStandaloneAssistantKind(kind) {
-    return kind === 'proactive_suggestion' || kind === 'slash_command_output';
+    return kind === 'proactive_suggestion' || kind === 'slash_command_output' || kind === 'memory_note';
   }
 
   function extractMessageStreamId(message) {

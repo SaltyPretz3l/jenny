@@ -35,6 +35,8 @@ const DELEGATE_COMPATIBILITY_TOOL_IDS = Object.freeze([
 ]);
 
 const DEFAULT_TOOL_DEFAULTS = Object.freeze({
+  // Exact-content consent is owned by the Electron tool, even in Auto mode.
+  session_message: 'auto',
   exit_plan_mode: 'ask',
   read_file: 'auto',
   glob_files: 'auto',
@@ -82,6 +84,14 @@ const DEFAULT_TOOL_DEFAULTS = Object.freeze({
   // The in-session todo list is the model's own scratch state; approval is
   // for the user's files and commands (owner, 2026-09-22).
   todo_write: 'auto',
+  // Jenny's memory: every write is bounded, attributed to Jenny, suppressible
+  // and one-click undoable; consent rides the per-request memory policy
+  // (pause / ask before saving), not a per-call prompt.
+  memory: 'auto',
+  recall_tool_output: 'auto',
+  conversations_recent: 'auto',
+  conversation_open: 'auto',
+  conversations_search: 'auto',
 });
 
 const DEFAULT_SAFETY_FOR_SIDE_EFFECTING = 'ask';

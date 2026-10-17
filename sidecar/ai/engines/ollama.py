@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import http.client
 import json
 import logging
 import math
@@ -10,7 +9,6 @@ import socket
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from typing import Any
@@ -18,6 +16,15 @@ from typing import Any
 from sidecar.ai.config import _DEFAULT_MAX_OUTPUT_TOKENS
 from sidecar.ai.engines.base import BaseEngine, ModelModality
 from sidecar.ai.engines.http_utils import read_json_response
+from sidecar.ai.engines.ollama_abortable_post import (
+    AbortableRequest as _AbortableRequest,
+)
+from sidecar.ai.engines.ollama_abortable_post import (
+    post_abort_scope as _post_abort_scope,
+)
+from sidecar.ai.engines.ollama_abortable_post import (
+    post_abortable as _post_abortable,
+)
 from sidecar.ai.engines.ollama_generation import _OllamaGenerationMixin
 from sidecar.ai.engines.ollama_metadata import (
     detect_thinking as _detect_thinking_helper,
@@ -51,7 +58,6 @@ from sidecar.ai.engines.ollama_shared import (
     report_model_state,
     supports_ollama_reasoning_levels,
 )
-from sidecar.ai.engines.ollama_stream_transport import force_close_socket
 from sidecar.ai.engines.ollama_telemetry import (
     ResidencyKey,
     _OllamaTelemetryMixin,
@@ -127,67 +133,6 @@ def _coerce_optional_nonneg_int(value: Any) -> int | None:
         return None
     coerced = int(value)
     return coerced if coerced >= 0 else None
-
-
-# Set by the warmup thread around its request so ``_post`` (whose signature
-# other callers and tests depend on) issues that one request over a connection
-# another thread can tear down. Thread-local: only the warmup thread sees it.
-_post_abort_scope = threading.local()
-
-
-class _AbortableRequest:
-    """One in-flight POST whose blocked connection another thread can close."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._conn: http.client.HTTPConnection | None = None
-        self._aborted = False
-
-    def attach(self, conn: http.client.HTTPConnection) -> None:
-        with self._lock:
-            self._conn = conn
-        self.raise_if_aborted()
-
-    def raise_if_aborted(self) -> None:
-        with self._lock:
-            if self._aborted:
-                raise ConnectionAbortedError("request aborted before it was sent")
-
-    def abort(self) -> None:
-        with self._lock:
-            self._aborted = True
-            conn = self._conn
-        if conn is None:
-            return
-        force_close_socket(getattr(conn, "sock", None))
-        conn.close()
-
-
-def _post_abortable(
-    abortable: _AbortableRequest,
-    url: str,
-    req: urllib.request.Request,
-    timeout: float,
-) -> dict[str, Any]:
-    """POST ``req`` over a connection ``abortable.abort()`` can close mid-flight."""
-    parts = urllib.parse.urlsplit(url)
-    conn_class = (
-        http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
-    )
-    conn = conn_class(parts.hostname or "", parts.port, timeout=timeout)
-    try:
-        abortable.attach(conn)
-        # An abort that ran before the socket existed had nothing to close:
-        # connect first, then honor it, so every later abort finds the socket.
-        conn.connect()
-        abortable.raise_if_aborted()
-        conn.request("POST", req.selector, body=req.data, headers=dict(req.header_items()))
-        resp = conn.getresponse()
-        if resp.status >= 400:
-            raise urllib.error.HTTPError(url, resp.status, resp.reason, resp.headers, resp)
-        return read_json_response(resp)
-    finally:
-        conn.close()
 
 
 class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):

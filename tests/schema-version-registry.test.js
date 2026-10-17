@@ -92,7 +92,7 @@ test('getAllSchemaVersions returns Electron registry entries and normalized side
     ['electron.turn_diagnostics', TURN_DIAGNOSTIC_SCHEMA_VERSION],
     ['electron.usage_history', USAGE_HISTORY_SCHEMA_VERSION],
     ['electron.jenny_status', JENNY_STATUS_SCHEMA_VERSION],
-    ['electron.mcp_servers', 1],
+    ['electron.mcp_servers', 2],
     ['sidecar.memory_store', 5],
   ]);
 

@@ -29,6 +29,8 @@ const CONSUMED_ELSEWHERE = Object.freeze({
   // parse_runtime_config calls desktop_policy_from_config(raw_config), which
   // reads DESKTOP_EXECUTION_POLICY_KEY = "desktop_execution_policy_version".
   desktop_execution_policy_version: 'sidecar/ai/execution_policy.py',
+  // Startup applies the trusted normal-restart transfer before request routing.
+  owned_process_handoff: 'sidecar/runtime/owned_process_tracking.py',
 });
 
 test.afterEach(async () => {

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Callable
 
 from sidecar.ai.error_codes import CMP_MEMORY_FAILED, CMP_MEMORY_SCHEMA_MIGRATION
 from sidecar.ai.memory.contracts import (
@@ -19,19 +20,14 @@ from sidecar.ai.memory.contracts import (
     MAX_SESSION_ID_CHARS,
     MAX_SOURCE_EXCERPT_CHARS,
     MAX_TITLE_CHARS,
-    build_content_digest,
+    legacy_kind_digest,
     normalize_spaces,
     require_finite_confidence,
 )
-from sidecar.ai.memory.store_project_migration import migrate_v7_to_v8, v8_schema_script
 from sidecar.ai.memory.store_shared import _transaction
 from sidecar.exceptions import MemoryStoreError
 
-SCHEMA_VERSION = 8
-
-# ---------------------------------------------------------------------------
-# Public entry points
-# ---------------------------------------------------------------------------
+SCHEMA_VERSION = 10
 
 
 def configure_connection(connection: sqlite3.Connection) -> str:
@@ -68,18 +64,20 @@ def run_migrations(connection: sqlite3.Connection) -> bool:
             "failed to read memory schema version",
         ) from error
 
-    if current_version < 1 or current_version > SCHEMA_VERSION:
-        if current_version == 0:
-            pass
-        else:
-            raise MemoryStoreError(
-                CMP_MEMORY_SCHEMA_MIGRATION,
-                f"unsupported memory schema version {current_version}; expected {SCHEMA_VERSION}",
-            )
+    if current_version < 0 or current_version > SCHEMA_VERSION:
+        raise MemoryStoreError(
+            CMP_MEMORY_SCHEMA_MIGRATION,
+            f"unsupported memory schema version {current_version}; expected {SCHEMA_VERSION}",
+        )
 
     initial_version = current_version
     if current_version == SCHEMA_VERSION:
         return False
+
+    # Rebuild steps load only when a database migrates; a current store skips them.
+    from sidecar.ai.memory.store_project_migration import migrate_v7_to_v8
+    from sidecar.ai.memory.store_v9_migration import migrate_v8_to_v9
+    from sidecar.ai.memory.store_v10_migration import migrate_v9_to_v10
 
     migrations = {
         1: _migrate_v1_to_v3,
@@ -88,7 +86,9 @@ def run_migrations(connection: sqlite3.Connection) -> bool:
         4: _migrate_v4_to_v5,
         5: _migrate_v5_to_v6,
         6: _migrate_v6_to_v7,
-        7: _migrate_v7_to_v8,
+        7: _rebuild(migrate_v7_to_v8),
+        8: _rebuild(migrate_v8_to_v9),
+        9: _rebuild(migrate_v9_to_v10),
     }
     try:
         with _transaction(connection):
@@ -370,18 +370,19 @@ def migrate_v2_family_key(
 
 
 def _migrate_from_empty(connection: sqlite3.Connection) -> None:
+    from sidecar.ai.memory.store_v10_migration import v10_schema_script
     try:
-        _execute_schema_script(connection, v8_schema_script(), version=SCHEMA_VERSION)
+        _execute_schema_script(connection, v10_schema_script(), version=SCHEMA_VERSION)
     except sqlite3.DatabaseError as error:
         raise MemoryStoreError(CMP_MEMORY_FAILED, "failed to migrate memory database") from error
 
 
 def _migration_checkpoint(_stage: str) -> None:
-    """Fault-injection seam for proving v7's transaction is all-or-nothing."""
+    """Fault-injection seam proving each rebuild's transaction is all-or-nothing."""
 
 
-def _migrate_v7_to_v8(connection: sqlite3.Connection) -> None:
-    migrate_v7_to_v8(
+def _rebuild(step: Callable[..., None]) -> Callable[[sqlite3.Connection], None]:
+    return lambda connection: step(
         connection,
         checkpoint=_migration_checkpoint,
         execute_schema_script=_execute_schema_script,
@@ -754,7 +755,7 @@ def _migrate_v6_to_v7(  # noqa: C901, PLR0912, PLR0915 - one atomic rebuild.
                     source_excerpt = source_excerpt[:MAX_SOURCE_EXCERPT_CHARS]
                     family_key = family_key[:MAX_FAMILY_KEY_CHARS]
                     provenance = provenance[:MAX_PROVENANCE_CHARS]
-                    digest = build_content_digest(lesson_kind, lesson_text)
+                    digest = legacy_kind_digest(lesson_kind, lesson_text)
                     connection.execute(
                         """
                         INSERT INTO memories_v7 (
@@ -856,7 +857,7 @@ def _migrate_v6_to_v7(  # noqa: C901, PLR0912, PLR0915 - one atomic rebuild.
                         raise ValueError("invalid family_key")
                     if len(category) > MAX_CATEGORY_CHARS:
                         raise ValueError("invalid category")
-                    digest = build_content_digest(lesson_kind, lesson_text)
+                    digest = legacy_kind_digest(lesson_kind, lesson_text)
                     connection.execute(
                         """
                         INSERT INTO pending_memory_candidates_v7 (

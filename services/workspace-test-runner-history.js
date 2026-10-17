@@ -14,6 +14,7 @@
 // started because the user's own run held the single-run lock: it has no
 // duration and no exit code, only the reason.
 
+const { scopeOf } = require('./workspace-test-runner-observation');
 const DEFAULT_MAX_PER_CONFIG = 100;
 const FINISH_KEYS = [
   'status', 'exitCode', 'durationMs', 'finishedAt', 'startedAt', 'errorCode',
@@ -27,6 +28,9 @@ const MAX_SKIP_REASON_LENGTH = 64;
 
 function attributionOf(record) {
   const out = {};
+  if (record?.activity?.schema_version === 1) {
+    out.activity = {schema_version:1, label:String(record.activity.label || '').slice(0,160), scope:scopeOf(record.activity.scope)};
+  }
   const initiator = record && typeof record.initiator === 'string' ? record.initiator.trim() : '';
   if (initiator) {
     out.initiator = initiator.slice(0, MAX_INITIATOR_LENGTH);

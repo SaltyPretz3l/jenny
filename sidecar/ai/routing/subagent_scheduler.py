@@ -6,7 +6,7 @@ import contextvars
 import math
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from sidecar.ai.error_codes import (
@@ -22,6 +22,7 @@ from sidecar.ai.routing.iteration_limits import (
 )
 from sidecar.ai.routing.sub_agent_invocation import (
     DELEGATE_OPERATION,
+    SUB_AGENT_REPORT_MODE_PLAIN_TEXT,
     SUBAGENT_CAPACITY_UNAVAILABLE_MESSAGE,
     SUBAGENT_DEADLINE_EXCEEDED_MESSAGE,
     SUBAGENT_RUNTIME_UNAVAILABLE_MESSAGE,
@@ -30,7 +31,12 @@ from sidecar.ai.routing.sub_agent_invocation import (
     build_sub_agent_identity,
     invoke_sub_agent,
 )
-from sidecar.ai.routing.subagent_finalization import SUB_AGENT_REPORT_MODE_PLAIN_TEXT
+from sidecar.ai.routing.subagent_model_routing import (
+    invoke_routed_task,
+    resolve_subagent_model_route,
+    subagent_failure_result,
+)
+from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.tool_families import KNOWN_TOOL_FAMILIES
 from sidecar.runtime.chat_models import TerminalChatStateError
 from sidecar.runtime.subagent_slots import (
@@ -44,7 +50,7 @@ PARENT_SYNTHESIS_RESERVE_MS = 60_000
 DEFAULT_ALLOWED_TOOL_FAMILIES = ("filesystem", "git", "code_intelligence")
 READ_ONLY_DISABLED_TOOLS = (
     "subagent_run", "subagent_batch", "delegate",
-    "worktree_create", "worktree_select", "worktree_delete",
+    "worktree_create", "worktree_select", "worktree_delete", "memory",
 )
 
 
@@ -66,6 +72,9 @@ class ScheduledInvocation:
     max_steps: int
     max_runtime_ms: int
     started: bool
+    provider: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,7 +88,8 @@ class DelegateSchedule:
 
 
 TaskSettledCallback = Callable[[ScheduledInvocation], None]
-TaskStartedCallback = Callable[[DelegateTask, SubAgentIdentity], None]
+TaskStartedCallback = Callable[..., None]
+TaskEventCallback = Callable[[DelegateTask, SubAgentIdentity, Any], None]
 
 
 def schedule_delegate_tasks(  # noqa: PLR0913 - the scheduler boundary is explicit.
@@ -93,6 +103,7 @@ def schedule_delegate_tasks(  # noqa: PLR0913 - the scheduler boundary is explic
     parent_agent_id: str,
     on_task_started: TaskStartedCallback | None = None,
     on_task_settled: TaskSettledCallback | None = None,
+    on_task_event: TaskEventCallback | None = None,
 ) -> DelegateSchedule:
     valid_tasks = request.valid_tasks
     execution = execution_for_request(router, request)
@@ -168,6 +179,7 @@ def schedule_delegate_tasks(  # noqa: PLR0913 - the scheduler boundary is explic
             task_iteration_limit=task_iteration_limit,
             on_task_started=on_task_started,
             on_task_settled=on_task_settled,
+            on_task_event=on_task_event,
         )
         return DelegateSchedule(
             execution,
@@ -187,6 +199,7 @@ def schedule_delegate_tasks(  # noqa: PLR0913 - the scheduler boundary is explic
         task_iteration_limit=task_iteration_limit,
         on_task_started=on_task_started,
         on_task_settled=on_task_settled,
+        on_task_event=on_task_event,
     )
     return DelegateSchedule(
         execution,
@@ -219,10 +232,11 @@ def _run_sequential(  # noqa: PLR0913
     task_iteration_limit: int,
     on_task_started: TaskStartedCallback | None,
     on_task_settled: TaskSettledCallback | None,
+    on_task_event: TaskEventCallback | None,
 ) -> tuple[ScheduledInvocation, ...]:
     settled: list[ScheduledInvocation] = []
     for index, task in enumerate(tasks):
-        remaining_ms = max(0, int((delegate_deadline - time.monotonic()) * 1_000))
+        remaining_ms = _remaining_runtime_ms(delegate_deadline)
         if remaining_ms <= 0:
             invocation = _unstarted_invocation(
                 task,
@@ -244,6 +258,7 @@ def _run_sequential(  # noqa: PLR0913
                 max_runtime_ms=remaining_ms,
                 absolute_deadline=delegate_deadline,
                 on_task_started=on_task_started,
+                on_task_event=on_task_event,
             )
         settled.append(invocation)
         if on_task_settled is not None:
@@ -254,10 +269,7 @@ def _run_sequential(  # noqa: PLR0913
                     remaining_task,
                     identities[remaining_task.ordinal],
                     max_steps=task_iteration_limit,
-                    max_runtime_ms=max(
-                        0,
-                        int((delegate_deadline - time.monotonic()) * 1_000),
-                    ),
+                    max_runtime_ms=_remaining_runtime_ms(delegate_deadline),
                 )
                 settled.append(cancelled)
                 if on_task_settled is not None:
@@ -278,6 +290,7 @@ def _run_parallel(  # noqa: PLR0913
     task_iteration_limit: int,
     on_task_started: TaskStartedCallback | None,
     on_task_settled: TaskSettledCallback | None,
+    on_task_event: TaskEventCallback | None,
 ) -> tuple[tuple[ScheduledInvocation, ...], bool]:
     allocator = getattr(runtime, "sub_agent_slot_allocator", None)
     if allocator is None:
@@ -334,6 +347,7 @@ def _run_parallel(  # noqa: PLR0913
                     slot_lease=lease,
                     absolute_deadline=delegate_deadline,
                     on_task_started=on_task_started,
+                    on_task_event=on_task_event,
                 )
                 futures[future] = task
             for future in as_completed(futures):
@@ -378,6 +392,7 @@ def _invoke_task(  # noqa: PLR0913
     slot_lease: Any | None = None,
     absolute_deadline: float | None = None,
     on_task_started: TaskStartedCallback | None = None,
+    on_task_event: TaskEventCallback | None = None,
 ) -> ScheduledInvocation:
     if slot_lease is None:
         allocator = getattr(runtime, "sub_agent_slot_allocator", None)
@@ -396,48 +411,41 @@ def _invoke_task(  # noqa: PLR0913
                 task, identity, max_steps=max_steps, max_runtime_ms=max_runtime_ms
             )
     started_at = time.monotonic()
+    route = None
     try:
-        if on_task_started is not None:
-            on_task_started(task, identity)
-        result = invoke_sub_agent(
+        route = resolve_subagent_model_route(router, parent_context, task)
+        result, route = invoke_routed_task(
             router=router,
             parent_context=parent_context,
-            messages=[{"role": "user", "content": str(task.prompt or "")}],
-            latest_user_content=str(task.prompt or ""),
-            slot_allocator=getattr(runtime, "sub_agent_slot_allocator", None),
-            runtime=runtime,
-            cancel_handle=getattr(runtime, "cancel_handle", None),
-            tool_preferences_override=build_subagent_tool_preferences(
-                DEFAULT_ALLOWED_TOOL_FAMILIES
-            ),
-            iteration_budget_override=max_steps,
-            max_runtime_ms=max_runtime_ms,
-            identity=identity,
-            slot_lease=slot_lease,
-            report_mode=SUB_AGENT_REPORT_MODE_PLAIN_TEXT,
-            absolute_deadline=absolute_deadline,
+            task=task, identity=identity, invoke=invoke_sub_agent, route=route,
+            on_task_started=on_task_started, on_task_event=on_task_event,
+            invocation_kwargs={
+                "messages": [{"role": "user", "content": str(task.prompt or "")}],
+                "latest_user_content": str(task.prompt or ""),
+                "slot_allocator": getattr(runtime, "sub_agent_slot_allocator", None),
+                "runtime": runtime, "cancel_handle": getattr(runtime, "cancel_handle", None),
+                "tool_preferences_override": build_subagent_tool_preferences(
+                    DEFAULT_ALLOWED_TOOL_FAMILIES),
+                "iteration_budget_override": max_steps, "max_runtime_ms": max_runtime_ms,
+                "identity": identity, "slot_lease": slot_lease,
+                "report_mode": SUB_AGENT_REPORT_MODE_PLAIN_TEXT,
+                "absolute_deadline": absolute_deadline,
+            },
+        )
+    except ToolExecutionFailure as error:
+        return _unstarted_invocation(
+            task, identity, max_steps=max_steps, max_runtime_ms=max_runtime_ms,
+            error_code=error.code, error_message=error.message,
+            completion_reason="rejected" if route is None else None,
         )
     except TerminalChatStateError as error:
         if error.status != TURN_STATE_CANCELLED:
             raise
-        result = SubAgentInvocationResult(
-            status="cancelled",
-            agent_id=identity.agent_id,
-            parent_agent_id=identity.parent_agent_id,
-            error_code=CMP_TOOL_EXECUTION_FAILED,
-            error_message="Sub-agent cancelled by parent.",
-            error_retryable=False,
-            completion_reason="cancelled",
+        result = subagent_failure_result(
+            identity, message="Sub-agent cancelled by parent.", completion_reason="cancelled",
         )
     except Exception:  # noqa: BLE001 - settle one started child without leaking provider data.
-        result = SubAgentInvocationResult(
-            status="failed",
-            agent_id=identity.agent_id,
-            parent_agent_id=identity.parent_agent_id,
-            error_code=CMP_TOOL_EXECUTION_FAILED,
-            error_message="Sub-agent execution failed.",
-            error_retryable=False,
-        )
+        result = subagent_failure_result(identity)
     finally:
         slot_lease.release()
     return ScheduledInvocation(
@@ -448,6 +456,9 @@ def _invoke_task(  # noqa: PLR0913
         max_steps=max_steps,
         max_runtime_ms=max_runtime_ms,
         started=True,
+        provider=route.provider if route else None,
+        model=route.model if route else None,
+        reasoning_effort=route.reasoning_effort if route else None,
     )
 
 
@@ -464,14 +475,8 @@ def _unstarted_invocation(  # noqa: PLR0913 - fixed settlement envelope.
     return ScheduledInvocation(
         task=task,
         identity=identity,
-        result=SubAgentInvocationResult(
-            status="failed",
-            agent_id=identity.agent_id,
-            parent_agent_id=identity.parent_agent_id,
-            error_code=error_code,
-            error_message=error_message,
-            error_retryable=completion_reason == "capacity_unavailable",
-            completion_reason=completion_reason,
+        result=subagent_failure_result(
+            identity, code=error_code, message=error_message, completion_reason=completion_reason,
         ),
         elapsed_ms=0,
         max_steps=max_steps,
@@ -488,10 +493,7 @@ def _capacity_invocation(
     max_runtime_ms: int,
 ) -> ScheduledInvocation:
     return _unstarted_invocation(
-        task,
-        identity,
-        max_steps=max_steps,
-        max_runtime_ms=max_runtime_ms,
+        task, identity, max_steps=max_steps, max_runtime_ms=max_runtime_ms,
         error_code=CMP_TOOL_EXECUTION_FAILED,
         error_message=SUBAGENT_CAPACITY_UNAVAILABLE_MESSAGE,
         completion_reason="capacity_unavailable",
@@ -506,16 +508,12 @@ def _cancelled_invocation(
     max_runtime_ms: int,
     message: str = "Sub-agent cancelled by parent.",
 ) -> ScheduledInvocation:
-    invocation = _unstarted_invocation(
-        task,
-        identity,
-        max_steps=max_steps,
-        max_runtime_ms=max_runtime_ms,
+    return _unstarted_invocation(
+        task, identity, max_steps=max_steps, max_runtime_ms=max_runtime_ms,
         error_code=CMP_TOOL_EXECUTION_FAILED,
         error_message=message or "Sub-agent cancelled by parent.",
         completion_reason="cancelled",
     )
-    return replace(invocation, result=replace(invocation.result, status="cancelled"))
 
 
 def _effective_runtime_budget(

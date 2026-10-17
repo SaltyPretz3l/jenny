@@ -532,3 +532,31 @@ test('the banner offers the one-time answer first and names the standing permiss
   ]);
   controller.dispose();
 });
+
+test('an exact-content message approval is never part of a batch decision', async () => {
+  const dom = createApprovalDom();
+  const { window } = dom;
+  const extra = window.document.createElement('div');
+  extra.className = 'approval-gap-row';
+  extra.setAttribute('data-approval-status', 'pending');
+  extra.setAttribute('data-approval-exact', 'true');
+  extra.setAttribute('data-tool-call-id', 'call-msg');
+  extra.setAttribute('data-approval-id', 'approval-stream-a-call-msg');
+  window.document.querySelector('.chat-thread-children').appendChild(extra);
+  // Fresh approval ids: the claim registry is shared with the earlier tests.
+  window.document.querySelectorAll('.approval-gap-row:not([data-approval-exact])').forEach((row, index) => {
+    row.setAttribute('data-approval-id', `approval-exact-batch-${index + 1}`);
+  });
+  const approvals = [];
+  const controller = bindApprovalBatchUx({
+    scopeRoot: window.document.getElementById('timeline'),
+    document: window.document,
+    callbacks: { async approveOne(callId) { approvals.push(callId); return false; }, async denyOne() { return false; }, onError() {} },
+  });
+  controller.sync();
+  await flush();
+  window.document.querySelector('[data-approval-batch-action="approve-all-once"]').click();
+  await flush();
+  assert.deepEqual(approvals, ['approval-exact-batch-1', 'approval-exact-batch-2']);
+  controller.dispose();
+});

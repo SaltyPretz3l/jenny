@@ -39,7 +39,7 @@ test('percentile reset cannot refresh, render, or re-enable its button after dis
   bindings.bind();
   const reset = dom.window.document.getElementById('phasePercentilesResetButton');
   reset.click();
-  assert.equal(reset.disabled, true);
+  assert.equal(reset.getAttribute('aria-disabled'), 'true');
 
   bindings.dispose();
   resetRequest.resolve();
@@ -47,5 +47,5 @@ test('percentile reset cannot refresh, render, or re-enable its button after dis
 
   assert.equal(refreshCalls, 0, 'the disposed chain must not start its refresh continuation');
   assert.equal(renderCalls, 0, 'the disposed chain must not render');
-  assert.equal(reset.disabled, true, 'the disposed chain must not mutate the detached button');
+  assert.equal(reset.getAttribute('aria-disabled'), 'true', 'the disposed chain must not mutate the detached button');
 });

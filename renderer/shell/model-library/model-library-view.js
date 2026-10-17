@@ -161,7 +161,8 @@
         && card.engineVisible === true && card.active !== true
         && String(card.engineType || '').toLowerCase() === 'ollama';
     }
-    if (action === 'pull') return card.installed !== true && !running;
+    // An NInfer row's Download is the block's set-up: hidden while it runs (one owner per message).
+    if (action === 'pull') return card.installed !== true && !running && card.ninferSetupRunning !== true;
     if (action === 'menu') {
       return compact !== true && card.installed === true && card.engineVisible === true
         && mergeUtils.isLocalOrUnknownEngine(card);
@@ -181,7 +182,7 @@
       unload: { label: jt('models.library.unload', 'Unload'), variant: 'secondary' },
       tune: { label: jt('models.library.tune', 'Tune'), variant: 'secondary' },
       remove: { label: jt('common.remove', 'Remove'), variant: 'danger' },
-      pull: { label: jt('models.library.pull', 'Pull'), variant: 'primary' },
+      pull: { label: card.selectedEngine === 'ninfer' ? jt('models.library.download', 'Download') : jt('models.library.pull', 'Pull'), variant: 'primary' },
       cancel: { label: jt('common.cancel', 'Cancel'), variant: 'danger' },
       menu: { label: '⋯', variant: 'ghost', ariaLabel: jt('models.library.moreActionsFor', 'More actions for {model}', { model: name }) },
       retry: { label: jt('models.library.retry', 'Retry'), variant: 'primary' },
@@ -247,6 +248,10 @@
     } else if (model.servingPaused === true) {
       // llama-server is parked while an image render holds the GPU.
       badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: jt('models.library.pausedForImageRender', 'Paused for an image render') }));
+    }
+    if (model.selectedEngine === 'ninfer') {
+      // The managed NInfer runtime (row 54); MTP is the artifact's own feature.
+      badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: 'NInfer' + (mtpOn ? ' \u00b7 MTP' : '') }));
     }
     if (model.selectedEngine === 'llama-server') {
       // A model on its own llama-server build names it; the bundled build is implied.

@@ -13,7 +13,7 @@ function fixture(options = {}) {
   const gateway = new InferenceOperations({ lanes, route, requestId: 'request:1',
     sessionId: 'session:1', authorityRevision: 'authority:1',
     assertCurrent: () => { if (!live) throw new Error('revoked'); }, ...options });
-  const base = { schema_version: 1, api_version: '2026-08-17', kind: 'inference',
+  const base = { schema_version: 1, api_version: '2026-10-15', kind: 'inference',
     request_id: 'request:1', session_id: 'session:1', authority_revision: 'authority:1',
     operation_id: 'operation:1' };
   const admit = patch => gateway.handle({ ...base, phase: 'admit', engine_type: 'ollama', ...patch });

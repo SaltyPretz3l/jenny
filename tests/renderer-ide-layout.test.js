@@ -27,7 +27,7 @@ function setup(opts = {}) {
 test('PANEL_RENDERERS lists every view panel exactly once', () => {
   assert.deepEqual([...PANEL_RENDERERS], [
     'renderExplorer', 'renderSearch', 'renderSourceControl',
-    'renderTerminal', 'renderProblems', 'renderRun', 'renderTestRunner', 'renderTestOutput',
+    'renderTerminal', 'renderProblems', 'renderRun', 'renderTestRunner', 'renderTestOutput', 'renderActivity',
   ]);
 });
 
@@ -49,7 +49,7 @@ test('missing panel renderers are no-ops and the rest still render in order', ()
   const h = setup({ omit: ['renderSearch', 'renderRun'] });
   assert.doesNotThrow(() => h.layout.render());
   assert.deepEqual(h.order, [
-    'workbench', 'renderExplorer', 'renderSourceControl', 'renderTerminal', 'renderProblems', 'renderTestRunner', 'renderTestOutput', 'dock',
+    'workbench', 'renderExplorer', 'renderSourceControl', 'renderTerminal', 'renderProblems', 'renderTestRunner', 'renderTestOutput', 'renderActivity', 'dock',
   ]);
 });
 

@@ -5,10 +5,13 @@ const os = require('os');
 const path = require('path');
 const { ElectronSessionStore } = require('../services/backend/electron-session-store');
 const {
+  EXPORT_FORMAT_VERSION,
   SESSION_IMPORT_ERROR_CODES,
   exportSession,
   importSession,
 } = require('../services/backend/session-export-import');
+const E = require('../services/backend/session-message-envelope');
+const F = require('./helpers/session-mail-fixtures');
 const {
   MAX_IMAGE_SIZE_BYTES,
 } = require('../services/attachment-asset-store');
@@ -164,7 +167,8 @@ describe('exportSession', () => {
     const parsed = JSON.parse(json);
     assert.equal(parsed.format, 'jenny-session-export');
     assert.equal(parsed.session.lockdown, true, 'lockdown travels with the export');
-    assert.equal(parsed.format_version, 1);
+    assert.equal(parsed.format_version, 1, 'a transcript without context rows stays format 1 (importable by older builds)');
+    assert.equal(EXPORT_FORMAT_VERSION, 2, 'a format-1 reader would coerce role:context rows to assistant text');
     assert.equal(parsed.session.title, 'Test Chat');
     assert.equal(parsed.session.messages.length, 2);
   });
@@ -792,5 +796,95 @@ describe('importSession', () => {
     });
     assert.deepEqual(deletedAssetPaths, [savedAssetPath]);
     assert.deepEqual(store._sessions, {});
+  });
+});
+
+describe('addressed session messages (role:context) in export and import', () => {
+  const included = (n, extra = {}) => E.buildIncludedRow(F.makeEnvelope(n, { body: `from chat ${n}` }), { turn_id: 'turn_1', timestamp: F.iso(n), ...extra });
+  const receipt = (n) => E.buildDiscardReceiptRow(F.makeEnvelope(n, { body: `discarded ${n}` }), { timestamp: F.iso(n) });
+  const payloadOf = (messages, version = 2) => JSON.stringify({
+    format: 'jenny-session-export', format_version: version, session: { title: 'Mail chat', messages },
+  });
+
+  it('exports the canonical rows with their envelope and imports them back as inert history', () => {
+    const rows = [
+      { id: 'u0', role: 'user', content: 'earlier' },
+      included(1),
+      receipt(2),
+      { id: 'u1', role: 'user', content: 'prompt' },
+    ];
+    const source = createMockSessionStore({ sess_mail: { id: 'sess_mail', title: 'Mail chat', messages: rows } });
+    const exported = JSON.parse(exportSession(source, 'sess_mail'));
+    assert.equal(exported.format_version, 2, 'context rows need a reader that knows role context');
+    const exportedRow = exported.session.messages.find((m) => m.id === `ctx_${F.uuid(1)}`);
+    assert.equal(exportedRow.role, 'context');
+    assert.equal(exportedRow.session_message.message_id, F.uuid(1));
+
+    const target = createMockSessionStore();
+    const result = importSession(target, JSON.stringify(exported));
+    assert.equal(result.dropped_context_row_count, undefined);
+    const imported = target.getSession(result.id);
+    assert.deepEqual(imported.messages.map((m) => m.id), ['u0', `ctx_${F.uuid(1)}`, `ctxr_${F.uuid(2)}`, 'u1']);
+    const context = imported.messages[1];
+    assert.equal(context.role, 'context');
+    assert.equal(context.kind, 'session_message');
+    assert.equal(context.content, 'from chat 1');
+    assert.equal(context.turn_id, 'turn_1');
+    assert.deepEqual(context.session_message, rows[1].session_message);
+    assert.equal(imported.messages[2].disposition, 'discarded');
+    // Never mints delivery state: the imported session has an empty mailbox.
+    assert.deepEqual(imported.session_mail.inbox, []);
+    assert.deepEqual(imported.session_mail.outbox, []);
+    assert.deepEqual(imported.session_mail.admission_snapshots, []);
+  });
+
+  it('imports format 1 and 2, and still refuses a newer format', () => {
+    const rows = [{ id: 'u0', role: 'user', content: 'plain' }];
+    for (const version of [1, 2]) {
+      const store = createMockSessionStore();
+      assert.equal(importSession(store, payloadOf(rows, version)).title, 'Mail chat (imported)');
+    }
+    assertSessionImportError(() => importSession(createMockSessionStore(), payloadOf(rows, EXPORT_FORMAT_VERSION + 1)), {
+      code: SESSION_IMPORT_ERROR_CODES.FORMAT_MISMATCH,
+      reason: 'unsupported_format_version',
+    });
+  });
+
+  it('drops and counts a context row that fails strict re-validation, never coercing it to another role', () => {
+    const good = included(1);
+    const wrongContent = { ...included(2), content: 'a different text' };
+    const forgedSha = included(3);
+    forgedSha.session_message = { ...forgedSha.session_message, body: 'tampered body' };
+    const wrongId = { ...included(4), id: 'ctx_not-the-message-id' };
+    const noEnvelope = { id: 'ctx_5', role: 'context', kind: 'session_message', content: 'orphan' };
+    const unknownKind = { ...included(6), kind: 'handoff' };
+    const extraEnvelopeKey = included(7);
+    extraEnvelopeKey.session_message = { ...extraEnvelopeKey.session_message, authority: 'admin' };
+    const store = createMockSessionStore();
+    const result = importSession(store, payloadOf([
+      { id: 'u0', role: 'user', content: 'keep me' }, good, wrongContent, forgedSha, wrongId, noEnvelope, unknownKind, extraEnvelopeKey,
+    ]));
+    assert.equal(result.dropped_context_row_count, 6);
+    const messages = store.getSession(result.id).messages;
+    assert.deepEqual(messages.map((m) => m.id), ['u0', `ctx_${F.uuid(1)}`]);
+    assert.ok(messages.every((m) => m.role !== 'assistant'), 'no dropped row became assistant text');
+  });
+
+  it('strips unknown keys from an imported context row but keeps the validated fields', () => {
+    const row = { ...included(1), tool_call: { call_id: 'x' }, attachments: [], injected_flag: true };
+    const store = createMockSessionStore();
+    const result = importSession(store, payloadOf([row]));
+    assert.ok(result.stripped_message_keys.includes('injected_flag'));
+    const [message] = store.getSession(result.id).messages;
+    assert.equal(message.role, 'context');
+    assert.equal(message.injected_flag, undefined);
+    assert.ok(!message.tool_call, 'no tool metadata rides on a context row');
+  });
+
+  it('a format-1 payload carrying a forged context row is still strictly re-validated', () => {
+    const store = createMockSessionStore();
+    const result = importSession(store, payloadOf([{ id: 'x', role: 'context', content: 'hi' }], 1));
+    assert.equal(result.dropped_context_row_count, 1);
+    assert.deepEqual(store.getSession(result.id).messages, []);
   });
 });

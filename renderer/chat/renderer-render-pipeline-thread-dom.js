@@ -234,6 +234,7 @@ root.rendererRenderPipelineThreadDomUtils = factory();
         : node.kind === 'interactive_round_recap' ? 'interactive'
         : node.kind === 'proactive_suggestion' ? 'proactive'
         : node.kind === 'slash_command_output' ? 'slash-output'
+        : node.kind === 'memory_note' ? 'memory-note'
         : 'response';
 
       return dividerMarkup + `

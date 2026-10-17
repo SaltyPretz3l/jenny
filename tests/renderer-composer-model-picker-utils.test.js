@@ -66,6 +66,17 @@ test('resolveModelGroup uses the contracted first-match ordering', () => {
   assert.deepEqual(utils.resolveModelGroup({ engineType: 'openai-compatible' }), {
     key: 'openai-compatible', label: 'OpenAI-compatible', order: 25,
   });
+  assert.deepEqual(utils.resolveModelGroup({ engineType: 'openai-compatible', managed: 'ninfer' }), {
+    key: 'ninfer', label: 'NInfer', order: 22,
+  });
+  assert.deepEqual(utils.resolveModelGroup({ engineType: 'openai-compatible', managed: 'llama-server' }), {
+    key: 'llama-server', label: 'llama-server', order: 23,
+  });
+  // The marker only names a runtime for an openai-compatible entry.
+  assert.deepEqual(utils.resolveModelGroup({ engineType: 'ollama', managed: 'ninfer' }), {
+    key: 'ollama', label: 'Ollama', order: 10,
+  });
+  assert.equal(utils.normalizeCatalogEntry({ id: 'n', engine_type: 'openai-compatible', managed: 'ninfer' }).group.key, 'ninfer');
   assert.deepEqual(utils.resolveModelGroup({ engineType: 'plugin_host' }), {
     key: 'other', label: 'Other', order: 90,
   });

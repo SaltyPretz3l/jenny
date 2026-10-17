@@ -12,6 +12,17 @@ const {
   registerIpcInvokeHandlers,
 } = require('../services/ipc-contract');
 
+test('image viewer exposes capability and ID-only chooser bridge operations', async () => {
+  const calls = [];
+  const bridge = createJennyShellBridge({ ipcRenderer: {
+    invoke: async (...args) => { calls.push(args); return { openWith: true }; },
+    on() {}, removeListener() {}, send() {},
+  } });
+  assert.deepEqual(await bridge.artifacts.capabilities(), { openWith: true });
+  await bridge.artifacts.openWith('source-session', 'image-id');
+  assert.deepEqual(calls, [['artifacts:capabilities'], ['artifacts:open-with', 'source-session', 'image-id']]);
+});
+
 test('ipc contract descriptors use unique invoke/send/subscribe channels', () => {
   const channels = new Map();
 
@@ -270,6 +281,18 @@ test('ipc contract exposes a stable sorted method inventory', () => {
   assert.ok(invokePaths.includes('mcpDiscovery.updateServer'));
   assert.ok(invokePaths.includes('mcpDiscovery.removeServer'));
   assert.ok(invokePaths.includes('mcpDiscovery.testServer'));
+  assert.ok(invokePaths.includes('mcpDiscovery.checkReadiness'));
+  assert.equal(getBridgeChannel('mcpDiscovery.checkReadiness', 'invoke'), 'mcp-discovery:check-readiness');
+  assert.ok(invokePaths.includes('mcpDiscovery.getPrompt'));
+  assert.equal(getBridgeChannel('mcpDiscovery.getPrompt', 'invoke'), 'mcp-discovery:get-prompt');
+  assert.ok(invokePaths.includes('mcpDiscovery.getReaInstallPlan'));
+  assert.ok(invokePaths.includes('mcpDiscovery.installRea'));
+  assert.ok(invokePaths.includes('mcpDiscovery.uninstallRea'));
+  assert.equal(getBridgeChannel('mcpDiscovery.getReaInstallPlan', 'invoke'), 'mcp-discovery:rea-install-plan');
+  assert.equal(getBridgeChannel('mcpDiscovery.installRea', 'invoke'), 'mcp-discovery:install-rea');
+  assert.equal(getBridgeChannel('mcpDiscovery.uninstallRea', 'invoke'), 'mcp-discovery:uninstall-rea');
+  assert.ok(listBridgeMethodPaths({ kind: 'subscribe' }).includes('mcpDiscovery.onReaInstallProgress'));
+  assert.equal(getBridgeChannel('mcpDiscovery.onReaInstallProgress', 'subscribe'), 'mcp-discovery:rea-install-progress');
   assert.ok(invokePaths.includes('mcpDiscovery.approveServer'));
   assert.ok(invokePaths.includes('mcpDiscovery.setServerEnabled'));
   assert.ok(invokePaths.includes('mcpAuth.getStatus'));
@@ -347,6 +370,8 @@ test('bridge methods with no renderer, preload, hosted or remote caller stay ret
   // Post-1.2.0 sweep S2: each had a descriptor and a main-process handler but
   // no caller. Re-adding one needs a real caller and its handler/tests.
   const retired = [
+    'logs.list',
+    'logs.onAppend',
     'sessions.updateMessage',
     'sessions.importSession',
     'workspaceTestRunner.listConfigs',
@@ -428,4 +453,20 @@ test('preload-internal channels register in main but never reach the page bridge
 
   const registered = registerIpcInvokeHandlers({ handle() {} }, { 'attachments.prepareDroppedPaths': () => null });
   assert.deepEqual(registered, ['attachments:prepare-dropped-paths']);
+});
+
+test('Settings memory page descriptors pin the W4 invoke channels', () => {
+  const expected = {
+    'memory.listArchived': 'memory:list-archived',
+    'memory.restore': 'memory:restore',
+    'memory.erase': 'memory:erase',
+    'memory.clearForgotten': 'memory:clear-forgotten',
+    'memory.listOperations': 'memory:list-operations',
+    'memory.setAlwaysOn': 'memory:set-always-on',
+    'memory.exportMarkdown': 'memory:export-markdown',
+    'memory.openContextFile': 'memory:open-context-file',
+  };
+  for (const [methodPath, channel] of Object.entries(expected)) {
+    assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], { kind: 'invoke', channel }, methodPath);
+  }
 });

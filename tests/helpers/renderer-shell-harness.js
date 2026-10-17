@@ -70,9 +70,6 @@ function createShellStub(options = {}) {
         pythonRuntime: false,
         todo: false,
       },
-      memory: {
-        captureSuggestions: true,
-      },
       featureFlags: {
         token_budget: true,
         context_compaction: true,

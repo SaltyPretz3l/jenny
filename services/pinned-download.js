@@ -26,6 +26,8 @@ function pinnedDownloadError(code, message) {
   return error;
 }
 
+const OUTPUT_CLOSE_WAIT_MS = 1_000;
+
 function waitForOutput(out, event, signal, stopped, start = null) {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -176,8 +178,20 @@ async function downloadPinnedFile({
   } finally {
     if (inactivityTimer) clearTimeout(inactivityTimer);
     if (!completed) out.destroy?.();
-    // Destruction can emit a queued error before close (including caller cancellation).
-    if (out.destroyed && !out.closed) out.on?.('close', removeOutputError);
+    // Destruction can emit a queued error before close (including caller
+    // cancellation), so the error listener stays until then. Callers delete
+    // the partial right after this settles, and on Windows an unlinked file
+    // stays visible until its handle closes: wait (bounded) for the close.
+    if (out.destroyed && !out.closed) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, OUTPUT_CLOSE_WAIT_MS);
+        timer.unref?.();
+        out.once?.('close', () => { clearTimeout(timer); resolve(); });
+      });
+    }
+    // A close slower than the bounded wait can still queue an error: the
+    // listener then stays until the stream closes, never leaving it unhandled.
+    if (out.destroyed && !out.closed && typeof out.once === 'function') out.once('close', removeOutputError);
     else removeOutputError();
   }
   return hash.digest('hex');

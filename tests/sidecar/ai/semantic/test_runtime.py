@@ -11,7 +11,7 @@ import pytest
 from sidecar.ai.config import parse_runtime_config
 from sidecar.ai.error_codes import CMP_CATALOG_INDEX_UNAVAILABLE, CMP_CATALOG_NOT_CONFIGURED
 from sidecar.ai.semantic import runtime
-from sidecar.ai.semantic.store import CatalogStore
+from sidecar.ai.semantic.store import SEMANTIC_CATALOG_SCHEMA_VERSION, CatalogStore
 from sidecar.ai.tools.registry import build_tool_bindings
 
 
@@ -97,7 +97,8 @@ def test_a_failed_open_is_retried_after_the_interval(
     assert runtime.configure_semantic_catalog(_config(tmp_path)) is None
 
     with closing(sqlite3.connect(db)) as connection:
-        connection.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+        connection.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                           (str(SEMANTIC_CATALOG_SCHEMA_VERSION),))
         connection.commit()
     assert runtime.configure_semantic_catalog(_config(tmp_path)) is None, "not before the interval"
     clock[0] += runtime.BUILD_RETRY_SECONDS

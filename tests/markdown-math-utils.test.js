@@ -448,6 +448,23 @@ test('real katex display markup carries .katex-display inside the wrapper; inlin
   assert.ok(display.querySelector('.katex-display'), 'display .katex-display missing');
 });
 
+test('real katex does not inherit trust from a polluted options prototype', () => {
+  const katex = require('katex');
+  const { root } = domWithRestoredMath('$\\href{javascript:alert(1)}{click}$');
+  const previous = Object.getOwnPropertyDescriptor(Object.prototype, 'trust');
+  let result;
+  try {
+    Object.defineProperty(Object.prototype, 'trust', { value: true, writable: true, configurable: true });
+    result = renderMathInto(root, { katexLib: katex });
+  } finally {
+    if (previous) Object.defineProperty(Object.prototype, 'trust', previous);
+    else delete Object.prototype.trust;
+  }
+  assert.equal(result.rendered, 1);
+  assert.ok(root.querySelector('.katex'), 'math still renders');
+  assert.equal(root.querySelector('a[href]'), null, 'inherited trust must not create a link');
+});
+
 test('real katex with throwOnError:false renders bad LaTeX as its own error markup, no throw', () => {
   const katex = require('katex');
   const { root } = domWithRestoredMath('bad $\\frac{1}{$ tail');

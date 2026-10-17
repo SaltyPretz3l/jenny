@@ -2,7 +2,7 @@ const {
   touchActiveTurnProgress,
 } = require('./chat-stream-session-lifecycle');
 const { normalizeString } = require('../shared/normalize');
-const { normalizeUsage } = require('./subagent-report-metadata');
+const { normalizeUsage, normalizeChildActivity } = require('./subagent-report-metadata');
 
 const TERMINAL_AGENT_STATUSES = new Set([
   'completed',
@@ -113,6 +113,10 @@ function normalizeAgentStatusEvent(value = {}) {
   if (model) event.model = model;
   if (provider) event.provider = provider;
   if (usage) event.usage = usage;
+  const activity = normalizeChildActivity(source.childActivity || source.child_activity);
+  if (activity) event.childActivity = activity;
+  const effort = normalizeRouteIdentifier(source.reasoningEffort || source.reasoning_effort);
+  if (effort) event.reasoningEffort = effort;
   if (terminalReason) event.terminalReason = terminalReason;
   return event;
 }
@@ -122,8 +126,8 @@ function normalizePositiveInteger(value) {
 }
 
 function normalizeRouteIdentifier(value) {
-  const text = normalizeString(value).slice(0, 96);
-  return text && !/[\\/]/.test(text) ? text : '';
+  const text = normalizeString(value).slice(0, 138);
+  return /^(?:codex-cli\/)?[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(text) ? text : '';
 }
 
 function normalizeAgentProgressNotification(params = {}, {
@@ -158,12 +162,14 @@ function normalizeAgentProgressNotification(params = {}, {
     model: params.model,
     provider: params.provider,
     usage: params.usage,
+    childActivity: params.child_activity || params.childActivity,
+    reasoningEffort: params.reasoning_effort || params.reasoningEffort,
     terminalReason: params.terminal_reason || params.terminalReason,
   });
 }
 
 function mirrorAgentStatusToActiveTurn(adapter, event) {
-  if (!adapter || !event) {
+  if (!adapter || !event || event.childActivity) {
     return null;
   }
   return touchActiveTurnProgress(adapter, {

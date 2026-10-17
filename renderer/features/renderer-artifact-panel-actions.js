@@ -46,6 +46,16 @@
     };
   }
 
+  // The one gate for the image header and More actions: a generated image the
+  // body shows (so neither missing nor failed to load), as an image-action target.
+  function imageActionTarget(artifact, panelEl) {
+    if (artifact?.artifactType !== 'image' || artifact.sourceKind !== 'generated_artifact' || artifact.status === 'missing') return null;
+    var id = String(artifact.image?.artifactId || artifact.id || '');
+    var key = (artifact.sessionId || '') + ':' + (artifact.id || '');
+    var shown = Array.from(panelEl?.querySelectorAll?.('.artifact-preview-image-open') || []).some(function (node) { return node.dataset.artifactKey === key; });
+    return id && artifact.sessionId && shown ? { kind: 'artifact', id: id, sessionId: artifact.sessionId } : null;
+  }
+
   function createArtifactPanelActions(deps) {
     var options = deps || {};
     var panelEl = options.panelEl || null;
@@ -69,7 +79,7 @@
     }
 
     function download(artifact) {
-      if (disposed || !artifact || artifact.artifactType === 'image' || options.isCurrentArtifact?.(artifact) === false) return Promise.resolve(null);
+      if (disposed || !artifact || options.isCurrentArtifact?.(artifact) === false) return Promise.resolve(null);
       if (downloadPromise) return downloadPromise;
       var source = typeof options.getArtifactSource === 'function' ? options.getArtifactSource() : '';
       var payload = buildDownloadPayload(artifact, source, options.formatLanguageLabel);
@@ -108,18 +118,30 @@
     }
 
     // More lists only what applies to this artifact (no permanently disabled
-    // rows): Copy (only while the narrow header folds it), Download, Maximize
-    // (not while maximized or in the overlay), Reveal, Open externally, Jump to
-    // chat, Delete.
+    // rows): Copy (only while the narrow header folds it), an image's Save as,
+    // Show in folder and Open externally, Download, Maximize (not while
+    // maximized or in the overlay), Reveal, Open externally, Jump to chat, Delete.
     function overflowItems(artifact) {
       var generated = artifact.artifactType === 'generated_file';
-      var textSource = artifact.artifactType !== 'image' && options.getArtifactSource?.() != null;
+      // Images have no source text, so this is null for them.
+      var textSource = options.getArtifactSource?.() != null;
+      var image = imageActionTarget(artifact, panelEl);
       var overlay = panelEl?.classList?.contains('artifact-review-overlay') === true;
       function act(selector) {
         return function () { if (options.isCurrentArtifact?.(artifact) !== false) hiddenClick(selector); };
       }
+      function run(action) {
+        return function () { if (!disposed && options.isCurrentArtifact?.(artifact) !== false) return globalThis.rendererImageViewerController?.run?.(action, image); };
+      }
       var items = [];
-      if (textSource && options.isNarrow?.() === true) items.push({ label: jt('common.copy', 'Copy'), action: act('[data-artifact-panel-v2-copy]') });
+      if ((textSource || image) && options.isNarrow?.() === true) {
+        items.push({ label: image ? jt('artifacts.actions.copyImage', 'Copy image') : jt('common.copy', 'Copy'), action: act('[data-artifact-panel-v2-copy]') });
+      }
+      if (image) {
+        items.push({ label: jt('artifacts.actions.saveImageAs', 'Save as…'), action: run('save-as') });
+        items.push({ label: jt('artifacts.actions.showInFolder', 'Show in folder'), action: run('reveal') });
+        items.push({ label: jt('artifacts.actions.openExternally', 'Open externally'), action: run('open') });
+      }
       if (textSource) items.push({ label: jt('artifacts.actions.download', 'Download'), action: function () { return download(artifact); } });
       if (!overlay && options.isMaximized?.() !== true && typeof options.toggleMaximize === 'function') {
         items.push({ label: jt('artifacts.actions.maximizePanel', 'Maximize panel'), action: function () { toggleMaximize(); } });
@@ -174,8 +196,10 @@
       closeOverflow();
     }
 
-    return { dispose: dispose, closeOverflow: closeOverflow, download: download, showOverflow: showOverflow, toggleMaximize: toggleMaximize };
+    function hasOverflowItems(artifact) { return Boolean(artifact) && overflowItems(artifact).length > 0; }
+
+    return { dispose: dispose, closeOverflow: closeOverflow, download: download, hasOverflowItems: hasOverflowItems, showOverflow: showOverflow, toggleMaximize: toggleMaximize };
   }
 
-  return { buildDownloadPayload: buildDownloadPayload, createArtifactPanelActions: createArtifactPanelActions };
+  return { buildDownloadPayload: buildDownloadPayload, createArtifactPanelActions: createArtifactPanelActions, imageActionTarget: imageActionTarget };
 });

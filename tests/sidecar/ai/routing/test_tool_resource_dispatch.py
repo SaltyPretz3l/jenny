@@ -376,7 +376,7 @@ def test_missing_script_interpreter_cleanup_survives_mcp_and_router(
     workspace.mkdir()
     (workspace / "marker.txt").write_text("still-readable", encoding="utf-8")
     monkeypatch.setattr(temp_script, "_create_temp_root", lambda: temp_root)
-    monkeypatch.setattr(temp_script.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(temp_script.shutil, "which", lambda _name, path=None: None)
 
     def unexpected_launch(*_args, **_kwargs):
         pytest.fail("missing interpreter must not launch a process")

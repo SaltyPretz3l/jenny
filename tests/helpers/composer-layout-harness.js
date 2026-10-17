@@ -11,6 +11,8 @@ const ROOT = path.resolve(__dirname, '../..');
 const browserPath = [
   process.env.JENNY_TEST_CHROMIUM,
   process.platform === 'win32' && 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  // Windows ships Edge (Chromium) where Chrome is absent; without a browser every layout gate skips.
+  process.platform === 'win32' && 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
   chromium.executablePath(),
 ].find((candidate) => candidate && fs.existsSync(candidate));
 const SKIP = !browserPath && 'No local Chromium available; set JENNY_TEST_CHROMIUM';
@@ -89,6 +91,8 @@ async function mountComposer(browser, { paneWidth, lang = 'en', palette = 'darkr
         .replace(/\{(\w+)\}/g, (match, id) => (params && Object.prototype.hasOwnProperty.call(params, id) ? String(params[id]) : match)),
     };
     document.documentElement.dataset.palette = name;
+    // The app's default chat width (appearance-utils): Narrow's 68ch measure collapses the toolbar sooner.
+    document.documentElement.dataset.chatWidth = 'standard';
     document.getElementById('startupOverlay').remove();
   }, { strings: catalog(lang), palette });
   for (const file of MODULES) await page.addScriptTag({ content: fs.readFileSync(path.join(ROOT, file), 'utf8') });

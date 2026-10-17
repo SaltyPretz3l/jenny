@@ -4,78 +4,41 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
-const { JSDOM } = require('jsdom');
+const { resolveMcpServerBadge, mapMcpFailureMessage } = require('../renderer/shell/renderer-mcp-servers');
+const { flush, discovery, pendingServer, harness, REA_COMMAND, openDrawer, saveEditor,
+  drawerSwitch } = require('./helpers/renderer-mcp-servers-harness');
 
-const actionButton = require('../renderer/inventory/action-button');
-const textField = require('../renderer/inventory/text-field');
-const selectField = require('../renderer/inventory/select-field');
-const toggleSwitch = require('../renderer/inventory/toggle-switch');
-const { createMcpServersController, resolveMcpServerBadge,
-  mapMcpFailureMessage } = require('../renderer/shell/renderer-mcp-servers');
+test('prompt counts appear once in summary and Details, including zero without readiness', async t => {
+  const h = harness(t, { initialState: discovery({ servers: [pendingServer({ name: 'rea', promptsCount: 2,
+    readiness: { healthy: true, tools: 3, prompts: 99, checkedAt: '2026-10-14T12:00:00Z' } })] }) });
+  h.controller.bind(); await flush();
+  const row = h.extensionsCard.querySelector('[data-mcp-server-row]');
+  assert.match(row.textContent, /3 tools.*2 prompts/);
+  assert.equal(row.textContent.includes('99 prompts'), false);
+  let drawer = openDrawer(h, 'details');
+  let labels = [...drawer.querySelectorAll('dt')].filter(dt => dt.textContent === 'Prompts');
+  assert.equal(labels.length, 1); assert.equal(labels[0].nextElementSibling.textContent, '2');
+  h.setState(discovery({ servers: [pendingServer({ name: 'rea' })] })); await h.controller.refresh();
+  assert.equal(h.extensionsCard.querySelector('[data-mcp-server-row]').textContent.includes('prompts'), false);
+  drawer = openDrawer(h, 'details');
+  labels = [...drawer.querySelectorAll('dt')].filter(dt => dt.textContent === 'Prompts');
+  assert.equal(labels.length, 1); assert.equal(labels[0].nextElementSibling.textContent, '0');
+});
 
-const flush = async () => { await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve)); };
-
-function discovery(overrides = {}) {
-  return { schemaVersion: 1, readOnly: false, remediationReason: '', migrated: false,
-    sseEnabled: true, servers: [], ...overrides };
-}
-
-function pendingServer(overrides = {}) {
-  return { name: 'weather', transport: 'stdio', command: 'weather-mcp', args: ['--stdio'],
-    status: 'configured', toolsCount: 0, enabled: false,
-    trust: { status: 'pending', configuration_digest: 'a'.repeat(64),
-      advertised_tools_digest: '', reviewed_at: '' }, ...overrides };
-}
-
-function harness(t, { initialState = discovery(), bridge = {}, authBridge = {} } = {}) {
-  const dom = new JSDOM(`<!doctype html><body><nav id="nav">
-    <button data-settings-section="extensions">Extensions</button></nav>
-    <section class="settings-card" data-settings-section="extensions"><h3>Extensions</h3>
-      <div id="skillsSettingsSection"></div>
-      <div id="mcpServersHost"></div></section>
-    <section class="settings-card" data-settings-section="tools"><h3>Tools</h3></section></body>`,
-  { pretendToBeVisual: true });
-  let state = initialState;
-  let authState = { loaded: true, store: { status: 'ready' }, servers: [] };
-  const calls = [];
-  const toasts = [];
-  const confirms = [];
-  const logs = [];
-  const api = {
-    getState: async () => state,
-    createServer: async (payload) => { calls.push(['create', payload]); return { ok: true }; },
-    updateServer: async (payload) => { calls.push(['update', payload]); return { ok: true }; },
-    removeServer: async (payload) => { calls.push(['remove', payload]);
-      state = discovery({ ...state, servers: state.servers.filter((server) => server.name !== payload.name) });
-      return { ok: true }; },
-    testServer: async (payload) => { calls.push(['test', payload]); return payload.confirmed
-      ? { ok: true, tool_count: 1, tools_digest: 'b'.repeat(64), tools: [{ name: 'forecast',
-        description: 'Get a forecast', schema_digest: 'c'.repeat(64) }] }
-      : { ok: false, confirmation_required: true, command: 'weather-mcp', args: ['--stdio'] }; },
-    approveServer: async (payload) => { calls.push(['approve', payload]); return { ok: true }; },
-    setServerEnabled: async (payload) => { calls.push(['toggle', payload]); return { ok: true }; },
-    ...bridge,
-  };
-  const authApi = { getStatus: async () => authState, ...authBridge };
-  dom.window.jennyShell = { mcpDiscovery: api, mcpAuth: authApi };
-  const previous = [globalThis.inventoryActionButton, globalThis.inventoryTextField,
-    globalThis.inventorySelectField, globalThis.inventoryToggleSwitch];
-  globalThis.inventoryActionButton = actionButton;
-  globalThis.inventoryTextField = textField;
-  globalThis.inventorySelectField = selectField;
-  globalThis.inventoryToggleSwitch = toggleSwitch;
-  const controller = createMcpServersController({ windowRef: dom.window, documentRef: dom.window.document,
-    showToastMessage: (message, options) => toasts.push({ message, options }),
-    appendClientLog: (...entry) => logs.push(entry),
-    confirmDanger: async (config) => { confirms.push(config); return true; } });
-  t.after(() => { controller.dispose(); [globalThis.inventoryActionButton, globalThis.inventoryTextField,
-    globalThis.inventorySelectField, globalThis.inventoryToggleSwitch] = previous; });
-  return { dom, controller, calls, toasts, confirms, logs, api, setState: (next) => { state = next; },
-    setAuthState: (next) => { authState = next; },
-    extensionsCard: dom.window.document.querySelector('.settings-card[data-settings-section="extensions"]'),
-    toolsCard: dom.window.document.querySelector('.settings-card[data-settings-section="tools"]') };
-}
+test('Test review renders discovered prompts with required argument stars and escaped names', async t => {
+  const h = harness(t, { initialState: discovery({ servers: [pendingServer()] }), bridge: {
+    testServer: async () => ({ ok: true, tools: [], tool_count: 0, tools_digest: 'b'.repeat(64),
+      prompts: [{ name: '<prompt>', arguments: [{ name: 'feature', required: true }, { name: 'optional' }] },
+        { name: 'plain', arguments: [] }] }),
+  } });
+  h.controller.bind(); await flush();
+  const drawer = openDrawer(h, 'details');
+  drawer.querySelector('[data-mcp-servers-action="test"]').click(); await flush();
+  assert.match(drawer.textContent, /2 discovered prompt\(s\)/);
+  assert.ok([...drawer.querySelectorAll('code')].some(code => code.textContent === '<prompt>(feature*, optional)'));
+  assert.ok([...drawer.querySelectorAll('code')].some(code => code.textContent === 'plain()'));
+  assert.equal(drawer.querySelector('prompt'), null);
+});
 
 test('flat MCP rows mount in their stable host with only drawer action and switch', async (t) => {
   const h = harness(t, { initialState: discovery({ servers: [pendingServer()] }) });
@@ -182,6 +145,7 @@ test('in-progress drawer actions are visibly disabled and restored after failure
   assert.equal(drawer.querySelector('.inv-drawer-panel').getAttribute('aria-busy'), 'true');
   assert.match(drawer.querySelector('[data-mcp-drawer-operation-status]').textContent, /Working/);
   assert.equal(drawer.querySelector('[data-mcp-servers-action="remove"]').disabled, true);
+  assert.equal(drawer.querySelector('.mcp-approval-row [data-inv-toggle]').disabled, true);
   assert.match(h.extensionsCard.querySelector('[data-mcp-server-row]').textContent, /operation in progress/);
   finish({ ok: false, reason: 'unavailable' });
   await flush();
@@ -409,4 +373,178 @@ test('pending runtime application tells the user the prior configuration may be 
   assert.equal(h.toasts[0].message.includes('server detail'), false);
   const editor = h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="save-editor"]');
   assert.equal(editor, null, 'a saved edit leaves the editor even while application is pending');
+});
+
+test('Windows Add drawer offers the rea preset and creates the row with its hidden limits', async (t) => {
+  const h = harness(t, { platform: 'Win32' });
+  h.controller.bind();
+  await flush();
+  const drawer = openDrawer(h, 'add');
+  const doc = h.dom.window.document;
+  const presets = drawer.querySelectorAll('[data-mcp-servers-action="preset"]');
+  assert.equal(presets.length, 1);
+  assert.equal(presets[0].textContent.trim(), 'Reverse engineering (rea)');
+  assert.equal(drawer.querySelector('[data-mcp-preset-note]'), null);
+  presets[0].click();
+  assert.equal(doc.getElementById('mcpServerName').value, 'rea');
+  assert.equal(doc.getElementById('mcpServerTarget').value, REA_COMMAND);
+  assert.equal(doc.getElementById('mcpServerArgs').value, '-y\nrea-agents@6.4.0\nmcp');
+  assert.match(drawer.querySelector('[data-mcp-preset-note]').textContent, /Node\.js 22\.19, 24\.11 or newer/);
+  assert.equal(doc.activeElement.id, 'mcpServerName');
+  saveEditor(h);
+  await flush();
+  assert.deepEqual(h.calls[0], ['create', { server: { name: 'rea', transport: 'stdio', command: REA_COMMAND,
+    args: ['-y', 'rea-agents@6.4.0', 'mcp'], memory_limit_mb: 2048, max_processes: 16,
+    inspect_timeout_seconds: 120, request_timeout_seconds: 300 } }]);
+});
+
+test('the preset line is Windows-only, Add-only, and a blank Add carries no hidden limits', async (t) => {
+  for (const platform of ['Linux x86_64', undefined]) {
+    const other = harness(t, { platform });
+    other.controller.bind();
+    await flush();
+    assert.equal(openDrawer(other, 'add').querySelector('.mcp-presets'), null, String(platform));
+    other.controller.dispose();
+  }
+  const h = harness(t, { platform: 'Win32', initialState: discovery({ servers: [pendingServer()] }) });
+  h.controller.bind();
+  await flush();
+  openDrawer(h, 'details').querySelector('[data-mcp-servers-action="edit"]').click();
+  assert.equal(h.dom.window.document.querySelector('#mcpServerDetailsDrawer .mcp-presets'), null);
+  h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="cancel-drawer"]').click();
+  assert.ok(openDrawer(h, 'add').querySelector('.mcp-presets'));
+  h.dom.window.document.getElementById('mcpServerName').value = 'docs';
+  h.dom.window.document.getElementById('mcpServerTarget').value = 'node';
+  saveEditor(h);
+  await flush();
+  assert.deepEqual(h.calls[0], ['create', { server: { name: 'docs', transport: 'stdio', command: 'node', args: [] } }]);
+});
+
+test('review tags read-only claims and the switch sends a pending row back to review', async (t) => {
+  const h = harness(t, { initialState: discovery({ servers: [pendingServer()] }), bridge: {
+    testServer: async (payload) => (payload.confirmed ? { ok: true, tool_count: 2, tools_digest: 'b'.repeat(64),
+      tools: [{ name: 'forecast', description: 'Get a forecast', schema_digest: 'c'.repeat(64), read_only_claim: true },
+        { name: 'alert', description: 'Send an alert', schema_digest: 'd'.repeat(64) }] }
+      : { ok: false, confirmation_required: true, command: 'weather-mcp', args: ['--stdio'] }),
+  } });
+  h.controller.bind();
+  await flush();
+  openDrawer(h, 'details').querySelector('[data-mcp-servers-action="test"]').click();
+  await flush();
+  const drawer = h.dom.window.document.getElementById('mcpServerDetailsDrawer');
+  assert.match(drawer.textContent, /1 of 2 tools claim to be read-only/);
+  const claims = drawer.querySelectorAll('.mcp-tool-claim');
+  assert.equal(claims.length, 1);
+  assert.equal(claims[0].textContent, 'read-only');
+  assert.equal(claims[0].parentElement.querySelector('strong').textContent, 'forecast');
+  assert.equal(drawer.querySelector('.mcp-approval-row').closest('section').querySelector('h3').textContent, 'Approval');
+  const toggle = drawerSwitch(h);
+  assert.equal(toggle.getAttribute('role'), 'switch');
+  assert.equal(toggle.getAttribute('aria-checked'), 'false');
+  toggle.click();
+  await flush();
+  assert.deepEqual(h.calls.find((call) => call[0] === 'update'), ['update', { name: 'weather', server: {
+    name: 'weather', transport: 'stdio', command: 'weather-mcp', args: ['--stdio'], read_only_auto_allow: true } }]);
+  assert.match(h.dom.window.document.getElementById('mcpServerDetailsDrawer').textContent, /Run an inspection/);
+});
+
+test('approved remote rows show the stored switch and flip it with the opaque credential reference', async (t) => {
+  const remote = pendingServer({ name: 'remote', transport: 'sse', command: '', args: [], enabled: true,
+    url: 'https://mcp.example.test/sse', readOnlyAutoAllow: true, trust: { status: 'approved' },
+    auth: { kind: 'bearer', secretRef: 'mcp:remote', token_url: '', client_id: '', scope: '' } });
+  const h = harness(t, { initialState: discovery({ servers: [remote] }) });
+  h.controller.bind();
+  await flush();
+  openDrawer(h, 'details');
+  assert.equal(drawerSwitch(h).getAttribute('aria-checked'), 'true');
+  drawerSwitch(h).click();
+  await flush();
+  assert.deepEqual(h.calls[0], ['update', { name: 'remote', server: { name: 'remote', transport: 'sse',
+    url: 'https://mcp.example.test/sse', auth: { kind: 'bearer', secret_ref: 'mcp:remote' },
+    read_only_auto_allow: false } }]);
+});
+
+test('a failed switch flip redraws the stored position and reports the failure', async (t) => {
+  const h = harness(t, { initialState: discovery({ servers: [pendingServer()] }), bridge: {
+    updateServer: async () => ({ ok: false, reason: 'x' }) } });
+  h.controller.bind();
+  await flush();
+  openDrawer(h, 'details');
+  drawerSwitch(h).click();
+  await flush();
+  assert.equal(drawerSwitch(h).getAttribute('aria-checked'), 'false');
+  assert.equal(h.toasts.at(-1).message, 'The MCP operation could not be completed.');
+});
+
+test('the preset button is disabled while an operation runs', async (t) => {
+  let finish;
+  const h = harness(t, { platform: 'Win32', bridge: {
+    createServer: () => new Promise((resolve) => { finish = resolve; }) } });
+  h.controller.bind();
+  await flush();
+  openDrawer(h, 'add').querySelector('[data-mcp-servers-action="preset"]').click();
+  saveEditor(h);
+  const preset = h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="preset"]');
+  assert.equal(preset.disabled, true);
+  finish({ ok: false, reason: 'x' });
+  await flush();
+});
+
+test('moving a preset row to SSE hides the preset note and drops the hidden limits', async (t) => {
+  const h = harness(t, { platform: 'Win32' });
+  h.controller.bind();
+  await flush();
+  const doc = h.dom.window.document;
+  openDrawer(h, 'add').querySelector('[data-mcp-servers-action="preset"]').click();
+  const transport = doc.getElementById('mcpServerTransport');
+  transport.value = 'sse';
+  transport.dispatchEvent(new h.dom.window.Event('change', { bubbles: true }));
+  assert.equal(doc.querySelector('[data-mcp-preset-note]').hidden, true);
+  doc.getElementById('mcpServerTarget').value = 'https://mcp.example.test/sse';
+  saveEditor(h);
+  await flush();
+  assert.deepEqual(h.calls[0], ['create', { server: { name: 'rea', transport: 'sse',
+    url: 'https://mcp.example.test/sse', auth: null } }]);
+  openDrawer(h, 'add').querySelector('[data-mcp-servers-action="preset"]').click();
+  assert.equal(doc.querySelector('[data-mcp-preset-note]').hidden, false);
+});
+
+test('an OAuth remote row keeps its credential reference and OAuth fields through a switch flip and an edit', async (t) => {
+  const remote = pendingServer({ name: 'remote', transport: 'sse', command: '', args: [],
+    url: 'https://mcp.example.test/sse', trust: { status: 'approved' },
+    auth: { kind: 'oauth_client_credentials', secretRef: 'mcp:remote', token_url: 'https://id.example.test/token',
+      client_id: 'jenny', scope: 'read' } });
+  const h = harness(t, { initialState: discovery({ servers: [remote] }) });
+  h.controller.bind();
+  await flush();
+  const row = (scope, extra) => ['update', { name: 'remote', server: { name: 'remote', transport: 'sse',
+    url: 'https://mcp.example.test/sse', auth: { kind: 'oauth_client_credentials', secret_ref: 'mcp:remote',
+      token_url: 'https://id.example.test/token', client_id: 'jenny', scope }, ...extra } }];
+  openDrawer(h, 'details');
+  drawerSwitch(h).click();
+  await flush();
+  assert.deepEqual(h.calls[0], row('read', { read_only_auto_allow: true }));
+  h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="edit"]').click();
+  h.dom.window.document.getElementById('mcpServerScope').value = ' read write ';
+  saveEditor(h);
+  await flush();
+  assert.deepEqual(h.calls[1], row('read write', {}));
+});
+
+test('the switch keeps keyboard focus through a saved and a failed flip', async (t) => {
+  let outcome = { ok: true };
+  const h = harness(t, { initialState: discovery({ servers: [pendingServer()] }), bridge: {
+    updateServer: async () => outcome } });
+  h.controller.bind();
+  await flush();
+  openDrawer(h, 'details');
+  const doc = h.dom.window.document;
+  for (outcome of [{ ok: true }, { ok: false, reason: 'x' }]) {
+    const toggle = drawerSwitch(h);
+    toggle.focus();
+    toggle.click();
+    await flush();
+    assert.notEqual(drawerSwitch(h), toggle, 'the drawer was redrawn');
+    assert.equal(doc.activeElement, drawerSwitch(h));
+  }
 });

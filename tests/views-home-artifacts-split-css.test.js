@@ -563,7 +563,7 @@ test('artifact review selectors live in their focused stylesheet', () => {
 
   for (const selector of [
     '.artifacts-detail-panel {',
-    '.artifact-editor-shell,',
+    '.artifact-editor-shell {',
     '.artifact-preview-mermaid-host {',
   ]) {
     assertMovedRuleStart({ focusedCss, parentCss, selector });

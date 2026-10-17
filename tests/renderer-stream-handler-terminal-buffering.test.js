@@ -255,8 +255,8 @@ test('complete path drains the queued follow-up even if post-work throws', async
       isCurrentSession: () => true,
       getQueuedSend: () => ({ sessionId: 'session-1', prompt: 'queued during complete' }),
       // A post-work step throws after the queued send exists. The drain runs
-      // after the try/finally, so without the catch the throw would skip it.
-      maybeSuggestMemoryCapture: async () => { throw new Error('memory capture boom'); },
+      // after the postwork try/finally, so a failing step must not skip it.
+      refreshSnapshots: async () => { throw new Error('postwork refresh boom'); },
       dispatchQueuedSendForSession: async (sessionId) => { dispatchCalls.push(sessionId); return { sessionId }; },
     },
   });

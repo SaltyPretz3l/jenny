@@ -281,3 +281,23 @@ def test_hosted_overlay_does_not_disclose_captured_root(tmp_path: Path) -> None:
     )
     assert tmp_path.name not in messages[0]
     assert "git_repo:" not in messages[0]
+
+
+
+def test_desktop_context_states_the_constructed_path_policy(tmp_path: Path) -> None:
+    block = _render(workspace_root=tmp_path)[0]
+    assert "desktop built-in tools use a constructed PATH" in block
+    assert "rustc, cargo, dotnet, cmake in parent PATH order" in block
+    assert "private virtual environment and unrelated parent PATH entries" in block
+    assert "Discovery does not guarantee installation" in block
+    assert "Third-party MCP keeps its restricted environment" in block
+
+
+def test_hosted_context_does_not_advertise_desktop_executable_discovery(tmp_path: Path) -> None:
+    block = _render(
+        workspace_root=tmp_path,
+        config=_config(host_mode="server", host_execution_policy_version=2),
+    )[0]
+    assert "desktop executable discovery is disabled" in block
+    assert "rustc" not in block
+    assert "constructed PATH" not in block

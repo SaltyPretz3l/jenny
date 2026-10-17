@@ -1,3 +1,4 @@
+const { CONFIG_ERROR_CODES } = require('./backend/error-codes');
 const path = require('path');
 const { EventEmitter } = require('events');
 const { preserveCorruptFile, readWithRetry } = require('./backend/corrupt-file-preserve');
@@ -11,7 +12,9 @@ const {
 const { FEATURE_OVERRIDE_KEYS, TOOL_SETTING_KEYS } = require('./feature-flags');
 const { normalizeLastChatgptModel, normalizeLocalEngines } = require('./shell-config-engines');
 const { applySessionRuntimePatch } = require('./shell-config-session-runtime');
-const { mergeWorkspacePatch, workspaceStateView } = require('./shell-config-normalizers');
+const { applyPerformanceTelemetryPatch } = require('./shell-config-performance');
+const { applySubagentRoutingPatch } = require('./subagent-routing-settings');
+const { applyMemorySettingsPatch, mergeWorkspacePatch, workspaceStateView } = require('./shell-config-normalizers');
 const {
   CONFIG_VERSION,
   DEFAULT_CHAT_UI,
@@ -19,7 +22,6 @@ const {
   DEFAULT_COMPANION,
   DEFAULT_ASSISTANT_IDENTITY,
   DEFAULT_FEATURE_OVERRIDES,
-  DEFAULT_MEMORY,
   DEFAULT_OFFLINE_INTELLIGENCE,
   DEFAULT_SETUP,
   DEFAULT_SKILLS,
@@ -40,7 +42,6 @@ const {
   normalizeCompanionMode,
   normalizeFollowUp,
   normalizeHomeConfig,
-  normalizeMemorySettings,
   normalizeOfflineIntelligence,
   normalizePreferredEngineType,
   normalizeRunMode,
@@ -724,8 +725,21 @@ class ShellConfigService extends EventEmitter {
     return result.snapshot.sessionRuntime;
   }
 
+  updatePerformanceTelemetry(patch) { // non-feature reason: never a managed-config refresh
+    const next = applyPerformanceTelemetryPatch(this.state.performanceTelemetry, patch);
+    const unchanged = JSON.stringify(next) === JSON.stringify(this.state.performanceTelemetry);
+    if (!unchanged && !this._commitState({ ...this.state, performanceTelemetry: next }, 'performance_telemetry_updated').persisted) {
+      throw Object.assign(new Error('performance_config_write_failed'), { reason: 'performance_config_write_failed' });
+    }
+    return this.getState().performanceTelemetry;
+  }
+
   updateFeatureSettings(patch = {}) {
     const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+    const nextRouting = Object.hasOwn(source, 'subagentRouting')
+      ? applySubagentRoutingPatch(this.state.subagentRouting, source.subagentRouting)
+      : this.state.subagentRouting;
+    const routingChanged = JSON.stringify(nextRouting) !== JSON.stringify(this.state.subagentRouting);
     const nextTools = normalizeToolsSettings({
       ...this.state.tools,
       ...(source.tools && typeof source.tools === 'object' && !Array.isArray(source.tools)
@@ -746,19 +760,14 @@ class ShellConfigService extends EventEmitter {
         ? source.webSearch
         : {}),
     });
-    const nextMemory = normalizeMemorySettings({
-      ...this.state.memory,
-      ...(source.memory && typeof source.memory === 'object' && !Array.isArray(source.memory)
-        ? source.memory
-        : {}),
-    });
     const toolsChanged = JSON.stringify(nextTools) !== JSON.stringify(this.state.tools);
     const overridesChanged =
       JSON.stringify(nextFeatureOverrides) !== JSON.stringify(this.state.featureOverrides);
     const webSearchChanged =
       JSON.stringify(nextWebSearch) !== JSON.stringify(this.state.webSearch);
+    const nextMemory = applyMemorySettingsPatch(this.state.memory, source.memory, this._getNow());
     const memoryChanged = JSON.stringify(nextMemory) !== JSON.stringify(this.state.memory);
-    if (!toolsChanged && !overridesChanged && !webSearchChanged && !memoryChanged) {
+    if (!toolsChanged && !overridesChanged && !webSearchChanged && !routingChanged && !memoryChanged) {
       return this.getState();
     }
 
@@ -769,6 +778,7 @@ class ShellConfigService extends EventEmitter {
       webSearch: nextWebSearch,
       featureOverrides: nextFeatureOverrides,
       memory: nextMemory,
+      subagentRouting: nextRouting,
     };
     let reason = 'feature_settings_updated';
     if (toolsChanged && !overridesChanged) {
@@ -798,10 +808,10 @@ class ShellConfigService extends EventEmitter {
     if (webSearchChanged && !toolsChanged && !overridesChanged) {
       reason = 'web_search_settings_updated';
     }
-    if (memoryChanged && !toolsChanged && !overridesChanged && !webSearchChanged) {
-      reason = 'memory_capture_suggestions_updated';
-    }
-    return this._writeState(nextState, reason);
+    if (memoryChanged && !toolsChanged && !overridesChanged && !webSearchChanged) reason = 'memory_settings_updated';
+    const committed = this._commitState(nextState, reason);
+    if (!committed.persisted) throw Object.assign(new Error('Feature settings could not be saved.'), { code: CONFIG_ERROR_CODES.PERSISTENCE });
+    return committed.snapshot;
   }
 
   updateOfflineIntelligence(patch = {}) {
@@ -830,10 +840,7 @@ class ShellConfigService extends EventEmitter {
   updateLocalEngineAcceleration(patch) {
     const localEngines = normalizeLocalEngines({
       ...this.state.localEngines,
-      openaiCompatible: {
-        ...this.state.localEngines?.openaiCompatible,
-        acceleration: patch,
-      },
+      openaiCompatible: { ...this.state.localEngines?.openaiCompatible, acceleration: patch },
     });
     const current = this.getLocalEngines().openaiCompatible.acceleration;
     if (JSON.stringify(localEngines.openaiCompatible.acceleration) === JSON.stringify(current)) return this.getState();
@@ -842,12 +849,21 @@ class ShellConfigService extends EventEmitter {
 
   // Semantic catalog embedding model choice (row 41). The normalizer drops a
   // path that is not a local absolute .gguf, so the result is the source of truth.
-  updateEmbeddingSettings(patch) {
-    const current = this.getLocalEngines().embedding;
+  updateEmbeddingSettings(patch) { return this._updateLocalEngineSlice('embedding', patch, 'embedding_settings_updated'); }
+
+  // NInfer (row 54): `watchdog` merges one level deeper so a toggle write cannot drop the thresholds.
+  updateNinferSettings(patch) {
     const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
-    const localEngines = normalizeLocalEngines({ ...this.state.localEngines, embedding: { ...current, ...source } });
-    if (JSON.stringify(localEngines.embedding) === JSON.stringify(current)) return current;
-    return this._writeState({ ...this.state, localEngines }, 'embedding_settings_updated').localEngines.embedding;
+    const watchdog = { ...this.getLocalEngines().ninfer.watchdog, ...(source.watchdog || {}) };
+    return this._updateLocalEngineSlice('ninfer', { ...source, watchdog }, 'ninfer_settings_updated');
+  }
+
+  _updateLocalEngineSlice(key, patch, reason) {
+    const current = this.getLocalEngines()[key];
+    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+    const localEngines = normalizeLocalEngines({ ...this.state.localEngines, [key]: { ...current, ...source } });
+    if (JSON.stringify(localEngines[key]) === JSON.stringify(current)) return current;
+    return this._writeState({ ...this.state, localEngines }, reason).localEngines[key];
   }
 
   updateManagedLlamaServer(patch) {
@@ -964,7 +980,6 @@ module.exports = {
   DEFAULT_CODEX_CLI,
   DEFAULT_COMPANION,
   DEFAULT_FEATURE_OVERRIDES,
-  DEFAULT_MEMORY,
   DEFAULT_OFFLINE_INTELLIGENCE,
   DEFAULT_SETUP,
   DEFAULT_SKILLS,
@@ -984,7 +999,6 @@ module.exports = {
   normalizeCompanionMode,
   normalizeFollowUp,
   normalizeLocalEngines,
-  normalizeMemorySettings,
   normalizeOfflineIntelligence,
   normalizeReminder,
   normalizeSetupState,

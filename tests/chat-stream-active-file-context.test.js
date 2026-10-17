@@ -91,7 +91,6 @@ function makeOptions(overrides = {}) {
     sessionMessages: [],
     prompt: 'what does foo do?',
     recentUserTurns: [],
-    promptHasExplicitStyleInstruction: false,
     preparedMessages: [{ role: 'user', content: 'what does foo do?' }],
     recallQuery: '',
     logTiming() {},
@@ -140,6 +139,7 @@ test('emits the active-file block on the typed channel when the flag is on', asy
   const options = makeOptions();
   const result = await assembleContextForChat(service, options);
   assert.equal(result.memoryPolicy.project_id, 'project_general');
+  assert.deepEqual(Object.keys(result.memoryPolicy).sort(), ['capture', 'enabled', 'policy_epoch', 'project_id', 'recall']);
 
   const activeFile = blockOfKind(result, 'active_file');
   assert.ok(activeFile, 'active-file block emitted');
@@ -466,5 +466,87 @@ test('does NOT exclude the active file from codebase when active-file context is
     assert.equal(blockOfKind(result, 'active_file'), null);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Memory v2 (row 58 W1 S4): the per-request policy combines the chat's
+// include_memory / memory_opt_out with the three global memory settings.
+test('memory_policy follows the settings and per-chat matrix', async () => {
+  const cases = [
+    ['default', {}, {}, { enabled: true, recall: true, capture: 'auto' }],
+    ['useInChats off', { useInChats: false }, {}, { enabled: false, recall: false, capture: 'auto' }],
+    ['include_memory off', {}, { include_memory: false }, { enabled: false, recall: false, capture: 'auto' }],
+    ['pauseSaving', { pauseSaving: true, askBeforeSaving: true }, {}, { enabled: true, recall: true, capture: 'off' }],
+    ['memory_opt_out', { askBeforeSaving: true }, { memory_opt_out: true }, { enabled: true, recall: true, capture: 'off' }],
+    ['askBeforeSaving', { askBeforeSaving: true }, {}, { enabled: true, recall: true, capture: 'ask' }],
+  ];
+  for (const [label, memorySettings, prefPatch, expected] of cases) {
+    const service = withProjectAuthority({
+      featureFlags: {},
+      configService: { getState: () => ({ memory: memorySettings }) },
+      memoryPolicyEpoch: () => 7,
+      _emitServiceLog() {},
+    });
+    const options = makeOptions({
+      activeFileContext: null,
+      contextPreferences: normalizeContextPreferences({
+        history_scope: 'fresh',
+        include_personality: false,
+        include_git_context: false,
+        include_codebase_context: false,
+        ...prefPatch,
+      }),
+    });
+    const result = await assembleContextForChat(service, options);
+    assert.deepEqual(result.memoryPolicy, { ...expected, project_id: 'project_general', policy_epoch: 7 }, label);
+  }
+});
+
+test('memory_policy defaults when the service has no config or epoch counter', async () => {
+  const result = await assembleContextForChat(makeService(false), makeOptions({ activeFileContext: null }));
+  assert.deepEqual(result.memoryPolicy, {
+    enabled: false, project_id: 'project_general', capture: 'auto', recall: false, policy_epoch: 0,
+  });
+});
+
+
+test('memory policy selects bounded eligible same-project summaries only', async () => {
+  const service = makeService(false);
+  service.featureFlags.session_offline_lockdown = true;
+  service.featureFlags.memory_v2_enabled = true;
+  const summary = (id, extra = {}) => ({ id, project_id: 'project_general', message_count: 2, title: id, ...extra });
+  const good = [summary('active', { active_turn: {} }), summary('long', { title: 'x'.repeat(201) }),
+    summary('untitled', { title: null, project_id: null }), ...Array.from({ length: 6 }, (_, i) => summary('good' + i))];
+  service.sessionStore = { listSessions: () => [summary('s1'), summary('empty', { message_count: 0 }),
+    summary('other', { project_id: 'project_other' }), summary('optout', { context_preferences: { memory_opt_out: true } }),
+    summary('locked', { lockdown: true }), summary('diagnostic', { diagnostic_mode: true }), summary('', {}), ...good],
+  getSession() { assert.fail('candidate selection must not load messages'); } };
+  const options = makeOptions();
+  options.contextPreferences = { ...options.contextPreferences, include_memory: true, history_scope: 'full' };
+  const result = await assembleContextForChat(service, options);
+  assert.deepEqual(result.memoryPolicy.recent_chats, good.slice(0, 6).map(s => ({ session_id: s.id, title: typeof s.title === 'string' ? s.title.slice(0, 200) : '' })));
+  const { buildMemoryPolicy } = require('../services/backend/backend-memory');
+  assert.equal(Object.hasOwn(buildMemoryPolicy(service, { includeMemory: true, projectId: 'project_general' }), 'recent_chats'), false);
+  service.featureFlags.memory_v2_enabled = false;
+  const killed = await assembleContextForChat(service, options);
+  assert.equal(Object.hasOwn(killed.memoryPolicy, 'recent_chats'), false, 'the memory_v2 kill switch drops recap candidates');
+  Object.assign(service.featureFlags, { memory_v2_enabled: true, session_offline_lockdown: false });
+  const flagOff = await assembleContextForChat(service, options);
+  assert.ok(!flagOff.memoryPolicy.recent_chats.some(c => c.session_id === 'locked'), 'a stored lockdown hides the chat with the flag off');
+});
+
+test('memory candidates are omitted with fresh history, recall off or no candidates', async () => {
+  for (const [include_memory, history_scope, useInChats, summaries] of [
+    [true, 'fresh', true, [{ id: 'old', message_count: 1 }]],
+    [false, 'full', true, [{ id: 'old', message_count: 1 }]],
+    [true, 'full', false, [{ id: 'old', message_count: 1 }]], [true, 'full', true, []],
+  ]) {
+    const service = makeService(false);
+    service.configService = { getState: () => ({ memory: { useInChats } }) };
+    service.sessionStore = { listSessions: () => summaries };
+    const options = makeOptions();
+    options.contextPreferences = { ...options.contextPreferences, include_memory, history_scope };
+    const result = await assembleContextForChat(service, options);
+    assert.equal(Object.hasOwn(result.memoryPolicy, 'recent_chats'), false);
   }
 });

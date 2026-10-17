@@ -29,6 +29,7 @@
       });
     }
     (root.rendererAppShellBindingsQuickSettings || {}).bindQuickSettings?.(ctx);
+    if (overlayManager) root.rendererAppImageViewerBinding.bindImageViewer(ctx, overlayManager);
     return overlayManager;
   }
 

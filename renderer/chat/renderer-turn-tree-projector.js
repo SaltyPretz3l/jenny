@@ -28,7 +28,7 @@
   } = turnNormalizationUtils;
   const STANDALONE_TURN_KINDS = new Set([
     'proactive_suggestion',
-    'slash_command_output',
+    'slash_command_output', 'memory_note',
   ]);
 
   const EVENT_KIND_PRIORITY = Object.freeze({
@@ -469,14 +469,13 @@
           ...(Number(toolResult.duration_ms) > 0 ? { duration_ms: Number(toolResult.duration_ms) } : {}),
           ...(() => {
             const metadata = cloneSubagentReportMetadata(toolResult.metadata, toolResult);
-            return metadata ? { metadata } : {};
-          })(),
-          ...(approvalState ? { approval_state: approvalState } : {}),
-          ...(() => {
-            const generatedArtifacts = Array.isArray(toolResult.generated_artifacts)
-              ? toolResult.generated_artifacts.map(normalizeGeneratedArtifact).filter(Boolean)
-              : [];
-            return generatedArtifacts.length ? { generated_artifacts: generatedArtifacts } : {};
+            const generatedArtifacts = (Array.isArray(toolResult.generated_artifacts) ? toolResult.generated_artifacts : [])
+              .map(normalizeGeneratedArtifact).filter(Boolean);
+            const refs = (Array.isArray(toolResult.trusted_attachment_refs) ? toolResult.trusted_attachment_refs : [])
+              .filter((ref) => ref && typeof ref === 'object' && ref.id);
+            return { ...(metadata ? { metadata } : {}), ...(approvalState ? { approval_state: approvalState } : {}),
+              ...(generatedArtifacts.length ? { generated_artifacts: generatedArtifacts } : {}),
+              ...(refs.length ? { trusted_attachment_refs: deepCloneJsonValue(refs) } : {}) };
           })(),
         },
       });
@@ -807,10 +806,9 @@
   // they are skipped like any other non-answering message — treating them as
   // a boundary would leave a retried anchor keyed by its stale stream (the
   // twin-turn row-loss shape) if one ever interleaves before the answer.
-  // Empty when the turn has no answer yet (a mid-send user-only tail keeps
-  // its own key). Errored answers count: an attempt persisted with
-  // status:'error' still carries the stream the live reducer and terminal
-  // reconcile key by, and skipping it would reopen the reconcile miss.
+  // Empty when the turn has no answer yet (a mid-send user-only tail keeps its
+  // own key). Errored answers count: an attempt persisted with status:'error'
+  // still carries the stream the live reducer and terminal reconcile key by.
   function resolveAnsweringStreamId(messages, startIndex) {
     for (let index = startIndex + 1; index < messages.length; index += 1) {
       const message = messages[index] && typeof messages[index] === 'object'
@@ -865,6 +863,8 @@
       const messageId = normalizeId(message.id) || `message_${index}`;
       const role = normalizeRole(message);
       const kind = normalizeKind(message);
+      // Addressed session messages (role:'context') and reflection notes (row 58 W2) are never turn rows.
+      if (role === 'context' || kind === 'memory_note') continue;
       const streamId = extractMessageStreamId(message);
 
       let turn;

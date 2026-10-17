@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field, replace
@@ -290,6 +291,42 @@ def tool_argument_fingerprint(arguments: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+_VOLATILE_RESULT_KEYS = frozenset({
+    "pid", "timestamp", "started_at", "finished_at", "completed_at", "updated_at",
+    "created_at", "elapsed", "elapsed_ms", "elapsed_seconds", "duration_ms",
+    "duration_seconds", "runtime_seconds",
+})
+_RESULT_TIMESTAMP = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(?:\.\d+)?"
+    r"(?:[Zz]|[+-]\d{2}:?\d{2})?\b"
+)
+_RESULT_DURATION = re.compile(r"\b(?:\d+:\d{2}:\d{2}(?:\.\d+)?|\d+(?:\.\d+)?(?:ms|s))\b")
+
+
+def _stable_result_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _stable_result_value(item)
+            for key, item in value.items() if key not in _VOLATILE_RESULT_KEYS
+        }
+    if isinstance(value, list):
+        return [_stable_result_value(item) for item in value]
+    return value
+
+
+def result_digest(output: str) -> str:
+    """Hash semantic output, ignoring volatile result fields and text timings."""
+    if not output:
+        return ""
+    try:
+        stable = _stable_result_value(json.loads(output))
+        normalized = json.dumps(stable, sort_keys=True, separators=(",", ":"))
+    except (ValueError, RecursionError):  # deep JSON can parse yet overflow the normaliser
+        normalized = _RESULT_TIMESTAMP.sub("<timestamp>", output)
+        normalized = _RESULT_DURATION.sub("<duration>", normalized)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+
 def observation_signature(event: ToolObservationEvent) -> str:
     """Return an argument-aware semantic signature for ``event``.
 
@@ -357,5 +394,6 @@ __all__ = [
     "ToolObservationStore",
     "observation_signature",
     "recent_observations_payload",
+    "result_digest",
     "tool_argument_fingerprint",
 ]

@@ -85,6 +85,7 @@
     Object.freeze(['renderer/features/renderer-ide-test-runner-panel.js', 'rendererIdeTestRunnerPanel']),
     Object.freeze(['renderer/features/renderer-ide-test-runner-wiring.js', 'rendererIdeTestRunnerWiring']),
     Object.freeze(['renderer/features/renderer-ide-test-output-panel.js', 'rendererIdeTestOutputPanel']),
+    Object.freeze(['renderer/features/renderer-ide-activity-wiring.js', 'rendererIdeActivityWiring']),
     Object.freeze(['renderer/features/renderer-ide-mru.js', 'rendererIdeMru']),
     // The Changes view (row 34 S5); renderer-code-review-rail.js CHANGES_VIEW_SCRIPTS lists the same files.
     Object.freeze(['renderer/features/renderer-changes-history-model.js', 'rendererChangesHistoryModel']),

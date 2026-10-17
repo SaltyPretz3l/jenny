@@ -65,7 +65,7 @@ candidate before publication.
 
 ## API_VERSION handshake
 
-**Source of truth:** `API_VERSION = "2026-08-17"` in
+**Source of truth:** `API_VERSION = "2026-10-15"` in
 [sidecar/protocol.py](../../sidecar/protocol.py). The paired client constant
 lives at [services/backend/sidecar-client.js](../../services/backend/sidecar-client.js).
 
@@ -273,7 +273,7 @@ fields within the same version, while non-additive facet changes require a bump.
 
 ## Memory store schema (SQLite)
 
-**Source of truth:** `SCHEMA_VERSION = 7` in
+**Source of truth:** `SCHEMA_VERSION = 10` in
 [sidecar/ai/memory/store_migrations.py](../../sidecar/ai/memory/store_migrations.py).
 
 The memory database is an SQLite file opened by
@@ -281,7 +281,7 @@ The memory database is an SQLite file opened by
 calls `run_migrations(connection)` on every open so migrations are idempotent
 and safe to run on partially-upgraded databases.
 
-**Current migration chain (v0 → v7).** `run_migrations()` advances every
+**Current migration chain (v0 → v10).** `run_migrations()` advances every
 required step during the same open and fails if a migration does not advance
 `PRAGMA user_version`. The entire chain is one outer transaction; individual
 steps may use savepoints, but no intermediate schema version commits. Failure
@@ -297,17 +297,24 @@ reports `preserved: true` only after rollback completes and the original
 | 4 | 5 | `_migrate_v4_to_v5` | Added pending-memory candidate tracking table. |
 | 5 | 6 | `_migrate_v5_to_v6` | Added bounded recall and retention indexes for raw exchanges, approved memories, extraction runs, and pending candidates. |
 | 6 | 7 | `_migrate_v6_to_v7` | Rebuilds approved/pending rows with constraints and SHA-256 identities; adds extraction leases, digest-only suppressions, bounded quarantine, and FTS5 recall; purges legacy raw exchanges. |
+| 7 | 8 | `migrate_v7_to_v8` ([store_project_migration.py](../../sidecar/ai/memory/store_project_migration.py)) | Atomic rebuild adding `project_id` isolation to every table, preserving AUTOINCREMENT high-waters. |
+| 8 | 9 | `migrate_v8_to_v9` ([store_v9_migration.py](../../sidecar/ai/memory/store_v9_migration.py)) | Atomic rebuild for the memory lifecycle: `memories` gains `scope_session_id`, `origin`, `status`/`archived_at`, `revision`, `protected`, `always_on` and `source_message_ids` and loses `family_key`; kinds map to the closed v9 list; digests become text-only and rows that collapse to one digest keep the lowest id (the rest are quarantined `v9_duplicate_collapsed`); legacy kind+text suppressions are dropped and counted; `memory_extraction_runs` is dropped; adds `memory_operations`, `memory_reflection_cursor`, `memory_project_state` and `memory_session_markers`. |
+| 9 | 10 | `migrate_v9_to_v10` ([store_v10_migration.py](../../sidecar/ai/memory/store_v10_migration.py)) | Additive, in one transaction: re-salts reflection-recap fingerprints (`recap_text_digest`, so a chat note and a recap with the same text no longer collide), then adds `memory_vectors` (one float32 embedding per active non-recap row: `memory_id` → `memories(id)` ON DELETE CASCADE, `content_fingerprint`, `model_key`, `dim`, `norm`, `blob`, `created_at`) and the triggers `memory_vectors_invalidate` (an edit of title/text/fingerprint or leaving `active` drops the vector) and `memory_vectors_delete`. Vectors are derived data rebuilt by `memory.embed_step`. |
 
 A fresh database is created with the consolidated
-`v7_schema_script()` DDL
-([store_migrations.py](../../sidecar/ai/memory/store_migrations.py))
+`v10_schema_script()` DDL (the v9 script plus the v10 additions,
+[store_v10_migration.py](../../sidecar/ai/memory/store_v10_migration.py))
 — migration functions only run on upgrades from older `PRAGMA user_version`
 values.
 
-**Retention and capacity contract.** Approved memories are user-owned and are
-never age-, count-, or pressure-evicted. Maintenance deletes only derived or
-rebuildable state (completed extraction receipts and stale pending candidates)
-in 500-row batches. Capacity is measured across the main database, WAL, and SHM.
+**Retention and capacity contract.** Active memories are user-owned and are
+never age-, count-, or pressure-evicted; at most 10,000 active rows exist
+(further adds are refused with `capacity`). Maintenance deletes only derived,
+rebuildable or expired state in 500-row batches: stale pending candidates,
+archived (forgotten) rows 30 days after `archived_at` (rows of an archived
+project are kept until it is unarchived), operation-ledger rows past their
+24-hour retry window (stubbed, then deleted a day later), and session-purge
+markers beyond the newest 10,000. Capacity is measured across the main database, WAL, and SHM.
 If derived cleanup cannot bring physical storage under the limit, existing
 approved rows remain intact and new or growing writes fail with
 `CMP-MEM-0007`; delete, doctor, and cleanup operations remain available. Heavy
@@ -319,11 +326,13 @@ full-table fallback. Individual malformed rows are removed from active tables,
 represented in bounded metadata-only quarantine records, and reported through
 `memory.status`; no lesson, prompt, fingerprint, or path appears in status.
 
-**Template for a v8 migration.** Bump `SCHEMA_VERSION`, add a complete
-`v8_schema_script()` for fresh installs, add one explicitly transactional
-`_migrate_v7_to_v8()` step, register it in the ordered migration map, and add
-fresh-v8, v7→v8, future-version refusal, schema-parity, and fault-after-each-
-stage tests. Every schema bump must add the immediate predecessor fixture.
+**Template for a v11 migration.** Bump `SCHEMA_VERSION`, add a complete
+`v11_schema_script()` for fresh installs in its own module (`store_migrations.py`
+is at the line cap and may only shrink), add one explicitly transactional
+`migrate_v10_to_v11()` step, register it in the ordered migration map, and add
+fresh-v11, v10→v11, future-version refusal, schema-parity, and fault-after-each-
+stage tests. Every schema bump must add the immediate predecessor fixture
+(`tests/release-compat/fixtures/memory-v10/`; v10 added `memory-v9/`).
 
 **Invariants.**
 
@@ -340,7 +349,7 @@ stage tests. Every schema bump must add the immediate predecessor fixture.
 
 ## Electron session store schema (JSON)
 
-**Source of truth:** `STORE_SCHEMA_VERSION = 24` in
+**Source of truth:** `STORE_SCHEMA_VERSION = 25` in
 [services/backend/session-store-migrations.js](../../services/backend/session-store-migrations.js).
 
 The informal combined shape below describes normalized in-memory session data,
@@ -356,7 +365,7 @@ still accepted by the migration path. Migrations run on every load via
 
 ```jsonc
 {
-  "schema_version": 24,           // integer; always equals STORE_SCHEMA_VERSION on write
+  "schema_version": 25,           // integer; always equals STORE_SCHEMA_VERSION on write
   "sessions": {
     "<session_id>": {
       "id": "<session_id>",
@@ -383,7 +392,15 @@ still accepted by the migration path. Migrations run on every load via
       ],
       "linked_session_ids": ["<id>", ...],  // deduped, self-excluded
       "active_turn": null | { /* snapshot from managed runtime */ },
-      "pending_approval": null | { /* tool-approval state */ }
+      "pending_approval": null | { /* tool-approval state */ },
+      // schema 25 chat-workspace coordination fields (see below)
+      "spawned_from": null,
+      "coordination_revision": 0,
+      "coordination_receipts": [],
+      "chat_proposals": { "schema_version": 1, "records": [], "launch_grants": [] },
+      "session_mail": { "schema_version": 1, "next_receive_sequence": 1, "inbox": [], "discarded": [], "outbox": [],
+                        "authorizations": [], "report_reservations": [], "admission_snapshots": [], "reporting_enabled": false },
+      "workspace_view": { "schema_version": 1, "rail_visible": null, "disclosures": {}, "children_expanded": null }
       // ...any additional normalized session fields
     }
   }
@@ -397,13 +414,20 @@ still accepted by the migration path. Migrations run on every load via
 **drops** top-level session fields that aren't in the normalization allowlist.
 This is deliberate forward-compat tolerance: an old renderer reading a newer
 payload won't crash on extras, and a newer renderer writing to an older store
-won't accidentally persist half-normalized state.
+won't accidentally persist half-normalized state. Session import and archive
+restore also strip top-level message keys outside the import allowlist
+([session-import-message-bounds.js](../../services/backend/session-import-message-bounds.js))
+before normalization, since message normalization otherwise carries unknown keys
+through. They reject (`format_mismatch`, naming the field path and limit) a message
+with any string over 65,536 characters, or over 2,000,000 characters for `content`,
+`tool_result.output_text` and the transcript text that mirrors them; exported
+attachment bytes are bounded by the asset-store limits instead.
 
 Top-level store fields (`schema_version`, `sessions`) follow the same rule:
 `normalizeStorePayload` only re-serializes known fields. Unknown top-level
 fields are dropped on the next write.
 
-### Migration chain (v1 -> v24)
+### Migration chain (v1 -> v25)
 
 | From | To | Repair function | What changed |
 |---|---|---|---|
@@ -429,6 +453,7 @@ fields are dropped on the next write.
 | 21 | 22 | `repairSessionForV22` | Normalize bounded failure-retry reasoning snapshots. |
 | 22 | 23 | identity | Chat files move to a base plus append-only journal; record unchanged. |
 | 23 | 24 | `repairSessionForV24` | Add the bounded per-chat `suggested_changes` record (Propose mode, row 35); older chats get an empty record. |
+| 24 | 25 | `repairSessionForV25` | Add the six chat-workspace coordination fields with inert defaults (`spawned_from` null, `coordination_revision` 0, `coordination_receipts` empty, `chat_proposals`, `session_mail`, `workspace_view`); every existing field is preserved. |
 
 Each upgrade is idempotent and runs on every load. The matching one-line
 comments beside each `repairSessionForV*` helper in
@@ -445,9 +470,9 @@ record format in [session-journal.js](../../services/backend/session-journal.js)
 
 | File | Content |
 |---|---|
-| `<session_id>.json` | Base: `{"journal_epoch": N, "schema_version": 24, "session": {...}}` |
+| `<session_id>.json` | Base: `{"journal_epoch": N, "schema_version": 25, "session": {...}}` |
 | `<session_id>.<N>.journal` | Delta records appended since base epoch N was written. |
-| `_index.json` | Base: `{"journal_epoch": N, "schema_version": 24, "sessions": {...}}` |
+| `_index.json` | Base: `{"journal_epoch": N, "schema_version": 25, "sessions": {...}}` |
 | `_index.<N>.journal` | Delta records for the index (a changed summary is a `set`, a deleted chat an `unset`). |
 
 - `journal_epoch` is the first key of a base. `0` or absent means the file was
@@ -481,19 +506,46 @@ record format in [session-journal.js](../../services/backend/session-journal.js)
   logs `session_store.newer_schema_detected`. Chats saved at schema 23 do not open
   there, as with any schema bump, and it does not read journals. Returning to the
   newer build restores everything; the files are left untouched.
-- The release-compat fixtures `userdata-v24-current` (un-compacted journals) and
+- The release-compat fixtures `userdata-v25-current` (un-compacted journals) and
   `userdata-v24-journal-recovery` (lost base rename) pin this layout;
-  `userdata-v23-current` is the v23 -> v24 migration input.
+  `userdata-v24-current` and `userdata-v23-current` are migration inputs.
+
+### Chat-workspace coordination fields (schema 25)
+
+[session-coordination-records.js](../../services/backend/session-coordination-records.js)
+owns the pure normalizers and defaults for six top-level session fields
+(row 59 checkpoint 2; plan `docs/plans/CHAT_WORKSPACE_UX_PARITY.md`, "Persistence,
+migrations and compatibility"). `ElectronSessionStore` stays the only owner.
+
+- Only `workspace_view` (`rail_visible`, per-section `disclosures` for
+  environment/context/outputs/changes/background_tasks, `children_expanded`) with
+  `coordination_revision` is written so far, through
+  `createWorkspaceViewStore(store).write`: a closed patch schema, an
+  `expected_revision` compare (mismatch is `revision_conflict`), a merge,
+  `coordination_revision + 1`, then a forced `flushSession`. A flush failure
+  returns `io_failed` and restores the in-memory record. Generic
+  `updateSession` patches cannot write any of the six fields.
+- `spawned_from`, `coordination_receipts`, `chat_proposals` and `session_mail`
+  are inert containers: a well-formed v1 body is kept as it is, a malformed one
+  becomes the default, and a container with an unknown future nested
+  `schema_version` is preserved verbatim, reported frozen
+  (`isCoordinationContainerFrozen`) and never written.
+- Defaults are applied on every normalization, not only by `repairSessionForV25`,
+  so a new, imported or restored chat gets them too. Session export (still format
+  1) does not carry these fields, so an imported chat starts with a default view
+  and `coordination_revision` 0.
+- Downgrade: a schema-24 build opening a schema-25 profile freezes the store as
+  with any newer schema (`session_store.newer_schema_detected`).
 
 ### Template for the next migration
 
-For the next incompatible session shape, bump `STORE_SCHEMA_VERSION` to 25,
-add/export a pure idempotent `repairSessionForV25(session)` helper, and append
-`[25, repairSessionForV25]` to `SESSION_MIGRATION_STEPS` in
+For the next incompatible session shape, bump `STORE_SCHEMA_VERSION` to 26,
+add/export a pure idempotent `repairSessionForV26(session)` helper, and append
+`[26, repairSessionForV26]` to `SESSION_MIGRATION_STEPS` in
 `services/backend/session-store-migrations.js`. The ordered `< threshold` loop
 applies each relevant repair and re-normalizes linked-session IDs.
 
-Cover v24 → v25, repeated normalization and forward-version write refusal with
+Cover v25 → v26, repeated normalization and forward-version write refusal with
 focused migration/session-store tests. Update the schema registry (which imports
 the live constant), this table and immutable release-compat fixtures together.
 Do not rewrite existing historical fixtures or reset the schema to an older value.
@@ -607,10 +659,9 @@ per-model state, and discards the unimplemented preserve-thinking preference.
 V39 removes the memory-extraction, session-memory, and cron-scheduler overrides.
 V40 explicitly discards `cost_tracker`; usage diagnostics are no longer a
 feature flag and cannot be disabled through persisted overrides.
-V41 adds the normalized `memory.captureSuggestions` preference, defaulting to
-`true`. The renderer adopts the former localStorage preference through the
-feature-settings service and removes the legacy key only after the durable write
-succeeds; exact legacy string `"0"` remains the sole false value.
+V41 added the normalized `memory.captureSuggestions` preference. It was retired
+on 2026-10-14 with regex memory capture (row 58 W1) without a version bump: a
+stored key is dropped on load and nothing reads it.
 
 **Forward-version guard.** If a loaded config declares `version > CONFIG_VERSION`,
 `ShellConfigService` normalizes a read-only in-memory snapshot for stability but
@@ -703,7 +754,7 @@ and other secret values still follow the
 
 ## Session export format
 
-**Source of truth:** `EXPORT_FORMAT_VERSION = 1` in
+**Source of truth:** `EXPORT_FORMAT_VERSION = 2` in
 [services/backend/session-export-import.js](../../services/backend/session-export-import.js).
 
 Session export payloads carry:
@@ -711,12 +762,19 @@ Session export payloads carry:
 ```jsonc
 {
   "format": "jenny-session-export",
-  "format_version": 1,
+  "format_version": 2,
   "session": { "...": "..." }
 }
 ```
 
-Import accepts the current format version, treats a missing `format_version` as
+Version 2 (row 59 checkpoint 4, 2026-10-15) may carry attributed `role:"context"`
+rows (`kind` `session_message` or `session_message_receipt` with their
+`session_message` envelope); a v1 reader would coerce them to assistant text,
+so the bump keeps older builds from importing them. An export writes version 2
+only when its transcript holds a context row; every other export stays version 1
+and still imports into 1.4.x. Imported context rows are
+re-validated and stay inert history: an import never creates inbox, outbox or
+grant state. Import accepts versions 1 and 2, treats a missing `format_version` as
 legacy v1, and refuses `format_version > EXPORT_FORMAT_VERSION` before creating
 a session or restoring attachments. The structured error is
 `SessionImportError` with reason `unsupported_format_version` and the existing
@@ -889,21 +947,44 @@ is covered by the session-store migrations above.
 
 ## Standalone MCP configuration schema (JSON)
 
-Electron registers `electron.mcp_servers` schema v1. Each stdio or gated-SSE
-row stores an explicit `enabled` value and a trust record binding configuration
-digest, advertised-tools digest, review timestamp, and pending/approved status.
-Only enabled, approved rows are forwarded during sidecar initialization, along
-with the approved tools digest.
+Electron registers `electron.mcp_servers` schema v2 (the constant lives in
+`services/mcp-config-store.js`). Each stdio or gated-SSE row stores an explicit
+`enabled` value and a trust record binding configuration digest,
+advertised-tools digest, review timestamp, and pending/approved status. Only
+enabled, approved rows are forwarded during sidecar initialization, along with
+the approved tools digest.
+
+Schema v2 (2026-10-12, roadmap row 53) adds optional row keys: `env` (stdio;
+at most 16 `^[A-Z][A-Z0-9_]{1,63}$` keys, string values up to 1,024 characters
+without control characters), `memory_limit_mb` (stdio, 256..8192),
+`max_processes` (stdio, 1..32), `request_timeout_seconds` (stdio, 1..1800),
+`inspect_timeout_seconds` (stdio and SSE, 1..180) and `read_only_auto_allow`
+(stdio and SSE, a boolean; any other value is `read_only_auto_allow_invalid`;
+the sidecar reads only a literal `true`). A stdio-only key on an SSE
+row is `unknown_server_fields`. `env` keys the stdio containment sets or passes
+through, keys containing `PATH`, `OPTIONS` or `OPTS`, and runtime option or
+loader families (`NODE_*`, `NPM_*`, `YARN_*`, `PNPM_*`, `COREPACK_*`, `JAVA_*`,
+`_JAVA_*`, `JDK_*`, `ELECTRON_*`, `PERL*`, `RUBY*`, `DOTNET_*`, `PYTHON*`, `LD_*`,
+`DYLD_*`, `JENNY_*`, `XDG_*`, `WINDIR`, `AUTHORIZATION`) are `reserved_env_key`;
+the sidecar parser mirrors the rule and its bounds (an out-of-range value there
+falls back to the field default, as every bounded sidecar config value does); secret-like names (`TOKEN`, `SECRET`,
+`PASSWORD`, `API_KEY`, `PRIVATE`) are `plaintext_secret`. All keys are covered
+by the configuration digest, but a key is stored only when the row carries it:
+no default is injected, so a row without them keeps its exact v1 digest and
+approval. A v1 document loads in place with its `enabled` values and trust
+records (`migrated: true`, status `schemaVersion` 1) and is written as v2 by the
+next change. Version 3 or later stays read-only as `future_schema`.
 
 A valid unversioned legacy document is atomically migrated with every row
 disabled and pending review. Existing `secret_ref` values and safeStorage
 ciphertext are unchanged. Plaintext secret fields, unknown lossy fields,
-malformed rows, duplicates, and future schemas leave the original file
-untouched, expose read-only remediation status, and forward no server. Writes
-use staged atomic replacement plus post-write verification and retain the prior
-effective configuration on failure. Release compatibility is pinned by
-`tests/release-compat/test_mcp_config_compat.js` and its missing, legacy,
-current, malformed, plaintext-secret, and future fixtures.
+malformed rows (including a rejected v2 key), duplicates, and future schemas
+leave the original file untouched, expose read-only remediation status, and
+forward no server. Writes use staged atomic replacement plus post-write
+verification and retain the prior effective configuration on failure. Release
+compatibility is pinned by `tests/release-compat/test_mcp_config_compat.js` and
+its missing, legacy, legacy-v1-approved, current (v2 with `env`), malformed,
+plaintext-secret, plaintext-secret-env, reserved-env, and future (v3) fixtures.
 
 The additive `mcp.inspect` request shares `API_VERSION` negotiation and adds no
 notification, turn-event kind, or durable sidecar state. Configuration edits or

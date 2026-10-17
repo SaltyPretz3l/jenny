@@ -151,7 +151,7 @@ function initializeApplicationProjects(service, options) {
   });
   const workspacePool = new ProjectWorkspacePool({ projectService });
   service.projectStore = store;
-  // Deletions whose memory move the sidecar has not confirmed (DPR-008).
+  // Deletions whose memory archive the sidecar has not confirmed (DPR-008).
   service.projectDeleteJournal = new ProjectDeleteJournal(
     path.join(options.userDataPath, 'project-delete-operations.json'), { logger }
   );

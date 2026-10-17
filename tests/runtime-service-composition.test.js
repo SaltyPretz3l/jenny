@@ -102,6 +102,14 @@ function makeContext(t, options) {
   return { services, calls };
 }
 
+test('canonical log append broadcasts exactly one diagnostics entry', async (t) => {
+  const { services, calls } = makeContext(t);
+  const before = calls.bridgeEvents.length;
+  const entry = services.logStore.append({ level: 'INFO', event: 'electron.test', message: 'one entry' });
+  await services.processLogWriter.flush();
+  assert.deepEqual(calls.bridgeEvents.slice(before), [['diagnostics.logs.onEntry', entry]]);
+});
+
 test('onGpuMemoryReset is invoked exactly once during composition', (t) => {
   const { calls } = makeContext(t);
   assert.equal(calls.gpuMemoryReset.length, 1);

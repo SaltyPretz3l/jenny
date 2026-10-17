@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const { t } = require('../i18n-main');
+const { normalizeRuntimeToken } = require('./chat-stream-managed-runtime-utils');
 
 // Mirrors sidecar TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES (aggregate decoded
 // bytes per tool result) — anything larger was never admitted sidecar-side,
@@ -188,6 +189,26 @@ function ingestToolResultAttachments(service, wireAttachments, context = {}) {
   return refs;
 }
 
+/**
+ * Refs this process already ingested for one tool call. The canonical replay
+ * of a tool.result carries no bytes, so it recovers the stored refs here
+ * instead of overwriting them with an empty list.
+ */
+function ingestedToolResultAttachmentRefs(service, { sessionId, streamId, callId } = {}) {
+  const owner = String(sessionId || '').trim();
+  const call = String(callId || '').trim();
+  if (!service || !owner || !call) return [];
+  const stream = String(streamId || '');
+  const refs = [];
+  for (const record of attachmentIndexFor(service).values()) {
+    if (record.sessionId === owner && record.toolCallId === call
+      && (!stream || record.streamId === stream)) {
+      refs.push(record);
+    }
+  }
+  return refs;
+}
+
 /** Persisted (turn event / session message) shape: refs only, no bytes. */
 function toPersistedToolResultAttachmentRefs(refs) {
   return (Array.isArray(refs) ? refs : []).map((ref) => ({
@@ -254,27 +275,45 @@ function persistedRecordForSession(service, sessionId, attachmentId) {
   return null;
 }
 
-function readToolResultAttachment(service, attachmentIdOrPayload, options = {}) {
-  const { id, sessionId } = readContext(attachmentIdOrPayload, options);
+/**
+ * Session-owned resolution of one ingested attachment to its managed real
+ * path (live index first, then the persisted session refs). Main-process
+ * only: the path must never reach the renderer.
+ */
+function resolveToolResultAttachmentPath(service, sessionId, attachmentId) {
+  const id = boundedReadToken(attachmentId, 256);
+  const owner = boundedReadToken(sessionId, 128);
   const index = attachmentIndexFor(service || {});
-  let record = id && sessionId ? index.get(attachmentIndexKey(sessionId, id)) : null;
+  let record = id && owner ? index.get(attachmentIndexKey(owner, id)) : null;
   if (record && service?.projectAuthority
-    && !sameSessionIdentity(record.sessionIdentity, captureSessionIdentity(service, sessionId))) {
+    && !sameSessionIdentity(record.sessionIdentity, captureSessionIdentity(service, owner))) {
     record = null;
   }
-  if (!record && id && sessionId) {
-    record = persistedRecordForSession(service, sessionId, id);
+  if (!record && id && owner) {
+    record = persistedRecordForSession(service, owner, id);
   }
   if (!record) {
-    return { ok: false, reason: t('main.attachments.unknownId', 'unknown attachment id') };
+    return { ok: false, reason: 'unknown_id' };
   }
   const store = service.attachmentAssetStore;
   const managedPath = store && typeof store.resolveManagedAssetRealPath === 'function'
     ? store.resolveManagedAssetRealPath(record.assetPath, { kind: 'image' })
     : '';
   if (!managedPath) {
-    return { ok: false, reason: t('main.attachments.notManaged', 'attachment is not in the managed asset store') };
+    return { ok: false, reason: 'not_managed' };
   }
+  return { ok: true, path: managedPath, mimeType: record.mimeType, kind: record.kind, record };
+}
+
+function readToolResultAttachment(service, attachmentIdOrPayload, options = {}) {
+  const { id, sessionId } = readContext(attachmentIdOrPayload, options);
+  const resolved = resolveToolResultAttachmentPath(service, sessionId, id);
+  if (!resolved.ok) {
+    return { ok: false, reason: resolved.reason === 'unknown_id'
+      ? t('main.attachments.unknownId', 'unknown attachment id')
+      : t('main.attachments.notManaged', 'attachment is not in the managed asset store') };
+  }
+  const { path: managedPath, record } = resolved;
   let stats;
   try {
     stats = fs.statSync(managedPath);
@@ -306,10 +345,41 @@ function readToolResultAttachment(service, attachmentIdOrPayload, options = {}) 
   };
 }
 
+// The sidecar journals a tool result's trusted attachments by wire id only
+// (att_*), but the renderer draws them from the stored asset (image_* id and
+// asset_path) that Electron ingested from the live tool.result. Swap in the
+// stored refs before capture so a Python chart renders live and after reload.
+function withIngestedAttachmentRefs(ctx, event) {
+  const type = normalizeRuntimeToken(event?.type);
+  const payload = event?.payload;
+  if ((type !== 'tool_execution_completed' && type !== 'tool_execution_failed')
+    || !Array.isArray(payload?.trusted_attachment_refs) || !payload.trusted_attachment_refs.length) {
+    return event;
+  }
+  const stored = ingestedToolResultAttachmentRefs(ctx.service, {
+    sessionId: ctx.resolvedSessionId,
+    streamId: ctx.streamId,
+    callId: normalizeRuntimeToken(event.tool_call_id || payload.tool_call_id || payload.toolCallId),
+  });
+  if (!stored.length) return event;
+  const bySourceId = new Map(stored.map((record) => [record.sourceId, record]));
+  let changed = false;
+  const refs = payload.trusted_attachment_refs.map((ref) => {
+    const record = bySourceId.get(String(ref?.id || ''));
+    if (!record) return ref;
+    changed = true;
+    return toPersistedToolResultAttachmentRefs([record])[0];
+  });
+  return changed ? { ...event, payload: { ...payload, trusted_attachment_refs: refs } } : event;
+}
+
 module.exports = {
   MAX_TOOL_RESULT_ATTACHMENT_TOTAL_BYTES,
   ingestToolResultAttachments,
+  ingestedToolResultAttachmentRefs,
   normalizeWireToolResultAttachment,
   readToolResultAttachment,
+  resolveToolResultAttachmentPath,
   toPersistedToolResultAttachmentRefs,
+  withIngestedAttachmentRefs,
 };

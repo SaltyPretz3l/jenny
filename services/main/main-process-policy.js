@@ -43,7 +43,7 @@ const FEATURE_STATE_CHANGE_REASONS = new Set([
   'tools_mermaid_enabled_updated',
   'tools_worktree_enabled_updated',
   'web_search_settings_updated',
-  'memory_capture_suggestions_updated',
+  'memory_settings_updated',
   'workspace_root_updated',
   'workspace_root_cleared',
   'workspace_root_seeded_from_env',
@@ -94,6 +94,7 @@ const NON_FEATURE_STATE_REASONS = new Set([
   'preferred_engine_type_updated',
   'command_sandbox_updated',
   'session_runtime_updated',
+  'performance_telemetry_updated',
 ]);
 
 function shouldBroadcastFeatureState(reason, reasons) {

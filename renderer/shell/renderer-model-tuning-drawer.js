@@ -89,6 +89,9 @@
     var engineDraft = null;
     var engineHints = null;
     var engineTypeHint = '';
+    // Row 54: an NInfer row's drawer (context window + MTP through jennyShell.ninfer).
+    var ninferModule = root.rendererModelTuningNinfer || (typeof require === 'function' ? require('./renderer-model-tuning-ninfer') : null);
+    var ninferSection = null;
     var pickFailure = ''; // the status copy a failed pick put up
     var pickingGguf = null; // the drawer generation whose pick (dialog, then probe) is in flight
     var pickingRuntime = null;
@@ -146,16 +149,21 @@
       return Boolean(engineType) && SUPPORTED_ENGINES.has(engineType);
     }
 
+    function ninferActive() {
+      return Boolean(ninferSection && ninferSection.active());
+    }
+
     function supportsContextTuning() {
       var engineType = resolveEngineType();
-      return Boolean(engineType) && (engineType === 'ollama' || engineType === 'openai-compatible');
+      // NInfer's context window is the runtime's own (--max-context), set in its section.
+      return Boolean(engineType) && (engineType === 'ollama' || engineType === 'openai-compatible') && !ninferActive();
     }
 
     function engineSectionEnabled() {
       var engineType = resolveEngineType();
       return shellState?.features?.featureFlags?.llama_server_acceleration === true
         && (engineType === 'ollama' || engineType === 'openai-compatible')
-        && Boolean(windowRef?.jennyShell?.engines);
+        && Boolean(windowRef?.jennyShell?.engines) && !ninferActive();
     }
 
     function deriveEngineState() {
@@ -182,7 +190,13 @@
     function engineLabel(engineType) {
       if (engineType === 'ollama') return 'Ollama';
       if (engineType === 'vllm') return 'vLLM';
-      if (engineType === 'openai-compatible') return 'llama-server';
+      if (engineType === 'openai-compatible') {
+        // NInfer serves this engine when the row says so, or the status snapshot names NInfer as the
+        // managed server for this very model; another row keeps its llama-server identity.
+        var managed = (activeState?.status || shellState?.diagnosticsSnapshot)?.runtime?.managed_server;
+        var servesThisModel = managed?.kind === 'ninfer' && String(managed.alias || '') === String(activeModelId || '');
+        return ninferActive() || servesThisModel ? 'NInfer' : 'llama-server';
+      }
       return engineType || jt('models.tuning.engineUnknown', 'engine unknown');
     }
 
@@ -246,6 +260,15 @@
     }
 
     function buildEngineSection() {
+      if (ninferActive()) {
+        var selectFieldModule = inventory.selectField || windowRef.inventorySelectField;
+        var ninferToggle = inventory.toggleSwitch || windowRef.inventoryToggleSwitch;
+        return ninferSection.html({
+          selectField: selectFieldModule, pending: pending,
+          toggleSwitch: typeof ninferToggle === 'function' ? ninferToggle : ninferToggle?.toggleSwitch,
+          actionButton: inventory.actionButton || windowRef.inventoryActionButton,
+        });
+      }
       if (!engineSectionEnabled() || !engineView) return '';
       var segmented = inventory.segmentedControl || windowRef.inventorySegmentedControl;
       var toggleModule = inventory.toggleSwitch || windowRef.inventoryToggleSwitch;
@@ -349,18 +372,20 @@
       if (engineSectionEnabled() && engineDraft) {
         dirty.push.apply(dirty, engineUtils.engineDirtyFields(engineView, engineDraft));
       }
+      if (ninferActive()) dirty.push.apply(dirty, ninferSection.dirtyRows());
       return dirty;
     }
 
     function updateDirtyState(host) {
       var dirty = dirtyFields(host);
       var dirtySet = new Set(dirty);
+      var busy = pending || (ninferActive() && ninferSection.busy());
       var saveButton = host?.querySelector?.('[data-action="save-model-tuning"]');
       if (saveButton) {
-        saveButton.textContent = pending
+        saveButton.textContent = busy
           ? jt('models.tuning.applying', 'Applying…')
           : jtn('models.tuning.applyChanges', dirty.length, { count: dirty.length }, 'Apply {count} change', 'Apply {count} changes');
-        saveButton.disabled = pending || !supportsTuning() || dirty.length === 0;
+        saveButton.disabled = busy || !supportsTuning() || dirty.length === 0;
       }
       host?.querySelectorAll?.('[data-model-tuning-row]').forEach(function (row) {
         var range = row.querySelector('.model-tuning-row-range');
@@ -368,8 +393,15 @@
       });
     }
 
-    function handleTuningChange() {
+    function handleTuningChange(event) {
+      // The NInfer context select keeps its own draft and Apply; it is no generic tuning field.
+      if (ninferActive() && ninferSection.onChange(event)) { render(); return; }
       updateDirtyState(boundActionsHost);
+    }
+
+    function applyNinfer() {
+      if (!ninferActive()) return;
+      void ninferSection.apply(function () { if (visible && !disposed) render(); });
     }
 
     function handleEngineChange(event) {
@@ -385,6 +417,7 @@
     }
 
     function handleMtpChange(event) {
+      if (ninferActive() && ninferSection.onToggle(event)) { render(); return; }
       if (event?.detail?.id !== 'modelTuningMtp' || !engineDraft) return;
       engineDraft.mtp = Boolean(event.detail.checked);
       updateDirtyState(boundActionsHost);
@@ -506,6 +539,7 @@
       host?.querySelector?.('[data-action="choose-model-gguf"]')?.addEventListener('click', chooseGguf);
       host?.querySelector?.('[data-action="choose-llama-server-runtime"]')?.addEventListener('click', chooseRuntime);
       host?.querySelector?.('[data-action="use-bundled-llama-server"]')?.addEventListener('click', useBundledRuntime);
+      host?.querySelector?.('[data-action="apply-ninfer-tuning"]')?.addEventListener('click', applyNinfer);
       updateDirtyState(host);
     }
 
@@ -785,13 +819,15 @@
     }
 
     async function save() {
-      if (pending || disposed) return;
+      if (pending || disposed || (ninferActive() && ninferSection.busy())) return;
       var operationGeneration = generation, operationModelId = activeModelId;
       var stale = function () {
         return disposed || !visible || generation !== operationGeneration || activeModelId !== operationModelId;
       };
       var host = documentRef?.getElementById?.('modelTuningDrawer');
-      var dirty = dirtyFields(host);
+      // NInfer rows count toward "Apply N changes": Apply commits them too, after the profile.
+      var ninferRows = ninferActive() ? ninferSection.dirtyRows() : [];
+      var dirty = dirtyFields(host).filter(function (field) { return !ninferRows.includes(field); });
       var draft = readTuningDraft(host);
       var tuningDirty = dirty.filter(function (field) { return !['engine', 'mtp', 'modelPath', 'runtimePath'].includes(field); });
       var ratioRaw = String(host?.querySelector?.('#modelTuningRatio')?.value || '').trim();
@@ -809,6 +845,11 @@
         if (contextLength !== hydratedContextLength) patch.contextLength = contextLength;
       }
       var contextChanged = Object.hasOwn(patch, 'contextLength');
+      if (ninferRows.length) { // no Engine section beside NInfer: nothing else restarts
+        var profileApplied = dirty.length ? await applyPatch(patch, draft) : true;
+        if (!dirty.length) statusMessage = '';
+        return profileApplied && !stale() ? ninferSection.apply(function () { if (visible && !disposed) render(); }) : profileApplied;
+      }
       if (tuningDirty.length === dirty.length) {
         var applied = await applyPatch(patch, draft);
         // An engine restart this model still owes runs once now (it covers the context too).
@@ -915,9 +956,16 @@
       engineSettings = null; localGgufs = null; serverStatus = null; engineView = null; engineDraft = null;
       engineHints = options?.engines || null; // the library card's merged engine facts, when opened from a card
       engineTypeHint = String(options?.engineTypeHint || '').trim().toLowerCase(); // per open(): resolveEngineType's last resort
+      if (!ninferSection && ninferModule && typeof ninferModule.createNinferTuningSection === 'function') {
+        ninferSection = ninferModule.createNinferTuningSection({
+          windowRef: windowRef, escapeHtml: escapeHtml, confirmDialog: confirmDialog,
+          getStreamingCount: function () { return streamingCount(); },
+        });
+      }
       statusMessage = jt('models.tuning.loadingProfile', 'Loading model profile…');
       render();
       var requests = [Promise.resolve().then(function () { return api()?.getState?.(); })];
+      if (ninferSection) requests.push(ninferSection.open(options?.ninfer || null));
       if (engineSectionEnabled()) requests.push(
         Promise.resolve().then(function () { return windowRef.jennyShell.engines.getSettings(); }),
         Promise.resolve().then(function () { return windowRef.jennyShell.llamaServer?.listLocalGgufs?.(); }),
@@ -927,10 +975,12 @@
       if (disposed || requestGeneration !== generation) return false;
       activeState = results[0].status === 'fulfilled' && results[0].value && typeof results[0].value === 'object' ? results[0].value : {};
       statusMessage = results[0].status === 'rejected' ? jt('models.tuning.profileUnavailable', 'Model profile is unavailable.') : '';
-      if (requests.length > 1) {
-        engineSettings = results[1].status === 'fulfilled' ? results[1].value : null;
-        localGgufs = results[2].status === 'fulfilled' ? results[2].value : null;
-        serverStatus = results[3].status === 'fulfilled' ? results[3].value : null;
+      // The NInfer section's read (when present) sits right after the profile; the engine reads follow it.
+      var engineResults = ninferSection ? results.slice(2) : results.slice(1);
+      if (engineResults.length) {
+        engineSettings = engineResults[0].status === 'fulfilled' ? engineResults[0].value : null;
+        localGgufs = engineResults[1].status === 'fulfilled' ? engineResults[1].value : null;
+        serverStatus = engineResults[2].status === 'fulfilled' ? engineResults[2].value : null;
         deriveEngineState();
       }
       return render();
@@ -940,6 +990,7 @@
       if (!visible) return;
       visible = false;
       generation += 1;
+      if (ninferSection) ninferSection.close();
       drawer?.close?.();
     }
 

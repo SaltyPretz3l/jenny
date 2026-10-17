@@ -3,24 +3,36 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+import time
+from typing import Any, Callable, Sequence, cast
 
-from sidecar.ai.context.token_budget import CharEstimationBackend
 from sidecar.ai.error_codes import (
     CMP_MEMORY_CAPACITY_EXCEEDED,
     CMP_MEMORY_FAILED,
     CMP_MEMORY_ROW_QUARANTINED,
 )
-from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, MemoryPolicy, require_project_id
+from sidecar.ai.memory.contracts import (
+    GENERAL_PROJECT_ID,
+    PROMPT_MEMORY_TOKEN_BUDGET,
+    MemoryPolicy,
+    RecapLine,
+    require_project_id,
+)
+from sidecar.ai.memory.recall_pipeline import HybridRecall, pack_prompt_recall
+from sidecar.ai.memory.reflection_epochs import PolicyEpochFence
 from sidecar.ai.memory.store import (
     ApprovedMemory,
     MemoryStore,
+    MemoryWriteResult,
     PendingMemoryCandidate,
 )
 from sidecar.ai.memory.unavailable import UnavailableMemoryStore
 from sidecar.exceptions import MemoryStoreError
 
 logger = logging.getLogger(__name__)
+
+# One end-to-end budget for every store read a prompt recall makes.
+PROMPT_RECALL_DEADLINE_SECONDS = 0.25
 
 
 class ApprovedMemoryService:
@@ -29,86 +41,136 @@ class ApprovedMemoryService:
     def __init__(self, store: MemoryStore) -> None:
         self._store = store
 
-    def save_memory(
-        self, *, project_id: str = GENERAL_PROJECT_ID, **kwargs: Any
-    ) -> tuple[ApprovedMemory, bool]:
-        return self._store.save_memory(project_id=project_id, **kwargs)
-
     def get_all_memories(
         self, *, project_id: str = GENERAL_PROJECT_ID
     ) -> list[ApprovedMemory]:
         return self._store.get_all_memories(project_id=project_id)
 
-    def get_memories_page(  # noqa: PLR0913 - mirrors the paged store contract.
+    def get_memories_page(
         self,
         *,
         limit: int,
         snapshot_max_id: int | None = None,
         after_id: int | None = None,
-        legacy_offset: int | None = None,
         project_id: str = GENERAL_PROJECT_ID,
         all_projects: bool = False,
-    ) -> tuple[list[ApprovedMemory], tuple[int, int] | int | None]:
+    ) -> tuple[list[ApprovedMemory], tuple[int, int] | None]:
         return self._store.get_memories_page(
             limit=limit,
             snapshot_max_id=snapshot_max_id,
             after_id=after_id,
-            legacy_offset=legacy_offset,
             project_id=project_id,
             all_projects=all_projects,
         )
 
-    def get_memory_by_id(
-        self, memory_id: int, *, project_id: str = GENERAL_PROJECT_ID
-    ) -> ApprovedMemory | None:
-        return self._store.get_memory_by_id(memory_id, project_id=project_id)
-
-    def update_memory(
-        self, *, project_id: str = GENERAL_PROJECT_ID, **kwargs: Any
-    ) -> ApprovedMemory:
-        return self._store.update_memory(project_id=project_id, **kwargs)
-
-    def delete_memory(
-        self, memory_id: int, *, project_id: str = GENERAL_PROJECT_ID
-    ) -> bool:
-        return self._store.delete_memory(memory_id, project_id=project_id)
-
-    def recall_memories(
+    def recall_memories(  # noqa: PLR0913 - mirrors the store recall contract.
         self,
         query: str,
         *,
         limit: int,
         project_id: str = GENERAL_PROJECT_ID,
         include_general: bool = False,
+        scope_session_id: str | None = None,
+        deadline: float | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> list[ApprovedMemory]:
+        optional: dict[str, Any] = {}
+        if scope_session_id is not None:
+            optional["scope_session_id"] = scope_session_id
+        if deadline is not None:
+            optional["deadline"] = deadline
+        if clock is not None:
+            optional["clock"] = clock
         return self._store.recall_memories(
             query,
             limit=limit,
             project_id=project_id,
             include_general=include_general,
+            **optional,
         )
 
-    def get_recent_memories_by_kind(
-        self,
-        lesson_kind: str,
-        limit: int,
-        *,
-        project_id: str = GENERAL_PROJECT_ID,
-        include_general: bool = False,
-    ) -> list[ApprovedMemory]:
-        return self._store.get_recent_memories_by_kind(
-            lesson_kind,
-            limit,
-            project_id=project_id,
-            include_general=include_general,
+    def recaps_for_sessions(
+        self, *, project_id: str, session_ids: Sequence[str], limit: int = 3
+    ) -> list[tuple[str, str, str]]:
+        return self._store.recaps_for_sessions(
+            project_id=project_id, session_ids=session_ids, limit=limit
         )
 
-    def has_memory_fingerprint(
-        self, content_fingerprint: str, *, project_id: str = GENERAL_PROJECT_ID
-    ) -> bool:
-        return self._store.has_memory_fingerprint(
-            content_fingerprint, project_id=project_id
+    def export_session(self, session_id: str) -> dict[str, Any]:
+        return self._store.export_session(session_id)
+
+    def import_session(self, **kwargs: Any) -> dict[str, Any]:
+        return self._store.import_session(**kwargs)
+
+    def chat_sessions(self, *, limit: int = 2000) -> dict[str, Any]:
+        return self._store.chat_sessions(limit=limit)
+
+    # --- schema v9 write API (one transaction each; refusals are results) ---
+
+    def remember(self, **kwargs: Any) -> MemoryWriteResult:
+        return self._store.remember(**kwargs)
+
+    def update(self, **kwargs: Any) -> MemoryWriteResult:
+        return self._store.update(**kwargs)
+
+    def forget(self, **kwargs: Any) -> MemoryWriteResult:
+        return self._store.forget(**kwargs)
+
+    def restore(self, **kwargs: Any) -> MemoryWriteResult:
+        return self._store.restore(**kwargs)
+
+    def restore_to(self, **kwargs: Any) -> MemoryWriteResult:
+        return self._store.restore_to(**kwargs)
+
+    def undo(self, **kwargs: Any) -> MemoryWriteResult:
+        return self._store.undo(**kwargs)
+
+    def erase(self, *, project_id: str, memory_id: int) -> bool:
+        return self._store.erase(project_id=project_id, memory_id=memory_id)
+
+    def archive_project(self, project_id: str) -> dict[str, int]:
+        return self._store.archive_project(project_id)
+
+    def unarchive_project(self, project_id: str) -> bool:
+        return self._store.unarchive_project(project_id)
+
+    def purge_session(self, session_id: str) -> dict[str, int]:
+        return self._store.purge_session(session_id)
+
+    def is_session_purged(self, session_id: str) -> bool:
+        return self._store.is_session_purged(session_id)
+
+    def clear_suppressions(self, *, project_id: str | None = None) -> int:
+        return self._store.clear_suppressions(project_id=project_id)
+
+    # --- schema v9 reads ---
+
+    def list_active(self, **kwargs: Any) -> tuple[list[ApprovedMemory], str | None]:
+        return self._store.list_active(**kwargs)
+
+    def list_archived(self, **kwargs: Any) -> tuple[list[ApprovedMemory], str | None]:
+        return self._store.list_archived(**kwargs)
+
+    def always_on_rows(self, project_id: str) -> list[ApprovedMemory]:
+        return self._store.always_on_rows(project_id)
+
+    def list_operations(self, *, project_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        return self._store.list_operations(project_id=project_id, limit=limit)
+
+    # --- reflection (row 58 W2) ---
+
+    def reflection_state(self, session_id: str) -> dict[str, Any]:
+        return self._store.reflection_state(session_id)
+
+    def reflection_dedupe_rows(
+        self, *, project_id: str, limit: int, scope_session_id: str = ""
+    ) -> list[tuple[str, str]]:
+        return self._store.reflection_dedupe_rows(
+            project_id=project_id, limit=limit, scope_session_id=scope_session_id
         )
+
+    def apply_reflection(self, **kwargs: Any) -> dict[str, Any]:
+        return self._store.apply_reflection(**kwargs)
 
 
 class PendingMemoryService:
@@ -117,16 +179,11 @@ class PendingMemoryService:
     def __init__(self, store: MemoryStore) -> None:
         self._store = store
 
-    def get_pending_candidates(
-        self,
-        session_id: str,
-        *,
-        limit: int = 5,
-        project_id: str = GENERAL_PROJECT_ID,
-    ) -> list[PendingMemoryCandidate]:
-        return self._store.get_pending_candidates(
-            session_id, limit=limit, project_id=project_id
-        )
+    def queue_candidate(self, **kwargs: Any) -> bool:
+        return self._store.queue_candidate(**kwargs)
+
+    def accept_pending(self, **kwargs: Any) -> MemoryWriteResult:
+        return self._store.accept_pending(**kwargs)
 
     def get_pending_candidates_for_harness(
         self, *, limit: int, project_id: str = GENERAL_PROJECT_ID
@@ -135,21 +192,19 @@ class PendingMemoryService:
             limit=limit, project_id=project_id
         )
 
-    def get_pending_candidates_page(  # noqa: PLR0913 - mirrors the paged store contract.
+    def get_pending_candidates_page(
         self,
         *,
         limit: int,
         snapshot_max_id: int | None = None,
         after_id: int | None = None,
-        legacy_offset: int | None = None,
         project_id: str = GENERAL_PROJECT_ID,
         all_projects: bool = False,
-    ) -> tuple[list[PendingMemoryCandidate], tuple[int, int] | int | None]:
+    ) -> tuple[list[PendingMemoryCandidate], tuple[int, int] | None]:
         return self._store.get_pending_candidates_page(
             limit=limit,
             snapshot_max_id=snapshot_max_id,
             after_id=after_id,
-            legacy_offset=legacy_offset,
             project_id=project_id,
             all_projects=all_projects,
         )
@@ -178,8 +233,16 @@ class PendingMemoryService:
 class MemoryService:
     """Own backend memory operations without an untyped store proxy."""
 
-    def __init__(self, store: MemoryStore | UnavailableMemoryStore) -> None:
+    def __init__(
+        self,
+        store: MemoryStore | UnavailableMemoryStore,
+        *,
+        hybrid_recall_enabled: bool = False,
+        embedder_source: Callable[[], Any] | None = None,
+    ) -> None:
         self._store = store
+        # Row 58 W4: the vector leg runs only with the flag on and an embedder.
+        self.hybrid = HybridRecall(enabled=hybrid_recall_enabled, embedder_source=embedder_source)
         concrete = (
             None
             if isinstance(store, UnavailableMemoryStore)
@@ -187,6 +250,8 @@ class MemoryService:
         )
         self.approved = ApprovedMemoryService(concrete) if concrete is not None else None
         self.pending = PendingMemoryService(concrete) if concrete is not None else None
+        # Process memory: the highest policy epoch each Electron process reported.
+        self.policy_epochs = PolicyEpochFence()
 
     @property
     def available(self) -> bool:
@@ -201,71 +266,89 @@ class MemoryService:
     def close(self) -> None:
         self._store.close()
 
-    def move_project_memories(
+    def recall(  # noqa: PLR0913 - the store recall contract plus the shared deadline.
         self,
+        query: str,
         *,
-        source_project_id: str,
-        target_project_id: str,
-    ) -> dict[str, int]:
-        """Desktop project delete: move one project's memory rows to another."""
+        limit: int,
+        project_id: str,
+        include_general: bool = False,
+        scope_session_id: str | None = None,
+        deadline: float | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> list[ApprovedMemory]:
+        """Lexical recall, fused with the vector leg while hybrid recall is on."""
 
-        if isinstance(self._store, UnavailableMemoryStore):
-            raise MemoryStoreError(self._store.reason_code, "memory is unavailable")
-        return cast(MemoryStore, self._store).move_project_memories(
-            source_project_id=source_project_id,
-            target_project_id=target_project_id,
+        approved = self.approved
+        if approved is None:
+            raise MemoryStoreError(CMP_MEMORY_FAILED, "memory is unavailable")
+        # Without a caller deadline the lexical read keeps the store's own bound
+        # and the vector leg gets the prompt recall's end-to-end budget.
+        hybrid_deadline = (
+            clock() + PROMPT_RECALL_DEADLINE_SECONDS if deadline is None else deadline
+        )
+        lexical = approved.recall_memories(
+            query, limit=limit, project_id=project_id, include_general=include_general,
+            scope_session_id=scope_session_id, deadline=deadline, clock=clock,
+        )
+        return self.hybrid.fuse(
+            self._store, lexical, query, limit=limit, project_id=project_id,
+            include_general=include_general, scope_session_id=scope_session_id,
+            deadline=hybrid_deadline, clock=clock,
         )
 
-    def recall_for_prompt(
+    def embed_step(self, **kwargs: Any) -> dict[str, Any]:
+        """memory.embed_step: index missing memory vectors within a time budget."""
+
+        if self.hybrid.enabled and self.approved is None:
+            raise MemoryStoreError(CMP_MEMORY_FAILED, "memory is unavailable")
+        return self.hybrid.embed_step(self._store, **kwargs)
+
+    def recall_for_prompt(  # noqa: PLR0913 - mirrors the store recall contract.
         self,
         query: str,
         *,
         policy: MemoryPolicy | None = None,
         limit: int = 5,
-        max_prompt_tokens: int = 256,
+        max_prompt_tokens: int = PROMPT_MEMORY_TOKEN_BUDGET,
+        clock: Callable[[], float] = time.monotonic,
+        scope_session_id: str | None = None,
     ) -> list[ApprovedMemory]:
+        memories, _ = self.recall_for_prompt_with_recaps(
+            query, policy=policy, limit=limit, scope_session_id=scope_session_id,
+            clock=clock, max_prompt_tokens=max_prompt_tokens,
+        )
+        return memories
+
+    def recall_for_prompt_with_recaps(  # noqa: PLR0913 - shared prompt recall contract.
+        self,
+        query: str,
+        *,
+        policy: MemoryPolicy | None = None,
+        limit: int = 5,
+        scope_session_id: str | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        max_prompt_tokens: int = PROMPT_MEMORY_TOKEN_BUDGET,
+    ) -> tuple[list[ApprovedMemory], list[RecapLine]]:
         effective_policy = policy or MemoryPolicy()
         approved = self.approved
-        if not effective_policy.enabled or approved is None:
-            return []
-        recalled = approved.recall_memories(
+        if not effective_policy.enabled or not effective_policy.recall or approved is None:
+            return [], []
+        deadline = clock() + PROMPT_RECALL_DEADLINE_SECONDS
+        recalled = self.recall(
             query,
             limit=limit,
             project_id=effective_policy.project_id,
             include_general=True,
+            scope_session_id=scope_session_id,
+            deadline=deadline,
+            clock=clock,
         )
-        style_rows = (
-            approved.get_recent_memories_by_kind(
-                "response_style",
-                1,
-                project_id=effective_policy.project_id,
-                include_general=True,
-            )
-            if effective_policy.include_response_style
-            else []
+        return pack_prompt_recall(
+            recalled, policy=effective_policy, scope_session_id=scope_session_id,
+            read_recaps=approved.recaps_for_sessions, limit=limit,
+            max_prompt_tokens=max_prompt_tokens, deadline=deadline, clock=clock,
         )
-        candidates: list[ApprovedMemory] = []
-        seen: set[str] = set()
-        for memory in [*style_rows, *recalled]:
-            if memory.content_fingerprint in seen:
-                continue
-            seen.add(memory.content_fingerprint)
-            candidates.append(memory)
-            if len(candidates) >= limit:
-                break
-        merged: list[ApprovedMemory] = []
-        tokens_used = 0
-        backend = CharEstimationBackend()
-        for memory in candidates:
-            text = "\n".join(
-                (memory.title, memory.lesson_kind, memory.lesson_text, memory.source_excerpt)
-            )
-            memory_tokens = max(1, backend.count_tokens(text))
-            if tokens_used + memory_tokens > max_prompt_tokens:
-                continue
-            merged.append(memory)
-            tokens_used += memory_tokens
-        return merged
 
     def status(
         self,
@@ -291,6 +374,7 @@ class MemoryService:
             status = self._store.status_snapshot(
                 project_id=scope, all_projects=all_projects
             )
+            status.update(self.hybrid.status(self._store))
         except Exception as error:  # noqa: BLE001 - status must never terminate the sidecar.
             code = error.code if isinstance(error, MemoryStoreError) else CMP_MEMORY_FAILED
             logger.warning(
@@ -349,6 +433,7 @@ def pending_memory_api(backend: MemoryService | MemoryStore) -> PendingMemorySer
 __all__ = [
     "ApprovedMemoryService",
     "MemoryService",
+    "MemoryWriteResult",
     "PendingMemoryService",
     "approved_memory_api",
     "pending_memory_api",

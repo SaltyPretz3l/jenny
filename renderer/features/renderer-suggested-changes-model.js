@@ -369,6 +369,10 @@
   // Group and dependency state in plain words, under the bar's title.
   function relationNote(batch, entries, entry) {
     const groupSize = liveGroupSize(entries, entry);
+    // An apply that started but never recorded its result (A19-F4).
+    if (entry.apply_attempt && entry.status !== 'applied') {
+      return jt('changes.bar.applyUnsettled', 'Jenny started applying this change but didn’t record that it finished. Check the file before accepting it again.');
+    }
     if (entry.status === 'needs_attention') {
       const rejected = rejectedDependency(entries, entry);
       return rejected

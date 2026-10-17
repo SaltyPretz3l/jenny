@@ -166,6 +166,7 @@ class BaseEngine(ABC):
         system: str = "",
         messages: Optional[List[EngineMessage]] = None,
         response_format: Optional["ResponseFormat"] = None,
+        cancel_handle: Any = None,
     ) -> str:
         """
         Generate a complete text response synchronously.
@@ -185,6 +186,11 @@ class BaseEngine(ABC):
             system: Optional system prompt (ignored if messages given)
             messages: Optional chat-mode message list for multi-turn conversation
             response_format: Optional format constraint (e.g. JSON mode)
+            cancel_handle: Optional cancellation handle. Engines with a
+                cancellable transport sever the in-flight request when it is
+                cancelled and raise its cancellation error (an already
+                cancelled handle raises before anything is sent); other
+                engines accept and ignore it.
 
         Returns:
             Generated text response
@@ -206,7 +212,7 @@ class BaseEngine(ABC):
         messages: Optional[List[EngineMessage]] = None,
         response_format: Optional["ResponseFormat"] = None,
         cancel_handle: Any = None,
-    ) -> Generator["StreamChunk", None, None]:
+    ) -> Generator["StreamChunk | EngineEvent", None, None]:
         """
         Yield tokens for streaming response.
 

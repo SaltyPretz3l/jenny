@@ -14,6 +14,7 @@
     historyScope: 'session',
     includePersonality: true,
     includeMemory: true,
+    memoryOptOut: false,
   });
 
   const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
@@ -64,10 +65,14 @@
     const includeMemory = Object.prototype.hasOwnProperty.call(source, 'include_memory')
       ? source.include_memory
       : source.includeMemory;
+    const memoryOptOut = Object.prototype.hasOwnProperty.call(source, 'memory_opt_out')
+      ? source.memory_opt_out
+      : source.memoryOptOut;
     return {
       historyScope: normalizeContextHistoryScope(historyScope),
       includePersonality: includePersonality === false ? false : DEFAULT_CONTEXT_PREFERENCES.includePersonality,
       includeMemory: includeMemory === false ? false : DEFAULT_CONTEXT_PREFERENCES.includeMemory,
+      memoryOptOut: memoryOptOut === true,
     };
   }
 

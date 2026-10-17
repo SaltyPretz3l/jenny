@@ -320,6 +320,21 @@ def test_hosted_dispatch_allowlist_is_explicit() -> None:
     assert "models.list" in HOST_ALLOWED_RPC_METHODS
 
 
+def test_hosted_dispatch_denies_command_execute_proposal_by_omission() -> None:
+    assert "command.execute_proposal" not in HOST_ALLOWED_RPC_METHODS
+    container = SimpleNamespace(stack=SimpleNamespace(config=_host_runtime_config()))
+    outcome = request_dispatch.process_message(
+        {"jsonrpc": "2.0", "id": 5, "method": "command.execute_proposal",
+         "params": {"accept_version": API_VERSION}},
+        True,
+        brain_container=container,
+        logger=SimpleNamespace(exception=lambda *_args, **_kwargs: None),
+        write_message=lambda _message: None,
+        read_message=lambda: {},
+    )
+    assert outcome.response["error"]["data"]["reason"] == "host_method_not_allowed"
+
+
 def test_hosted_intent_is_latched_before_initialize_build_and_survives_null_stack(
     monkeypatch,
 ) -> None:

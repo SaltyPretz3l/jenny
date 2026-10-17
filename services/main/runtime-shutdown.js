@@ -7,6 +7,9 @@ const { chatModelRefusal } = require('../llama-server-gguf-files');
 const { stopRuntimeWithDependencies } = require('../runtime-stop');
 const { resolveLaunchAcceleration } = require('./llama-server-acceleration-launch');
 const { createLlamaServerManager } = require('./llama-server-manager');
+const { createNinferManager } = require('./ninfer-manager');
+const ninferLifecycle = require('../ninfer-lifecycle');
+const { buildFeatureFlags } = require('../feature-flags');
 
 const SHUTDOWN_STEP_COUNT = 7;
 // Startup reports phase keys and facts (see emitStartupProgress); only
@@ -57,6 +60,8 @@ function createRuntimeShutdownController({
   shutdownLlamaServerSyncImpl = llamaServerLifecycle.shutdownLlamaServerSync,
   llamaServerLifecycleImpl = llamaServerLifecycle,
   resolveLaunchAccelerationImpl = resolveLaunchAcceleration,
+  ninferLifecycleImpl = ninferLifecycle,
+  createNinferWatchdogImpl = undefined,
   // Image engine (stable-diffusion.cpp) hooks. Startup: reap an orphan render
   // with proof BEFORE llama-server autostart takes the GPU. Shutdown: the chat
   // GPU handoff's closing latch (cancel the render, never restore) runs before
@@ -71,7 +76,66 @@ function createRuntimeShutdownController({
   // crash surface, restart-on-next-chat). This controller only sequences it
   // into startup and the two shutdown paths.
   llamaServerManager = null,
+  // The managed NInfer runtime (row 54) is the llama-server's sibling: one
+  // managed server owns the GPU, so the llama-server launch gate refuses while
+  // NInfer is up and a NInfer launch stops llama-server first (ninfer-manager.js).
+  ninferManager = null,
 } = {}) {
+  // Flag-off (JENNY_ENABLE_NINFER=0) hides the manager entirely: no autostart,
+  // no broker, no IPC data. Read lazily; the shell config may not exist yet.
+  function ninferEnabled() {
+    try {
+      return buildFeatureFlags(processRef.env, getShellConfigService()?.getState?.()?.featureOverrides || {}).ninfer !== false;
+    } catch (_error) {
+      return false;
+    }
+  }
+  let managedNinfer = null;
+  function ninferLaunchRefusal() {
+    const state = managedNinfer?.getStatus?.()?.state;
+    if (['starting', 'ready', 'stopping'].includes(state)) return 'ninfer_running';
+    // A stop whose exit was never confirmed may still hold the GPU.
+    return managedNinfer?.cleanupUnconfirmed?.() ? 'ninfer_stop_unconfirmed' : '';
+  }
+  // The sidecar's api_url and key point at NInfer only while it is ready: when
+  // it leaves readiness for good (stop, crash, watchdog, unload; not a parked
+  // identity the GPU handoff restores) the config is re-brokered so the client
+  // drops the dead origin and that launch's key.
+  let ninferEndpointBrokered = false;
+  function releaseNinferEndpoint(status) {
+    if (!ninferEndpointBrokered || !['stopped', 'crashed'].includes(status.state) || status.identityRetained === true) return undefined;
+    ninferEndpointBrokered = false;
+    const backendService = getBackendService();
+    if (backendService?.currentEngineType !== 'openai-compatible' || typeof backendService.refreshManagedConfig !== 'function') return undefined;
+    return Promise.resolve(backendService.refreshManagedConfig('ninfer_stopped')).catch(() => null);
+  }
+  // Every managed launch mints a new api key; a sidecar already talking to
+  // the openai-compatible engine must receive it or every request 401s.
+  function rebrokerManagedServer(status, reason) {
+    const backendService = getBackendService();
+    // A cold start reads as a model load with a clock (and feeds the
+    // last-load record) instead of a bare "Starting engine".
+    // Isolated so a status fault can never skip the key re-broker below.
+    try {
+      if (backendService) observeManagedLlamaServerState(backendService, status);
+    } catch (_error) { /* the status is advisory; the launch proceeds */ }
+    if (status.state !== 'ready') {
+      return;
+    }
+    // An identity restore (chat GPU handoff) relaunched with the key the
+    // parked turn already holds: nothing to re-broker, and a stack rebuild
+    // here would race the turn that is about to resume.
+    if (status.identityReused === true) {
+      return;
+    }
+    if (backendService?.currentEngineType !== 'openai-compatible'
+      || typeof backendService.refreshManagedConfig !== 'function') {
+      return;
+    }
+    // Returned so the manager holds ensureRunning() until the key is brokered.
+    return Promise.resolve(backendService.refreshManagedConfig(reason))
+      .catch(() => null); // refreshManagedConfig logs its own failure
+  }
   const managedLlamaServer = llamaServerManager || createLlamaServerManager({
     processRef,
     rootDir,
@@ -89,9 +153,9 @@ function createRuntimeShutdownController({
     // launch may take the GPU back except the handoff's own identity restore.
     launchGate: () => {
       try {
-        return getBackendService()?.chatGpuHandoff?.launchRefusal?.() || '';
+        return getBackendService()?.chatGpuHandoff?.launchRefusal?.() || ninferLaunchRefusal();
       } catch (_error) {
-        return '';
+        return ninferLaunchRefusal();
       }
     },
     // Managed-engine liveness heartbeat for the sidecar's stream-inactivity
@@ -105,32 +169,30 @@ function createRuntimeShutdownController({
         /* best-effort */
       }
     },
-    // Every launch mints a new api key; a sidecar already talking to the
-    // openai-compatible engine must receive it or every request 401s.
-    onStateChange: (status) => {
-      const backendService = getBackendService();
-      // A cold start reads as a model load with a clock (and feeds the
-      // last-load record) instead of a bare "Starting engine".
-      // Isolated so a status fault can never skip the key re-broker below.
+    onStateChange: (status) => rebrokerManagedServer(status, 'llama_server_ready'),
+  });
+  managedNinfer = ninferManager || createNinferManager({
+    userDataPath: () => app.getPath('userData'),
+    getShellConfigService,
+    getRuntime: () => getBackendService()?.ninferRuntime || null,
+    getLlamaServerManager: () => managedLlamaServer,
+    emitStartupAuditMark,
+    log,
+    lifecycle: ninferLifecycleImpl,
+    ...(createNinferWatchdogImpl ? { createWatchdog: createNinferWatchdogImpl } : {}),
+    launchGate: () => {
       try {
-        if (backendService) observeManagedLlamaServerState(backendService, status);
-      } catch (_error) { /* the status is advisory; the launch proceeds */ }
-      if (status.state !== 'ready') {
-        return;
+        return getBackendService()?.chatGpuHandoff?.launchRefusal?.() || '';
+      } catch (_error) {
+        return '';
       }
-      // An identity restore (chat GPU handoff) relaunched with the key the
-      // parked turn already holds: nothing to re-broker, and a stack rebuild
-      // here would race the turn that is about to resume.
-      if (status.identityReused === true) {
-        return;
-      }
-      if (backendService?.currentEngineType !== 'openai-compatible'
-        || typeof backendService.refreshManagedConfig !== 'function') {
-        return;
-      }
-      // Returned so the manager holds ensureRunning() until the key is brokered.
-      return Promise.resolve(backendService.refreshManagedConfig('llama_server_ready'))
-        .catch(() => null); // refreshManagedConfig logs its own failure
+    },
+    onStateChange: (status) => {
+      sendBridgeEvent('ninfer.onChanged', { source: 'manager', state: status.state, stoppedBy: status.stoppedBy || '' });
+      getBackendService()?.performance?.refreshRuntime?.(); // new launch -> new GPU runtime identity
+      if (status.state !== 'ready') return releaseNinferEndpoint(status);
+      ninferEndpointBrokered = true;
+      return rebrokerManagedServer(status, 'ninfer_ready');
     },
   });
   let emergencyRuntimeShutdownTriggered = false;
@@ -170,6 +232,12 @@ function createRuntimeShutdownController({
 
   function getLlamaServerManager() {
     return managedLlamaServer;
+  }
+
+  // null while the flag is off: consumers (broker, IPC, load path) then see
+  // no NInfer at all.
+  function getNinferManager() {
+    return ninferEnabled() ? managedNinfer : null;
   }
 
   function getLlamaServerApiKey() {
@@ -274,6 +342,15 @@ function createRuntimeShutdownController({
     // The engine the backend boots with (preferred, else inferred from the
     // default model); without a backend the manager reads the preferred one.
     const engineType = getBackendService()?.currentEngineType;
+    // NInfer first: when it was the last-used managed server it owns the boot
+    // launch and llama-server stays down (one managed server on the GPU).
+    if (ninferEnabled()) {
+      const ninferBoot = await managedNinfer.startFromSettings(engineType ? { engineType } : {});
+      if (ninferBoot?.autostarted === true) {
+        log('INFO', 'runtime.startup_step', { step: 'llama_server_autostart', status: 'skipped', reason: 'ninfer_autostarted' });
+        return;
+      }
+    }
     await managedLlamaServer.startFromSettings(engineType ? { engineType } : {});
   }
 
@@ -289,6 +366,7 @@ function createRuntimeShutdownController({
   }
 
   async function stopLlamaServerOnShutdown() {
+    await managedNinfer.stop();
     await managedLlamaServer.stop();
   }
 
@@ -410,9 +488,13 @@ function createRuntimeShutdownController({
     } catch (_error) {
       // runShutdownStage already logged the failure; llama-server still stops
     }
+    // Row 58 W2: stop the reflection scheduler (aborts an in-flight run).
+    try { getBackendService()?.memoryReflectionScheduler?.dispose?.(); } catch (_error) { /* best effort only */ }
+    try { getBackendService()?.memoryPurgeReconcile?.dispose?.(); } catch (_error) { /* best effort only */ }
+    try { getBackendService()?.conversationIndexPump?.dispose?.(); } catch (_error) { /* best effort only */ }
     // Row 41: stop the catalog scheduler and its embedding server first.
     try {
-      await runShutdownStage('semantic_catalog', async () => getBackendService()?.semanticCatalogService?.dispose?.(), signal);
+      await runShutdownStage('semantic_catalog', async () => { getBackendService()?.performance?.dispose?.(); getBackendService()?.semanticCatalogService?.dispose?.(); }, signal);
     } catch (_error) {
       // runShutdownStage already logged the failure
     }
@@ -523,7 +605,16 @@ function createRuntimeShutdownController({
       // best effort only
     }
     try {
+      getBackendService()?.performance?.dispose?.();
+      getBackendService()?.memoryReflectionScheduler?.dispose?.();
+      getBackendService()?.memoryPurgeReconcile?.dispose?.();
+      getBackendService()?.conversationIndexPump?.dispose?.();
       getBackendService()?.semanticCatalogService?.dispose?.();
+    } catch (_error) {
+      // best effort only
+    }
+    try {
+      managedNinfer.stopSync();
     } catch (_error) {
       // best effort only
     }
@@ -550,6 +641,7 @@ function createRuntimeShutdownController({
       const sidecarResult = shutdownManagedSidecarSyncImpl({
         userDataPath: app.getPath('userData'),
         logger: log,
+        recoverOwnedProcesses: () => getBackendService()?.sidecarManager?.ownedProcessLedger?.recover(),
       });
       sidecarExitConfirmed = sidecarResult?.hadState === true
         ? sidecarResult.killed === true
@@ -605,6 +697,7 @@ function createRuntimeShutdownController({
     emitStartupProgress,
     getLlamaServerApiKey,
     getLlamaServerManager,
+    getNinferManager,
     runEmergencyRuntimeShutdownSync,
     shutdownStepCount: SHUTDOWN_STEP_COUNT,
     shutdownStepIndex: SHUTDOWN_STEP_INDEX,

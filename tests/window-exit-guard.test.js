@@ -238,6 +238,56 @@ test('a second native close while a preflight is pending is de-duped', () => {
   assert.ok(entries.some((entry) => entry.event === 'window.exit_preflight_in_flight'));
 });
 
+test('authorizeNextQuit also lets the native close that precedes before-quit through once (macOS updater order)', async () => {
+  const { win, state, fireClose } = createFakeWindow();
+  const guard = createWindowExitGuard({ log: () => {}, ...createManualTimers() });
+  guard.attach(win);
+
+  guard.authorizeNextQuit();
+  const { prevented } = fireClose();
+  assert.equal(prevented, false, 'the updater-driven close is not intercepted');
+  assert.equal(state.sent.length, 0, 'no second confirmation on the close');
+  assert.equal(await guard.requestQuitPreflight(), true, 'the quit itself is still authorized');
+  assert.equal(state.sent.length, 0);
+
+  const later = guard.requestQuitPreflight();
+  assert.equal(state.sent.length, 1, 'both authorizations were one-shot');
+  guard.resolvePreflight({ requestId: state.sent[0].payload.requestId, proceed: false });
+  assert.equal(await later, false);
+});
+
+test('revokeQuitAuthorization after a failed install makes the next quit AND close prompt again', async () => {
+  const { win, state, fireClose } = createFakeWindow();
+  const guard = createWindowExitGuard({ log: () => {}, ...createManualTimers() });
+  guard.attach(win);
+
+  guard.authorizeNextQuit();
+  guard.revokeQuitAuthorization();
+
+  const quit = guard.requestQuitPreflight();
+  assert.equal(state.sent.length, 1, 'the quit prompts again');
+  guard.resolvePreflight({ requestId: state.sent[0].payload.requestId, proceed: false });
+  assert.equal(await quit, false, 'the user can still cancel');
+
+  const { prevented } = fireClose();
+  assert.equal(prevented, true, 'the close prompts again too');
+  assert.equal(state.sent.length, 2);
+});
+
+test('revokeQuitAuthorization does not drop a close bypass armed by authorizeNextClose', () => {
+  const { win, state, fireClose } = createFakeWindow();
+  const guard = createWindowExitGuard({ log: () => {}, ...createManualTimers() });
+  guard.attach(win);
+
+  guard.authorizeNextClose();
+  guard.authorizeNextQuit();
+  guard.revokeQuitAuthorization();
+
+  const { prevented } = fireClose();
+  assert.equal(prevented, false, 'the renderer-preflighted close still passes');
+  assert.equal(state.sent.length, 0);
+});
+
 test('authorizeNextClose lets a renderer-preflighted close through without re-prompting', () => {
   const { win, state, fireClose } = createFakeWindow();
   const timers = createManualTimers();
@@ -279,4 +329,137 @@ test('a reply for a stale/unknown requestId is a no-op', () => {
   assert.deepEqual(result, { ok: false, code: 'no_pending' });
   assert.equal(state.closeCount, 0);
   assert.ok(guard.isPreflightPending(), 'the real pending entry is untouched');
+});
+
+test('a quit preflight pushes on the request channel and proceed:true resolves true WITHOUT closing', async () => {
+  const { win, state, fireClose } = createFakeWindow();
+  const timers = createManualTimers();
+  const guard = createWindowExitGuard({ log: () => {}, ...timers });
+  guard.attach(win);
+
+  const decision = guard.requestQuitPreflight();
+
+  assert.equal(state.sent.length, 1, 'one preflight request is pushed');
+  assert.equal(state.sent[0].channel, REQUEST_CHANNEL);
+  assert.equal(typeof state.sent[0].payload.requestId, 'string');
+  assert.ok(guard.isPreflightPending());
+  const result = guard.resolvePreflight({ requestId: state.sent[0].payload.requestId, proceed: true });
+  assert.deepEqual(result, { ok: true, proceed: true });
+  assert.equal(await decision, true);
+  assert.equal(state.closeCount, 0, 'a quit preflight never closes the window itself');
+  assert.equal(guard.isPreflightPending(), false);
+  assert.equal(timers.size(), 0);
+  // No bypass was armed: a later native close is still guarded.
+  assert.equal(fireClose().prevented, true);
+  assert.equal(state.sent.length, 2, 'a later native close pushes its own request');
+});
+
+test('a quit preflight resolves false on proceed:false and keeps the window open', async () => {
+  const { win, state } = createFakeWindow();
+  const timers = createManualTimers();
+  const guard = createWindowExitGuard({ log: () => {}, ...timers });
+  guard.attach(win);
+
+  const decision = guard.requestQuitPreflight();
+  guard.resolvePreflight({ requestId: state.sent[0].payload.requestId, proceed: false });
+
+  assert.equal(await decision, false);
+  assert.equal(state.closeCount, 0);
+  assert.equal(guard.isPreflightPending(), false);
+});
+
+test('a quit preflight FAILS OPEN to true when the renderer never acks', async () => {
+  const { win, state } = createFakeWindow();
+  const timers = createManualTimers();
+  const { log, entries } = captureLog();
+  const guard = createWindowExitGuard({ log, ...timers });
+  guard.attach(win);
+
+  const decision = guard.requestQuitPreflight();
+  timers.flushAll();
+
+  assert.equal(await decision, true);
+  assert.equal(state.closeCount, 0, 'the quit fail-open must not close the window');
+  assert.equal(guard.isPreflightPending(), false);
+  assert.ok(entries.some((e) => e.event === 'window.exit_preflight_fail_open' && e.details.reason === 'timeout'));
+});
+
+test('a quit preflight resolves true immediately with no attached or a destroyed window', async () => {
+  const guard = createWindowExitGuard({ log: () => {}, ...createManualTimers() });
+  assert.equal(await guard.requestQuitPreflight(), true);
+
+  const { win, state } = createFakeWindow();
+  guard.attach(win);
+  win.destroyNow();
+  assert.equal(await guard.requestQuitPreflight(), true);
+  assert.equal(state.sent.length, 0, 'nothing is pushed to a destroyed window');
+});
+
+test('a quit preflight FAILS OPEN to true when webContents.send throws', async () => {
+  const { win, state } = createFakeWindow();
+  win.webContents.send = () => { throw new Error('render frame disposed'); };
+  const timers = createManualTimers();
+  const { log, entries } = captureLog();
+  const guard = createWindowExitGuard({ log, ...timers });
+  guard.attach(win);
+
+  assert.equal(await guard.requestQuitPreflight(), true);
+  assert.equal(state.closeCount, 0);
+  assert.equal(guard.isPreflightPending(), false);
+  assert.equal(timers.size(), 0);
+  assert.ok(entries.some((e) => e.event === 'window.exit_preflight_fail_open' && e.details.reason === 'send_failed'));
+});
+
+test('authorizeNextQuit skips the quit prompt exactly once', async () => {
+  const { win, state } = createFakeWindow();
+  const guard = createWindowExitGuard({ log: () => {}, ...createManualTimers() });
+  guard.attach(win);
+
+  guard.authorizeNextQuit();
+  assert.equal(await guard.requestQuitPreflight(), true);
+  assert.equal(state.sent.length, 0, 'an authorized quit pushes no request');
+
+  const second = guard.requestQuitPreflight();
+  assert.equal(state.sent.length, 1, 'the authorization is one-shot');
+  guard.resolvePreflight({ requestId: state.sent[0].payload.requestId, proceed: false });
+  assert.equal(await second, false);
+});
+
+test('a pending close preflight makes a quit preflight resolve false without a second prompt', async () => {
+  const { win, state, fireClose } = createFakeWindow();
+  const guard = createWindowExitGuard({ log: () => {}, ...createManualTimers() });
+  guard.attach(win);
+  fireClose();
+
+  assert.equal(await guard.requestQuitPreflight(), false);
+  assert.equal(state.sent.length, 1, 'only the close request was pushed');
+  assert.ok(guard.isPreflightPending(), 'the pending close still owns the decision');
+});
+
+test('a native close during a pending quit preflight is prevented and ignored', async () => {
+  const { win, state, fireClose } = createFakeWindow();
+  const guard = createWindowExitGuard({ log: () => {}, ...createManualTimers() });
+  guard.attach(win);
+  const decision = guard.requestQuitPreflight();
+
+  const { prevented } = fireClose();
+
+  assert.equal(prevented, true);
+  assert.equal(state.sent.length, 1, 'the close does not push a second request');
+  guard.resolvePreflight({ requestId: state.sent[0].payload.requestId, proceed: true });
+  assert.equal(await decision, true);
+});
+
+test('a window destroyed during a pending quit preflight resolves it true', async () => {
+  const { win } = createFakeWindow();
+  const timers = createManualTimers();
+  const guard = createWindowExitGuard({ log: () => {}, ...timers });
+  guard.attach(win);
+  const decision = guard.requestQuitPreflight();
+
+  win.destroyNow();
+
+  assert.equal(await decision, true);
+  assert.equal(guard.isPreflightPending(), false);
+  assert.equal(timers.size(), 0);
 });

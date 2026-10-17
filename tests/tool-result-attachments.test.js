@@ -458,3 +458,57 @@ test('tool.result without an asset store still persists cleanly with no refs', (
   assert.equal(toolResult.tool_result.output_text, 'plain output');
   assert.equal(toolResult.tool_result.trusted_attachment_refs, undefined);
 });
+
+// Canonical projection replays tool.result from the turn event with no bytes;
+// that second upsert must keep the refs the live result stored, or the Python
+// chart vanishes from the message and the renderer (live and after reload).
+test('a canonical tool.result replay keeps the refs the live result ingested', (t) => {
+  const storeService = makeTempStoreService(t);
+  const messages = [];
+  const emitted = [];
+  const service = {
+    sessionStore: {
+      getSessionMessages: () => messages,
+      appendMessage: (_sessionId, message) => messages.push(message),
+      updateMessage: (_sessionId, messageId, patch) => {
+        const index = messages.findIndex((message) => message.id === messageId);
+        if (index !== -1) messages[index] = { ...messages[index], ...patch };
+      },
+    },
+    emit: (type, payload) => emitted.push({ type, payload }),
+    pendingToolApprovals: new Map(),
+    currentModel: 'mock-model',
+    options: { userDataPath: os.tmpdir() },
+    attachmentAssetStore: storeService.attachmentAssetStore,
+  };
+  const context = {
+    seenToolCalls: new Set(),
+    toolSummaries: new Map(),
+    model: 'mock-model',
+    resolvedSessionId: 'session-py',
+    streamId: 'stream-py',
+    eventBase: { sessionId: 'session-py', streamId: 'stream-py', model: 'mock-model' },
+  };
+  const params = { tool_call_id: 'call-py', tool_name: 'python_execute', success: true, output: 'ok' };
+  const wire = wireAttachment({ source_tool: 'python_execute' });
+
+  handleToolNotification(service, context, {
+    method: 'tool.result', params: { ...params, trusted_attachments: [wire] },
+  });
+  handleToolNotification(service, context, { method: 'tool.result', params }, { canonicalEvent: true });
+
+  const refs = messages.find((message) => message.kind === 'tool_result').tool_result.trusted_attachment_refs;
+  assert.equal(refs.length, 1);
+  assert.ok(refs[0].id.startsWith('image_'));
+  assert.ok(refs[0].asset_path);
+  const streamResults = emitted.filter((entry) => entry.type === 'chat-stream' && entry.payload.type === 'tool_result');
+  assert.equal(streamResults.length, 2);
+  assert.equal(streamResults[1].payload.trustedAttachments.length, 1, 'the replay re-emits the stored image');
+
+  // A non-canonical result with no attachments still clears nothing it never had.
+  handleToolNotification(service, { ...context, toolSummaries: new Map(), seenToolCalls: new Set() }, {
+    method: 'tool.result', params: { ...params, tool_call_id: 'call-plain' },
+  });
+  const plain = messages.find((message) => message.kind === 'tool_result' && message.tool_result.call_id === 'call-plain');
+  assert.equal(plain.tool_result.trusted_attachment_refs, undefined);
+});

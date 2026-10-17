@@ -131,6 +131,44 @@ test('generateSuggestions logs timeout failures at INFO level', async () => {
   assert.equal(logs[0].details.timeout, true);
 });
 
+test('generateSuggestions runs preemptible and treats preemption as a silent skip', async () => {
+  const { RuntimeLaneAdmission } = require('../services/session-runtime/lanes');
+  const { beginRuntimeInferenceInitialization, completeRuntimeInferenceInitialization } =
+    require('../services/session-runtime/inference-protocol');
+  const { preemptAuxiliaryInference, preemptibleAuxiliaryCount } = require('../services/backend/auxiliary-preemption');
+  const logs = [];
+  let registeredDuringRequest = 0;
+  const client = {
+    process: {}, connected: true, runtimeOperationHandlers: new Map(),
+    // The sidecar answers chat.cancel for an auxiliary id with -32000 auxiliary_cancelled.
+    _sendBestEffortChatCancel({ requestId }) { client.cancel?.(requestId); },
+    request: (_method, params) => new Promise((_resolve, reject) => {
+      registeredDuringRequest = preemptibleAuxiliaryCount(service);
+      client.cancel = requestId => {
+        assert.equal(requestId, params.request_id);
+        const error = new Error('Auxiliary request cancelled.');
+        error.rpc = { code: -32000, message: error.message, data: { reason: 'auxiliary_cancelled' } };
+        reject(error);
+      };
+      void preemptAuxiliaryInference(service, { reason: 'chat_admission' });
+    }),
+  };
+  completeRuntimeInferenceInitialization(client, beginRuntimeInferenceInitialization(client),
+    { runtime_inference_admission_version: 1 });
+  const service = createMockService({
+    currentEngineType: 'mock', configService: { getState: () => ({}) }, sidecarClient: client,
+    featureFlags: { session_runtime: true }, sessionRuntime: { lanes: new RuntimeLaneAdmission(), scheduler: {} },
+    _emitServiceLog(level, event, details) { logs.push({ level, event, details }); },
+  });
+  const result = await generateSuggestions(service, createMockCompanionState());
+  assert.deepEqual(result, { suggestions: [] });
+  assert.equal(registeredDuringRequest, 1);
+  assert.equal(logs.some(entry => entry.event === 'suggestions.generate_failed'), false);
+  const skipped = logs.find(entry => entry.event === 'suggestions.generate_skipped');
+  assert.equal(skipped.level, 'INFO');
+  assert.equal(skipped.details.reason, 'auxiliary_preempted');
+});
+
 test('generateSuggestions filters empty string suggestions', async () => {
   const service = createMockService({
     sidecarClient: {

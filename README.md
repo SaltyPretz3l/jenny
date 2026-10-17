@@ -8,16 +8,17 @@ With a local model, Jenny processes your prompts locally; no cloud account is ne
 
 Jenny is built around smaller models, roughly 9B–35B parameters. How well she handles a task depends on the model you choose and the hardware you have. Expect mistakes, especially on complicated tasks, and review code and commands before relying on them.
 
-## Jenny 1.4.0
+## Jenny 1.5.0
 
-**[Jenny 1.4.0 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.4.0)**.
-The headline is Propose mode: Jenny proposes exact file changes, you review
-them beside the editor and accept before anything is written, with History,
-Undo and Redo. Also new: a Workspace in which every panel can be moved and
-editor groups carry their own terminal, changes and chat; a per-project task
-board and project notes; a bring-your-own-embedding semantic catalog; chats
-saved as append-only journals; faster follow-up turns on local models through
-prompt-prefix reuse; and a failed model load that says why and offers the fix.
+**[Jenny 1.5.0 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.5.0)**.
+The headline is memory that carries across chats: Jenny remembers, corrects
+and forgets notes with a receipt and Undo for each change, can take notes on
+its own while the model is idle, and can search your past chats. Also new:
+linked chats that pick up work from a handoff and report back to their parent,
+messages between chats with explicit approval, inline Git and command
+proposals that run exactly what was proposed, a per-pane session rail with
+context use and live performance, MCP prompts as slash commands, and a managed
+NInfer engine for RTX 5090 systems on Windows.
 It retains the Workspace PDF/DOCX editor, the optional PDF reading add-on, 19
 interface languages, Arabic RTL, and explicit update controls. See the
 [release notes](RELEASE_NOTES.md).
@@ -55,7 +56,13 @@ back to English.
 
 The clips are recorded from the real app driving a scripted replay engine (no live model); the history, calendar, and titlebar figures in frame are seeded for the recording. MP4 versions sit next to the GIFs in `docs/media/`; see `docs/media/README.md` for how they are made.
 
-## Install on Windows
+## One-command installation (pending publication)
+
+For packaged installation commands, supported platforms and qualification
+status, see [one-command installation](docs/BUILDING.md#one-command-packaged-installation).
+The commands remain pending public export and desktop qualification.
+
+## Install on Windows (direct download)
 
 Download **[Jenny-Setup-x64.exe](https://github.com/SaltyPretz3l/jenny/releases/latest/download/Jenny-Setup-x64.exe)** and run it. There are no wizard pages to work through. The installer creates a **Jenny** desktop shortcut.
 
@@ -79,7 +86,7 @@ The setup tiles disappear when you're done. You can run setup again from **Setti
 
 ### macOS: experimental; installer untested
 
-The 1.4.0 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Silicon. They are built by CI and have not been installed or launched on a real Mac; source setup remains the tested route. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
+The 1.5.0 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Silicon. They are built by CI and have not been installed or launched on a real Mac; source setup remains the tested route. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
 
 - Future experimental installers may be unsigned; check the signing status in that release's notes and follow macOS's standard **Privacy & Security → Open Anyway** flow if you trust the download.
 - **Automatic updates are disabled on macOS** because they require a signed and notarized build. Download the new dmg from the [releases page](https://github.com/SaltyPretz3l/jenny/releases) to update.
@@ -87,9 +94,9 @@ The 1.4.0 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Sil
 
 ### Linux (experimental)
 
-Jenny 1.4.0 includes experimental **`Jenny-x86_64.AppImage`** and
+Jenny 1.5.0 includes experimental **`Jenny-x86_64.AppImage`** and
 **`Jenny-amd64.deb`** packages on the
-[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.4.0).
+[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.5.0).
 Native CI verified the glibc floor and packaged-app startup. Installed-format,
 upgrade and bare-metal qualification remain outstanding.
 These x64 packages target Ubuntu 22.04+, Debian 12+, and compatible
@@ -133,7 +140,7 @@ required. Optional private HTTPS connects other devices to the same durable host
 
 The browser host provides chat, typed file tools and one-off-approved commands
 in a separate offline disposable sandbox. Command file changes are discarded.
-Desktop IDE/terminal and plugin parity remain outside this MVP. See
+Desktop IDE and terminal parity remain outside this MVP. See
 [hosting operations](docs/operations/HOSTED_JENNY.md) for qualification and recovery.
 
 ### Optional desktop command sandbox
@@ -141,7 +148,7 @@ Desktop IDE/terminal and plugin parity remain outside this MVP. See
 The desktop app can also use a Docker command sandbox without becoming a
 browser host. It defaults off and requires a running Linux Docker engine.
 Commands operate on disposable workspace copies and discard their file changes;
-this mode does not provide terminal, MCP or executable-plugin parity. See
+this mode does not provide terminal or MCP parity. See
 [desktop sandbox setup and qualification](docs/operations/DESKTOP_COMMAND_SANDBOX.md).
 
 ## Running from source
@@ -290,9 +297,9 @@ Development happens in a private repository. Accepted changes are copied there b
 
 Jenny is a hobby project maintained by one person. Bug reports are read, but replies, reviews, and releases happen as time allows. Security reports take priority through the [private advisory process](SECURITY.md).
 
-### Source version 1.4.0
+### Source version 1.5.0
 
-This source tree includes guided setup, local coding tools with live command output, experimental platform and Docker workflows, and the plugin host. Downloadable installers are listed separately on the [releases page](https://github.com/SaltyPretz3l/jenny/releases); a source version does not establish that its installers have been published. No plugins are bundled. Crash reporting is optional and off by default.
+This source tree includes guided setup, local coding tools with live command output, and experimental platform and Docker workflows. Downloadable installers are listed separately on the [releases page](https://github.com/SaltyPretz3l/jenny/releases); a source version does not establish that its installers have been published. Crash reporting is optional and off by default.
 
 See [RELEASE_NOTES.md](RELEASE_NOTES.md) for release details, earlier changes, and SHA-256 download hashes.
 

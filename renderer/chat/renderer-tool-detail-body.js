@@ -465,28 +465,14 @@
       if (parsed.stdout) { parts.push(textSection('Stdout', parsed.stdout, { copyId: `${domToken}-stdout`, pretty: true })); hasStructuredOutput = true; }
       if (parsed.stderr) { parts.push(textSection('Stderr', parsed.stderr, { copyId: `${domToken}-stderr` })); hasStructuredOutput = true; }
       if (parsed.last_expr_repr) { parts.push(textSection('Result', parsed.last_expr_repr, { copyId: `${domToken}-result`, pretty: true })); hasStructuredOutput = true; }
-      const images = Array.isArray(parsed.images) ? parsed.images.filter((src) => typeof src === 'string') : [];
-      const trustedImages = Array.isArray(model.trustedAttachmentImageUrls) ? model.trustedAttachmentImageUrls : [];
-      const allowedImageSource = (raw) => {
-        const src = String(raw || '').trim();
-        if (/^data:image\//i.test(src)) return true;
-        if (/^file:/i.test(src)) {
-          try {
-            const host = String(new URL(src).hostname || '').trim().toLowerCase();
-            return !host || host === 'localhost';
-          } catch (_error) { return false; }
-        }
-        return /^[a-zA-Z]:[\\/]/.test(src) || (/^\//.test(src) && !/^\/\//.test(src));
-      };
-      const legacySafeImages = images.filter(allowedImageSource);
-      const safeImages = Array.from(new Set(legacySafeImages.concat(trustedImages.filter(allowedImageSource))));
-      const blockedImageCount = Math.max(0, images.length - legacySafeImages.length);
-      if (safeImages.length) {
-        parts.push(`<div class="tool-call-section">${sectionCaption('Images', '')}<div>${safeImages.map((src) => `<img class="python-output-image" src="${escapeHtml(src)}" alt="${escapeHtml(jt('chat.toolDetail.pythonOutputImageAlt', 'Python output image'))}">`).join('')}</div></div>`);
+      const outputImages = toolShellUtils.pythonOutputImages?.(parsed.images, model.trustedAttachmentImages) || { items: [], blocked: 0 };
+      const imageFigures = toolShellUtils.renderPythonOutputImages?.(outputImages.items) || '';
+      if (imageFigures) {
+        parts.push(`<div class="tool-call-section">${sectionCaption('Images', '')}${imageFigures}</div>`);
         hasStructuredOutput = true;
       }
-      if (blockedImageCount > 0) {
-        parts.push(`<div class="tool-call-section">${sectionCaption('Images', '')}<div class="tool-call-empty">${escapeHtml(jt('chat.toolDetail.imagesUnavailable', '{count} image output(s) are unavailable.', { count: blockedImageCount }))}</div></div>`);
+      if (outputImages.blocked > 0) {
+        parts.push(`<div class="tool-call-section">${sectionCaption('Images', '')}<div class="tool-call-empty">${escapeHtml(jt('chat.toolDetail.imagesUnavailable', '{count} image output(s) are unavailable.', { count: outputImages.blocked }))}</div></div>`);
         hasStructuredOutput = true;
       }
       if (Array.isArray(parsed.tables) && parsed.tables.length) {

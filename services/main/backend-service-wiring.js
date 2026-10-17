@@ -53,6 +53,8 @@ function createBackendServiceWithDeps({
   // Managed llama-server manager getter (api key + base URL for the sidecar
   // secrets broker, status for diagnostics, ensureRunning for engine switch).
   getLlamaServerManager = () => null,
+  // The managed NInfer runtime's manager (row 54); null while the flag is off.
+  getNinferManager = () => null,
   buildEffectiveFeatureFlags = () => ({}),
   buildFeatureStatePayload = () => ({}),
   refreshGpuMemorySample = async () => null,
@@ -154,6 +156,7 @@ function createBackendServiceWithDeps({
       ? null
       : llamaServerSettings.profile,
     getLlamaServerManager,
+    getNinferManager,
     configService: shellConfigService,
     personalityWorkspace,
     safeStorage,
@@ -206,19 +209,30 @@ function createBackendServiceWithDeps({
   void pdfAddon.start().catch(() => {});
   const { ExclusiveGpuCoordinator } = require('../backend/exclusive-gpu-coordinator');
   const { createChatGpuHandoff } = require('../backend/chat-gpu-handoff');
-  const { reconcileRenderRecord, killRenderRecordSync } = require('../image-engine-pidfile');
+  const { reconcileRenderRecord, killRenderRecordSync, clearRenderRecordUnproven,
+    readRenderRecordSummary } = require('../image-engine-pidfile');
   backendService.imageEngine = imageEngine;
   imageEngine.on('changed', (state) => sendBridgeEvent('imageEngine.onChanged', state));
   imageEngine.start();
   backendService.exclusiveGpuCoordinator = backendService.exclusiveGpuCoordinator || new ExclusiveGpuCoordinator({ logger: log });
   backendService.chatGpuHandoff = createChatGpuHandoff({
-    backendService, coordinator: backendService.exclusiveGpuCoordinator, getLlamaServerManager,
+    backendService, coordinator: backendService.exclusiveGpuCoordinator, getLlamaServerManager, getNinferManager,
     reconcileRenderProcesses: () => reconcileRenderRecord({ userDataPath: app.getPath('userData'), log }),
+    clearRenderRecordUnproven: () => clearRenderRecordUnproven({ userDataPath: app.getPath('userData'), log }),
+    renderRecordSummary: () => readRenderRecordSummary({ userDataPath: app.getPath('userData') }),
     log,
   });
   backendService.imageEngineRuntime = {
     killRenderSync: () => killRenderRecordSync({ userDataPath: app.getPath('userData'), log }),
   };
+  // Managed NInfer runtime (row 54): eligibility, installer and artifact
+  // downloader; the manager in runtime-shutdown.js reads them from here.
+  const { createNinferRuntime } = require('./ninfer-runtime-wiring');
+  backendService.ninferRuntime = createNinferRuntime({
+    userDataPath: app.getPath('userData'), flags: initialFeatureFlags, platform: processRef.platform, log,
+  });
+  // Renderers refetch ninfer.getState() on any change; the payload only says what moved.
+  backendService.ninferRuntime.on('changed', (state) => sendBridgeEvent('ninfer.onChanged', { source: 'runtime', ...state }));
   const { DesktopSandboxService } = require('../execution/desktop-sandbox-service');
   backendService.commandSandbox = new DesktopSandboxService({
     userDataPath: app.getPath('userData'),
@@ -235,6 +249,13 @@ function createBackendServiceWithDeps({
     userDataPath: app.getPath('userData'), resourcesPath: processRef.resourcesPath || '', appRoot, log,
     sendBridgeEvent,
   });
+  // Row 58 W2: background reflection ("Jenny takes notes"), idle-gated like the catalog.
+  require('../backend/memory-reflection-scheduler').startMemoryReflectionScheduler({ service: backendService });
+  // Row 58 W4: feed past chats into the derived conversation index, idle-gated.
+  require('../backend/conversation-index-pump').startConversationIndexPump({ service: backendService });
+  // Row 58 W3: once per launch, purge chat memory of chats deleted while the sidecar was away.
+  backendService.memoryPurgeReconcile = require('../backend/memory-purge-reconcile')
+    .startMemoryPurgeReconcile({ service: backendService });
   backendService.workspaceActiveUseTracker = createTrackerForService(backendService, {
     app,
     getWindow: getMainWindow,
@@ -384,6 +405,8 @@ function createBackendServiceWithDeps({
     sendBridgeEvent,
     log,
     usageHistory,
+    // Bounded terminal inference summaries ride the turn's usage record (row 59 cp6).
+    takeInferencePerformance: (streamId) => backendService.inferenceIntake?.takeTerminalSummaries(streamId) || null,
   });
 
   backendService.on('backend-status', (status) => {
@@ -432,6 +455,29 @@ function createBackendServiceWithDeps({
   // accept applies one suggestion through the sidecar's journaled write.
   backendService.suggestedChanges = createSuggestedChangesService({
     backendService, emit: (event) => sendBridgeEvent('suggestedChanges.onChanged', event), log,
+  });
+  // Chat workspace summary / session rail (row 59 checkpoint 2): read-mostly
+  // composition; invalidations ride the bridge-event bus.
+  backendService.chatWorkspace = require('../chat-workspace-wiring').createChatWorkspaceService({
+    backendService, emit: (event) => sendBridgeEvent('chatWorkspace.onChanged', event), log,
+  });
+  // Inline Git / command proposals (row 59 checkpoint 3): continuation dispatch,
+  // outcome tracking and startup reconciliation; Run goes through the
+  // exact-command adapter once the sidecar negotiates command_proposal_version.
+  backendService.chatProposals = require('../chat-proposal-wiring').createChatProposalService({
+    backendService, emit: (event) => sendBridgeEvent('sessionProposals.onChanged', event), log,
+  });
+  // Addressed session messaging (row 59 checkpoint 4): durable delivery between chats,
+  // the destination inbox and startup reconciliation. Admission (managed-sidecar-chat)
+  // publishes its own mail writes through `backendService.chatMessages.notify`.
+  backendService.chatMessages = require('../chat-messaging-wiring').createChatMessagingService({
+    backendService, emit: (event) => sendBridgeEvent('chatMessages.onChanged', event), log,
+  });
+
+  // Live inference metrics and GPU-pressure warnings (row 59 checkpoint 6): the intake the
+  // notification router feeds, the shared GPU sampler and the bridge service. Desktop only.
+  require('./performance-wiring').createPerformanceWiring({
+    backendService, shellConfigService, getNinferManager, sendBridgeEvent, log,
   });
 
   backendService.on('auth-state', (state) => {

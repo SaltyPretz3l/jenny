@@ -356,6 +356,62 @@ async function ensureManagedLlamaServerReadyForChat(
   return true;
 }
 
+// The NInfer sibling of the llama-server preflight (row 54): only the
+// last-used NInfer artifact's own chats relaunch it, and only while no other
+// model is current. Its lastUsedArtifactId and llama-server's lastUsedTag are
+// mutually exclusive, so at most one of the two preflights launches.
+async function ensureManagedNinferReadyForChat(
+  service,
+  { engineType, sessionId, streamId, traceId } = {}
+) {
+  if (service?.hostPorts?.posture?.ownsEngineLifecycle === false) {
+    return false;
+  }
+  if (String(engineType || '').trim().toLowerCase() !== 'openai-compatible') {
+    return false;
+  }
+  const manager = service.options?.getNinferManager?.() || null;
+  const artifactId = String(service.configService?.getLocalEngines?.()?.ninfer?.lastUsedArtifactId || '').trim();
+  if (!manager || !artifactId) {
+    return false;
+  }
+  const artifact = (service.ninferRuntime?.artifacts?.artifacts || []).find((pin) => pin.id === artifactId) || null;
+  const currentModel = String(service.currentModel || '').trim();
+  if (!artifact || (currentModel && currentModel !== artifact.model_id && currentModel !== artifact.id)) {
+    return false;
+  }
+  let status = manager.getStatus?.() || {};
+  if (status.state === 'ready' && typeof manager.settled === 'function') {
+    status = (await manager.settled()) || status;
+  }
+  if (status.state === 'ready') {
+    return true;
+  }
+  if (!['crashed', 'stopped', 'stopping', 'starting'].includes(status.state)) {
+    return false;
+  }
+  if (status.state !== 'starting') {
+    service._emitServiceLog('WARN', 'chat.ninfer_preflight_restart', {
+      sessionId, streamId, traceId, state: status.state, stoppedBy: status.stoppedBy || '',
+    });
+  }
+  let readyStatus;
+  try {
+    readyStatus = await manager.ensureRunning({ artifactId });
+  } catch (error) {
+    readyStatus = { state: status.state, lastError: String(error?.message || error) };
+  }
+  if (readyStatus?.state !== 'ready') {
+    const detail = readyStatus?.lastError || readyStatus?.state;
+    service._emitServiceLog('WARN', 'chat.ninfer_preflight_unavailable', {
+      sessionId, streamId, traceId, state: readyStatus?.state, message: detail,
+    });
+    throw createOllamaPreflightError(`NInfer is unavailable: ${detail}`);
+  }
+  service._emitServiceLog('INFO', 'chat.ninfer_preflight_ready', { sessionId, streamId, traceId });
+  return true;
+}
+
 function resolveReconnectReason(errorPayload) {
   const payload = errorPayload && typeof errorPayload === 'object' && !Array.isArray(errorPayload)
     ? errorPayload
@@ -409,6 +465,7 @@ module.exports = {
   describeOllamaFailure,
   ensureManagedEngineNotFallbackForChat,
   ensureManagedLlamaServerReadyForChat,
+  ensureManagedNinferReadyForChat,
   ensureManagedOllamaReadyForChat,
   ensureManagedSidecarReadyForChat,
   scheduleManagedSidecarReconnectAfterFailure,

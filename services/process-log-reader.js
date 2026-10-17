@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const DEFAULT_MAX_FILES = 5;
 const DEFAULT_MAX_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_ENTRIES = 2000;
+// Entries are bounded at 16 KiB when written; a longer line is damage (or a crash tail) and is skipped, not held.
+const MAX_LINE_BYTES = 1024 * 1024;
 
 async function readFileTail(filePath, maxBytes, fsImpl = fs) {
   const handle = await fsImpl.promises.open(filePath, 'r');
@@ -41,11 +43,93 @@ async function existingLogPaths(filePath, maxFiles, fsImpl) {
   return existing;
 }
 
+async function* readCompleteLinesNewestFirst(filePath, fsImpl) {
+  const handle = await fsImpl.promises.open(filePath, 'r');
+  try {
+    let position = Number((await handle.stat()).size) || 0;
+    let pending = Buffer.alloc(0);
+    let skipTail = true;
+    // Set once an oversized line's newest bytes were dropped: its remaining head is skipped and reported once.
+    let dropping = false;
+    while (position > 0) {
+      const length = Math.min(position, 64 * 1024);
+      position -= length;
+      const buffer = Buffer.allocUnsafe(length);
+      const { bytesRead } = await handle.read(buffer, 0, length, position);
+      const combined = Buffer.concat([buffer.subarray(0, bytesRead), pending]);
+      let end = combined.length;
+      for (let index = combined.lastIndexOf(10); index >= 0; index = combined.lastIndexOf(10, index - 1)) {
+        const line = combined.subarray(index + 1, end);
+        if (skipTail) skipTail = false;
+        else if (dropping) {
+          dropping = false;
+          yield { text: '', bytes: 0, oversized: true };
+        } else yield { text: line.toString('utf8'), bytes: line.length + 1 };
+        end = index;
+        if (index === 0) break;
+      }
+      pending = combined.subarray(0, end);
+      if (pending.length > MAX_LINE_BYTES) {
+        pending = Buffer.alloc(0);
+        // The unterminated tail is skipped anyway; a terminated line is reported when its start is found.
+        if (!skipTail) dropping = true;
+      }
+    }
+    if (dropping) yield { text: '', bytes: 0, oversized: true };
+    else if (!skipTail && pending.length > 0) yield { text: pending.toString('utf8'), bytes: pending.length + 1 };
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+async function readFilteredHistory(files, excludeRunId, maxBytes, maxEntries, fsImpl) {
+  const entries = [];
+  const errors = [];
+  let retainedBytes = 0;
+  let malformedCount = 0;
+  let truncated = false;
+  for (const file of files) {
+    try {
+      for await (const line of readCompleteLinesNewestFirst(file.path, fsImpl)) {
+        if (line.oversized) {
+          malformedCount += 1;
+          continue;
+        }
+        const trimmed = line.text.trim();
+        if (!trimmed) continue;
+        let entry;
+        try {
+          entry = JSON.parse(trimmed);
+        } catch (_error) {
+          malformedCount += 1;
+          continue;
+        }
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          malformedCount += 1;
+          continue;
+        }
+        if (String(entry.run_id || '') === excludeRunId) continue;
+        if (entries.length >= maxEntries || retainedBytes + line.bytes > maxBytes) {
+          truncated = true;
+          break;
+        }
+        entries.push(entry);
+        retainedBytes += line.bytes;
+      }
+    } catch (error) {
+      errors.push({ code: String(error?.code || 'read_failed'), stage: 'read' });
+    }
+    if (truncated) break;
+  }
+  return { entries: entries.reverse(), malformed_count: malformedCount, truncated, errors };
+}
+
 async function readProcessLogHistory({
   filePath,
   maxFiles = DEFAULT_MAX_FILES,
   maxBytes = DEFAULT_MAX_BYTES,
   maxEntries = DEFAULT_MAX_ENTRIES,
+  excludeRunId = '',
   fsImpl = fs,
 } = {}) {
   if (!filePath) return { entries: [], malformed_count: 0, truncated: false, errors: [] };
@@ -61,6 +145,10 @@ async function readProcessLogHistory({
       entries: [], malformed_count: 0, truncated: false,
       errors: [{ code: String(error?.code || 'read_failed'), stage: 'list' }],
     };
+  }
+
+  if (excludeRunId) {
+    return readFilteredHistory(files, String(excludeRunId), boundedBytes, boundedEntries, fsImpl);
   }
 
   const selected = [];

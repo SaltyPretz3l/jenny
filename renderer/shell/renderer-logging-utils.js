@@ -12,7 +12,7 @@
      neither bloats the ring buffer nor janks the per-render redaction pass. */
   const DEFAULT_DETAIL_SIZE_CAP = 32768;
 
-  /* Intake hardening: onAppend payloads are untrusted. Oversized or circular
+  /* Intake hardening: diagnostics.logs.onEntry payloads are untrusted. Oversized or circular
      `details` would otherwise propagate verbatim into the buffer and the copy
      path. Returns a plain object that is always safe to JSON.stringify. */
   function sanitizeLogDetails(details, cap) {
@@ -63,7 +63,7 @@
       ).trim() || normalizedEvent;
       const status = String(normalizedDetails.status || 'ok').trim() || 'ok';
       // Renderer-originated entries get the same size-cap / circular guard the
-      // external onAppend path uses, so an oversized or circular `details` object
+      // external onEntry path uses, so an oversized or circular `details` object
       // cannot propagate verbatim into the ring buffer or the IPC forwarder batch.
       // (Correlation fields above are read from the original before sanitizing.)
       const safeDetails = sanitizeLogDetails(normalizedDetails);

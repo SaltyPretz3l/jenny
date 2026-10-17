@@ -222,6 +222,7 @@
     denied: 'unknown',
     app_restart: 'unknown',
     app_restart_rerun: 'unknown',
+    refused: 'unknown',
   };
 
   /* Local fallback titles per error class — mirrors the backend

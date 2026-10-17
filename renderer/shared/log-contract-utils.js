@@ -16,7 +16,7 @@
 
   // Single redaction vocabulary for every JS log surface.
   //
-  // services/log-entry-normalizer.js is the only require seam into this module,
+  // services/log-entry-normalizer.js and the Codex services require this module,
   // so main.js log(), services/main/client-log-forwarding.js,
   // services/backend/turn-diagnostic-dump.js and
   // the renderer's user-facing log-report copy all share whatever this file
@@ -78,7 +78,8 @@
   // Where a secret rule below starts: a key, a bearer token or, for a crossing,
   // any URL. Value runs stop only at the URLs the DSN rules hide and swallow
   // any other, as before.
-  const KEY_ANCHOR = String.raw`\b(?:${SECRET_KEYS}|${caseless('cookie')})\s*[:=]`;
+  // Separators may join an identifier prefix; a closing quote may end the key.
+  const KEY_ANCHOR = String.raw`(?<![A-Za-z0-9])(?:${SECRET_KEYS}|${caseless('cookie')})["']?\s*[:=]`;
   const BEARER_ANCHOR = String.raw`\b${caseless('bearer')}\s+[A-Za-z0-9._~+/=-]{6}`;
   const SECRET_ANCHOR = String.raw`(?:${KEY_ANCHOR}|${BEARER_ANCHOR}|\b[A-Za-z][A-Za-z0-9+.-]{0,15}:\/\/)`;
   const VALUE_STOP = String.raw`(?:${KEY_ANCHOR}|${BEARER_ANCHOR}|\b(?:${caseless(String.raw`postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp`)}:\/\/|${caseless('https?')}:\/\/[^:\s"'<>\/]+:[^@\s"'<>\/]+@))`;
@@ -147,7 +148,10 @@
   const VALUE_PATH_BODY = pathBody(String.raw`"'\x60,;{}`, 'value');
   const SECRET_VALUE = String.raw`(?:${TOKEN}(?:${VALUE_PATH_BODY}(?=[.:?!]*(?![^\s,;'"{}]))|(?:(?!${VALUE_STOP})[^\s,;'"{}])*)|[^\s,;'"{}](?:(?!${KEY_ANCHOR})[^\s,;'"{}])*)`;
   const COOKIE_VALUE_RE = new RegExp(String.raw`\b(${caseless('cookie')})\s*=\s*${SECRET_VALUE}`, 'g');
-  const KEYED_SECRET_RE = new RegExp(String.raw`\b((?:${SECRET_KEYS})\s*[:=]\s*)(?:${caseless('bearer')}\s+)?${SECRET_VALUE}`, 'g');
+  // A quoted value is secret up to its closing quote, spaces, separators and escaped quotes included; with no
+  // closing quote within the bound, the rest of the line is redacted rather than left to the unquoted rule.
+  const QUOTED_KEYED_SECRET_RE = new RegExp(String.raw`(?<![A-Za-z0-9])((?:${SECRET_KEYS})["']?\s*[:=]\s*)(["'])(?:\\.|(?!\2)[^\\\r\n]){1,1024}(?:\2|[^\r\n]*)`, 'g');
+  const KEYED_SECRET_RE = new RegExp(String.raw`(?<![A-Za-z0-9])((?:${SECRET_KEYS})["']?\s*[:=]\s*["']?)(?:${caseless('(?:bearer|basic)')}\s+)?${SECRET_VALUE}`, 'g');
   // Deliberately looser than sanitization.py's {256,}: that rule guards model
   // input, this one guards a log line where a short embedded payload is already
   // unreadable noise and may carry private content.
@@ -169,23 +173,23 @@
     if (!normalized) {
       return false;
     }
-    return normalized === 'authorization'
+    return normalized.endsWith('authorization')
       || normalized === 'contentpreview'
       || normalized === 'email'
       || normalized.endsWith('email')
-      || normalized === 'apikey'
-      || normalized === 'token'
+      || normalized.endsWith('apikey')
+      || normalized.endsWith('accesskey')
       || normalized.endsWith('token')
-      || normalized === 'secret'
       || normalized.endsWith('secret')
-      || normalized === 'password'
       || normalized.endsWith('password')
+      || normalized.endsWith('passwd')
       || normalized === 'dsn'
       || normalized.endsWith('dsn')
       || normalized === 'cookie'
       || normalized === 'setcookie'
-      || normalized === 'privatekey'
-      || normalized.endsWith('credential');
+      || normalized.endsWith('privatekey')
+      || normalized.endsWith('credential')
+      || normalized.endsWith('credentials');
   }
 
   function redactPathPrefixes(text, prefixes) {
@@ -223,6 +227,7 @@
       .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{6,}/gi, 'Bearer [redacted]')
       .replace(/\b(set-cookie|cookie)\s*:\s*[^\r\n]+/gi, '$1: [redacted]')
       .replace(COOKIE_VALUE_RE, '$1=[redacted]')
+      .replace(QUOTED_KEYED_SECRET_RE, '$1$2[redacted]$2')
       .replace(KEYED_SECRET_RE, '$1[redacted]')
       .replace(/\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp):\/\/[^\s'"<>]+/gi, '[redacted:dsn]')
       .replace(/\bhttps?:\/\/[^:\s"'<>]+:[^@\s"'<>]+@[^\s"'<>]+/gi, '[redacted:dsn]')

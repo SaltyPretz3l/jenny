@@ -1,5 +1,8 @@
+const { imageEditingAvailable } = require('./image-edit-reference');
 const { createAttachmentIpcHandlers } = require('./main/attachment-ipc-handlers');
+const { createMemorySettingsIpcHandlers } = require('./main/memory-settings-ipc-handlers');
 const { createArtifactFileActions } = require('./artifact-file-actions');
+const { createChatImageFileActions } = require('./chat-image-file-actions');
 const { createEmptyCalendarSnapshot } = require('./calendar-service');
 const path = require('path');
 
@@ -16,6 +19,7 @@ const { normalizeToolName } = require('./tools/tool-permission-store');
 const { surfaceFamilyForTool, connectionIdForTool } = require('./tools/tool-surface-families');
 const { DEFAULT_TOOL_DEFAULTS } = require('./tools/tool-policy-evaluator');
 const { isToolAvailableDuringSessionLockdown } = require('./backend/session-lockdown-gate');
+const { isPlainObject } = require('./value-utils');
 
 const { getWindowStateSnapshot } = require('./window-state-service');
 const {
@@ -30,6 +34,7 @@ const { APP_ZOOM_DEFAULT } = require('./shell-config-zoom-state');
 const { defaultOllamaFallbackUrl } = require('./ollama-install-service');
 const { CONTEXT_LENGTH_STEPS } = require('./shell-config-compaction-tuning');
 const { buildNextTurnContextSummary } = require('./backend/next-turn-context-summary');
+const { previewContext } = require('./backend/context-preview');
 const { markAcceptedPlanApproved } = require('./backend/plan-document-events');
 const {
   createChatGptAuthServiceDefault,
@@ -43,6 +48,7 @@ const MAX_INTERACTIVE_USAGE_ROWS = 200;
 const MAX_EXPORT_USAGE_ROWS = 500;
 const USAGE_EXPORT_SCOPES = new Set(['session', 'today', 'all']);
 
+const plainOptions = (options) => (isPlainObject(options) ? options : {});
 
 function cloneJsonSafe(value, fallback) {
   try {
@@ -268,6 +274,7 @@ function registerAuxiliaryIpcHandlers({
   engineTuningService = null,
   dialog,
   getMainWindow,
+  getProtectedRoots = () => [],
   workspaceRootCoordinator = null,
   ipcAuthorization = {},
   prepareAttachmentEntries,
@@ -277,6 +284,7 @@ function registerAuxiliaryIpcHandlers({
   isChildPath,
   clipboard,
   nativeImage,
+  shell,
   log,
   getMainLifecycle,
   toolExecutor,
@@ -284,6 +292,7 @@ function registerAuxiliaryIpcHandlers({
   usageHistory,
   setupService,
   ollamaInstallService,
+  reaInstallService,
   mcpDiscoveryService,
   schedulerService,
   linkStatusService,
@@ -297,6 +306,9 @@ function registerAuxiliaryIpcHandlers({
   workspaceIdeService = null,
 } = {}) {
   const fileActions = createArtifactFileActions({ artifactService, dialog, getMainWindow, clipboard, nativeImage });
+  const chatImageActions = createChatImageFileActions({
+    service: backendService, dialog, getMainWindow, clipboard, nativeImage, shell,
+  });
   const getWindowStatePayload = () => {
     if (typeof getWindowState === 'function') {
       return getWindowState();
@@ -383,6 +395,8 @@ function registerAuxiliaryIpcHandlers({
       artifactService.saveArtifact(sessionId, artifactId, content),
     'artifacts.saveAs': (_, sessionId, artifactId) => fileActions.saveAs(sessionId, artifactId),
     'artifacts.copyImage': (_, sessionId, artifactId) => fileActions.copyImage(sessionId, artifactId),
+    'artifacts.capabilities': async () => ({ ...await fileActions.capabilities(), ...await imageEditingAvailable(backendService) }),
+    'artifacts.openWith': (_, sessionId, artifactId) => fileActions.openWith(sessionId, artifactId),
     'artifacts.reveal': (_, sessionId, artifactId) =>
       artifactService.revealArtifact(sessionId, artifactId),
     'artifacts.openExternal': (_, sessionId, artifactId) =>
@@ -391,22 +405,30 @@ function registerAuxiliaryIpcHandlers({
       artifactService.deleteArtifact(sessionId, artifactId),
     'artifacts.deleteSession': (_, sessionId) =>
       artifactService.deleteSessionArtifacts(sessionId),
-    'memory.suggestForSession': (_, sessionId) =>
-      backendService.suggestMemoriesForSession(sessionId),
+    'chatImages.copyImage': (_, sessionId, ref) => chatImageActions.copyImage(sessionId, ref),
+    'chatImages.saveAs': (_, sessionId, ref) => chatImageActions.saveAs(sessionId, ref),
+    'chatImages.reveal': (_, sessionId, ref) => chatImageActions.reveal(sessionId, ref),
     'memory.status': () => backendService.getMemoryStatus(),
     'memory.save': (_, sessionId, candidate) =>
       backendService.saveMemoryForSession(sessionId, candidate),
     'memory.listApproved': () => backendService.listApprovedMemories(),
     'memory.listPending': () => backendService.listPendingMemories(),
-    'memory.update': (_, memoryId, patch, projectId) =>
-      backendService.updateApprovedMemory(memoryId, patch, projectId),
-    'memory.delete': (_, memoryId, projectId) =>
-      backendService.deleteApprovedMemory(memoryId, projectId),
-    'memory.deletePending': (_, sessionId, contentFingerprint) =>
-      backendService.deletePendingMemory(sessionId, contentFingerprint),
-    'memory.dismiss': (_, sessionIdOrFingerprint, fingerprint) => (
-      backendService.dismissMemorySuggestion(sessionIdOrFingerprint, fingerprint)
-    ),
+    'memory.update': (_, memoryId, patch, projectId, options) =>
+      backendService.updateApprovedMemory(memoryId, patch, projectId, plainOptions(options)),
+    'memory.delete': (_, memoryId, projectId, options) =>
+      backendService.deleteApprovedMemory(memoryId, projectId, plainOptions(options)),
+    // Settings names the listed candidate's own project; the chat card omits it.
+    'memory.acceptPending': (_, sessionId, contentFingerprint, projectId) =>
+      backendService.acceptPendingMemory(sessionId, contentFingerprint, projectId),
+    'memory.undoChange': (_, operationId, projectId) =>
+      backendService.undoApprovedMemoryChange(operationId, projectId),
+    'memory.deletePending': (_, sessionId, contentFingerprint, projectId) =>
+      backendService.deletePendingMemory(sessionId, contentFingerprint, projectId),
+    'memory.undo': (_, request) =>
+      backendService.undoMemoryOperation(request?.sessionId, request?.operationId),
+    ...createMemorySettingsIpcHandlers({
+      backendService, personalityWorkspace, dialog, getMainWindow, getProtectedRoots, log,
+    }),
     'harness.inspect': (_, options) => backendService.inspectHarness(options),
     'diagnostics.getJennyStatus': (_, options) => backendService.getJennyStatus(options),
     'diagnostics.phasePercentiles.get': () => backendService.getPhasePercentilesSnapshot(),
@@ -477,6 +499,16 @@ function registerAuxiliaryIpcHandlers({
       mcpDiscoveryService ? mcpDiscoveryService.removeServer(payload) : { ok: false, error: { code: 'unavailable' } },
     'mcpDiscovery.testServer': (_, payload) =>
       mcpDiscoveryService ? mcpDiscoveryService.testServer(payload) : { ok: false, error: { code: 'unavailable' } },
+    'mcpDiscovery.checkReadiness': (_, payload) =>
+      mcpDiscoveryService ? mcpDiscoveryService.checkReadiness(payload) : { ok: false, error: { code: 'unavailable' } },
+    'mcpDiscovery.getPrompt': (_, payload) =>
+      mcpDiscoveryService ? mcpDiscoveryService.getPrompt(payload) : { ok: false, error: { code: 'unavailable' } },
+    'mcpDiscovery.getReaInstallPlan': () =>
+      reaInstallService ? reaInstallService.getInstallPlan() : { supported: false },
+    'mcpDiscovery.installRea': (_, payload) =>
+      reaInstallService ? reaInstallService.installRea(payload) : { ok: false, error: { code: 'unavailable' } },
+    'mcpDiscovery.uninstallRea': (_, payload) =>
+      reaInstallService ? reaInstallService.uninstallRea(payload) : { ok: false, error: { code: 'unavailable' } },
     'mcpDiscovery.approveServer': (_, payload) =>
       mcpDiscoveryService ? mcpDiscoveryService.approveServer(payload) : { ok: false, error: { code: 'unavailable' } },
     'mcpDiscovery.setServerEnabled': (_, payload) =>
@@ -725,9 +757,10 @@ function registerAuxiliaryIpcHandlers({
     'compaction.setTuning': (_, payload = {}) => (
       modelTuningBridge.call('update', payload, getFallbackCompactionTuningState)
     ),
-    'chat.getNextTurnContextSummary': (_, sessionId, draftMetadata = {}) => (
-      buildNextTurnContextSummary(backendService?.sessionStore, sessionId, draftMetadata)
-    ),
+    'chat.getNextTurnContextSummary': async (_, sessionId, draftMetadata = {}) => ({
+      ...buildNextTurnContextSummary(backendService?.sessionStore, sessionId, draftMetadata),
+      preview: await previewContext(backendService, sessionId),
+    }),
     'proactive.chooseWorkspaceRoot': async () => {
       const prepared = typeof workspaceRootCoordinator?.prepareChoose === 'function'
         ? await workspaceRootCoordinator.prepareChoose()

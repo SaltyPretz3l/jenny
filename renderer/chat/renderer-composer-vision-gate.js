@@ -14,6 +14,13 @@
     return { supported: null, source: 'unknown', modelLabel };
   }
 
+  function findCatalogEntry(state, id) {
+    const entries = Array.isArray(state?.modelList?.data) ? state.modelList.data : [];
+    const entryId = (entry) => String(entry?.id || entry?.name || entry?.model || '');
+    return entries.find((entry) => entryId(entry) === id)
+      || entries.find((entry) => entryId(entry).toLowerCase() === id.toLowerCase());
+  }
+
   function resolveActiveModelVision(state, runtimePreferences) {
     try {
       const preferred = String(runtimePreferences?.preferredModel || '').trim();
@@ -22,8 +29,14 @@
       if (preferred === '' || preferred === backendModel) {
         // No model resolved or loaded yet: the send itself triggers the lazy
         // load, so there is nothing to judge — fail open (sidecar stays the authority).
+        // Only the catalog's explicit "no vision" is known before the load;
+        // without it the image was sent and refused after the fact (gate
+        // 2026-10-14 F10).
         if (!backendModel || state?.status?.local_runtime?.model?.loaded === false) {
-          return unknownVision(modelLabel);
+          const pending = preferred || backendModel;
+          return pending && findCatalogEntry(state, pending)?.capabilities?.vision === false
+            ? { supported: false, source: 'catalog', modelLabel }
+            : unknownVision(modelLabel);
         }
         const statusVision = state?.status?.local_runtime?.capabilities?.vision;
         if (statusVision && typeof statusVision === 'object' && typeof statusVision.available === 'boolean') {
@@ -40,10 +53,7 @@
         return unknownVision(modelLabel);
       }
 
-      const entries = Array.isArray(state?.modelList?.data) ? state.modelList.data : [];
-      const entryId = (entry) => String(entry?.id || entry?.name || entry?.model || '');
-      const catalogEntry = entries.find((entry) => entryId(entry) === preferred)
-        || entries.find((entry) => entryId(entry).toLowerCase() === preferred.toLowerCase());
+      const catalogEntry = findCatalogEntry(state, preferred);
       if (typeof catalogEntry?.capabilities?.vision === 'boolean') {
         return { supported: catalogEntry.capabilities.vision, source: 'catalog', modelLabel };
       }

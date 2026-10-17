@@ -74,7 +74,7 @@ async function publishFromProvider(params, options) {
       project_id: context.authority.project_id, root_id: context.authority.root_id, root_revision: context.authority.root_revision } };
   const batchBytes = encoded({ calls: [call] });
   const frozenBytes = encoded(frozen);
-  return options.onRuntimeOperation({ api_version: '2026-08-17', schema_version: 1,
+  return options.onRuntimeOperation({ api_version: '2026-10-15', schema_version: 1,
     kind: 'continuation', phase: 'checkpoint', request_id: params.request_id,
     session_id: params.session_id, authority_revision: context.source_attempt.authority_revision,
     operation_id: call.call_id, continuation_context: context, tool_calls: [call],

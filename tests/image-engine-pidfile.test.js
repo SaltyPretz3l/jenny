@@ -209,3 +209,86 @@ test('sync non-Windows kill sends SIGKILL only after matching identity', (t) => 
   assert.deepEqual(calls, [[record.pid, 'SIGKILL']]);
   assert.equal(readRenderRecord(pidPath), null);
 });
+
+
+test('recovery retains source copies until render death is confirmed, then removes them',async()=>{
+  const {userDataPath,pidPath,record}=setup();fs.mkdirSync(path.dirname(record.output));
+  const reference=path.join(path.dirname(record.output),record.opId+'-reference.png');fs.writeFileSync(reference,'private source');
+  writeRenderRecord(pidPath,record);
+  const unconfirmed=await reconcileRenderRecord({userDataPath,isProcessAliveImpl:()=>true,getProcessCommandLineImpl:async()=>record.opId,killTreeImpl:async()=>({confirmed:false})});
+  assert.equal(unconfirmed.confirmed,false);assert.equal(fs.existsSync(reference),true);
+  await reconcileRenderRecord({userDataPath,isProcessAliveImpl:()=>false});assert.equal(fs.existsSync(reference),false);
+});
+
+// Owner-confirmed "Clear anyway": the record and the render's scratch files go
+// without proof, nothing is killed, and a record that cannot be removed stays.
+const { clearRenderRecordUnproven, readRenderRecordSummary, retainRenderTree } = require('../services/image-engine-pidfile');
+
+function stuckRecord(t) {
+  const { userDataPath, pidPath, record } = setup();
+  const scratch = path.dirname(record.output);
+  fs.mkdirSync(scratch);
+  const reference = path.join(scratch, `${record.opId}-reference.png`);
+  fs.writeFileSync(record.output, 'partial render');
+  fs.writeFileSync(reference, 'private source');
+  writeRenderRecord(pidPath, { ...record, treeSince: 1000 });
+  retainRenderTree(pidPath, record.opId, { spawnedAtMs: 1000, spawnReturnedAtMs: 1001, rootHeldUntilMs: 1002,
+    rootCreatedMs: null, processes: [], survivors: [], unresolved: [{ pid: 7001, createdMs: null }, { pid: 7002, createdMs: 5 }] });
+  const kills = [];
+  t.mock.method(process, 'kill', (...args) => { kills.push(args); });
+  return { userDataPath, pidPath, record, reference, kills };
+}
+
+test('an unproven clear drops the record and its scratch files, logs the unchecked helpers and kills nothing', (t) => {
+  const { userDataPath, pidPath, record, reference, kills } = stuckRecord(t);
+  assert.deepEqual(readRenderRecordSummary({ userDataPath }), { started_at: 1234, unresolved: 2 });
+  const logs = [];
+  assert.deepEqual(clearRenderRecordUnproven({ userDataPath, log: (...entry) => logs.push(entry) }),
+    { cleared: true, record: { pid: 123, startedAt: 1234, unresolved: 2 } });
+  assert.equal(readRenderRecord(pidPath), null);
+  assert.equal(fs.existsSync(record.output), false);
+  assert.equal(fs.existsSync(reference), false);
+  assert.deepEqual(logs, [['WARN', 'image_engine.cleared_unproven', { opId: record.opId, pid: 123, unresolved: 2 }]]);
+  assert.deepEqual(kills, []);
+  assert.equal(readRenderRecordSummary({ userDataPath }), null);
+  assert.deepEqual(clearRenderRecordUnproven({ userDataPath }), { cleared: true, record: null });
+});
+
+test('an unproven clear whose record cannot be read reports it locked and touches nothing (w2h4-R3)', (t) => {
+  const { userDataPath, pidPath, record, reference, kills } = stuckRecord(t);
+  const before = fs.readFileSync(pidPath, 'utf8');
+  const unlinks = [];
+  const fsImpl = { ...fs,
+    readFileSync(target, ...rest) {
+      if (target === pidPath) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      return fs.readFileSync(target, ...rest);
+    },
+    unlinkSync(target) { unlinks.push(target); return fs.unlinkSync(target); },
+  };
+  assert.deepEqual(clearRenderRecordUnproven({ userDataPath, fsImpl }), { cleared: false, reason: 'image_engine_record_locked' });
+  assert.equal(fs.readFileSync(pidPath, 'utf8'), before);
+  assert.equal(fs.existsSync(record.output), true);
+  assert.equal(fs.existsSync(reference), true);
+  assert.deepEqual(unlinks, []);
+  assert.deepEqual(kills, []);
+});
+
+test('an unproven clear whose record cannot be removed reports it locked and keeps the record', (t) => {
+  const { userDataPath, pidPath, record, reference, kills } = stuckRecord(t);
+  const before = readRenderRecord(pidPath);
+  const outputBytes = fs.readFileSync(record.output);
+  const referenceBytes = fs.readFileSync(reference);
+  const logs = [];
+  const fsImpl = { ...fs, unlinkSync(target) {
+    if (target === pidPath) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+    return fs.unlinkSync(target);
+  } };
+  assert.deepEqual(clearRenderRecordUnproven({ userDataPath, fsImpl, log: (...entry) => logs.push(entry) }),
+    { cleared: false, reason: 'image_engine_record_locked' });
+  assert.deepEqual(readRenderRecord(pidPath), before);
+  // The scratch files stay with the record (w2h3-R2).
+  assert.deepEqual(fs.readFileSync(record.output), outputBytes);
+  assert.deepEqual(fs.readFileSync(reference), referenceBytes);
+  assert.equal(logs.some(([, event]) => event === 'image_engine.cleared_unproven'), false);
+  assert.deepEqual(kills, []);
+});

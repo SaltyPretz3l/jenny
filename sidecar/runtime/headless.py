@@ -20,8 +20,10 @@ from sidecar.runtime.chat import (
     ChatResponse,
     build_chat_send_response,
     chat_error_notification,
+    resume_chat_send_response_from_approval_plan,
 )
 from sidecar.runtime.chat_models import ChatResponse as RuntimeChatResponse
+from sidecar.runtime.chat_tool_observations import chat_response_with_tool_observations
 from sidecar.runtime.diagnostics import configure_sidecar_logging, shutdown_sidecar_logging
 from sidecar.runtime.turn_state import TERMINAL_SUBCODE_DENIED_USER_EXPLICIT
 
@@ -40,8 +42,6 @@ _READ_ONLY_TOOL_ALLOWLIST = frozenset(
         "read_file",
         "glob_files",
         "grep_search",
-        "web_search",
-        "fetch_url",
         "list_dir",
         "git_status",
         "git_log",
@@ -361,7 +361,7 @@ class NdjsonNotificationWriter:
 def _confirm_dangerous_mode(stdin: Any) -> bool:
     _stderr("WARNING: dangerously-skip permission mode auto-approves all tool requests.")
     if not bool(getattr(stdin, "isatty", lambda: False)()):
-        return True
+        return False
     sys.stderr.write("Continue in dangerously-skip mode? [y/N]: ")
     sys.stderr.flush()
     response = stdin.readline()
@@ -416,24 +416,20 @@ def _run_chat_turn(  # noqa: PLR0913
         "trace_id": trace_id,
         "messages": [{"role": "user", "content": prompt}],
     }
-    side_effects_enabled = approvals_pre_granted
-    while True:
-        response = build_chat_send_response(
-            request_id,
-            params,
-            approvals_pre_granted=side_effects_enabled,
-            brain_container=brain_container,
-            invalid_params_code=-32602,
-            stream_notifications=stream_notifications,
-            notification_writer=(
-                notification_writer.write if notification_writer is not None else None
-            ),
-            approval_reader=approval_bridge.read_message,
-            approval_timeout_seconds=_APPROVAL_TIMEOUT_SECONDS,
-            approval_writer=approval_bridge.write_message,
-        )
-        if response.approval_request is None:
-            return response
+    response = build_chat_send_response(
+        request_id,
+        params,
+        approvals_pre_granted=approvals_pre_granted,
+        brain_container=brain_container,
+        invalid_params_code=-32602,
+        stream_notifications=stream_notifications,
+        notification_writer=(notification_writer.write if notification_writer else None),
+        approval_reader=approval_bridge.read_message,
+        approval_timeout_seconds=_APPROVAL_TIMEOUT_SECONDS,
+        approval_writer=approval_bridge.write_message,
+    )
+    notifications: list[dict[str, Any]] = []
+    while response.approval_request is not None:
         tool_name = str(response.approval_request.get("tool_name") or "").strip()
         reason = str(response.approval_request.get("reason") or "").strip()
         raw_tool_input = response.approval_request.get("tool_input")
@@ -443,13 +439,25 @@ def _run_chat_turn(  # noqa: PLR0913
             tool_input={str(key): value for key, value in tool_input.items()},
             reason=reason,
         )
-        if not approved:
-            return _approval_denied_response(
-                request_id=request_id,
-                trace_id=trace_id,
-                session_id=session_id,
+        # Only a frozen, identity-bound call may resume. Never rerun the prompt
+        # with turn-wide approval, including for legacy responses without a plan.
+        notifications.extend(response.notifications)
+        if not approved or response.approval_plan is None:
+            response = _approval_denied_response(
+                request_id=request_id, trace_id=trace_id, session_id=session_id,
             )
-        side_effects_enabled = True
+            break
+        response = resume_chat_send_response_from_approval_plan(
+            response.approval_plan,
+            brain_container=brain_container,
+            stream_notifications=stream_notifications,
+            notification_writer=(notification_writer.write if notification_writer else None),
+            electron_tool_reader=approval_bridge.read_message,
+            electron_tool_writer=approval_bridge.write_message,
+            live_params=params,
+        )
+    response.notifications[:0] = notifications
+    return chat_response_with_tool_observations(response, brain_container.stack)
 
 
 def _result_envelope(
@@ -533,7 +541,11 @@ def _preflight_permissions(options: HeadlessRunOptions) -> int | None:
         return None
     if _confirm_dangerous_mode(sys.stdin):
         return None
-    error_message = "dangerously-skip permissions confirmation declined"
+    error_message = (
+        "dangerously-skip permissions confirmation declined"
+        if bool(getattr(sys.stdin, "isatty", lambda: False)())
+        else "dangerously-skip permissions requires interactive stdin"
+    )
     return _emit_runtime_error(
         output_format=options.output_format,
         request_id=options.request_id,
@@ -645,6 +657,9 @@ def run_headless_from_args(args: argparse.Namespace) -> int:
 
     try:
         raw_config, config_source = _load_raw_config(options.config_arg)
+        from sidecar.runtime.headless_policy import constrain_automatic_tool_policy
+
+        raw_config = constrain_automatic_tool_policy(raw_config, mode=options.mode)
         _configure_runtime(raw_config)
         logging_configured = True
 

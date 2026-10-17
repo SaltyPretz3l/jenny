@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { ensureJennyDirGitignoreSync } = require('../jenny-project-dir');
+const { removeFileSync, removeTree } = require('../fs-remove-no-follow');
 
 const MAX_WORKSPACE_RESTORE_STAGES = 20;
 const WORKSPACE_RESTORE_JOURNAL = 'workspace-restore-journal.json';
@@ -55,7 +56,7 @@ function writeJsonDurable(filePath, value) {
     fsyncDirectory(path.dirname(filePath));
   } catch (error) {
     if (descriptor !== undefined) fs.closeSync(descriptor);
-    fs.rmSync(tempPath, { force: true });
+    removeFileSync(tempPath);
     throw error;
   }
 }
@@ -88,7 +89,7 @@ async function listWorkspaceRestoreStages(stagingRoot) {
 }
 
 async function removeWorkspaceRestoreStage(stagePath, stagingRoot) {
-  await fs.promises.rm(stagePath, { recursive: true, force: true });
+  await removeTree(stagePath);
   await fs.promises.rmdir(stagingRoot).catch((error) => {
     if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error?.code)) throw error;
   });

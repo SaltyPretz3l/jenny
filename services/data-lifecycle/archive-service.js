@@ -7,6 +7,7 @@ const path = require('path');
 const { pipeline } = require('stream/promises');
 const { Writable } = require('stream');
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
+const { removeTree } = require('../fs-remove-no-follow');
 
 const {
   ARCHIVE_FORMAT,
@@ -179,7 +180,8 @@ async function prepareEntryStagingRoot(stagingRoot, encrypted, hasProducedEntrie
     const stalePath = path.join(root, dirent.name);
     try {
       if (now - (await fs.promises.lstat(stalePath)).mtimeMs >= STALE_STAGING_AGE_MS) {
-        await fs.promises.rm(stalePath, { recursive: true, force: true });
+        // Never Node's rm: a stale staging directory may hold a junction (see fs-remove-no-follow).
+        await removeTree(stalePath);
       }
     } catch {
       // Retried by the next archive.
@@ -393,7 +395,7 @@ async function createArchive({
       ? archiveError(DATA_ERROR_CODES.INVALID_REQUEST, 'operation_cancelled', 'Archive creation was canceled.', error)
       : error;
     // Profile staging is outside the partial; retry a removal the entry could not finish.
-    if (lastStagingDir) await fs.promises.rm(lastStagingDir, { recursive: true, force: true }).catch(() => {});
+    if (lastStagingDir) await removeTree(lastStagingDir).catch(() => {});
     await removeOrReportPartial(normalizedRoot, partialPath, failure);
     throw failure;
   }

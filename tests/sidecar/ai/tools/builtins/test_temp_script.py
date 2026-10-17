@@ -14,6 +14,7 @@ from sidecar.ai.error_codes import (
 )
 from sidecar.ai.tools.builtins import output_chunk_slot
 from sidecar.ai.tools.builtins import temp_script as temp_script_module
+from sidecar.ai.tools.builtins.shell_settings import configure_shell_security
 from sidecar.ai.tools.builtins.temp_script import run_temp_script_tool
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -125,7 +126,11 @@ def test_temp_script_cleans_up_when_execution_is_cancelled(
     assert created and all(not path.exists() for path in created)
 
 
-def test_temp_script_output_is_bounded(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("head_tail", "marker"),
+    [(True, "...[middle truncated"), (False, "...[truncated]")],
+)
+def test_temp_script_output_is_bounded(tmp_path: Path, head_tail: bool, marker: str) -> None:
     # ~60 KB as 300 long lines, not 3000 short ones: cmd's cost is per line, and
     # under the parallel sidecar lane the 3000-line loop outran the 10 s default
     # timeout. The explicit timeout keeps this bound test off the timeout contract.
@@ -136,15 +141,19 @@ def test_temp_script_output_is_bounded(tmp_path: Path) -> None:
         else f"i=0; while [ $i -lt 300 ]; do echo {line}; i=$((i+1)); done\n"
     )
 
-    result = run_temp_script_tool(
-        {"script": script, "timeout_seconds": 60},
-        WorkspaceGuard(str(tmp_path)),
-    )
+    configure_shell_security({"shell_head_tail_output": head_tail})
+    try:
+        result = run_temp_script_tool(
+            {"script": script, "timeout_seconds": 60},
+            WorkspaceGuard(str(tmp_path)),
+        )
+    finally:
+        configure_shell_security({})
 
     assert result.metadata.get("timed_out") is not True, result.metadata
     assert result.success is True
     assert len(result.output) < 25_000
-    assert "...[truncated]" in result.output
+    assert marker in result.output
 
 
 def test_live_output_redacts_temporary_path(
@@ -174,8 +183,9 @@ def test_live_output_redacts_temporary_path(
 
 
 def test_python_workspace_import_failure_has_actionable_hint_and_recovers(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""))
     real_which = temp_script_module.shutil.which
-    monkeypatch.setattr(temp_script_module.shutil, "which", lambda name: sys.executable if name in {"python", "python3"} else real_which(name))
+    monkeypatch.setattr(temp_script_module.shutil, "which", lambda name, **kwargs: sys.executable if name in {"python", "python3"} else real_which(name, **kwargs))
     (tmp_path / "ascend_fixture_module.py").write_text("answer = 42", encoding="utf-8")
     guard = WorkspaceGuard(str(tmp_path))
     failed = run_temp_script_tool({"language": "python", "script": "import ascend_fixture_module"}, guard)

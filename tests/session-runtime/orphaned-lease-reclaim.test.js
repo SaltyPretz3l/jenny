@@ -58,7 +58,7 @@ function harness(t, { uncertainClaims = 1 } = {}) {
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const settled = { status: 'completed', producerSettled: true, canonicalSettled: true };
 function operation(gateway, id, phase, fields) {
-  return gateway.handle({ api_version: '2026-08-17', schema_version: 1, kind: 'inference', operation_id: id,
+  return gateway.handle({ api_version: '2026-10-15', schema_version: 1, kind: 'inference', operation_id: id,
     phase, request_id: gateway.requestId, session_id: gateway.sessionId,
     authority_revision: gateway.authorityRevision, ...fields });
 }

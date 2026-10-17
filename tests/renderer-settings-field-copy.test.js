@@ -94,7 +94,7 @@ test('toggle-list builders inherit descriptions from the copy map', () => {
   assert.ok(lists.sources && lists.runtime, 'both context lists render');
   const doc = new JSDOM(`<!doctype html><body>${lists.sources}${lists.runtime}</body>`).window.document;
   const rows = doc.querySelectorAll('.settings-field--row');
-  assert.equal(rows.length, 3);
+  assert.equal(rows.length, 4); // personality, memory, "Don't remember this chat" (row 58 W1), compaction
   for (const row of rows) {
     const id = row.querySelector('[data-inv-toggle]').getAttribute('data-inv-toggle');
     const copy = fieldCopy.getSettingsFieldCopy(id);

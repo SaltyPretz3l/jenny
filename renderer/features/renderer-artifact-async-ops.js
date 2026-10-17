@@ -273,6 +273,7 @@
         if (!Array.isArray(state.artifacts.deletedArtifactIds)) state.artifacts.deletedArtifactIds = [];
         if (!state.artifacts.deletedArtifactIds.includes(opKey)) state.artifacts.deletedArtifactIds.push(opKey);
         draftStore.discard(artifact.sessionId, artifact.id);
+        globalThis.rendererArtifactCardUtils?.evictArtifactImage?.(artifact.sessionId, file.artifactId || artifact.id);
         const wasSelected = artifactOperationTarget.matchesSelection(token);
         invalidateSessionArtifacts(artifact.sessionId, { preserveLoaded: !wasSelected });
         if (wasSelected) {

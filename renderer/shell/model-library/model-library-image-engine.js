@@ -22,7 +22,8 @@
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  var SLOTS = ['diffusion', 'text_encoder', 'vae'];
+  var REQUIRED_SLOTS = ['diffusion', 'text_encoder', 'vae'];
+  var OPTIONAL_SLOTS = ['vision_projector'];
   var ID_RE = /^[a-f0-9]{12}$/;
 
   if (typeof actionButton !== 'function' || typeof actionButton.escapeHtml !== 'function'
@@ -73,6 +74,7 @@
   }
 
   function saveFailureMessage(reason) {
+    if (reason === 'image_projector_unsupported') return jt('imageEdit.projectorUnsupported', 'Projector unsupported. Choose None or a compatible projector.');
     switch (reason) {
       case 'image_text_encoder_unsupported':
         return jt('models.library.imageEngine.saveEncoderUnsupported', 'That text encoder format is not supported by the engine. Pick a GGUF or bf16 encoder.');
@@ -105,9 +107,11 @@
     var engine = null;
     // The last folder scan and the user's slot picks over it.
     var scan = null;
-    var picks = { diffusion: '', text_encoder: '', vae: '', family: '' };
+    var picks = { diffusion: '', text_encoder: '', vae: '', vision_projector: '', family: '' };
     var pending = false;
     var confirmRemove = false;
+    var confirmClear = false; // "Clear anyway" asks inline first
+    var clearing = false; // and its clear is the action in flight
     var note = '';
     var generation = 0;
     var lastFocusKey = '';
@@ -151,11 +155,38 @@
     function setSizeBytes(set) {
       var files = set.files || {};
       var total = 0;
-      SLOTS.forEach(function (slot) {
+      REQUIRED_SLOTS.concat(OPTIONAL_SLOTS).forEach(function (slot) {
         var entry = files[slot];
         total += entry && Number.isFinite(Number(entry.size_bytes)) ? Number(entry.size_bytes) : 0;
       });
       return total;
+    }
+
+    // A retained lease a clean-up attempt in this run could not prove ended;
+    // only then is the record offered for an unproven clear.
+    function cleanupStuck() {
+      var handoff = engine && engine.handoff;
+      return Boolean(handoff && handoff.retained && !handoff.active && handoff.cleanup && Number(handoff.cleanup.attempts) > 0);
+    }
+
+    function clockTime(ms) {
+      var i18n = globalThis.jennyI18n || {};
+      try {
+        return new Date(ms).toLocaleTimeString(typeof i18n.tag === 'function' ? i18n.tag() : undefined,
+          Object.assign({ hour: '2-digit' }, typeof i18n.timeOptions === 'function' ? i18n.timeOptions() : {}, { minute: '2-digit' }));
+      } catch (_error) { return ''; }
+    }
+
+    // What Jenny knows about the stuck render, or the inline confirm in its place.
+    function stuckMarkup() {
+      if (!cleanupStuck() || (pending && clearing)) return '';
+      var record = engine.handoff.cleanup.record || {};
+      var text = confirmClear
+        ? jt('models.library.imageEngine.clearConfirm', 'Clear without proof? Chat resumes now. A stray sd-cli helper would keep its GPU memory until it exits.')
+        : Number(record.unresolved) > 0 && Number(record.started_at) > 0
+          ? jt('models.library.imageEngine.stuckHelpers', 'Jenny could not check {count} helper processes from {time}.', { count: Number(record.unresolved), time: clockTime(Number(record.started_at)) })
+          : jt('models.library.imageEngine.stuckUnknown', 'Jenny could not confirm the last render ended.');
+      return '<span class="model-library-image-engine-' + (confirmClear ? 'confirm' : 'help') + '">' + escapeHtml(text) + '</span>';
     }
 
     function statusModel() {
@@ -182,6 +213,10 @@
         return { tone: 'default', message: jt('models.library.imageEngine.installCancelled', 'Install cancelled.') };
       }
       if (status === 'error') return { tone: 'danger', message: jt('models.library.imageEngine.notInstalledReason', 'Not installed · {reason}', { reason: installFailureMessage(engine.last_error) }) };
+      if (cleanupStuck()) {
+        if (pending && clearing) return { tone: 'pending', spinner: true, message: jt('models.library.imageEngine.clearing', 'Clearing the render record…') };
+        return { tone: 'danger', message: jt('models.library.imageEngine.renderStuck', 'Installed · the last render may still be running. Chat models stay paused.') };
+      }
       if (engine.handoff && engine.handoff.retained) {
         return { tone: 'warning', message: jt('models.library.imageEngine.cleanupPending', 'Installed · the last image did not finish cleanly. Chat models stay paused until it is cleaned up.') };
       }
@@ -205,6 +240,11 @@
         ? jt('models.library.imageEngine.install', 'Install engine… ({size} MB)', { size: size })
         : jt('models.library.imageEngine.installNoSize', 'Install engine…');
       var own = button('choose-runtime', jt('models.library.imageEngine.useOwn', 'Use my own sd-cli.exe…'));
+      if (cleanupStuck()) {
+        return confirmClear
+          ? button('force-clear', jt('models.library.imageEngine.clearAnyway', 'Clear anyway'), 'danger') + button('keep-waiting', jt('models.library.imageEngine.keepWaiting', 'Keep waiting'), 'ghost')
+          : button('reconcile', jt('models.library.imageEngine.tryAgain', 'Try again')) + button('force-clear-ask', jt('models.library.imageEngine.clearAnywayAsk', 'Clear anyway…'), 'ghost');
+      }
       if (engine && engine.handoff && engine.handoff.retained) {
         return button('reconcile', jt('models.library.imageEngine.cleanUp', 'Clean up now'), 'primary');
       }
@@ -229,7 +269,7 @@
       });
       if (!choices.length) choices = [{ value: '', label: jt('models.library.imageEngine.noneFound', 'None found in this folder') }];
       return selectField({
-        id: 'imageEngineSlot-' + slot, label: label, value: picks[slot], options: choices,
+        id: 'imageEngineSlot-' + slot, label: label, value: picks[slot], options: slot === 'vision_projector' ? [{ value: '', label: jt('imageEdit.none', 'None') }].concat(choices) : choices,
         disabled: pending || !candidates.length, dataset: { 'image-engine-slot': slot },
       });
     }
@@ -274,6 +314,7 @@
           + slotSelect('diffusion', jt('models.library.imageEngine.slotDiffusion', 'Diffusion model'))
           + slotSelect('text_encoder', jt('models.library.imageEngine.slotEncoder', 'Text encoder'))
           + slotSelect('vae', jt('models.library.imageEngine.slotVae', 'VAE'))
+          + slotSelect('vision_projector', jt('imageEdit.projector', 'Vision projector (optional, for editing)'))
           + familySelect()
           + '</div>'
           + '<div class="model-library-image-engine-actions">'
@@ -319,6 +360,7 @@
         + statusRow({ tone: status.tone, spinner: status.spinner === true, progress: status.progress || null, compact: true,
           label: jt('models.library.imageEngine.statusLabel', 'Status'), message: status.message, className: 'model-library-image-engine-status' })
         + (confirmRemove ? '<span class="model-library-image-engine-help">' + escapeHtml(jt('models.library.imageEngine.removeConfirm', 'Remove the image engine? Saved model sets stay.')) + '</span>' : '')
+        + stuckMarkup()
         + '<div class="model-library-image-engine-actions">' + engineActions() + '</div>'
         + (engine && engine.status === 'installing'
           ? '<span class="model-library-folders-empty">' + escapeHtml(jt('models.library.imageEngine.workingNote', 'Then: verify fingerprint → unpack → ready. Chats keep working meanwhile.')) + '</span>' : '')
@@ -377,6 +419,7 @@
       engine = next;
       // Main's answer clears the engine-side failure once the engine is back.
       if (engine.status !== 'installed') confirmRemove = false;
+      if (!cleanupStuck()) confirmClear = false;
       render();
     }
 
@@ -432,17 +475,20 @@
       }
       if (!result || !result.candidates) return;
       scan = { root: result.root, candidates: result.candidates, truncated: result.truncated === true };
-      SLOTS.forEach(function (slot) {
+      REQUIRED_SLOTS.forEach(function (slot) {
         var list = Array.isArray(scan.candidates[slot]) ? scan.candidates[slot] : [];
         picks[slot] = list.length === 1 || !list.some(function (c) { return c.name === picks[slot]; })
           ? (list.length ? list[0].name : '') : picks[slot];
+      });
+      OPTIONAL_SLOTS.forEach(function (slot) {
+        if (!(scan.candidates[slot] || []).some(function (c) { return c.name === picks[slot]; })) picks[slot] = '';
       });
     }
 
     function saveSet() {
       if (!scan || !canSave()) return Promise.resolve(null);
       var payload = { root: scan.root, diffusion: picks.diffusion, text_encoder: picks.text_encoder, vae: picks.vae,
-        family: detectedFamily() || picks.family, label: '' };
+        family: detectedFamily() || picks.family, label: '', ...(picks.vision_projector ? { vision_projector: picks.vision_projector } : {}) };
       return invoke('saveModelSet', payload, function (result) {
         note = result.ok === false ? saveFailureMessage(result.reason) : jt('models.library.imageEngine.saved', 'Saved.');
       });
@@ -455,6 +501,7 @@
       var action = target.getAttribute('data-image-engine-action');
       var setId = target.getAttribute('data-image-engine-set') || '';
       event.preventDefault();
+      clearing = action === 'force-clear';
       switch (action) {
         case 'install': void invoke('install', { confirmed: true }, function (result) {
           if (result.ok === false && result.reason !== 'install_in_progress' && result.reason !== 'cancelled') {
@@ -473,6 +520,13 @@
         case 'clear-runtime': void invoke('clearRuntime'); break;
         case 'reconcile': void invoke('reconcile', undefined, function (result) {
           if (result.ok === false) note = jt('models.library.imageEngine.cleanUpFailed', 'Clean-up could not confirm the render ended. Restart Jenny if this repeats.');
+        }); break;
+        case 'force-clear-ask': confirmClear = true; render(); break;
+        case 'keep-waiting': confirmClear = false; render(); break;
+        case 'force-clear': void invoke('forceClear', { confirmed: true }, function (result) {
+          confirmClear = false;
+          note = result.ok === false ? jt('models.library.imageEngine.clearFailed', 'The record could not be cleared. Restart Jenny to check again.')
+            : jt('models.library.imageEngine.clearedUnproven', 'Record cleared without proof at {time}.', { time: clockTime(Date.now()) });
         }); break;
         case 'choose-folder': void invoke('chooseModelFolder', undefined, applyScan); break;
         case 'rescan': if (scan) void invoke('scanModels', { root: scan.root }, applyScan); break;

@@ -44,9 +44,11 @@ from sidecar.runtime.chat_decision_support import (
     ToolResolutionContext,
     apply_budget_check,
     budget_meter_fields,
+    build_recall_history,
     build_search_index,
     check_budget,
     compact_context,
+    compaction_policy,
     compute_deferral_set,
     estimate_messages_tokens,
     estimate_tool_schema_tokens,
@@ -109,6 +111,7 @@ def _build_chat_decision(
     streamed_event_types: frozenset[str] | None = None,
     completion_source: str = "model",
     resumable_stop: str | None = None,
+    turn_boundary: Any | None = None,
     terminal_error_code: str | None = None,
     terminal_subcode: str | None = None,
     terminal_error_retryable: bool = False,
@@ -131,6 +134,7 @@ def _build_chat_decision(
         streamed_event_types=streamed_event_types or frozenset(),
         completion_source=str(completion_source or "model"),
         resumable_stop=str(resumable_stop or "").strip() or None,
+        turn_boundary=turn_boundary,
         terminal_error_code=str(terminal_error_code or "").strip() or None,
         terminal_subcode=str(terminal_subcode or "").strip() or None,
         terminal_error_retryable=bool(terminal_error_retryable),
@@ -236,13 +240,10 @@ def _prepare_context_budget(
     # E1: the ring's first honest reading of THIS turn, published before the
     # model call so a long agentic turn stops showing the previous turn's size.
     _emit_preflight_context_usage(
-        context,
-        budget_tracker=budget_tracker,
-        tokens_used=status.tokens_used,
+        context, budget_tracker=budget_tracker, tokens_used=status.tokens_used
     )
     should_run_compaction = status.should_compact and is_feature_flag_enabled(
-        context.feature_flags,
-        FEATURE_CONTEXT_COMPACTION,
+        context.feature_flags, FEATURE_CONTEXT_COMPACTION
     )
     advisory = kernel._context_builder.build_context_pressure_advisory(status)
     if advisory:
@@ -317,6 +318,7 @@ def _run_context_compaction(
         system_context=context.system_prompt_text,
         base_prompt=resolve_compaction_prompt(kernel._config),
         circuit_breaker=kernel._compaction_breakers.for_key(context.session_id),
+        policy=compaction_policy(getattr(kernel._config, "feature_flags", None)),
         generate_fn=kernel._build_compaction_generate_fn(
             request_id=context.request_id,
             max_tokens=min(
@@ -397,17 +399,14 @@ def _log_compaction_result(context: _BudgetPreflightContext, compaction_result: 
         },
         request_id=context.request_id,
     )
-    if compaction_result.strategy != "micro":
+    if not compaction_result.micro_fallback:
         return
     log_event(
         logger,
         logging.WARNING,
         component="ai.router",
         event="ai.router.compaction_micro_fallback",
-        message=(
-            "Context compaction used microcompaction after "
-            "full compaction was unavailable or failed."
-        ),
+        message="Context compaction fell back to microcompaction after full compaction failed.",
         status="degraded",
         data={
             "tokens_before": compaction_result.tokens_before,
@@ -589,7 +588,7 @@ def _build_runtime_overlay_messages(
         context_builder=kernel._context_builder,
         memory_store=getattr(kernel, "_memory_store", None),
         latest_user_content=latest_user_content,
-        memory_policy=getattr(request_context, "memory_policy", None),
+        memory_policy=getattr(request_context, "memory_policy", None), session_id=session_id,
         log_context=RuntimeOverlayLogContext(
             logger=logger,
             component="ai.router",
@@ -810,12 +809,12 @@ def build_chat_decision(
     # `resolve_personality_rendered` is the one expression; an approval plan
     # frozen on this turn records its answer for the resume path.
     personality_rendered = resolve_personality_rendered(kernel._config, context_blocks)
-    context_block_messages = build_context_block_system_messages(
-        context_blocks,
-        include_personality=include_personality_block,
-        agent_name=getattr(kernel._config, "assistant_name", None),
-        ui_language=getattr(kernel._config, "ui_language", "en"),
-    )
+    # `## Always-on memories` follows the personality row (else leads the typed rows).
+    context_block_messages = _system_messages.with_always_on_message(
+        kernel, request_context, build_context_block_system_messages(
+            context_blocks, include_personality=include_personality_block,
+            agent_name=getattr(kernel._config, "assistant_name", None),
+            ui_language=getattr(kernel._config, "ui_language", "en")))
     runtime_system_messages = _build_runtime_overlay_messages(
         kernel,
         request_context,
@@ -939,7 +938,6 @@ def build_chat_decision(
     if budget_result.terminal_decision is not None:
         return budget_result.terminal_decision
 
-    # -- Delegate to extracted tool loop -----------------------------------
     from sidecar.ai.routing import iteration_limits as _iteration_limits
 
     effective_runtime = runtime or LoopRuntime(
@@ -959,6 +957,7 @@ def build_chat_decision(
         observation_store=getattr(kernel._engine, "_tool_observation_store", None),
         request_context=request_context,
     )
+    effective_runtime.recall_history = build_recall_history(canonical_session_messages, messages)
     loop_runner = run_tool_loop if not callable(continuation_resume) else (
         lambda **kwargs: continuation_resume(
             deferred_budget_initializer=_initialize_deferred_budget, **kwargs
@@ -1006,10 +1005,9 @@ def build_chat_decision(
         streamed_event_types=frozenset(loop_result.streamed_event_types),
         completion_source=str(getattr(loop_result, "completion_source", "model") or "model"),
         resumable_stop=getattr(loop_result, "resumable_stop", None),
+        turn_boundary=getattr(loop_result, "turn_boundary", None),
         terminal_error_code=getattr(loop_result, "terminal_error_code", None),
         terminal_subcode=getattr(loop_result, "terminal_subcode", None),
-        terminal_error_retryable=bool(
-            getattr(loop_result, "terminal_error_retryable", False)
-        ),
+        terminal_error_retryable=bool(getattr(loop_result, "terminal_error_retryable", False)),
         budget_tracker=budget_tracker,
     )

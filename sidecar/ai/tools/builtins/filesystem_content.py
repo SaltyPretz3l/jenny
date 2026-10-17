@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import io
 import json
+import sys
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
@@ -118,6 +119,9 @@ def _load_pillow():
 def _load_pymupdf():
     try:
         fitz = importlib.import_module("fitz")
+        # The add-on must never write diagnostic prose to framed RPC stdout.
+        fitz.set_messages(stream=sys.stderr)
+        fitz.set_log(stream=sys.stderr)
     except Exception as exc:
         if not pdf_addon_configured():
             message = (

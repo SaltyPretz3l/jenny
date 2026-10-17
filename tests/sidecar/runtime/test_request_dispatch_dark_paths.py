@@ -125,7 +125,7 @@ def test_approval_wait_extends_when_unattended_pause_arrives_after_timeout(
     cache_put_ttls: list[float] = []
 
     class _ApprovalPlanCache:
-        def put(self, cached_plan: Any, *, ttl_seconds: float) -> Any:
+        def put(self, cached_plan: Any, *, ttl_seconds: float, on_discard: Any = None) -> Any:
             cache_put_ttls.append(ttl_seconds)
             return cached_plan
 
@@ -321,7 +321,7 @@ def test_build_it_gives_the_build_a_fresh_working_time_budget(
     resumed_plans: list[Any] = []
 
     class _ApprovalPlanCache:
-        def put(self, cached_plan: Any, *, ttl_seconds: float) -> Any:
+        def put(self, cached_plan: Any, *, ttl_seconds: float, on_discard: Any = None) -> Any:
             return cached_plan
 
         def consume(self, _request_id: str, _call_id: str) -> Any:
@@ -1545,6 +1545,22 @@ def test_process_message_hardware_vram_usage_null_message_id_returns_none_respon
         read_message=_null_reader,
     )
     assert outcome.response is None
+
+
+def test_process_message_hardware_vram_usage_poll_logs_below_info(monkeypatch, caplog) -> None:
+    # Gate 2026-10-14 F5: the 15 s poll was about half of all Activity records.
+    _patch_sub_dispatchers(monkeypatch)
+    brain = _make_minimal_brain()
+    with caplog.at_level(logging.INFO, logger=LOGGER.name):
+        rd.process_message(
+            {"method": HARDWARE_VRAM_USAGE_METHOD, "params": {"accept_version": API_VERSION}},
+            True,
+            brain_container=brain,  # type: ignore[arg-type]
+            logger=LOGGER,
+            write_message=_null_writer,
+            read_message=_null_reader,
+        )
+    assert not [r for r in caplog.records if "hardware.vram_usage" in r.getMessage()]
 
 
 # ---------------------------------------------------------------------------

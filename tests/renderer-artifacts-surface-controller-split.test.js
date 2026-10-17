@@ -211,7 +211,7 @@ const PARITY_EXPECTED = {
   },
   image: {
     previewHidden: false, editorHidden: true, kicker: 'Image', detailMode: 'image',
-    note: 'Previewing the session image at full stage size.', marker: 'artifact-preview-image-shell',
+    note: '', marker: 'artifact-preview-image-shell',
   },
   'tool output text': {
     previewHidden: false, editorHidden: true, kicker: 'Tool Output', detailMode: 'tool',

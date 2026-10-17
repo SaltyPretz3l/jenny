@@ -13,8 +13,10 @@ PROTOCOL_PATH = ROOT / "sidecar" / "protocol.py"
 NOTIFICATION_NAME_RE = re.compile(r"^[a-z]+\.[a-z_]+$")
 
 REQUIRED_CONSTANTS = {
+    "MCP_PROMPT_GET_METHOD": "mcp.prompt_get",
     "INITIALIZE_METHOD": "initialize",
     "CHAT_SEND_METHOD": "chat.send",
+    "COMMAND_EXECUTE_PROPOSAL_METHOD": "command.execute_proposal",
     "SHUTDOWN_METHOD": "shutdown",
     "CHAT_TOKEN_METHOD": "chat.token",
     "CHAT_THINKING_METHOD": "chat.thinking",

@@ -124,3 +124,77 @@ test('the dormant artifact auto-open pre-check stops before projection when the 
   assert.equal(builds, 1);
   assert.equal(renders, 1);
 });
+
+describe('renderer-shell-artifact-bridge owner line (row 59 checkpoint 2)', () => {
+  const { JSDOM } = require('jsdom');
+  const sidePanelOwner = require('../renderer/chat/renderer-side-panel-owner');
+
+  function ownerBridge(panes) {
+    const state = {
+      currentSessionId: 'sess_a',
+      sessions: [{ id: 'sess_a', title: 'Alpha chat' }, { id: 'sess_b', title: 'Beta chat' }],
+      panes: { panes: panes.map((sessionId, index) => ({ paneId: String(index), sessionId })) },
+      ui: { activeView: 'chat' }, artifacts: {},
+    };
+    const bridge = createShellArtifactBridge({
+      state,
+      sidePanelOwner,
+      callbacks: { getActiveSession: () => state.sessions[0] },
+      windowRef: { localStorage: { getItem: () => null } },
+      constants: { ARTIFACT_REVIEW_STORAGE_KEY: STORAGE_KEY },
+    });
+    const panel = new JSDOM('<aside id="panel"></aside>').window.document.getElementById('panel');
+    return { state, bridge, panel };
+  }
+  const line = (panel) => panel.querySelector(':scope > .side-panel-owner-line');
+
+  test('Changes and Activity name their owner with one pane; the artifact and context modes stay split-only', () => {
+    const { bridge, panel } = ownerBridge(['sess_a']);
+    bridge.sidePanel.syncOwnerLine(panel, 'artifact');
+    assert.equal(line(panel), null, 'artifact: no line with one pane');
+    bridge.sidePanel.syncOwnerLine(panel, 'context');
+    assert.equal(line(panel), null, 'context: no line with one pane');
+    bridge.sidePanel.syncOwnerLine(panel, 'code_review');
+    assert.equal(line(panel).querySelector('.side-panel-owner-title').textContent, 'Alpha chat');
+    bridge.sidePanel.syncOwnerLine(panel, 'artifact');
+    assert.equal(line(panel), null, 'leaving Changes removes the line');
+    bridge.sidePanel.syncOwnerLine(panel, 'activity');
+    assert.equal(line(panel).querySelector('.side-panel-owner-title').textContent, 'Alpha chat');
+  });
+
+  test('with two panes every panel names the explicit owner, not the focused chat', () => {
+    const { state, bridge, panel } = ownerBridge(['sess_a', 'sess_b']);
+    state.ui.sidePanelOwnerSessionId = 'sess_b';
+    for (const mode of ['artifact', 'context', 'code_review', 'activity']) {
+      bridge.sidePanel.syncOwnerLine(panel, mode);
+      assert.equal(line(panel).querySelector('.side-panel-owner-title').textContent, 'Beta chat', mode);
+    }
+    assert.equal(state.currentSessionId, 'sess_a', 'focus is on the other pane');
+  });
+
+  test('the session rail detail entry points are wired at construction, before any panel is built', (t) => {
+    const original = globalThis.rendererChatWorkspaceDetail;
+    let deps = null;
+    globalThis.rendererChatWorkspaceDetail = { configure: (next) => { deps = { ...(deps || {}), ...next }; } };
+    t.after(() => { globalThis.rendererChatWorkspaceDetail = original; });
+    let builds = 0;
+    const state = { currentSessionId: 's1', sessions: [{ id: 's1' }], ui: { activeView: 'chat' }, artifacts: {} };
+    createShellArtifactBridge({
+      state, constants: { ARTIFACT_REVIEW_STORAGE_KEY: STORAGE_KEY },
+      callbacks: { getActiveSession: () => state.sessions[0] },
+      windowRef: { localStorage: { getItem: () => null } },
+      artifactsUtils: { createArtifactManager: () => { builds += 1; return { openArtifactTarget: (ref, options) => `opened ${ref} from ${options.source}` }; } },
+    });
+    assert.equal(builds, 0, 'the artifact surface is still dormant');
+    for (const name of ['claimOwner', 'openArtifact', 'openChanges', 'closePanel']) assert.equal(typeof deps?.[name], 'function', name);
+    assert.equal(deps.openArtifact('art_1'), 'opened art_1 from session-rail', 'a rail row builds the surface on first use');
+    assert.equal(builds, 1);
+  });
+
+  test('explicit claims move the owner with two panes and are a no-op with one', () => {
+    const split = ownerBridge(['sess_a', 'sess_b']);
+    assert.equal(split.bridge.sidePanel.claim('sess_b'), true);
+    assert.equal(split.state.ui.sidePanelOwnerSessionId, 'sess_b');
+    assert.equal(ownerBridge(['sess_a']).bridge.sidePanel.claim('sess_a'), false);
+  });
+});

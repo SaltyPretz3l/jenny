@@ -6,6 +6,7 @@ const { AttachmentAssetStore } = require('../attachment-asset-store');
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
 const { ElectronSessionStore } = require('../backend/electron-session-store');
 const { importSession } = require('../backend/session-export-import');
+const { removeFile, removeFileSync, removeTree } = require('../fs-remove-no-follow');
 const { normalizeProjectId } = require('../projects/project-schema');
 const {
   ARCHIVE_EXTENSION,
@@ -18,8 +19,10 @@ const {
 const { archiveError, validateLogicalPath } = require('./archive-format');
 const restorePreferences = require('./restore-preferences');
 const runtimeArchive = require('./runtime-archive');
+const coordinationArchive = require('./session-coordination-archive');
 const runtimeBackup = require('./restore-runtime-backup');
-const { isUntouchedPersonalityBootstrap, isUntouchedMemoryBootstrap } = require('./fresh-profile-bootstrap');
+const { isMeaningfullyFresh } = require('./fresh-profile-bootstrap');
+const { removeDerivedIndexFiles } = require('./derived-indexes');
 const { withDatabaseJournalActions } = require('./sqlite-snapshot');
 const restoreDurability = require('./workspace-restore-durability');
 const { WORKSPACE_RESTORE_JOURNAL, WORKSPACE_RESTORE_ROOT, createWorkspaceRestoreStage } = restoreDurability;
@@ -30,7 +33,7 @@ const RESTORE_SCAN_LIMIT = 50;
 const MAX_WORKSPACE_RESTORE_FILE_BYTES = 8 * 1024 * 1024 * 1024;
 const PENDING_SUFFIX = '.jenny-restore-pending.json';
 const ACTIVE_RESTORE_RELATIVE_PATH = path.join('data-lifecycle', 'restore-active.json');
-const ALLOWED_ROOTS = Object.freeze(['sessions', 'preferences', 'personality', 'calendar', 'memory', 'notes', 'workspace', 'runtime']);
+const ALLOWED_ROOTS = Object.freeze(['sessions', 'preferences', 'personality', 'calendar', 'memory', 'notes', 'workspace', 'runtime', 'coordination']);
 function restorePointerPath(userDataPath) {
   const root = path.resolve(String(userDataPath || ''));
   return path.join(path.dirname(root), `.${path.basename(root)}${PENDING_SUFFIX}`);
@@ -42,48 +45,13 @@ function writeJsonAtomic(filePath, value) {
     fs.writeFileSync(tempPath, JSON.stringify(value, null, 2), { encoding: 'utf8', flag: 'wx' });
     fs.renameSync(tempPath, filePath);
   } catch (error) {
-    fs.rmSync(tempPath, { force: true });
+    removeFileSync(tempPath);
     throw error;
   }
 }
-function listDirectoryEntries(targetPath) {
-  try {
-    return fs.readdirSync(targetPath);
-  } catch (error) {
-    if (error?.code === 'ENOENT') return [];
-    throw error;
-  }
-}
-
 function isPathWithin(ownerRoot, targetPath) {
   const relative = path.relative(path.resolve(ownerRoot), path.resolve(targetPath));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-function isMeaningfullyFresh({ userDataPath, sessionStore = null } = {}) {
-  if (!String(userDataPath || '').trim()) return false;
-  if (!runtimeArchive.isUntouchedProjectBootstrap(userDataPath)) return false;
-  if (!runtimeArchive.isUntouchedRuntimeBootstrap(userDataPath)) return false;
-  if (!runtimeArchive.isUntouchedRuntimeCoordinationBootstrap(userDataPath)) return false;
-  if (!isUntouchedPersonalityBootstrap(userDataPath) || !isUntouchedMemoryBootstrap(userDataPath)) return false;
-  if (sessionStore && typeof sessionStore.listSessions === 'function') {
-    if ((sessionStore.listSessions() || []).length > 0) return false;
-  } else if (listDirectoryEntries(path.join(userDataPath, 'sessions')).length > 0) {
-    return false;
-  }
-  const meaningfulPaths = [
-    path.join(userDataPath, 'sessions.json'),
-    path.join(userDataPath, 'attachments'),
-    path.join(userDataPath, 'home-calendar.json'),
-  ];
-  return meaningfulPaths.every((targetPath) => {
-    try {
-      const stat = fs.lstatSync(targetPath);
-      return stat.isDirectory() ? listDirectoryEntries(targetPath).length === 0 : stat.size === 0;
-    } catch (error) {
-      return error?.code === 'ENOENT';
-    }
-  });
 }
 
 function archiveFingerprint(archivePath) {
@@ -321,7 +289,7 @@ async function replaceWorkspaceFile(sourcePath, targetPath) {
     await fs.promises.rename(sourcePath, targetPath);
   } catch (error) {
     if (!['EEXIST', 'EPERM'].includes(error?.code) || !fs.existsSync(targetPath)) throw error;
-    await fs.promises.rm(targetPath, { force: true });
+    await removeFile(targetPath);
     await fs.promises.rename(sourcePath, targetPath);
   }
 }
@@ -348,13 +316,13 @@ async function rollbackWorkspaceActions(actions, rollbackRoot) {
       }
     } else if (action.replacementCreated) {
       const currentSignature = await workspaceTargetSignature(action.identity, action.targetPath);
-      if (currentSignature === action.restoredSignature) await fs.promises.rm(action.targetPath, { force: true });
+      if (currentSignature === action.restoredSignature) await removeFile(action.targetPath);
       else if (currentSignature !== 'missing') {
         throw archiveError(DATA_ERROR_CODES.RESTORE_CONFLICT, 'workspace_restore_rollback_incomplete', 'Workspace restore recovery requires attention.');
       }
     }
   }
-  await fs.promises.rm(rollbackRoot, { recursive: true, force: true });
+  await removeTree(rollbackRoot);
 }
 
 function parseWorkspaceRestoreJournal(stagePath, identity) {
@@ -433,7 +401,7 @@ async function recoverWorkspaceRestoreStage(stagePath, stagingRoot, identity) {
     } else if (fs.existsSync(targetPath)) {
       const currentSignature = await workspaceTargetSignature(identity, targetPath);
       if (currentSignature === restoredSignature) {
-        await fs.promises.rm(targetPath, { force: true });
+        await removeFile(targetPath);
       } else if (completedPaths.has(entry.logical_path)) {
         throw archiveError(DATA_ERROR_CODES.RESTORE_CONFLICT, 'workspace_restore_recovery_incomplete', 'Workspace restore recovery requires attention.');
       }
@@ -668,7 +636,7 @@ async function stageRestore({
     });
     return { ok: true, status: 'restart_required', operationId, fingerprint: journal.fingerprint };
   } catch (error) {
-    await fs.promises.rm(stagePath, { recursive: true, force: true }).catch(() => {});
+    await removeTree(stagePath).catch(() => {});
     throw error;
   }
 }
@@ -735,7 +703,7 @@ async function verifyStagedEntry(stagePath, entry) {
 function destinationForEntry(entry, { userDataPath, runtimePath, workspaceRoot, includeWorkspace }) {
   const logicalPath = validateLogicalPath(entry.logical_path);
   const [root, ...rest] = logicalPath.split('/');
-  if (root === 'sessions') return null;
+  if (root === 'sessions' || root === 'coordination') return null; // sessions import; coordination applies after them
   if (root === 'preferences') {
     if (rest.length === 1 && rest[0] === 'shell-config.json') {
       return ensureSafeDestination(userDataPath, path.join(userDataPath, 'shell-config.json'));
@@ -832,12 +800,7 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
   const manifest = journal.manifest;
   validateRestorableManifest(manifest);
   const rollbackRoot = path.join(path.dirname(userRoot), `${path.basename(userRoot)}.jenny-restore-rollback-${journal.operation_id}`);
-  const context = {
-    userDataPath: userRoot,
-    runtimePath,
-    workspaceRoot: journal.workspace_root,
-    includeWorkspace: journal.include_workspace,
-  };
+  const context = { userDataPath: userRoot, runtimePath, workspaceRoot: journal.workspace_root, includeWorkspace: journal.include_workspace };
   const actions = buildPromotionActions(manifest, context);
   runtimeBackup.assignPromotionOriginals(journal, actions);
   runtimeBackup.assignRuntimeBackups(actions, journal, runtimePath);
@@ -845,7 +808,7 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
   if (fs.existsSync(activeMarkerPath)) {
     const active = restorePreferences.readBoundedJson(activeMarkerPath);
     if (active.operation_id === journal.operation_id && active.status === 'promoted') {
-      fs.rmSync(pointerPath, { force: true });
+      removeFileSync(pointerPath);
       return { ok: true, status: 'promoted', operationId: journal.operation_id };
     }
   }
@@ -878,6 +841,7 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
     ensureSafeDestination(userRoot, path.join(userRoot, 'sessions.json'));
     ensureSafeDestination(userRoot, path.join(userRoot, 'attachments'));
     stores = createRestoreStores(userRoot, nativeImage);
+    const coordination = await coordinationArchive.loadStagedCoordination(manifest, (entry) => verifyStagedEntry(stagePath, entry));
     for (const entry of manifest.entries) {
       const sourcePath = assertSafeStagedSource(
         stagePath,
@@ -897,12 +861,11 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
         importSession(stores.sessionStore, sessionBytes.toString('utf8'), stores.attachmentStore, {
           trustedArchive: true,
           restoredSessionId: entry.restore_metadata?.session_id,
+          restoredIncarnation: coordinationArchive.restoredIncarnationFor(coordination, entry.restore_metadata?.session_id),
         });
         continue;
       }
-      const targetPath = destinationForEntry(entry, {
-        ...context,
-      });
+      const targetPath = destinationForEntry(entry, context);
       if (!targetPath) continue;
       const ownerRoot = entry.logical_path.startsWith('workspace/')
         ? journal.workspace_root
@@ -926,11 +889,14 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
         throw archiveError(DATA_ERROR_CODES.ARCHIVE_CORRUPT, 'archive_checksum_failed', 'Restored entry failed verification.');
       }
     }
-    // The app opens its own store on this profile next: this one must be closed
-    // (flushed, complete chat files, no timers) before the restore is promoted.
+    const coordinationReport = coordinationArchive.applyCoordination(stores.sessionStore, coordination);
+    // The app opens its own store next: close this one (flushed, complete chat files, no timers) before promotion.
     const restoredStore = stores.sessionStore;
     stores = null;
     restoredStore.dispose();
+    // Caches built for the pre-restore profile are stale; the sidecar (not yet
+    // started at promotion) rebuilds them. Never throws; reports reason codes.
+    const derivedIndexes = removeDerivedIndexFiles(userRoot);
     writeJsonAtomic(activeMarkerPath, {
       schema_version: RESTORE_SCHEMA_VERSION,
       operation_id: journal.operation_id,
@@ -941,8 +907,10 @@ async function promotePendingRestore({ userDataPath, runtimePath = '', nativeIma
       rollback_runtime_inode: journal.rollback_runtime_inode,
       status: 'promoted',
     });
-    fs.rmSync(pointerPath, { force: true });
-    return { ok: true, status: 'promoted', operationId: journal.operation_id };
+    removeFileSync(pointerPath);
+    return {
+      ok: true, status: 'promoted', operationId: journal.operation_id, coordination: coordinationReport, derivedIndexes,
+    };
   } catch (error) {
     try {
       stores?.sessionStore.dispose();
@@ -991,10 +959,10 @@ async function finalizeRestoredBoot(userDataPath, { runtimePath = '' } = {}) {
       throw archiveError(DATA_ERROR_CODES.UNSAFE_PATH, 'unsafe_restore_path', 'Restore cleanup path is unsafe.');
     }
   }
-  await fs.promises.rm(rollbackRoot, { recursive: true, force: true });
-  if (runtimeRollbackRoot) await fs.promises.rm(runtimeRollbackRoot, { recursive: true, force: true });
-  await fs.promises.rm(stagePath, { recursive: true, force: true });
-  await fs.promises.rm(markerPath, { force: true });
+  await removeTree(rollbackRoot);
+  if (runtimeRollbackRoot) await removeTree(runtimeRollbackRoot);
+  await removeTree(stagePath);
+  await removeFile(markerPath);
   return true;
 }
 

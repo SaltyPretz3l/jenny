@@ -20,6 +20,7 @@ from sidecar.ai.engines.http_utils import (
     raise_if_cancelled as _raise_if_cancelled_shared,
 )
 from sidecar.ai.engines.http_utils import register_cancel_callback
+from sidecar.ai.engines.ollama_stream_transport import force_close_socket
 from sidecar.ai.error_codes import (
     CMP_CLOUD_HTTP_ERROR,
     CMP_CLOUD_NETWORK_ERROR,
@@ -227,6 +228,47 @@ class ProviderHttpService:
             timeout=timeout,
         )
 
+    def post_json_interruptible(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        cancel_handle: Any,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """POST JSON over a one-shot connection that a cancel severs at any point.
+
+        ``post_json`` can close a cancelled response only once its headers have
+        arrived, and a non-streaming completion sends none until generation
+        ends. This call opens a private connection (same base URL, headers,
+        timeout and TLS policy) and the cancel force-closes its socket, so the
+        server sees the disconnect even while it is still prefilling. The
+        pooled client is never closed: an httpx.Client cannot be reopened.
+        """
+        _raise_if_cancelled(cancel_handle, self._provider)
+        severer = _SocketSeverer()
+        client = httpx.Client(
+            base_url=self._client.base_url,
+            timeout=self._client.timeout,
+            headers=self._client.headers,
+            verify=_shared_ssl_context(),
+        )
+        unregister_cancel = register_cancel_callback(cancel_handle, severer.sever)
+        try:
+            return self._request_json(
+                "POST",
+                path,
+                payload=payload,
+                query=None,
+                cancel_handle=cancel_handle,
+                timeout=timeout,
+                client=client,
+                extensions={"trace": severer.trace},
+            )
+        finally:
+            unregister_cancel()
+            client.close()
+
     def _request_json(
         self,
         method: str,
@@ -236,6 +278,8 @@ class ProviderHttpService:
         query: dict[str, str] | None,
         cancel_handle: Any,
         timeout: float | None = None,
+        client: httpx.Client | None = None,
+        extensions: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         _raise_if_cancelled(cancel_handle, self._provider)
         try:
@@ -246,6 +290,8 @@ class ProviderHttpService:
                 query=query,
                 cancel_handle=cancel_handle,
                 timeout=timeout,
+                client=client,
+                extensions=extensions,
             )
         except (httpx.TimeoutException, httpx.TransportError) as error:
             _raise_if_cancelled(cancel_handle, self._provider)
@@ -265,15 +311,20 @@ class ProviderHttpService:
         query: dict[str, str] | None,
         cancel_handle: Any = None,
         timeout: float | None = None,
+        client: httpx.Client | None = None,
+        extensions: dict[str, Any] | None = None,
     ) -> httpx.Response:
         request_kwargs: dict[str, Any] = {"params": query}
         if method != "GET":
             request_kwargs["json"] = payload
         if timeout is not None:
             request_kwargs["timeout"] = timeout
+        if extensions is not None:
+            request_kwargs["extensions"] = extensions
+        http_client = self._client if client is None else client
         try:
             _raise_if_cancelled(cancel_handle, self._provider)
-            with self._client.stream(method, path, **request_kwargs) as response:
+            with http_client.stream(method, path, **request_kwargs) as response:
                 unregister_cancel = _register_response_cancel_callback(
                     cancel_handle, response
                 )
@@ -327,6 +378,37 @@ class ProviderHttpService:
                 retryable=False,
                 classification="response_too_large",
             ) from error
+
+class _SocketSeverer:
+    """Record a one-shot connection's sockets (httpcore trace) and close them on cancel."""
+
+    _SOCKET_EVENTS = frozenset({"connection.connect_tcp.complete", "connection.start_tls.complete"})
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._sockets: list[Any] = []
+        self._severed = False
+
+    def trace(self, event: str, info: dict[str, Any]) -> None:
+        if event not in self._SOCKET_EVENTS:
+            return
+        get_extra_info = getattr(info.get("return_value"), "get_extra_info", None)
+        sock = get_extra_info("socket") if callable(get_extra_info) else None
+        if sock is None:
+            return
+        with self._lock:
+            self._sockets.append(sock)
+            severed = self._severed
+        if severed:  # The cancel ran while this connection was being opened.
+            force_close_socket(sock)
+
+    def sever(self) -> None:
+        with self._lock:
+            self._severed = True
+            sockets = list(self._sockets)
+        for sock in sockets:
+            force_close_socket(sock)
+
 
 def _register_response_cancel_callback(cancel_handle: Any, response: Any) -> Any:
     def _close() -> None:

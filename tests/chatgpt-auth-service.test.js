@@ -6,6 +6,10 @@ const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const test = require('node:test');
+const { holdEventLoopUntilTestsFinish } = require('./helpers/event-loop-hold');
+
+// Service wait timers are unref'd on purpose; Node 22's runner would drain the loop under them.
+holdEventLoopUntilTestsFinish(test);
 const assert = require('node:assert/strict');
 
 const {

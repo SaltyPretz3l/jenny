@@ -14,13 +14,15 @@ from scripts.dev.memory_store_doctor import (
 )
 from sidecar.ai.memory.store import MemoryStore
 from sidecar.ai.memory.store_migrations import MAX_QUARANTINE_ROWS, SCHEMA_VERSION
+from tests.sidecar.ai.memory.memory_v9_helpers import forget_row, save_row
 
 
 def test_doctor_inspection_is_read_only_and_content_free(tmp_path: Path) -> None:
     db_path = tmp_path / "memory.db"
     store = MemoryStore(db_path)
     try:
-        store.save_memory(
+        save_row(
+            store,
             session_id="session",
             title="Secret title",
             lesson_text="The user prefers confidential tea.",
@@ -36,8 +38,40 @@ def test_doctor_inspection_is_read_only_and_content_free(tmp_path: Path) -> None
 
     assert result["schema_version"] == SCHEMA_VERSION
     assert result["counts"]["approved"] == 1
+    assert {key: result["counts"][key] for key in ("active", "archived", "operations")} == {
+        "active": 1,
+        "archived": 0,
+        "operations": 1,
+    }
+    assert "extraction_runs" not in result["counts"]
+    assert result["counts"]["vectors"] == 0
     assert "confidential" not in json.dumps(result)
     assert db_path.read_bytes() == before
+
+
+def test_doctor_counts_archived_memories_separately(tmp_path: Path) -> None:
+    db_path = tmp_path / "memory.db"
+    store = MemoryStore(db_path)
+    try:
+        for lesson in ("The user prefers tea.", "The user prefers jazz."):
+            save_row(
+                store,
+                session_id="session",
+                title="Preference",
+                lesson_text=lesson,
+                lesson_kind="preference",
+                confidence=0.9,
+                source_excerpt="",
+            )
+        assert forget_row(store, store.get_all_memories()[0].id).status == "saved"
+    finally:
+        store.close()
+
+    counts = inspect_store(db_path)["counts"]
+
+    assert (counts["approved"], counts["active"], counts["archived"]) == (2, 1, 1)
+    assert counts["suppressions"] == 1
+    assert counts["operations"] == 3  # noqa: PLR2004 - two remembers and one forget.
 
 
 def test_doctor_repairs_require_and_create_backup(tmp_path: Path) -> None:

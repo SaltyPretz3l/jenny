@@ -47,7 +47,7 @@
   var PROSE_ROW_KINDS = { '': 1, assistant_text: 1, user_bubble: 1, slash_output: 1 };
   // Messages whose rows are not the Markdown rendering of their content.
   var NON_MARKDOWN_MESSAGE_KINDS = {
-    tool_use: 1, tool_result: 1, interactive_round_recap: 1, proactive_suggestion: 1, slash_command_output: 1,
+    tool_use: 1, tool_result: 1, interactive_round_recap: 1, proactive_suggestion: 1, slash_command_output: 1, memory_note: 1,
   };
 
   function buildPattern(query, options) {
@@ -271,7 +271,7 @@
       var role = String(message.role || '').trim();
       var kind = String(message.kind || '').trim();
       if (role === 'user') turnOwnerId = '';
-      if (role === 'assistant' && kind !== 'interactive_round_recap' && kind !== 'slash_command_output' && !turnOwnerId) {
+      if (role === 'assistant' && kind !== 'interactive_round_recap' && kind !== 'slash_command_output' && kind !== 'memory_note' && !turnOwnerId) {
         turnOwnerId = messageId;
       }
       var articleOwnerId = role === 'assistant' && turnOwnerId ? turnOwnerId : messageId;

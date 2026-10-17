@@ -9,6 +9,8 @@
 
   var badge = root.inventoryBadge;
   var spinner = root.inventorySpinner;
+  var stateIcon = root.inventoryStateIcon;
+  var emptyNote = root.inventoryEmptyNote;
   var collapsible = root.inventoryCollapsible;
   var codeBlock = root.inventoryCodeBlock;
   var faviconBadge = root.inventoryFaviconBadge;
@@ -52,8 +54,11 @@
   var settingsField = root.inventorySettingsField;
 
   var inventory = {
+    resizableDivider: root.inventoryResizableDivider,
     badge: badge,
     spinner: spinner,
+    stateIcon: stateIcon,
+    emptyNote: emptyNote,
     collapsible: collapsible,
     codeBlock: codeBlock,
     faviconBadge: faviconBadge,

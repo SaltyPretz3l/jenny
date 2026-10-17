@@ -21,6 +21,8 @@ from sidecar.ai.tools.workspace_restore import (
     _load_record,
     _plan_staging,
     _preflight_conflicts,
+    _safe_path,
+    _signature,
     _sync_retention,
     _utc_now,
     _verify_recovery_objects,
@@ -58,8 +60,10 @@ def reapply_change_set(
             "Workspace recovery is blocked while another change set is active.",
             details={"status": "busy"},
         )
-    if restore["protected_occupants"]:
-        # Re-arming would drop the copies this undo kept of what it replaced.
+    # Re-arming drops the copies this undo kept of what it replaced, so each
+    # protected file must already be back on disk (the Redo safety copy).
+    protected = _protected_paths(root, record)
+    if protected is None:
         raise WorkspaceRestoreError(
             "reapply_protected_occupants",
             "This undo protected files it replaced, so it cannot be re-applied.",
@@ -93,7 +97,7 @@ def reapply_change_set(
     cast(dict[str, Any], rearmed["wall_time"])["updated_at"] = now
     _verify_recovery_objects(root, rearmed)
     plan = _inverse_plan(rearmed)
-    mismatched = _reapply_mismatches(root, plan, _plan_staging(root, rearmed, plan))
+    mismatched = _reapply_mismatches(root, plan, _plan_staging(root, rearmed, plan), set(protected))
     if mismatched:
         raise WorkspaceRestoreError(
             "reapply_state_mismatch",
@@ -105,25 +109,51 @@ def reapply_change_set(
     return _change_set_summary(rearmed)
 
 
+def _protected_paths(root: Path, record: Mapping[str, Any]) -> dict[str, PathSignature] | None:
+    """Each protected occupant's path, when it holds that occupant's bytes again; else None."""
+    steps = [cast(Mapping[str, Any], item["step"]) for item in _inverse_plan(record)]
+    paths: dict[str, PathSignature] = {}
+    for occupant in cast(list[dict[str, Any]], record["restore"]["protected_occupants"]):
+        object_id = str(occupant["object_id"])
+        step = next(
+            (item for item in steps if f"-{str(item['step_id']).replace('.', '-')}-" in object_id),
+            None,
+        )
+        if step is None:
+            return None
+        relative = cast(str, step["to_relative_path"] or step["from_relative_path"])
+        expected = PathSignature.from_mapping(occupant["signature"])
+        if _signature(_safe_path(root, relative)) != expected:
+            return None
+        paths[relative] = expected
+    return paths
+
+
 def _reapply_mismatches(
-    root: Path, plan: Sequence[Mapping[str, Any]], staging: Sequence[Mapping[str, Any]]
+    root: Path,
+    plan: Sequence[Mapping[str, Any]],
+    staging: Sequence[Mapping[str, Any]],
+    protected: set[str],
 ) -> list[str]:
     """Paths where the disk is not the change set's post-apply state.
 
     Stricter than the undo preflight: a restore_object target must hold the
-    exact post-apply signature, where undo accepts a missing target.
+    exact post-apply signature, where undo accepts a missing target. A
+    ``protected`` path holds the occupant the undo replaced (checked by the
+    caller): re-armed, it reads as that same conflict again.
     """
     paths = {
         cast(str, conflict["relative_path"])
         for conflict in _preflight_conflicts(root, plan, staging)
-    }
+    } - protected
     virtual: dict[str, PathSignature] = {}
     for item in plan:
         step = cast(Mapping[str, Any], item["step"])
         if step["kind"] == "restore_object":
             destination = cast(str, step["to_relative_path"] or "")
             expected = PathSignature.from_mapping(step["expected_current_signature"])
-            if _virtual_signature(root, virtual, destination) != expected:
+            current = _virtual_signature(root, virtual, destination)
+            if destination not in protected and current != expected:
                 paths.add(destination)
         _apply_virtual_inverse(root, virtual, step)
     return sorted(paths)

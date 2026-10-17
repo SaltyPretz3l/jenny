@@ -1,5 +1,6 @@
 const path = require('path');
 const { sameLocalOrigin } = require('../local-origin');
+const { managedServerAlias, managedServerApiKey, ninferManagedOrigin, resolveManagedServerOwner } = require('./managed-server-owner');
 const { chatgptModelsEnabled } = require('./chatgpt-models-enabled');
 
 const {
@@ -563,6 +564,8 @@ const HOSTED_TOOL_CAPABILITY_POLICY = Object.freeze({
   tools_home_enabled: false,
   tools_task_board_enabled: false,
   tools_project_notes_enabled: false,
+  tools_memory_enabled: false,
+  tools_conversations_enabled: false,
   tools_rich_files_enabled: false,
   tools_knowledge_enabled: false,
   tools_shell_enabled: false,
@@ -584,16 +587,14 @@ function resolveManagedConfiguredModel(service) {
   }
   const engineType = service.currentEngineType
     || inferEngineTypeFromModel(service.currentModel || service.defaultModel);
-  const manager = engineType === 'openai-compatible'
-    ? service.options?.getLlamaServerManager?.() || null
-    : null;
-  const llamaServerStatus = manager?.getStatus?.();
-  const llamaServerAlias = String(llamaServerStatus?.alias || '').trim();
-  // Only the endpoint that IS the managed server takes its alias; a user's own
-  // openai-compatible endpoint keeps the model it was configured with.
-  if (llamaServerStatus?.state === 'ready' && llamaServerAlias
-    && sameLocalOrigin(resolveOpenAICompatibleApiUrl(service), manager.getBaseUrl?.())) {
-    return llamaServerAlias;
+  // Only the endpoint that IS a managed server (llama-server or NInfer) takes
+  // its alias; a user's own openai-compatible endpoint keeps the model it was
+  // configured with (managed-server-owner.js).
+  const managedAlias = engineType === 'openai-compatible'
+    ? managedServerAlias(service, resolveOpenAICompatibleApiUrl(service))
+    : '';
+  if (managedAlias) {
+    return managedAlias;
   }
   const configuredDefaultModel = String(service.defaultModel || '').trim();
   const inferredDefaultEngine = inferEngineTypeFromModel(configuredDefaultModel);
@@ -655,6 +656,11 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
   const cloudLoopProfile = getConfiguredCloudLoopProfile(service);
   const config = {
     engine_type: engineType,
+    managed_prefill_progress: !hostedEndpoint && engineType === 'openai-compatible'
+      && service.featureFlags?.prefill_progress === true
+      && service.options?.getLlamaServerManager?.()?.supportsPrefillProgress?.() === true
+      && sameLocalOrigin(resolveOpenAICompatibleApiUrl(service),
+        service.options?.getLlamaServerManager?.()?.getBaseUrl?.()),
     model: configuredModel,
     // Ollama keeps the deliberate VRAM-conscious shell clamp. Every other
     // engine reports its own window (or uses the sidecar's bounded fallback).
@@ -688,6 +694,10 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     tools_home_enabled: service.featureFlags?.tools_home_enabled === true,
     tools_task_board_enabled: service.featureFlags?.tools_task_board_enabled === true,
     tools_project_notes_enabled: service.featureFlags?.tools_project_notes_enabled === true,
+    tools_memory_enabled: service.featureFlags?.memory_v2_enabled === true,
+    tools_conversations_enabled: service.featureFlags?.memory_v2_enabled === true,
+    memory_hybrid_recall_enabled: service.featureFlags?.memory_hybrid_recall === true,
+    json_schema_response_format: engineType === 'openai-compatible' && resolveManagedServerOwner(service, resolveOpenAICompatibleApiUrl(service))?.kind === 'llama-server', // Reflection's json_schema: managed llama-server only, never NInfer.
     tools_subagents_enabled: getConfiguredToolsSubagentsEnabled(service),
     tools_rich_files_enabled: getConfiguredToolsRichFilesEnabled(service),
     tools_image_read_enabled: getConfiguredToolsImageReadEnabled(service),
@@ -757,6 +767,8 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     electron_state_root: service.options.userDataPath,
     electron_shell_config_path: path.join(service.options.userDataPath, 'shell-config.json'),
     electron_sessions_path: path.join(service.options.userDataPath, 'sessions.json'),
+    owned_process_ledger_path: path.join(service.options.userDataPath, 'owned-processes.json'),
+    owned_process_handoff: service.sidecarManager?.ownedProcessHandoff || null,
     electron_tool_permissions_path: path.join(service.options.userDataPath, 'tool-permissions.json'),
     memory_db_path: service.hostMode === 'server' && service.options.memoryPath
       ? service.options.memoryPath : path.join(service.options.userDataPath, 'sidecar-memory.db'),
@@ -798,6 +810,10 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
   // model key, prompt templates). Enabled only while the embedder is ready.
   if (typeof service.semanticCatalogService?.getSidecarConfig === 'function') {
     Object.assign(config, service.semanticCatalogService.getSidecarConfig());
+  }
+  // Row 58 W4: the sidecar-owned derived index of past chats (desktop only).
+  if (service.featureFlags?.memory_v2_enabled === true && service.hostMode !== 'server') {
+    config.conversation_index = { enabled: true, db_path: path.join(service.options.userDataPath, 'conversation-index.db') };
   }
   if (service.mcpDiscoveryService && typeof service.mcpDiscoveryService.getSidecarConfig === 'function') {
     Object.assign(config, service.mcpDiscoveryService.getSidecarConfig());
@@ -901,12 +917,17 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
   return config;
 }
 
-// The api_url the sidecar's openai-compatible engine will talk to: an
-// explicit endpoint wins, otherwise the configured local port.
+// The api_url the sidecar's openai-compatible engine will talk to: a hosted
+// endpoint wins, then a serving NInfer (its own port, while it is the active
+// managed server), then an explicit endpoint, otherwise the configured port.
 function resolveOpenAICompatibleApiUrl(service) {
   const hostedEndpoint = getHostedModelEndpoint(service);
   if (hostedEndpoint?.engine === 'openai-compatible' && hostedEndpoint.apiUrl) {
     return String(hostedEndpoint.apiUrl).trim();
+  }
+  const ninferOrigin = ninferManagedOrigin(service);
+  if (ninferOrigin) {
+    return ninferOrigin;
   }
   const openaiCompatState = getConfiguredLocalOpenAICompatibleState(service);
   const explicitUrl = typeof openaiCompatState?.apiUrl === 'string'
@@ -958,12 +979,11 @@ function buildManagedSidecarSecrets(service, { telemetrySettings = null } = {}) 
     Object.assign(secrets, service.semanticCatalogService.getSidecarSecrets());
   }
   if (service.currentEngineType === 'openai-compatible') {
-    // The key belongs to the managed llama-server process only. The engine's
-    // api_url may point at a user-run server (explicit apiUrl, or a different
-    // port), which must never receive Jenny's key.
-    const manager = service.options?.getLlamaServerManager?.();
-    const apiKey = typeof manager?.getApiKey === 'function' ? String(manager.getApiKey() || '') : '';
-    if (apiKey && sameLocalOrigin(resolveOpenAICompatibleApiUrl(service), manager.getBaseUrl?.())) {
+    // The key belongs to the managed server process only (llama-server or
+    // NInfer). The engine's api_url may point at a user-run server (explicit
+    // apiUrl, or a different port), which must never receive Jenny's key.
+    const apiKey = managedServerApiKey(service, resolveOpenAICompatibleApiUrl(service));
+    if (apiKey) {
       secrets.openai_compatible_api_key = apiKey;
     }
   }

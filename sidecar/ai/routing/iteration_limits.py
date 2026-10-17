@@ -297,6 +297,23 @@ def _safe_positive_float(value: Any, default: float) -> float:
     return parsed
 
 
+def _mcp_row_request_timeout(config: Any, tool_id: str) -> float:
+    """Return the explicit ``request_timeout_seconds`` of the external row owning ``tool_id``.
+
+    A row left at the dataclass default is treated as unset (0.0), so it never
+    raises a lower global tool timeout. The builtin server is never a row match.
+    """
+    from sidecar.ai.config_models import MCPServerConfig
+    from sidecar.ai.mcp.tool_namespace import is_external_mcp_tool_of_server
+
+    timeout = 0.0
+    for row in getattr(config, "mcp_servers", None) or ():
+        if (is_external_mcp_tool_of_server(row.name, tool_id)
+                and row.request_timeout_seconds != MCPServerConfig.request_timeout_seconds):
+            timeout = max(timeout, float(row.request_timeout_seconds))
+    return timeout
+
+
 def tool_timeout_for_runtime(config: Any, runtime: Any | None, call: Any | None) -> float | None:
     configured_timeout = effective_tools_execution_timeout_seconds(
         config
@@ -322,6 +339,8 @@ def tool_timeout_for_runtime(config: Any, runtime: Any | None, call: Any | None)
             )
     if call is not None and call.tool_id == "image_generate":
         configured_timeout = max(configured_timeout, IMAGE_GENERATE_TIMEOUT_SECONDS)
+    if call is not None and str(call.tool_id).startswith("mcp__"):
+        configured_timeout = max(configured_timeout, _mcp_row_request_timeout(config, call.tool_id))
     if runtime is None:
         return configured_timeout
     remaining = runtime.remaining_wall_clock_seconds()

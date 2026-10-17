@@ -9,6 +9,7 @@ const {
   normalizeTerminalStatus,
 } = require('./backend/generated-chat-lifecycle-contract');
 const { normalizeText } = require('./shared/normalize');
+const { boundInferencePerformance } = require('./performance/performance-contract');
 
 const USAGE_HISTORY_SCHEMA_VERSION = 2;
 const USAGE_HISTORY_FILE = 'usage-history.json';
@@ -114,6 +115,11 @@ function buildRecordId(_sessionId, streamId, requestId) {
   return '';
 }
 
+function inferencePerformanceField(value) {
+  const bounded = value === undefined || value === null ? null : boundInferencePerformance(value);
+  return bounded ? { inference_performance: bounded } : {};
+}
+
 function normalizeTurnRow(value, { nowIso = '', requireTimestamp = true } = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const sessionId = boundedText(source.session_id || source.sessionId, MAX_ID_CHARS);
@@ -156,6 +162,8 @@ function normalizeTurnRow(value, { nowIso = '', requireTimestamp = true } = {}) 
     ),
     estimated: source.estimated === true,
     ...cost,
+    // Bounded terminal inference summaries (<= 32, <= 16 KiB) from the performance intake.
+    ...inferencePerformanceField(source.inference_performance),
   };
 }
 
@@ -321,8 +329,14 @@ function buildTotals(rows) {
   return totals;
 }
 
+// Snapshot and export rows leave the per-row inference summaries on disk: they are
+// diagnostic detail, and up to 16 KiB each must not ride every usage IPC payload.
 function cloneRows(rows) {
-  return rows.map((row) => ({ ...row }));
+  return rows.map((row) => {
+    const copy = { ...row };
+    delete copy.inference_performance;
+    return copy;
+  });
 }
 
 class UsageHistoryService extends EventEmitter {
@@ -485,6 +499,7 @@ class UsageHistoryService extends EventEmitter {
       terminal_type: metadata.terminalType || metadata.terminal_type,
       outcome: metadata.outcome,
       outcome_detail: metadata.outcomeDetail || metadata.outcome_detail,
+      inference_performance: metadata.inferencePerformance ?? metadata.inference_performance,
       duration_ms: metadata.durationMs ?? metadata.duration_ms,
       model: usage.model || metadata.model,
       recorded_at: nowIso,

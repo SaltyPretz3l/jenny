@@ -679,6 +679,8 @@ def _stream_generate_with_tools(
         transition_phase(None)
         return GenerationResult(content=synthetic, finish_reason="error"), emitted_event_types
     cleanup_reason = "provider_exit"
+    from sidecar.ai.routing.inference_performance import GenerationStatus
+    prefill_status = GenerationStatus(runtime, thinking_id)
     try:
         stream_reader.abort_transport = abort_transport
         stream_queue = stream_reader.queue
@@ -704,7 +706,8 @@ def _stream_generate_with_tools(
                 _ENGINE_LIVENESS_RECHECK_SECONDS if liveness_deferrals else base_window
             )
             now = time.monotonic()
-            wait_timeout = max(0.001, next_watchdog_at - now)
+            prefill_status.flush(now)
+            wait_timeout = prefill_status.wait_timeout(now, max(0.001, next_watchdog_at - now))
             remaining_deadline = runtime.remaining_wall_clock_seconds(now=now)
             if remaining_deadline is not None:
                 wait_timeout = min(wait_timeout, max(0.001, remaining_deadline))
@@ -797,6 +800,14 @@ def _stream_generate_with_tools(
                     content=synthetic,
                     finish_reason="timeout",
                 ), emitted_event_types
+            is_prefill, moved = prefill_status.accept(chunk, time.monotonic())
+            if is_prefill:
+                if moved:
+                    # Prefill is still before the first token; keep that window and label.
+                    silence_started = time.monotonic()
+                    next_watchdog_at = silence_started + model_load_grace
+                    liveness_deferrals = 0
+                continue
             # Any item (delta, tool boundary, terminal, or failure) means the model
             # is alive: every subsequent wait reverts to the inactivity window.
             received_first_chunk = True
@@ -840,32 +851,10 @@ def _stream_generate_with_tools(
                         result,
                         thinking_text="".join(thinking_parts).strip(),
                     )
-                if result.tool_calls:
-                    canonical_calls, coerced_aliases, coalesced_count = (
-                        _tool_call_canonicalization.canonicalize_tool_calls(
-                            result.tool_calls
-                        )
-                    )
-                    if canonical_calls != result.tool_calls:
-                        result = replace(
-                            result,
-                            tool_calls=canonical_calls,
-                        )
-                    if coerced_aliases or coalesced_count:
-                        _gr_hub.log_event(
-                            logger,
-                            logging.INFO,
-                            component="ai.router",
-                            event="ai.router.tool_calls_canonicalized",
-                            message="Canonicalized model tool calls before dispatch.",
-                            status="recovered",
-                            data={
-                                "aliases": coerced_aliases,
-                                "coalesced_count": coalesced_count,
-                                "remaining_count": len(result.tool_calls),
-                            },
-                            request_id=getattr(runtime, "request_id", ""),
-                        )
+                result = _tool_call_canonicalization.canonicalize_generation_result(
+                    result, request_id=getattr(runtime, "request_id", ""),
+                    log_event=_gr_hub.log_event, logger=logger,
+                )
                 # Two terminal-shape fail-closed signals: ``finish_reason ==
                 # "tool_calls"`` with no parsed tool_calls (the normalizer
                 # suppressed them as malformed), and reasoning-only completions
@@ -1007,6 +996,8 @@ def _stream_generate_with_tools(
             thinking_text="".join(thinking_parts).strip(),
         ), emitted_event_types
     finally:
+        with suppress(Exception):  # Cleanup must preserve the original provider failure.
+            prefill_status.finish(cleanup_reason)
         # Retire or quarantine the producer before the wrapper detaches its child.
         # A terminal producer is finishing on its own: join before aborting it.
         if cleanup_reason == "provider_terminal":

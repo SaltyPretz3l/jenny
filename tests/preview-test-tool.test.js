@@ -19,6 +19,10 @@ const {
   makeWorkspace,
   stubService,
 } = require('./helpers/preview-test-tool-fixture');
+const { holdEventLoopUntilTestsFinish } = require('./helpers/event-loop-hold');
+
+// Service wait timers are unref'd on purpose; Node 22's runner would drain the loop under them.
+holdEventLoopUntilTestsFinish(test);
 
 test.afterEach(async () => {
   await cleanupTrackedResources();

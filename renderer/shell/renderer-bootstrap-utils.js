@@ -36,6 +36,9 @@
     || (typeof require === 'function' ? require('../inventory/select-field') : null);
   const inventoryTextField = globalRoot?.inventoryTextField
     || (typeof require === 'function' ? require('../inventory/text-field') : null);
+  const inventoryStateIcon = globalRoot?.inventoryStateIcon
+    || (typeof require === 'function' ? require('../inventory/state-icon') : null);
+  const escapeHtml = (globalRoot?.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   const normalizeRunMode = settingsSupport.normalizeRunMode;
   const normalizeUiLanguageTag = settingsSupport.normalizeUiLanguageTag;
@@ -46,16 +49,30 @@
   function renderDiagnosticsControls(documentRef) {
     const put = (id, markup) => { const host = documentRef.getElementById(id); if (host && !host.firstElementChild) host.innerHTML = markup; };
     if (typeof inventorySelectField === 'function') {
-      put('diagnosticsRunControl', inventorySelectField({ id: 'diagnosticsRunSelect', label: jt('shell.bootstrap.diagnostics.evidenceWindow', 'Evidence window'), ariaLabel: jt('shell.bootstrap.diagnostics.run', 'Diagnostic run'), options: [{ value: '', label: jt('shell.bootstrap.diagnostics.thisLaunch', 'This app launch') }] }));
-      put('diagnosticsLevelControl', inventorySelectField({ id: 'logLevelFilter', label: jt('shell.bootstrap.diagnostics.severity', 'Severity'), options: ['all', 'error', 'warn', 'info', 'debug'].map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) })) }));
-      put('diagnosticsSourceControl', inventorySelectField({ id: 'logSourceFilter', label: jt('shell.bootstrap.diagnostics.source', 'Source'), options: ['all', 'electron', 'renderer', 'sidecar'].map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) })) }));
+      // The launch picker's options are painted by the Diagnostics frame once the first snapshot names the launches.
+      put('diagnosticsRunControl', inventorySelectField({ id: 'diagnosticsRunSelect', label: jt('shell.bootstrap.diagnostics.launch', 'Launch'), options: [{ value: '', label: jt('shell.bootstrap.diagnostics.thisLaunchShort', 'This launch') }] }));
+      put('diagnosticsLevelControl', inventorySelectField({ id: 'logLevelFilter', label: jt('shell.bootstrap.diagnostics.severity', 'Severity'), options: [
+        { value: 'all', label: jt('shell.bootstrap.diagnostics.allSeverities', 'All severities') },
+        { value: 'error', label: jt('shell.bootstrap.diagnostics.errors', 'Errors') },
+        { value: 'warn', label: jt('shell.bootstrap.diagnostics.warnings', 'Warnings') },
+        { value: 'info', label: jt('shell.bootstrap.diagnostics.info', 'Info') },
+        { value: 'debug', label: jt('shell.bootstrap.diagnostics.debug', 'Debug') },
+      ] }));
+      put('diagnosticsSourceControl', inventorySelectField({ id: 'logSourceFilter', label: jt('shell.bootstrap.diagnostics.source', 'Source'), options: [
+        { value: 'all', label: jt('shell.bootstrap.diagnostics.allSources', 'All sources') },
+        { value: 'electron', label: jt('diagnostics.issues.area.app', 'App') },
+        { value: 'renderer', label: jt('diagnostics.issues.area.appWindow', 'App window') },
+        { value: 'sidecar', label: jt('diagnostics.issues.area.localEngine', 'Local engine') },
+      ] }));
     }
-    if (typeof inventoryTextField === 'function') put('diagnosticsSearchControl', inventoryTextField({ id: 'logSearchInput', ariaLabel: jt('shell.bootstrap.diagnostics.searchActivity', 'Search activity'), placeholder: jt('shell.bootstrap.diagnostics.searchPlaceholder', 'Search events, messages, or IDs…'), className: 'logs-search-shell' }));
+    if (typeof inventoryTextField === 'function') put('diagnosticsSearchControl', inventoryTextField({ id: 'logSearchInput', ariaLabel: jt('shell.bootstrap.diagnostics.searchActivity', 'Search activity'), placeholder: jt('shell.bootstrap.diagnostics.searchRecords', 'Search messages, events or IDs') }));
     if (typeof inventoryActionButton === 'function') {
-      put('diagnosticsCopyControl', inventoryActionButton({ id: 'copy-diagnostic-report', domId: 'copyLogsReportButton', label: jt('shell.bootstrap.diagnostics.copyReport', 'Copy diagnostic report'), className: 'page-button' }));
-      put('diagnosticsResetControl', inventoryActionButton({ id: 'reset-phase-percentiles', domId: 'phasePercentilesResetButton', label: jt('shell.bootstrap.diagnostics.resetSamples', 'Reset samples'), variant: 'ghost', size: 'sm' }));
-      put('diagnosticsRefreshControl', inventoryActionButton({ id: 'refresh-diagnostics', domId: 'observabilityRefreshButton', label: jt('common.refresh', 'Refresh'), variant: 'ghost', size: 'sm' }));
-      put('diagnosticsFollowControl', inventoryActionButton({ id: 'follow-latest', domId: 'logAutoScrollToggle', label: jt('shell.bootstrap.diagnostics.followLatest', 'Follow latest'), variant: 'ghost', size: 'sm', ariaPressed: true }));
+      const icon = (name) => (typeof inventoryStateIcon === 'function' ? inventoryStateIcon(name) : '');
+      put('diagnosticsCopyControl', inventoryActionButton({ id: 'copy-diagnostic-report', domId: 'copyLogsReportButton', label: jt('shell.bootstrap.diagnostics.copyReportShort', 'Copy report'), size: 'sm' }));
+      put('diagnosticsResetControl', inventoryActionButton({ id: 'reset-phase-percentiles', domId: 'phasePercentilesResetButton', label: jt('shell.bootstrap.diagnostics.resetTimings', 'Reset timings'), plain: true, className: 'diagnostics-text-button' }));
+      put('diagnosticsRefreshControl', inventoryActionButton({ id: 'refresh-diagnostics', domId: 'observabilityRefreshButton', label: jt('common.refresh', 'Refresh'), ariaLabel: jt('common.refresh', 'Refresh'), title: jt('common.refresh', 'Refresh'), plain: true, className: 'diagnostics-icon-button', trustedHtml: icon('refresh') }));
+      put('diagnosticsFollowControl', inventoryActionButton({ id: 'follow-latest', domId: 'logAutoScrollToggle', label: jt('shell.bootstrap.diagnostics.followLatest', 'Follow latest'), plain: true, className: 'diagnostics-follow', ariaPressed: true,
+        trustedHtml: icon('follow') + '<span>' + escapeHtml(jt('shell.bootstrap.diagnostics.followLatest', 'Follow latest')) + '</span>' }));
       put('contextPersonalityLinkHost', inventoryActionButton({ id: 'open-personality-page', label: jt('shell.bootstrap.diagnostics.openPersonality', 'Open Personality'), plain: true, className: 'settings-row-link' }));
       put('contextMemoryLinkHost', inventoryActionButton({ id: 'open-memory-page', label: jt('shell.bootstrap.diagnostics.manageRecalledMemories', 'Manage memories'), plain: true, className: 'settings-row-link' }));
     }
@@ -166,6 +183,7 @@
           historyScope: 'session',
           includePersonality: true,
           includeMemory: true,
+          memoryOptOut: false,
         },
       },
       // Personality v3: one draft object, one dirty flag, one Save.
@@ -177,10 +195,6 @@
         budgets: { personality: 1500, user: 1000, memory: 1500 },
         compiled: { text: '', chars: 0, tokensEstimate: 0, sections: [] },
       },
-      memoryContextFiles: {
-        body: '', savedBody: '', dirty: false, loading: false, saving: false, savedAt: 0,
-        budget: 1500, actionStatus: '', loadStatus: '',
-      },
       memoryManager: {
         memories: [], loading: false, loaded: false, unavailable: false,
         pendingCandidates: [],
@@ -188,8 +202,6 @@
         pendingLoaded: false,
         pendingUnavailable: false,
         pendingStatus: jt('shell.bootstrap.memoryReviewQueueSignIn', 'Open Memory while signed in to load the review queue.'),
-        pendingFilter: 'all',
-        pendingSort: 'newest',
         pendingFocusKey: '',
         pendingFocusAppliedKey: '',
         status: jt('shell.bootstrap.openMemoryForApproved', 'Open Memory while signed in to load approved memories.'),
@@ -198,15 +210,23 @@
         statusLoaded: false,
         statusUnavailable: false,
         filter: 'all',
-        projectFilter: 'all',
         projects: [],
+        // Memory page (row 58 W4): the open scope tab (until the user picks
+        // one, the first scope with rows) and the lazily loaded folds per scope.
+        scopeTab: 'project_general',
+        scopeTabChosen: false,
+        archivedByScope: new Map(),
+        operationsByScope: new Map(),
+        forgottenOpen: false,
+        historyOpen: false,
+        archivedLoading: false,
+        operationsLoading: false,
         searchQuery: '',
         editingMemoryId: null,
         draftsById: new Map(),
         pendingActionById: new Map(),
         pendingReviewActionByKey: new Map(),
         approvedVisibleLimit: 200,
-        pendingVisibleLimit: 200,
       },
       proactive: {
         loaded: false,
@@ -252,9 +272,7 @@
           pythonRuntime: false,
           todo: false,
         },
-        memory: {
-          captureSuggestions: true,
-        },
+        memory: { takeNotes: true, askBeforeSaving: false, pauseSaving: false, useInChats: true },
         featureFlags: {
           token_budget: true,
           context_compaction: true,
@@ -493,11 +511,6 @@
         personalityStatus: 'personalityStatus',
       },
       memories: {
-        memoryNotesFieldHost: 'memoryNotesFieldHost',
-        memoryNotesCounter: 'memoryNotesCounter',
-        memoryNotesLint: 'memoryNotesLint',
-        memoryNotesActions: 'memoryNotesActions',
-        memoryContextStatus: 'memoryContextStatus',
       },
       usage: {
         usageBadge: 'usageBadge',

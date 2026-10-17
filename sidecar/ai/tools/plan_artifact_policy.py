@@ -193,6 +193,9 @@ def is_plan_artifact_write_eligible(
     # The todo list is in-memory session state, never a workspace write.
     if normalized_name in {"mermaid_generate", "todo_write"}:
         return True
+    # Plan Mode may add a memory; correcting or forgetting one waits for the build.
+    if normalized_name == "memory":
+        return isinstance(arguments, dict) and arguments.get("action") == "remember"
     return normalized_name == "create_artifact" and is_safe_plan_document(arguments)
 
 

@@ -1,26 +1,49 @@
+/* Chat images: one frame for generated, attached and tool-output images. The tool cluster sits
+   on the image's corner on a fixed neutral pill (the viewer's chrome), so it reads over any image
+   in any theme; it shows on hover or keyboard focus, and always on touch. */
 .inv-artifact-figures {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 16px;
+  max-inline-size: 560px;
   padding-block: 8px;
+}
+
+.inv-artifact-figures:not(:has(> :nth-child(2))) {
+  grid-template-columns: minmax(0, 448px);
+}
+
+/* Several images side by side share the call's prompt: show it once, under the last. */
+.inv-artifact-figures:has(> :nth-child(2)) > :not(:last-child) .inv-artifact-figure-prompt {
+  display: none;
 }
 
 .inv-artifact-figure {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   margin: 0;
+  min-inline-size: 0;
   inline-size: 100%;
   max-inline-size: 448px;
 }
 
+.inv-artifact-figure-media {
+  position: relative;
+}
+
 .inv-artifact-figure-frame {
   display: block;
+  inline-size: 100%;
   padding: 0;
   border: 0;
   background: none;
   border-radius: 10px;
   cursor: zoom-in;
+}
+
+span.inv-artifact-figure-frame {
+  cursor: default;
 }
 
 .inv-artifact-figure-frame:focus-visible {
@@ -38,42 +61,137 @@
 }
 
 .inv-artifact-figure-image:not([src]) {
+  aspect-ratio: var(--inv-image-ratio, 1 / 1);
   background: var(--bg-surface-2);
-}
-
-.inv-artifact-figure-image:not([width]):not([src]),
-.inv-artifact-figure-image:not([height]):not([src]) {
-  aspect-ratio: 1 / 1;
 }
 
 .inv-artifact-figure-unavailable {
   display: none;
 }
 
-.inv-artifact-figure[data-inv-artifact-image-state="unavailable"] .inv-artifact-figure-image {
+.inv-artifact-figure[data-inv-artifact-image-state="unavailable"] .inv-artifact-figure-image,
+.inv-artifact-figure[data-inv-artifact-image-state="unavailable"] .inv-artifact-figure-actions {
   display: none;
+}
+
+.inv-artifact-figure[data-inv-artifact-image-state="unavailable"] .inv-artifact-figure-frame {
+  cursor: default;
 }
 
 .inv-artifact-figure[data-inv-artifact-image-state="unavailable"] .inv-artifact-figure-unavailable {
   display: grid;
   place-items: center;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: var(--inv-image-ratio, 1 / 1);
+  max-block-size: 280px;
   background: var(--bg-surface-2);
   border-radius: 10px;
   color: var(--text-muted);
   font-size: var(--font-size-caption);
 }
 
-.inv-artifact-figure-caption,
 .inv-artifact-figure-actions {
+  position: absolute;
+  inset-block-start: 8px;
+  inset-inline-end: 8px;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(20, 22, 28, 0.78);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.inv-artifact-figure-media:hover .inv-artifact-figure-actions,
+.inv-artifact-figure-media:focus-within .inv-artifact-figure-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .inv-artifact-figure-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.inv-artifact-figure-tool {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 30px;
+  block-size: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #e6e8ec;
+  cursor: pointer;
+}
+
+.inv-artifact-figure-tool:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.inv-artifact-figure-tool:focus-visible {
+  outline: 2px solid #9bcaff;
+  outline-offset: 0;
+}
+
+.inv-artifact-figure-tool svg {
+  inline-size: 17px;
+  block-size: 17px;
+}
+
+/* A narrow figure (a chart in a squeezed chat column) is too small for an
+ * overlay: the cluster covered its centre and a click there hit Copy instead
+ * of opening the viewer. Below 240 px the tools sit under the image. */
+.inv-artifact-figure:not(.inv-artifact-figure--attachment):not(.inv-artifact-figure--pending) {
+  container: invfigure / inline-size;
+}
+
+@container invfigure (max-width: 239px) {
+  .inv-artifact-figure-actions {
+    position: static;
+    justify-content: flex-end;
+    margin-block-start: 4px;
+    padding: 0;
+    background: none;
+    backdrop-filter: none;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .inv-artifact-figure-tool {
+    color: var(--text-muted);
+  }
+
+  .inv-artifact-figure-tool:hover {
+    background: var(--bg-surface-2);
+    color: var(--text-primary);
+  }
+
+  .inv-artifact-figure-tool:focus-visible {
+    outline-color: var(--focus-outline);
+  }
 }
 
 .inv-artifact-figure-caption {
-  justify-content: space-between;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-inline-size: 0;
+}
+
+.inv-artifact-figure-title {
+  min-inline-size: 0;
+  overflow: hidden;
+  font-weight: var(--font-weight-semibold, 600);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .inv-artifact-figure-meta {
@@ -90,9 +208,67 @@
   -webkit-line-clamp: 2;
   color: var(--text-muted);
   font-size: var(--font-size-caption);
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
+/* An attached image is the picture itself at thumbnail size, its file name under it. The figure
+   is as wide as the image (a long file name ellipsizes instead of widening it), so the tool
+   cluster stays on the image's corner. */
+.inv-artifact-figure--attachment {
+  inline-size: fit-content;
+}
+
+.inv-artifact-figure--attachment .inv-artifact-figure-caption {
+  contain: inline-size;
+}
+
+.inv-artifact-figure--attachment .inv-artifact-figure-image {
+  inline-size: auto;
+  max-inline-size: var(--inv-image-attachment-size, min(240px, 64vw));
+  max-block-size: 240px;
+  object-fit: contain;
+}
+
+.inv-artifact-figure--attachment .inv-artifact-figure-title {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 400;
+}
+
+/* Tool output (charts): height-capped, on white like the plot it usually is. */
+.inv-artifact-figure--tool {
+  max-inline-size: 520px;
+}
+
+.inv-artifact-figure--tool .inv-artifact-figure-image {
+  max-block-size: 280px;
+  object-fit: contain;
+  background: #fff;
+}
+
+/* The markdown "View image" reference to a generated image. */
+.inv-artifact-view-image {
+  padding: 4px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--bg-surface-2);
+  color: var(--accent);
+  font: inherit;
+  cursor: zoom-in;
+}
+
+.inv-artifact-view-image:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.inv-artifact-image-reference-unavailable {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+/* The pending card's Cancel. */
 .inv-artifact-figure-action {
   padding: 0;
   border: 0;
@@ -103,14 +279,15 @@
   cursor: pointer;
 }
 
-.inv-artifact-figure-action--primary {
-  color: var(--accent);
-}
-
 .inv-artifact-figure-action:hover,
 .inv-artifact-figure-action:focus-visible {
   color: var(--text-primary);
   text-decoration: underline;
+}
+
+.inv-artifact-figure-action:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .inv-artifact-figure-placeholder {
@@ -136,4 +313,94 @@
 .inv-artifact-figure-pending-note {
   color: var(--text-muted);
   font-size: var(--font-size-caption);
+}
+
+.image-edit-draft { display: flex; align-items: center; gap: 10px; padding: 8px 12px; color: var(--text-primary); }
+.image-edit-draft-preview { position: relative; width: 64px; height: 64px; flex: 0 0 64px; }
+.image-edit-draft-preview img { width: 100%; height: 100%; object-fit: contain; }
+.image-edit-draft-preview canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.image-edit-draft span { overflow-wrap: anywhere; font-size: var(--font-size-caption); }
+.image-edit-draft button { margin-inline-start: auto; }
+
+/* Generation details under an image in the artifact panel (the viewer's Details column, inline). */
+.inv-image-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--font-size-caption);
+}
+
+.inv-image-details h3 {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+}
+
+.inv-image-details-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.inv-image-details-head h3 {
+  margin: 0;
+}
+
+.inv-image-details-copy {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 26px;
+  block-size: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.inv-image-details-copy:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.inv-image-details-copy:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.inv-image-details-copy svg {
+  inline-size: 15px;
+  block-size: 15px;
+}
+
+.inv-image-details-prompt {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.inv-image-details-prompt--avoid {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.inv-image-details-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 8px 0 0;
+}
+
+.inv-image-details-facts dt {
+  color: var(--text-muted);
+}
+
+.inv-image-details-facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }

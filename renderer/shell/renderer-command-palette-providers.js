@@ -150,6 +150,11 @@
         { id: 'action:workspace', group: 'Actions', label: jt('commandPalette.actions.openWorkspace', 'Open workspace'), description: jt('commandPalette.actions.openWorkspaceDescription', 'Jump to the Workspace editor'), hint: null, run: navigateTo('ide') },
         { id: 'action:toggle-sidebar', group: 'Actions', label: jt('commandPalette.actions.toggleSidebar', 'Toggle sidebar'), description: jt('commandPalette.actions.toggleSidebarDescription', 'Collapse or expand the sidebar rail'), hint: null, run: () => { try { toggleSidebarCollapsed(); } catch (_err) { /* noop */ } } },
       ];
+      if(state.features?.featureFlags?.activity_monitor === true) items.push({id:'action:activity',group:'Actions',
+        label:jt('activity.open','Open Activity'),description:jt('activity.title','Activity'),run:()=>{
+          if(state.ui?.activeView === 'ide')globalRef.document?.querySelector('[data-wb-tab="activity"], [data-wb-strip="activity"]')?.click();
+          else {setActiveView('chat');const button=globalRef.document?.querySelector('[data-activity-open]');if(button?.getAttribute('aria-pressed')!=='true')button?.click();}
+        }});
       // Labels resolve against live state at snapshot time, so Pin/Unpin and
       // Archive/Unarchive stay truthful for the session the palette opened over.
       const sessions = Array.isArray(state.sessions) ? state.sessions : [];
@@ -241,7 +246,7 @@
         description: entry.available === false
           ? String(entry.description || '') + ' — ' + String(entry.unavailableReason || jt('commandPalette.unavailableMessage', 'Command unavailable.'))
           : String(entry.description || ''),
-        hint: entry.action === 'insert' ? jt('commandPalette.hints.insert', 'Insert') : jt('commandPalette.hints.run', 'Run'),
+        ...(entry.tag ? { tag: entry.tag } : { hint: entry.action === 'insert' ? jt('commandPalette.hints.insert', 'Insert') : jt('commandPalette.hints.run', 'Run') }),
         disabled: entry.available === false,
         unavailableReason: String(entry.unavailableReason || jt('commandPalette.unavailableMessage', 'Command unavailable.')),
         run: () => { try { (entry.action === 'insert' ? insertSlashCommand : tryExecuteSlashCommand)(String(entry.name || '')); } catch (_err) { /* noop */ } },

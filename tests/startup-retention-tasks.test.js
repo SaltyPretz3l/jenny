@@ -151,7 +151,7 @@ test('collectReferencedAttachmentAssetPaths falls back to getSessionMessages wit
   assert.deepEqual(collectReferencedAttachmentAssetPaths(store), ['C:\\assets\\legacy.png']);
 });
 
-test('the scheduled sweep retains persisted tool-event media, re-read when the stamp moves', t => {
+test('the scheduled sweep retains persisted tool-event media and re-reads after an event-only append', t => {
   const fs = require('node:fs');
   const path = require('node:path');
   const { createTrackedTempDir, cleanupTrackedResources } = require('./helpers/resource-cleanup');
@@ -203,6 +203,9 @@ test('the scheduled sweep retains persisted tool-event media, re-read when the s
   for (const asset of retained) {
     assert.equal(fs.existsSync(asset.assetPath), true, 'persisted tool-result media must survive the sweep');
   }
+  const reads = [];
+  const peek = backend.sessionStore.peekSession.bind(backend.sessionStore);
+  backend.sessionStore.peekSession = id => { reads.push(id); return peek(id); };
   const lateAsset = makeAgedAsset();
   const lateOrphan = makeAgedAsset();
   const before = backend.sessionStore.listSessions()[0];
@@ -210,15 +213,59 @@ test('the scheduled sweep retains persisted tool-event media, re-read when the s
   const after = backend.sessionStore.listSessions()[0];
   assert.equal(after.updated_at, before.updated_at);
   assert.equal(after.message_count, before.message_count);
-  // An event write does not move the stamp; a message append does, and the
-  // re-read then collects the late event ref together with the message refs.
-  backend.sessionStore.appendMessage(sessionId, { id: 'user-2', role: 'user', content: 'again' });
-  backend.sessionStore.flush();
+  // No message append: the turn-event stamp alone moves the memo stamp, so
+  // the next sweep re-reads this one session and collects the late event ref.
   intervals[0]();
-  assert.equal(fs.existsSync(lateAsset.assetPath), true, 'event refs are re-collected with the body');
+  assert.deepEqual(reads, [sessionId], 'the event-only append re-reads exactly that session');
+  assert.equal(fs.existsSync(lateAsset.assetPath), true, 'an event-only ref is collected at the next sweep');
   assert.equal(fs.existsSync(lateOrphan.assetPath), false);
   for (const asset of retained) assert.equal(fs.existsSync(asset.assetPath), true);
   assert.equal(logs.some(([level]) => level === 'WARN'), false, 'retention completed without aborting');
+});
+
+function createRealStoreWithSession(t, title) {
+  const path = require('node:path');
+  const { createTrackedTempDir, cleanupTrackedResources } = require('./helpers/resource-cleanup');
+  const { ElectronSessionStore } = require('../services/backend/electron-session-store');
+  t.after(cleanupTrackedResources);
+  const store = new ElectronSessionStore(path.join(createTrackedTempDir('jenny-retention-stamp-'), 'sessions.json'));
+  t.after(() => store.dispose());
+  const sessionId = store.createSession({ title }).id;
+  store.appendMessage(sessionId, { id: 'user-1', role: 'user', content: 'hello' });
+  const appendEvent = eventId => assert.equal(store.appendTurnEvents(sessionId, [{
+    event_id: eventId, turn_id: 'turn-1', kind: 'tool_result', tool_call_id: 'call-1', payload: {},
+  }]).ok, true);
+  return { store, sessionId, appendEvent };
+}
+
+test('getTurnEventStamp is 0 when unknown and moves only on turn-event appends', t => {
+  const { store, sessionId, appendEvent } = createRealStoreWithSession(t, 'Stamp');
+  assert.equal(store.getTurnEventStamp('no-such-session'), 0);
+  const initial = store.getTurnEventStamp(sessionId);
+  appendEvent('event-1');
+  const afterFirst = store.getTurnEventStamp(sessionId);
+  assert.ok(afterFirst > initial, 'an append moves the stamp');
+  appendEvent('event-1'); // all-duplicates: nothing new appended
+  store.setSessionMeta(sessionId, { pinned: true });
+  assert.equal(store.getTurnEventStamp(sessionId), afterFirst, 'non-event writes leave the stamp alone');
+  appendEvent('event-2');
+  assert.ok(store.getTurnEventStamp(sessionId) > afterFirst);
+});
+
+test('a real-store sweep with no turn-event or message change reads no session', t => {
+  const { store, sessionId, appendEvent } = createRealStoreWithSession(t, 'Memo');
+  const reads = [];
+  const peek = store.peekSession.bind(store);
+  store.peekSession = id => { reads.push(id); return peek(id); };
+  const cache = new Map();
+  collectReferencedAttachmentAssetPaths(store, { cache });
+  assert.deepEqual(reads, [sessionId]);
+  store.setSessionMeta(sessionId, { pinned: true }); // non-bumping, non-event write
+  collectReferencedAttachmentAssetPaths(store, { cache });
+  assert.deepEqual(reads, [sessionId], 'an unchanged stamp is served from the memo');
+  appendEvent('event-1');
+  collectReferencedAttachmentAssetPaths(store, { cache });
+  assert.deepEqual(reads, [sessionId, sessionId], 'an event-only append re-reads the session');
 });
 
 test('message tool-result refs retain every media kind and tolerate absent or malformed refs', () => {

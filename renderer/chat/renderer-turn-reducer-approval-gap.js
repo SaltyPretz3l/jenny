@@ -55,6 +55,10 @@
       throw new Error('renderer-turn-reducer-approval-gap: required deps missing');
     }
 
+    function isPlainObject(value) {
+      return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+    }
+
     function isPlainInput(value) {
       return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
         && Object.keys(value).length > 0;
@@ -115,6 +119,7 @@
       if (initialPolicyConsequence) payload.policy_consequence = initialPolicyConsequence;
       if (initialReason) payload.reason = initialReason;
       if (body.one_off_only === true || body.oneOffOnly === true || callPayload.one_off_only === true) payload.one_off_only = true;
+      if (isPlainObject(body.session_message_approval)) payload.session_message_approval = body.session_message_approval;
       const toolName = normalizeId(body.tool_name) || normalizeId(callPayload.tool_name);
       if (toolName) {
         payload.tool_name = toolName;
@@ -299,6 +304,9 @@
       }
       if (body.one_off_only === true || body.oneOffOnly === true || callPayload.one_off_only === true) {
         gapRow.payload.one_off_only = true;
+      }
+      if (!gapRow.payload.session_message_approval && isPlainObject(body.session_message_approval)) {
+        gapRow.payload.session_message_approval = body.session_message_approval;
       }
       // The plan variant usually arrives on the tool_approval_needed event
       // AFTER the pending tool_use created the gap row — stamp it on sync too

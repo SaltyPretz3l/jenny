@@ -31,6 +31,15 @@ def namespace_mcp_tool_name(server_name: str, raw_tool_name: str) -> str:
     return f"{MCP_TOOL_NAMESPACE_PREFIX}{server_component}__{tool_component}"
 
 
+def is_external_mcp_tool_of_server(server_name: str, tool_name: str) -> bool:
+    """Return True when ``tool_name`` is a namespaced tool of external server ``server_name``."""
+    if str(server_name or "").strip() == BUILTIN_MCP_SERVER_NAME:
+        return False
+    server_component = normalize_mcp_name_component(server_name, fallback="server")
+    prefix = f"{MCP_TOOL_NAMESPACE_PREFIX}{server_component}__"
+    return str(tool_name or "").strip().startswith(prefix)
+
+
 def is_namespaced_mcp_tool_name(tool_name: str) -> bool:
     return str(tool_name or "").strip().startswith(MCP_TOOL_NAMESPACE_PREFIX)
 

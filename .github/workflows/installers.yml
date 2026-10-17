@@ -1,0 +1,111 @@
+name: Installer entrypoints
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      real_install:
+        description: Download and install the latest public release on disposable runners (real-install jobs)
+        type: boolean
+        default: false
+      previous_release:
+        description: Optional stable tag such as v1.3.1 to install first so the Linux job exercises an upgrade
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  fixtures:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pytest==9.0.2
+      - name: Validate POSIX shell syntax
+        if: runner.os != 'Windows'
+        run: sh -n install.sh
+      # Fixtures need no application dependencies and never install Jenny.
+      - run: python -m pytest --noconftest -o addopts= tests/sidecar/test_install_bootstrap.py -q
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      # The export selector and its test are source-only; the public export omits both.
+      - if: hashFiles('scripts/packaging/create_github_stage.py') != ''
+        run: python -m pytest --noconftest -o addopts= tests/sidecar/test_create_github_stage.py -q
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+
+  # Real installs run only on request: each downloads and installs the latest public
+  # release on a disposable GitHub-hosted runner, never on a developer machine.
+  real-install-windows:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.real_install }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+      - run: powershell -NoProfile -File scripts/packaging/install-native-windows.ps1
+      - name: Collect the profile shell log
+        if: always()
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts\logs | Out-Null
+          $log = Join-Path $env:APPDATA 'jenny\logs\shell.log'
+          if (Test-Path -LiteralPath $log) { Copy-Item -LiteralPath $log -Destination artifacts\logs\shell.log -Force }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-install-windows-logs
+          path: artifacts/logs/
+          if-no-files-found: warn
+
+  real-install-linux:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.real_install }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          PREVIOUS_RELEASE: ${{ inputs.previous_release }}
+        run: |
+          set -eu
+          case "$PREVIOUS_RELEASE" in
+            '')
+              bash scripts/packaging/install-native-linux.sh --route all ;;
+            v[0-9]*.[0-9]*.[0-9]*)
+              bash scripts/packaging/install-native-linux.sh --route all --from-release "$PREVIOUS_RELEASE" ;;
+            *)
+              echo 'previous_release must be a stable tag such as v1.3.1' >&2
+              exit 1 ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-install-linux-logs
+          path: artifacts/logs/install-native-*.log
+          if-no-files-found: warn
+
+  real-install-macos:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.real_install }}
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh scripts/packaging/install-native-macos.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-install-macos-logs
+          path: artifacts/logs/install-native-macos*.log
+          if-no-files-found: warn

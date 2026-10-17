@@ -1,0 +1,452 @@
+/* Inline session proposal cards (row 59 checkpoints 3 and 5a-2): the Git decision tray, the
+   command card, the session offer and suggestion rows and their shared status line.
+   Markup: renderer/chat/renderer-proposal-cards.js and renderer-proposal-session-cards.js.
+   Built on the ask_user grammar (eyebrow + rule, receipt rule); no side bars. */
+
+.proposal-card {
+  position: relative;
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  max-width: min(100%, var(--chat-card-max-width));
+  padding-block: var(--space-3);
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+}
+
+/* ---------- Git decision tray: one soft tray ---------- */
+.proposal-decision {
+  gap: 0;
+  padding: var(--space-6) var(--space-7);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
+}
+
+.proposal-decision .user-questions-header {
+  margin-block-end: var(--space-4);
+  padding-inline-end: 28px;
+}
+
+.proposal-summary {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.proposal-question {
+  margin: var(--space-5) 0 0;
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.proposal-receipt .proposal-question {
+  margin-block-start: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.proposal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  margin-block-start: var(--space-6);
+}
+
+.proposal-dismiss.btn {
+  position: absolute;
+  inset-block-start: var(--space-4);
+  inset-inline-end: var(--space-4);
+  inline-size: 28px;
+  block-size: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The paths disclosure: "6 files" sits at the end of the action row and opens onto its own line. */
+.proposal-scope {
+  margin-inline-start: auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.proposal-scope[open] {
+  order: 2;
+  flex: 1 0 100%;
+  margin-inline-start: 0;
+}
+
+.proposal-scope > summary {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.proposal-scope > summary:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.proposal-paths {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  max-block-size: 220px;
+  overflow: auto;
+}
+
+.proposal-paths code {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Receipt: the same rule, the question and one status line ---------- */
+.proposal-receipt {
+  gap: var(--space-2);
+}
+
+.proposal-receipt .user-questions-receipt-rule {
+  display: block;
+  block-size: 1px;
+  background: var(--border-subtle);
+  margin-block-end: var(--space-2);
+}
+
+.proposal-gone {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+/* ---------- Status line: dot + state word + detail (a polite live region) ---------- */
+.proposal-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-block-size: 24px;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.proposal-status:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.proposal-state {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.proposal-status[data-tone="warn"] .proposal-state { color: var(--state-warning); }
+.proposal-status[data-tone="error"] .proposal-state { color: var(--text-danger-emphasis); }
+
+.proposal-status[data-running="true"] > .status-dot {
+  animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
+}
+
+.proposal-detail {
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.proposal-elapsed {
+  color: var(--tl-status-active);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.proposal-link.proposal-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--text-secondary) 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+.proposal-link.proposal-link:hover { color: var(--text-primary); }
+
+.proposal-link.proposal-link:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.proposal-notice {
+  margin: 0;
+  color: var(--state-warning);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+.proposal-card[aria-busy="true"] .proposal-actions,
+.proposal-card[aria-busy="true"] .proposal-run {
+  opacity: 0.7;
+}
+
+/* ---------- Command card ---------- */
+.proposal-purpose {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.proposal-codeblock {
+  margin-block-start: 0;
+}
+
+.proposal-codeblock .inv-codeblock-toolbar {
+  gap: var(--space-3);
+}
+
+.proposal-codeblock .inv-codeblock-language {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  margin-inline-end: auto;
+}
+
+/* The exact text: horizontal scroll, never re-wrapped mid-token, never clipped. */
+.proposal-codeblock .inv-codeblock {
+  white-space: pre;
+  word-break: normal;
+  overflow-x: auto;
+}
+
+.proposal-run {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+.proposal-run:hover:not(:disabled) { background: var(--widget-action-hover-bg); }
+
+.proposal-run:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.proposal-run:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.proposal-precond {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-surface) 60%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.proposal-precond-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+}
+
+.proposal-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ---------- Session offer and suggestion rows (row 59 checkpoint 5a-2) ---------- */
+.proposal-session-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.proposal-session-offer .proposal-session-title {
+  font-size: var(--font-size-body);
+}
+
+.proposal-session-desc {
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.proposal-session-note {
+  margin: var(--space-3) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+.proposal-session-offer .proposal-actions {
+  margin-block-start: var(--space-5);
+}
+
+.proposal-choices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-inline-start: auto;
+}
+
+.proposal-options {
+  position: relative;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.proposal-options-summary {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  overflow-wrap: anywhere;
+}
+
+.proposal-options-popover.proposal-options-popover {
+  inset-block-end: calc(100% + var(--space-3));
+  inset-inline-start: 0;
+  display: grid;
+  gap: var(--space-3);
+  inline-size: min(320px, 80vw);
+  max-inline-size: none;
+}
+
+.proposal-options-popover[hidden] {
+  display: none;
+}
+
+.proposal-options-popover .inv-select-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.proposal-options-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.proposal-options-label,
+.proposal-options-popover .inv-select-field-label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.proposal-options-value {
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+}
+
+.proposal-options-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+}
+
+/* A suggestion is a compact row; the first row of a group carries the header above it. */
+.proposal-suggestion {
+  gap: var(--space-2);
+  padding-block: var(--space-4);
+  padding-inline: var(--space-5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-surface) 60%, transparent);
+}
+
+.proposal-suggestion.proposal-receipt {
+  gap: var(--space-2);
+}
+
+.proposal-suggestion .proposal-actions {
+  margin-block-start: var(--space-3);
+  gap: var(--space-3);
+}
+
+.proposal-suggestion .proposal-dismiss.btn {
+  inset-block-start: var(--space-3);
+  inset-inline-end: var(--space-3);
+}
+
+.proposal-suggestion .proposal-session-title {
+  padding-inline-end: 28px;
+}
+
+.proposal-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding-block-end: var(--space-3);
+  border-block-end: 1px solid var(--border-subtle);
+}
+
+.proposal-group-head:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.proposal-group-count {
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.proposal-group-head .proposal-notice {
+  flex: 1 0 100%;
+}
+
+.proposal-card[aria-busy="true"] .proposal-choices,
+.proposal-group-head[aria-busy="true"] .proposal-start-all {
+  opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .proposal-status[data-running="true"] > .status-dot {
+    animation: none;
+  }
+}

@@ -42,7 +42,7 @@ const DISPLAY_ERROR_NAMES = new Set([
 const SELECTOR_NAMES = new Set(['querySelector', 'querySelectorAll', 'closest', 'matches']);
 const PROPER_NOUNS = new Set([
   'Jenny', 'Ollama', 'vLLM', 'MCP', 'GGUF', 'Monaco', 'Mermaid', 'KaTeX',
-  'GitHub', 'Codex', 'ChatGPT', 'llama-server', 'Python', 'PowerShell',
+  'GitHub', 'Codex', 'ChatGPT', 'llama-server', 'NInfer', 'Python', 'PowerShell',
 ]);
 const KEYBOARD_CHORD_RE = /^((Ctrl|Shift|Alt|Cmd|Meta|Win)\+)+([A-Za-z0-9]|F\d{1,2}|Enter|Esc|Escape|Tab|Space|Backspace|Delete|Up|Down|Left|Right|Home|End|PageUp|PageDown|[`~!@#$%^&*()\-_=+\u005b\]{};:'",.<>/?\\|])$/;
 const TEMPLATE_PROSE_MARKER = '{expr}';
@@ -189,7 +189,7 @@ function isQuotedHtml(value) {
 
 function isUrlOrPath(value) {
   const text = String(value).trim();
-  return text.includes('://') || /^(?:\/|\.\/|\.\.\/)/.test(text);
+  return text.includes('://') || /^(?:\/|\.\/|\.\.\/)/.test(text) || /^[A-Za-z]:[\\/]/.test(text);
 }
 
 function isCssOrSelector(value) {

@@ -49,3 +49,27 @@ def test_load_pymupdf_names_pdf_addon_and_install_state(
     assert raised.value.code == "CMP-TOOL-0047"
     assert raised.value.message == expected_message
     assert raised.value.retryable is False
+
+
+def test_read_file_pdf_diagnostics_are_isolated_before_catalog_import():
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    fixture = Path(__file__).resolve().parents[4] / "fixtures/documents/malformed.pdf"
+    script = (
+        "import json,sys; from pathlib import Path; "
+        "from sidecar.ai.tools.builtins.filesystem import read_file_tool,configure_filesystem_tools; "
+        "from sidecar.ai.tools.workspace import WorkspaceGuard; "
+        "assert 'sidecar.ai.semantic.extract' not in sys.modules; "
+        "configure_filesystem_tools({'tools_image_read_enabled':True}); "
+        f"p=Path({str(fixture)!r}); "
+        "r=read_file_tool({'path':p.name,'pages':'1'},WorkspaceGuard(str(p.parent))); "
+        "sys.stdout.write(json.dumps({'output':json.loads(r.output)}))"
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                            text=True, encoding="utf-8", timeout=30, check=True)
+    payload = json.loads(result.stdout)
+    assert payload["output"]["selected_pages"] == [1]
+    assert "MuPDF" in result.stderr

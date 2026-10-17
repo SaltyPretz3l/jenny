@@ -5,7 +5,7 @@ const { beginRuntimeInferenceInitialization, completeRuntimeInferenceInitializat
 
 async function initializeSidecarClient(client, payload, { timeoutMs, signal, onProgress }, apiVersion) {
   const initialization = beginRuntimeInferenceInitialization(client);
-  const { config = {}, secrets = {}, clientVersion = DEFAULT_CLIENT_VERSION } = payload || {};
+  const { config = {}, secrets = {}, clientVersion = DEFAULT_CLIENT_VERSION, chatWorkspaceCapabilities } = payload || {};
   const requestId = `initialize-${client.nextId}`;
   client.notificationHandlers.set(requestId, typeof onProgress === 'function' ? onProgress : null);
   try {
@@ -15,6 +15,8 @@ async function initializeSidecarClient(client, payload, { timeoutMs, signal, onP
       request_id: requestId,
       config,
       secrets,
+      // Omitted when absent so a caller that predates the field sends the same request.
+      ...(chatWorkspaceCapabilities === undefined ? {} : { chat_workspace_capabilities: chatWorkspaceCapabilities }),
     }, { timeoutMs, signal, requestKey: requestId });
     completeRuntimeInferenceInitialization(client, initialization, result);
     return result;

@@ -26,6 +26,9 @@ test('the always-on tool surface matches the reviewed literal contract', () => {
   assert.deepEqual(ALWAYS_ON_TOOL_NAMES, [
     'ask_user', 'exit_plan_mode', 'todo_write', 'todo_read', 'operation_status', 'jenny_status',
     'tool_search', 'load_skill', 'connections_list', 'session_spawn', 'session_wait', 'session_result',
+    'memory', 'propose_git_action', 'propose_command', 'propose_session', 'complete_session_handoff',
+    'session_message', 'conversations_recent', 'conversation_open', 'conversations_search',
+    'recall_tool_output',
   ]);
 });
 

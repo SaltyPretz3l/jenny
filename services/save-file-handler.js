@@ -82,6 +82,8 @@ function buildSaveFileHandler({ dialog, getMainWindow, getProtectedRoots, log })
     const format = normalizeString(input.format).trim().toLowerCase();
     const overrideFilters = Array.isArray(input.filters) ? input.filters : null;
     const anonymizePaths = input.anonymizePaths === true;
+    // An optional localized dialog title (bounded); the default stays 'Save…'.
+    const title = normalizeString(input.title).trim().slice(0, 200);
 
     if (!SUPPORTED_FORMATS.has(format)) {
       const err = new Error(`Unsupported save-file format: "${format}"`);
@@ -91,7 +93,7 @@ function buildSaveFileHandler({ dialog, getMainWindow, getProtectedRoots, log })
 
     const filters = resolveFilters(format, overrideFilters);
     const dialogOptions = {
-      title: 'Save…',
+      title: title || 'Save…',
       defaultPath: defaultName || `jenny-export.${(filters[0].extensions || ['txt'])[0]}`,
       filters,
     };

@@ -54,6 +54,8 @@ _SYNTHETIC_HANDLER_NAMES = frozenset(
         "monitor",
         "check_monitor",
         "delegate",
+        "memory",
+        "recall_tool_output",
         "tool_search",
     }
 )
@@ -72,6 +74,7 @@ _DISPLAY_NAME_OVERRIDES = {
     "list_dir": "List Directory",
     "propose_change": "Suggest Change",
     "jenny_status": "Jenny Status",
+    "memory": "Memory",
     "mermaid_generate": "Mermaid Generate",
     "monitor": "Monitor",
     "python_execute": "Python Runtime",
@@ -216,7 +219,7 @@ def _validate_manifest_entry(entry: dict[str, Any], *, index: int) -> tuple[Conf
     if (
         isinstance(availability, dict)
         and availability.get("plan_mode_artifact_write") is True
-        and name not in {"create_artifact", "mermaid_generate", "todo_write"}
+        and name not in {"create_artifact", "memory", "mermaid_generate", "todo_write"}
     ):
         raise ValueError(f"tool manifest entry {label} cannot declare plan_mode_artifact_write")
     validate_manifest_aliases(entry.get("aliases"), label=label)

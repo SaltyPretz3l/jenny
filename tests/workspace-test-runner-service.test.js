@@ -113,6 +113,7 @@ test('s1: a completed run is appended to history as a terminal record', async ()
   assert.deepEqual(records[0], {
     runId: 'run-1', configId: 'unit', status: 'passed',
     startedAt: 'S', exitCode: 0, durationMs: 1500, finishedAt: 'F',
+    activity: {schema_version:1, label:'Unit', scope:{schema_version:1, project_id:null, session_id:null, root_id:null, root_revision:null}},
   });
 });
 

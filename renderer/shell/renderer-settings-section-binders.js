@@ -19,12 +19,9 @@
       renderAll,
       renderSettings,
       renderPersonalityEditor,
-      renderMemoryContextFiles,
       handlePersonalitySave,
       handlePersonalityReset,
       handlePersonalityOpenFolder,
-      saveMemoryContextFile,
-      resetMemoryContextFile,
       showShellErrorToast,
       toErrorMessage,
       showSessionActionError,
@@ -421,35 +418,33 @@
       return finalizeSectionBindings();
     }
 
-    function bindMemories(registerSectionListener, finalizeSectionBindings, context = {}) {
-      const memoryDom = getLazySectionDom('memories');
-      const confirmDialog = createConfirmDialog('memoryNotesClearConfirmOverlay');
-      registerSectionListener(memoryDom.memoryNotesActions, 'click', (event) => {
-        const target = event.target;
-        if (!target?.closest) return;
-        if (target.closest('[data-action="memory-notes-save"]')) {
-          saveMemoryContextFile().catch(() => {});
-          return;
-        }
-        if (!target.closest('[data-action="memory-notes-clear"]')) return;
-        if (!confirmDialog?.confirm) {
-          state.memoryContextFiles.actionStatus = jt('settings.memories.clearUnavailable', 'Clear is unavailable.');
-          renderMemoryContextFiles();
-          return;
-        }
-        Promise.resolve(confirmDialog.confirm({
-          title: jt('settings.shell.clearLongTermNotesTitle', 'Clear long-term notes?'),
-          message: jt('settings.shell.clearLongTermNotesMessage', 'The notes go back to empty. Approved memories are not affected.'),
-          confirmLabel: jt('common.clear', 'Clear'),
-          cancelLabel: jt('common.cancel', 'Cancel'),
-          variant: 'danger',
-        })).then((confirmed) => (confirmed ? resetMemoryContextFile() : undefined)).catch(() => {});
+    // The Memory page binds its own events (renderer-memory-actions-utils.js).
+    function bindMemories(_registerSectionListener, finalizeSectionBindings) {
+      return finalizeSectionBindings();
+    }
+
+    let subagentRoutingController = null;
+    function bindTools(_registerSectionListener, finalizeSectionBindings, context = {}) {
+      const windowRef = deps.windowRef || globalThis;
+      const module = windowRef.rendererSettingsSubagents || (typeof require === 'function' ? require('./renderer-settings-subagents') : null);
+      const container = windowRef.document?.getElementById?.('toolsConfigFieldList');
+      if (!container || !module || subagentRoutingController) return finalizeSectionBindings();
+      subagentRoutingController = module.createSubagentRoutingController({ windowRef, container,
+        getFeatures: () => state.features || {}, applyFeatures: callbacks.applyRoutingFeatureState,
+        ...(typeof callbacks.refreshFeatureState === 'function' ? { getBridge: () => ({
+          getState: () => windowRef.jennyShell?.features?.getState?.(),
+          updateSettings: (patch) => callbacks.refreshFeatureState(patch),
+          onChanged: (handler) => windowRef.jennyShell?.features?.onChanged?.(handler),
+        }) } : {}),
       });
-      context.addCleanup?.(() => confirmDialog?.dispose?.());
+      subagentRoutingController.bind();
+      context.markSectionBound?.();
+      context.addCleanup?.(() => { subagentRoutingController?.dispose(); subagentRoutingController = null; });
       return finalizeSectionBindings();
     }
 
     const sectionBindersById = Object.freeze({
+      tools: bindTools,
       skills: bindSkills,
       advanced: bindAdvanced,
       offline: bindOffline,
@@ -476,6 +471,7 @@
       if (advancedBoundDom) void advancedTuningSection?.refresh?.(advancedBoundDom);
     }
     const sectionShownHandlers = Object.freeze({
+      tools: () => { void subagentRoutingController?.refresh(); },
       runtimeLimits: runtimeConsoleShown, advanced: advancedShown,
     });
     function sectionShown(sectionId) {

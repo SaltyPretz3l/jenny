@@ -565,9 +565,15 @@
           return;
         }
 
-        if (event.target.closest('[data-inv-image-cancel]')) {
+        const imageCancelButton = event.target.closest('[data-inv-image-cancel]');
+        if (imageCancelButton) {
           event.preventDefault();
+          // Disabled while stopping: a double click must not fire repeated stops.
+          imageCancelButton.setAttribute('aria-busy', 'true');
+          imageCancelButton.disabled = true;
           Promise.resolve().then(() => handleStopActiveStream()).catch((error) => {
+            imageCancelButton.removeAttribute('aria-busy');
+            imageCancelButton.disabled = false;
             showComposerActionError(error, jt('chat.transcript.stopFailedTitle', 'Stop Failed'));
           });
           return;
@@ -580,6 +586,37 @@
             artifactId: artifactActionButton.dataset.artifactId,
             sessionId: artifactActionButton.dataset.sessionId,
             contextNode: artifactActionButton,
+          }).catch((error) => {
+            showComposerActionError(error, jt('chat.transcript.artifactActionFailedTitle', 'Artifact Action Failed'));
+          });
+          return;
+        }
+        const imageActionButton = event.target.closest('[data-image-action]');
+        if (imageActionButton) {
+          event.preventDefault();
+          const { imageAction: action, imageKind: kind, imageId: id } = imageActionButton.dataset;
+          const sessionId = imageActionButton.dataset.sessionId || getSessionId();
+          const controller = doc?.defaultView?.rendererImageViewerController;
+          Promise.resolve().then(() => {
+            if (action === 'panel') return handleArtifactAction({ action, artifactId: id, sessionId, contextNode: imageActionButton });
+            if (!controller?.run) throw new Error(jt('chat.artifactFigure.unavailable', 'Image unavailable'));
+            return controller.run(action, { kind, id, sessionId });
+          }).catch((error) => {
+            showComposerActionError(error, jt('chat.transcript.artifactActionFailedTitle', 'Artifact Action Failed'));
+          });
+          return;
+        }
+        const imageOpenButton = event.target.closest('[data-image-viewer-open]');
+        if (imageOpenButton) {
+          event.preventDefault();
+          if (imageOpenButton.getAttribute('aria-disabled') === 'true') return;
+          const controller = doc?.defaultView?.rendererImageViewerController;
+          Promise.resolve(controller?.open?.({
+            sessionId: imageOpenButton.dataset.sessionId || getSessionId(),
+            select: { kind: imageOpenButton.dataset.imageViewerOpen, id: imageOpenButton.dataset.imageId },
+            contextNode: imageOpenButton,
+          }) ?? false).then((opened) => {
+            if (opened === false) throw new Error(jt('chat.artifactFigure.unavailable', 'Image unavailable'));
           }).catch((error) => {
             showComposerActionError(error, jt('chat.transcript.artifactActionFailedTitle', 'Artifact Action Failed'));
           });
@@ -882,6 +919,14 @@
         const toggle = event.target?.closest?.('[data-tool-row-toggle]');
         if (toggle && typeof event.detail?.expanded === 'boolean') toggleMinimalToolRow(toggle, event.detail.expanded);
       }, listenerOptions);
+      // An attached or tool-output image whose file is gone: show the frame's unavailable state.
+      // Generated images (data-inv-artifact-image-key) are handled by the artifact card loader.
+      registerListener(chatTimeline, 'error', (event) => {
+        const img = event.target;
+        if (!img?.matches?.('img.inv-artifact-figure-image:not([data-inv-artifact-image-key])')) return;
+        img.closest('.inv-artifact-figure')?.setAttribute('data-inv-artifact-image-state', 'unavailable');
+        img.closest('.inv-artifact-figure-frame')?.setAttribute('aria-disabled', 'true');
+      }, { ...listenerOptions, capture: true });
       registerListener(chatTimeline, 'pointerover', checkQuestionsFromEvent, listenerOptions);
       registerListener(chatTimeline, 'focusin', checkQuestionsFromEvent, listenerOptions);
       chatTimeline.querySelectorAll('.user-questions-block[data-question-ref]').forEach(
@@ -896,6 +941,19 @@
         globalThis.rendererTranscriptViewUtils?.mountTranscriptViewControl?.({
           cluster: utilityCluster, chatTimeline, getSessionId, registerListener, listenerOptions,
         });
+        // Row 59 checkpoint 2: this pane's session rail (its own session's facts); it disposes with the bind.
+        globalThis.rendererSessionRail?.mountSessionRail?.({ pane: utilityCluster.parentElement, cluster: utilityCluster, chatTimeline, getSessionId,
+          refreshIntervalMs: 5000,
+          // This pane's own queue: split view keeps attachments per session.
+          getAttachments: () => globalThis.rendererComposerSessionState?.getQueuedAttachments?.(state, getSessionId())
+            ?? state.attachments?.queued ?? [],
+          getSummaryKey: () => {
+            const session = state.sessions?.find?.((entry) => entry.id === getSessionId()) || {};
+            return JSON.stringify([session.project_id, session.run_mode, session.plan_mode,
+              session.context_preferences, session.preferred_model, state.settings, state.model]);
+          }, signal: bindAbortController?.signal });
+        // Row 59 checkpoint 4: the pane's addressed-message strip above its composer (backlog line, sender receipts).
+        globalThis.rendererComposerMessageStrip?.mountComposerMessageStrip?.({ host: utilityCluster.parentElement.querySelector('#composerMessageStrip, [data-chat-node="composerMessageStrip"]'), pane: utilityCluster.parentElement, chatTimeline, getSessionId, signal: bindAbortController?.signal, appendClientLog });
       }
     }
 

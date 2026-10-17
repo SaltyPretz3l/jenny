@@ -37,7 +37,6 @@
   const MODE = 'subagents';
   const PANEL_ID = 'artifactReviewPanel';
   const OPEN_FILE_EVENT = 'ide:open-file-at-line';
-  const FOCUS_ATTRIBUTES = ['data-subagent-select', 'data-subagent-back', 'data-subagent-close'];
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
   function noop() {}
@@ -46,10 +45,6 @@
     return value === 'detail' ? 'detail' : 'tree';
   }
 
-  function cssEscape(windowRef, value) {
-    if (windowRef?.CSS?.escape) return windowRef.CSS.escape(String(value || ''));
-    return String(value || '').replace(/["\\]/g, '\\$&');
-  }
 
   function createSubagentRail(deps) {
     const d = deps || {};
@@ -192,7 +187,8 @@
       return true;
     }
 
-    function repaint() {
+    function repaint(options = {}) {
+      if (options.force) lastMarkup = '';
       if (!lastSurface || !getRecord() || !isSubagentsMode()) return false;
       return renderSubagentsSurface(lastSurface) === true;
     }
@@ -209,20 +205,6 @@
       surface.previewContent?.classList?.remove?.('hidden');
     }
 
-    function captureFocus(host) {
-      const active = host.ownerDocument?.activeElement;
-      if (!active || !host.contains(active)) return null;
-      for (const attribute of FOCUS_ATTRIBUTES) {
-        if (active.hasAttribute?.(attribute)) return { attribute, value: active.getAttribute(attribute) };
-      }
-      return null;
-    }
-
-    function restoreFocus(host, focus) {
-      if (!focus) return;
-      host.querySelector(`[${focus.attribute}="${cssEscape(windowRef, focus.value)}"]`)?.focus?.({ preventScroll: true });
-    }
-
     function paint(surface, parts, record) {
       prepareSurface(surface);
       const host = surface.previewContent;
@@ -231,16 +213,13 @@
       const html = `<div class="subagent-monitor-shell" data-subagent-page="${page}">${parts.header || ''}${parts.body || ''}${parts.footer || ''}</div>`;
       const shell = host.querySelector(':scope > .subagent-monitor-shell');
       if (html === lastMarkup && shell) return;
-      const focus = captureFocus(host);
-      const bodyBefore = shell?.querySelector?.('.subagent-monitor-body');
-      const scrollTop = shell && shell.getAttribute('data-subagent-page') === page ? Number(bodyBefore?.scrollTop || 0) : 0;
-      host.innerHTML = html;
+      if (activeHandle?.preserveLiveState) activeHandle.preserveLiveState(host, () => {
+        if (activeHandle.updateMarkup) activeHandle.updateMarkup(host, html);
+        else host.innerHTML = html;
+      });
+      else host.innerHTML = html;
       lastMarkup = html;
-      if (scrollTop > 0) {
-        const body = host.querySelector('.subagent-monitor-body');
-        if (body) body.scrollTop = scrollTop;
-      }
-      restoreFocus(host, focus);
+
     }
 
     // The pull: called by renderSplitDetail for mode `subagents`. False (no

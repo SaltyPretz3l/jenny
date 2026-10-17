@@ -259,6 +259,13 @@
         if (result && result.ok) {
           if (result.receipt_saved === false) {
             appendClientLog('ERROR', 'suggested_changes.receipt_unsaved', { sessionId });
+            // The file changed but its record did not save (A19-F4): say so, not success.
+            return {
+              ok: false,
+              applied: true,
+              receiptUnsaved: true,
+              message: jt('changes.accept.receiptUnsaved', 'Jenny applied this change, but couldn’t record it. It may not show in History until Jenny saves it.'),
+            };
           }
           // A group member waits for the rest of its group; nothing is written yet.
           return { ok: true, applied: result.status !== 'accepted' };

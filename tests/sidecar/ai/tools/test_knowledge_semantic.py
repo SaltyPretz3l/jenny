@@ -306,7 +306,7 @@ def test_an_inaccessible_hit_is_skipped_instead_of_failing_the_search(
 
     def denied(self: Path) -> bool:  # only the fusion's own check is denied
         caller = sys._getframe(1).f_code.co_filename
-        if self.name == "rockets.txt" and caller.endswith("semantic_fusion.py"):
+        if self.name == "rockets.txt" and caller.endswith("evidence.py"):
             raise PermissionError(13, "denied", str(self))
         return real_is_file(self)
 

@@ -27,8 +27,8 @@ const {
 const { handleElectronToolRequest,
   handleRuntimeOperationRequest } = require('./sidecar-client-request-rpc');
 const { notificationRequestId, notifyEngineActivity, notifySessionRunModeUpdated } = require('./sidecar-client-notifications');
-const { armPendingTimeout, sendPendingChatCancel, suspendRequestTimeout } = require('./sidecar-client-request-timeout');
-const API_VERSION = '2026-08-17';
+const { armPendingTimeout, isChatTurnMethod, sendPendingChatCancel, suspendRequestTimeout } = require('./sidecar-client-request-timeout');
+const API_VERSION = '2026-10-15';
 const JSONRPC_VERSION = '2.0';
 const CHAT_CANCEL_METHOD = 'chat.cancel';
 const TOOL_REQUEST_APPROVAL_METHOD = 'tool.request_approval';
@@ -330,7 +330,7 @@ class SidecarClient extends EventEmitter {
       : null;
     const cancelReason = this._cancelReasonFromSignal(
       signal,
-      method === 'chat.send' ? CANCEL_REASON_USER : 'transport_abort'
+      isChatTurnMethod(method) ? CANCEL_REASON_USER : 'transport_abort'
     );
     if (reason instanceof Error) {
       return annotateSidecarError(reason, {
@@ -605,13 +605,19 @@ class SidecarClient extends EventEmitter {
         message = JSON.parse(bodyBuffer.toString('utf8'));
       } catch (parseError) {
         if (this.logger) {
+          // The parser's message quotes the body; log its shape only.
           this.logger('ERROR', 'sidecar.frame_parse_error', {
             byteLength: bodyBuffer.length,
-            message: parseError.message || String(parseError),
+            errorName: parseError.name || 'Error',
           });
         }
-        this.emit('parse-error', parseError);
-        continue;
+        // parse-error is diagnostic only: a complete frame nobody can read would
+        // strand its pending request, so the transport fails even if a listener throws.
+        try {
+          this.emit('parse-error', parseError);
+        } finally {
+          this._failTransport(new Error('Sidecar transport received a malformed frame.'));
+        }
       }
       if (!message || typeof message !== 'object' || Array.isArray(message)) {
         if (this.logger) {
@@ -938,7 +944,9 @@ class SidecarClient extends EventEmitter {
     const normalizedRequestId = String(requestId || '').trim();
     const normalizedTraceId = String(traceId || '').trim() || normalizedRequestId;
     const normalizedSessionId = String(sessionId || '').trim();
-    const normalizedCancelReason = normalizeCancelReason(cancelReason, CANCEL_REASON_USER);
+    // Auxiliary preemption (auxiliary-preemption.js) names its own reason.
+    const normalizedCancelReason = cancelReason === 'preempted' ? cancelReason
+      : normalizeCancelReason(cancelReason, CANCEL_REASON_USER);
     if (!normalizedRequestId || !this.process || !this.process.stdin || !this.connected) {
       return;
     }

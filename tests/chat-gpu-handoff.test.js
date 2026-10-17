@@ -27,13 +27,18 @@ function makeHarness({
   totalMb = 24_000,
   restoreStatus = { state: 'ready', identityReused: true },
   reconcileRenderProcesses,
+  clearRenderRecordUnproven,
+  renderRecordSummary,
   pendingInference = 0,
   barriers = () => [],
+  // Optional managed NInfer server (pid 5151): { status, dies, retains, restoreStatus }.
+  ninfer: ninferOptions = null,
 } = {}) {
   const calls = [];
   const logs = [];
-  let alive = true;
+  let alive = managerStatus.state === 'ready';
   let stopped = false;
+  let ninferAlive = ninferOptions?.status?.state === 'ready';
   const backendService = {
     currentEngineType: engineType,
     currentModel: 'gemma4:12b',
@@ -53,6 +58,18 @@ function makeHarness({
       return { ...restoreStatus, lastError: '' };
     },
   };
+  const ninfer = ninferOptions ? {
+    getStatus: () => ({ ...ninferOptions.status }),
+    async stop(options) {
+      calls.push(['ninfer.stop', options]);
+      if (ninferOptions.dies !== false) ninferAlive = false;
+      return { state: 'stopped', identityRetained: ninferOptions.retains !== false, lastError: '' };
+    },
+    async ensureRunning(spec, options) {
+      calls.push(['ninfer.ensureRunning', spec, options]);
+      return { ...(ninferOptions.restoreStatus || { state: 'ready', identityReused: true }), lastError: '' };
+    },
+  } : null;
   const ollama = { resident: [{ name: 'gemma4:12b' }] };
   const fetchImpl = async (url, init = {}) => {
     calls.push(['fetch', url, init.method || 'GET', init.body || '']);
@@ -71,20 +88,23 @@ function makeHarness({
     backendService,
     coordinator,
     getLlamaServerManager: () => manager,
+    getNinferManager: () => ninfer,
     probeVram: async () => {
-      const evicted = engineType === 'ollama' ? ollama.resident.length === 0 : !alive;
+      const evicted = engineType === 'ollama' ? ollama.resident.length === 0 : !alive && !ninferAlive;
       const usedMb = evicted && vramFreesAfterEviction ? 500 : 20_000;
       return { available: true, usedMb, totalMb, devices: [{ index: 0, usedMb, totalMb }] };
     },
     fetchImpl,
     reconcileRenderProcesses,
+    clearRenderRecordUnproven,
+    renderRecordSummary,
     pendingInferenceCount: () => pendingInference,
-    isProcessAliveImpl: (pid) => pid === 4242 && alive,
+    isProcessAliveImpl: (pid) => (pid === 4242 && alive) || (pid === 5151 && ninferAlive),
     sleep: async () => { clock += 400; },
     now: () => clock,
     log: (level, event, payload) => logs.push({ level, event, payload }),
   });
-  return { backendService, calls, coordinator, handoff, logs, manager, ollama };
+  return { backendService, calls, coordinator, handoff, logs, manager, ninfer, ollama };
 }
 
 const REQUIREMENTS = { minTotalVramMb: 8_000, requiredFreeMb: 8_000 };
@@ -381,4 +401,192 @@ test('every error code carries a translated user-facing message', () => {
     assert.equal(error.reason, 'why');
     assert.ok(error.message.length > 20, `${code} has a message`);
   }
+});
+
+// Model Library "Clear anyway": the owner releases a retained lease that no
+// reconcile could prove, only after one unconfirmed attempt and never mid-render.
+function forceClearHarness({ cleared = { cleared: true, record: { pid: 9, startedAt: 5, unresolved: 2 } } } = {}) {
+  const clears = [];
+  const h = makeHarness({
+    reconcileRenderProcesses: async () => ({ confirmed: false, action: 'unconfirmed' }),
+    clearRenderRecordUnproven: () => { clears.push('clear'); return typeof cleared === 'function' ? cleared() : cleared; },
+    renderRecordSummary: () => ({ started_at: 5, unresolved: 2 }),
+  });
+  return { ...h, clears };
+}
+
+test('force clear is refused without confirmation, mid-handoff, with nothing retained and before any clean-up attempt', async () => {
+  const idle = forceClearHarness();
+  assert.deepEqual(await idle.handoff.forceClear({ confirmed: true }), { ok: false, reason: 'nothing_retained' });
+  const h = forceClearHarness();
+  await h.handoff.suspend(OWNER, REQUIREMENTS);
+  assert.deepEqual(await h.handoff.forceClear({ confirmed: true }), { ok: false, reason: 'handoff_active' });
+  await h.handoff.restoreAndRelease({ cleanupConfirmed: false, reason: 'kill_unconfirmed' });
+  assert.equal(h.handoff.getState().cleanup.attempts, 0);
+  assert.deepEqual(await h.handoff.forceClear({ confirmed: true }), { ok: false, reason: 'cleanup_not_attempted' });
+  await h.handoff.reconcile();
+  for (const confirmed of [undefined, false, 'true', 1]) {
+    assert.deepEqual(await h.handoff.forceClear({ confirmed }), { ok: false, reason: 'confirmation_required' });
+  }
+  assert.deepEqual(await h.handoff.forceClear(), { ok: false, reason: 'confirmation_required' });
+  assert.deepEqual(h.clears, []);
+  assert.equal(h.coordinator.getState().state, STATE_PRIVILEGED_RESIDENT, 'the lease is still held');
+  assert.equal(h.handoff.launchRefusal(), 'gpu_lease_held');
+});
+
+test('force clear after an unconfirmed reconcile releases the lease and replays the deferred refresh', async () => {
+  const h = forceClearHarness();
+  const refreshes = [];
+  h.backendService.refreshManagedConfig = async (reason) => { refreshes.push(reason); };
+  await h.handoff.suspend(OWNER, REQUIREMENTS);
+  h.backendService.deferredConfigRefreshReason = 'config_updated';
+  await h.handoff.restoreAndRelease({ cleanupConfirmed: false, reason: 'kill_unconfirmed' });
+  assert.deepEqual(await h.handoff.reconcile(), { confirmed: false, released: false });
+  const { cleanup } = h.handoff.getState();
+  assert.equal(cleanup.attempts, 1);
+  assert.equal(typeof cleanup.last_unconfirmed_at, 'number');
+  assert.deepEqual(cleanup.record, { started_at: 5, unresolved: 2 });
+  assert.deepEqual(refreshes, []);
+  assert.deepEqual(await h.handoff.forceClear({ confirmed: true }), { ok: true, released: true, unresolved: 2 });
+  assert.deepEqual(h.clears, ['clear']);
+  assert.deepEqual(h.coordinator.getState(), { state: STATE_CHAT_RESIDENT, leaseId: null });
+  assert.equal(h.handoff.launchRefusal(), '');
+  assert.equal(h.handoff.getState().retained, false);
+  assert.equal(h.handoff.getState().cleanup, undefined);
+  assert.deepEqual(refreshes, ['config_updated']);
+  assert.ok(h.logs.some((entry) => entry.level === 'WARN' && entry.event === 'gpu_handoff.force_cleared'));
+  // The attempt count belonged to the released lease: a new retained lease starts over.
+  await h.handoff.suspend(OWNER, REQUIREMENTS);
+  await h.handoff.restoreAndRelease({ cleanupConfirmed: false });
+  assert.deepEqual(await h.handoff.forceClear({ confirmed: true }), { ok: false, reason: 'cleanup_not_attempted' });
+});
+
+test('force clear of a startup orphan lease counts the startup reconcile as the attempt', async () => {
+  const h = forceClearHarness({ cleared: { cleared: true, record: null } });
+  assert.deepEqual(await h.handoff.reconcile(), { confirmed: false, released: false });
+  assert.equal(h.handoff.getState().cleanup.attempts, 1);
+  assert.deepEqual(await h.handoff.forceClear({ confirmed: true }), { ok: true, released: true, unresolved: 0 });
+  assert.deepEqual(h.coordinator.getState(), { state: STATE_CHAT_RESIDENT, leaseId: null });
+});
+
+test('a reconcile that finishes after a force clear leaves the newer retained lease alone', async () => {
+  const proofs = [];
+  const h = makeHarness({
+    reconcileRenderProcesses: () => new Promise((resolve) => { proofs.push(resolve); }),
+    clearRenderRecordUnproven: () => ({ cleared: true, record: null }),
+  });
+  // Lease A settles unconfirmed and one clean-up attempt fails.
+  await h.handoff.suspend(OWNER, REQUIREMENTS);
+  await h.handoff.restoreAndRelease({ cleanupConfirmed: false, reason: 'kill_unconfirmed' });
+  const first = h.handoff.reconcile();
+  proofs.shift()({ confirmed: false });
+  assert.deepEqual(await first, { confirmed: false, released: false });
+  // A second reconcile of A is still waiting for proof when the owner clears A.
+  const late = h.handoff.reconcile();
+  assert.deepEqual(await h.handoff.forceClear({ confirmed: true }), { ok: true, released: true, unresolved: 0 });
+  // Render B settles unconfirmed and retains lease B.
+  await h.handoff.suspend(OWNER, REQUIREMENTS);
+  await h.handoff.restoreAndRelease({ cleanupConfirmed: false, reason: 'kill_unconfirmed' });
+  const leaseB = h.coordinator.getState().leaseId;
+  assert.equal(h.handoff.getState().retained, true);
+  // A's late proof arrives confirmed: it belongs to the replaced lease (w2h3-R1).
+  proofs.shift()({ confirmed: true });
+  assert.deepEqual(await late, { confirmed: true, released: false, reason: 'lease_replaced' });
+  assert.equal(h.handoff.getState().retained, true);
+  assert.equal(h.handoff.getState().cleanup.attempts, 0);
+  assert.equal(h.handoff.launchRefusal(), 'gpu_lease_held');
+  assert.deepEqual(h.coordinator.getState(), { state: STATE_PRIVILEGED_RESIDENT, leaseId: leaseB });
+  assert.ok(h.logs.some((entry) => entry.event === 'gpu_handoff.reconcile_stale'));
+  // B's own clean-up still works.
+  const own = h.handoff.reconcile();
+  proofs.shift()({ confirmed: true });
+  assert.deepEqual(await own, { confirmed: true, released: true });
+  assert.deepEqual(h.coordinator.getState(), { state: STATE_CHAT_RESIDENT, leaseId: null });
+});
+
+test('force clear keeps the lease when the record cannot be removed', async () => {
+  const h = forceClearHarness({ cleared: { cleared: false, reason: 'image_engine_record_locked' } });
+  await h.handoff.suspend(OWNER, REQUIREMENTS);
+  await h.handoff.restoreAndRelease({ cleanupConfirmed: false });
+  await h.handoff.reconcile();
+  assert.deepEqual(await h.handoff.forceClear({ confirmed: true }), { ok: false, reason: 'image_engine_record_locked' });
+  assert.equal(h.coordinator.getState().state, STATE_PRIVILEGED_RESIDENT);
+  assert.equal(h.handoff.getState().retained, true);
+  assert.equal(h.handoff.launchRefusal(), 'gpu_lease_held');
+  assert.equal(h.handoff.getState().cleanup.attempts, 1);
+  // A clear that throws is a failed clear, not a release.
+  const throwing = forceClearHarness({ cleared: () => { throw new Error('denied'); } });
+  await throwing.handoff.reconcile();
+  assert.deepEqual(await throwing.handoff.forceClear({ confirmed: true }), { ok: false, reason: 'image_engine_record_locked' });
+  assert.equal(throwing.coordinator.getState().state, STATE_PRIVILEGED_RESIDENT);
+});
+
+// Managed NInfer: one managed server owns the GPU at a time, so a ready NInfer
+// server means the llama-server manager is stopped.
+const LLAMA_STOPPED = { state: 'stopped', pid: 0, reused: false };
+const NINFER_READY = { state: 'ready', pid: 5151, alias: 'ninfer-chat' };
+
+function ninferHarness(ninfer = {}) {
+  return makeHarness({ managerStatus: LLAMA_STOPPED, ninfer: { status: NINFER_READY, ...ninfer } });
+}
+
+test('NInfer: a serving NInfer server is parked with identity retained and relaunched with it, released once', async () => {
+  const h = ninferHarness();
+  const { leaseId } = await h.handoff.suspend(OWNER, REQUIREMENTS);
+  assert.deepEqual(h.calls, [['ninfer.stop', { retainIdentity: true }]], 'only the NInfer manager is stopped');
+  assert.deepEqual(h.coordinator.getState(), { state: STATE_PRIVILEGED_RESIDENT, leaseId });
+  assert.equal(h.handoff.launchRefusal(), 'gpu_lease_held');
+  assert.ok(h.logs.some((entry) => entry.event === 'gpu_handoff.evicted' && entry.payload.engine === 'ninfer'));
+  const first = h.handoff.restoreAndRelease({ reason: 'render_ok' });
+  const second = h.handoff.restoreAndRelease({ reason: 'render_ok' });
+  assert.deepEqual(await first, { restored: true, released: true, reason: 'render_ok' });
+  assert.deepEqual(await second, await first);
+  assert.deepEqual(h.calls.slice(1), [['ninfer.ensureRunning', null, { reuseIdentity: true }]]);
+  assert.ok(!h.calls.some((call) => call[0] === 'stop' || call[0] === 'ensureRunning'), 'the llama-server manager is untouched');
+  assert.equal(h.logs.filter((entry) => entry.event === 'gpu_handoff.released').length, 1);
+  assert.deepEqual(h.coordinator.getState(), { state: STATE_CHAT_RESIDENT, leaseId: null });
+  assert.equal(h.handoff.launchRefusal(), '');
+});
+
+test('NInfer: a stop that cannot retain the identity is unverified and the lease released', async () => {
+  const h = ninferHarness({ retains: false });
+  await rejectsWith(h.handoff.suspend(OWNER, REQUIREMENTS), CODES.EVICTION_UNVERIFIED, 'ninfer_stop_unconfirmed');
+  assert.equal(h.calls[0][0], 'ninfer.stop');
+  assert.ok(!h.calls.some((call) => call[0] === 'stop'), 'the llama-server manager is never stopped');
+  assert.deepEqual(h.coordinator.getState(), { state: STATE_CHAT_RESIDENT, leaseId: null });
+  assert.equal(h.handoff.launchRefusal(), '');
+});
+
+test('NInfer: a server that never exits is unverified, the chat engine restored and the lease released', async () => {
+  const h = ninferHarness({ dies: false });
+  await rejectsWith(h.handoff.suspend(OWNER, REQUIREMENTS), CODES.EVICTION_UNVERIFIED, 'ninfer_still_alive');
+  assert.deepEqual(h.calls, [
+    ['ninfer.stop', { retainIdentity: true }],
+    ['ninfer.ensureRunning', null, { reuseIdentity: true }],
+  ]);
+  assert.deepEqual(h.coordinator.getState(), { state: STATE_CHAT_RESIDENT, leaseId: null });
+  assert.equal(h.handoff.launchRefusal(), '');
+});
+
+test('NInfer: a server that crashed mid-render reports restored:false and still releases the lease', async () => {
+  const h = ninferHarness({ restoreStatus: { state: 'crashed', identityReused: false } });
+  await h.handoff.suspend(OWNER, REQUIREMENTS);
+  assert.deepEqual(await h.handoff.restoreAndRelease(), { restored: false, released: true, reason: 'done' });
+  const failure = h.logs.find((entry) => entry.event === 'gpu_handoff.restore_failed');
+  assert.ok(failure, 'the failed restore is logged');
+  assert.equal(failure.level, 'WARN');
+  assert.equal(failure.payload.state, 'crashed');
+  assert.deepEqual(h.coordinator.getState(), { state: STATE_CHAT_RESIDENT, leaseId: null });
+});
+
+test('NInfer: a stopped NInfer manager leaves the llama-server path in charge', async () => {
+  const h = makeHarness({ ninfer: { status: { state: 'stopped', pid: 0 } } });
+  await h.handoff.suspend(OWNER, REQUIREMENTS);
+  assert.deepEqual(h.calls, [['stop', { retainIdentity: true }]]);
+  assert.deepEqual(await h.handoff.restoreAndRelease(), { restored: true, released: true, reason: 'done' });
+  assert.ok(!h.calls.some((call) => call[0].startsWith('ninfer.')), 'the NInfer manager is untouched');
+  // Neither server ready: the engine state is unknown, as before.
+  const none = makeHarness({ managerStatus: LLAMA_STOPPED, ninfer: { status: { state: 'stopped', pid: 0 } } });
+  await rejectsWith(none.handoff.suspend(OWNER, REQUIREMENTS), CODES.EVICTION_UNVERIFIED, 'chat_engine_state_unknown');
+  assert.deepEqual(none.calls, []);
 });

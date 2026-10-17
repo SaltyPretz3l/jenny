@@ -50,13 +50,17 @@ _OUTPUT_CONTROL_RESERVE_BYTES = 1 * 1024 * 1024
 _INVALID_PARAMS_CODE = -32602
 
 
-def _normalize_cancel_reason(value: Any, *, fallback: str = "sidecar_cancel") -> str:
+# Aux handles keep Electron's preemption reason; chat turns map it to sidecar_cancel.
+_AUXILIARY_CANCEL_REASONS = CANCELLED_TERMINAL_SUBCODES | {"preempted"}
+
+
+def _normalize_cancel_reason(
+    value: Any, *, allowed: frozenset[str] = CANCELLED_TERMINAL_SUBCODES
+) -> str:
     normalized = str(value or "").strip().replace("-", "_").replace(" ", "_").lower()
     if normalized in {"chat_cancel", "chat_cancelled"}:
         return "sidecar_cancel"
-    if normalized in CANCELLED_TERMINAL_SUBCODES:
-        return normalized
-    return fallback if fallback in CANCELLED_TERMINAL_SUBCODES else "sidecar_cancel"
+    return normalized if normalized in allowed else "sidecar_cancel"
 
 
 class TransportBackpressureError(RuntimeError):
@@ -87,6 +91,7 @@ class TurnCancellationHandle:
     generation: int | None = None
     live_run_mode: LiveRunModeState = field(default_factory=LiveRunModeState)
     reason: str = "chat_cancelled"
+    cancel_reasons: frozenset[str] = CANCELLED_TERMINAL_SUBCODES
     _event: threading.Event = field(default_factory=threading.Event)
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _callbacks: dict[int, Callable[[str], None]] = field(default_factory=dict)
@@ -96,7 +101,7 @@ class TurnCancellationHandle:
     def cancel(self, *, reason: str = "chat_cancelled") -> bool:
         callbacks: list[Callable[[str], None]] = []
         children: list[TurnCancellationHandle] = []
-        normalized_reason = _normalize_cancel_reason(reason)
+        normalized_reason = _normalize_cancel_reason(reason, allowed=self.cancel_reasons)
         with self._lock:
             already_cancelled = self._event.is_set()
             if not already_cancelled:
@@ -510,6 +515,8 @@ class StdioTransportMultiplexer:
         self._approval_waiters: dict[int, queue.Queue[dict[str, Any]]] = {}
         self._active_turns: dict[str, TurnCancellationHandle] = {}
         self._active_turns_by_session: dict[str, TurnCancellationHandle] = {}
+        # chat.cancel targets that never count toward the turn cap or a busy session.
+        self._auxiliary_handles: dict[str, TurnCancellationHandle] = {}
         self._cancel_tombstones: dict[str, tuple[float, str]] = {}
         self._lock = threading.Lock()
         self._cancel_tombstone_ttl_seconds = max(cancel_tombstone_ttl_seconds, 0.1)
@@ -747,6 +754,25 @@ class StdioTransportMultiplexer:
             ):
                 self._active_turns_by_session.pop(normalized_session_id, None)
 
+    def register_auxiliary_handle(self, request_id: str) -> TurnCancellationHandle:
+        """Register a chat.cancel target for one auxiliary inference request."""
+        key = str(request_id or "").strip()
+        handle = TurnCancellationHandle(request_id=key, cancel_reasons=_AUXILIARY_CANCEL_REASONS)
+        with self._lock:
+            self._prune_cancel_tombstones_locked()
+            if key in self._auxiliary_handles or key in self._active_turns:
+                raise DuplicateRequestIdError(f"active request_id already registered: {key}")
+            self._auxiliary_handles[key] = handle
+            tombstone = self._cancel_tombstones.pop(key, None)
+        if tombstone is not None:
+            handle.cancel(reason=tombstone[1])
+        return handle
+
+    def unregister_auxiliary_handle(self, handle: TurnCancellationHandle) -> None:
+        with self._lock:
+            if self._auxiliary_handles.get(handle.request_id) is handle:
+                self._auxiliary_handles.pop(handle.request_id, None)
+
     def approval_reader_factory(
         self,
         approval_id: int,
@@ -906,13 +932,17 @@ class StdioTransportMultiplexer:
         request_id = str(params.get("request_id") or "").strip()
         trace_id = str(params.get("trace_id") or "").strip() or None
         session_id = str(params.get("session_id") or "").strip() or None
-        cancel_reason = _normalize_cancel_reason(params.get("cancel_reason"))
+        cancel_reason = _normalize_cancel_reason(
+            params.get("cancel_reason"), allowed=_AUXILIARY_CANCEL_REASONS
+        )
         status = "ignored"
         tombstone_hit = False
         if request_id:
             with self._lock:
                 self._prune_cancel_tombstones_locked()
-                handle = self._active_turns.get(request_id)
+                handle = self._active_turns.get(request_id) or self._auxiliary_handles.get(
+                    request_id
+                )
                 if handle is not None:
                     handle.cancel(reason=cancel_reason)
                     status = "cancel_requested"

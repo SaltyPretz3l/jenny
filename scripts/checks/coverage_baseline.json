@@ -40,7 +40,6 @@
       "sidecar/ai/engines/mock.py": 100.0,
       "sidecar/runtime/request_dispatch.py": 86.03,
       "sidecar/ai/routing/tool_execution.py": 91.28,
-      "sidecar/runtime/memory_suggestions.py": 88.36,
       "sidecar/ai/routing/chat_decision.py": 97.62,
       "sidecar/runtime/ipc_payloads.py": 90.24,
       "sidecar/runtime/ollama_support.py": 100.0,

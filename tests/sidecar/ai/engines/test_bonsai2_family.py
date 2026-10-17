@@ -528,7 +528,8 @@ def test_acceleration_catalog_lists_bonsai2_without_an_mtp_head() -> None:
     assert entry["ngram"] is True
     assert entry["vramHeadroomMb"] == 2048
     qwen38_entry = next(item for item in families if item["family"] == "qwen38")
-    assert set(entry) == set(qwen38_entry)
+    # drafterPattern names a separate drafter GGUF; a native-shaped family has none.
+    assert set(entry) == set(qwen38_entry) - {"drafterPattern"}
 
 
 class _RecordingOllamaEngine:

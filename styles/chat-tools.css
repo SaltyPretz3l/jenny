@@ -145,16 +145,6 @@
   border-radius: var(--tl-radius-panel);
 }
 
-.python-output-image {
-  display: block;
-  max-width: 100%;
-  max-height: 280px;
-  border-radius: var(--tl-radius-control);
-  margin: var(--space-4) 0;
-  object-fit: contain;
-  background: var(--widget-tool-code-bg);
-}
-
 .python-table-output {
   overflow-x: auto;
   margin: var(--space-4) 0;

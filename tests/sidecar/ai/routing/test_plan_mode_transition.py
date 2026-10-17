@@ -34,7 +34,7 @@ def _context() -> ChatRequestContext:
         session_id="session",
         mode="assist",
         approvals_pre_granted=False,
-        memory_policy=MemoryPolicy(enabled=False, include_response_style=False),
+        memory_policy=MemoryPolicy(enabled=False, capture="off", recall=False),
         plan_mode=True,
         read_only=True,
     )

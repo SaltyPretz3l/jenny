@@ -399,7 +399,8 @@
         message &&
         message.role === 'assistant' &&
         kind !== 'interactive_round_recap' &&
-        kind !== 'slash_command_output'
+        kind !== 'slash_command_output' &&
+        kind !== 'memory_note'
       ) {
         return String(message.id || '');
       }

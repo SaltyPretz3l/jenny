@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 from sidecar.ai.context.builder import RuntimeToolStatus
+from sidecar.ai.context.context_rows import CONTEXT_ROLE, render_context_entries
 from sidecar.ai.engines.base import EngineMessage, EngineToolCall
 from sidecar.ai.routing.vision_turn import (
     VISION_ANCHOR_MESSAGE,
@@ -535,6 +536,15 @@ def build_tool_use_nudge(
 # ---------------------------------------------------------------------------
 
 
+def _apply_tool_fields(entry: EngineMessage, message: dict[str, object]) -> None:
+    tool_call_id = message.get("tool_call_id")
+    if isinstance(tool_call_id, str):
+        entry["tool_call_id"] = tool_call_id
+    name = message.get("name")
+    if isinstance(name, str):
+        entry["name"] = name
+
+
 def engine_messages(
     messages: list[dict[str, object]],
     *,
@@ -556,6 +566,10 @@ def engine_messages(
     attached_images = False
     for source_index, message in enumerate(messages):
         role = str(message.get("role", "")).strip().lower()
+        if role == CONTEXT_ROLE:
+            # User-role JSON-quoted data behind a fixed preamble; an invalid row is dropped.
+            normalized.extend(cast(list[EngineMessage], render_context_entries(message)))
+            continue
         if role not in {"system", "user", "assistant", "tool"}:
             continue
         raw_content = message.get("content")
@@ -575,12 +589,7 @@ def engine_messages(
         if role == "assistant" and has_tool_calls:
             entry["tool_calls"] = cast(list[EngineToolCall], raw_tool_calls)
         if role == "tool":
-            tool_call_id = message.get("tool_call_id")
-            if isinstance(tool_call_id, str):
-                entry["tool_call_id"] = tool_call_id
-            name = message.get("name")
-            if isinstance(name, str):
-                entry["name"] = name
+            _apply_tool_fields(entry, message)
         if vision_images and source_index == anchor_index:
             entry["images"] = list(vision_images)
             attached_images = True

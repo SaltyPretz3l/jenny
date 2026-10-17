@@ -6,6 +6,7 @@ const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
+const { removeFileSync } = require('../fs-remove-no-follow');
 
 const MAX_SQLITE_SNAPSHOT_BYTES = 512 * 1024 * 1024;
 const SQLITE_HEADER = Buffer.from('SQLite format 3\0', 'latin1');
@@ -51,7 +52,7 @@ function removeStaleSnapshots(stagingDir, now = Date.now()) {
     if (!dirent.isFile() || !SNAPSHOT_FILE_NAME.test(dirent.name)) continue;
     const filePath = path.join(stagingDir, dirent.name);
     try {
-      if (now - fs.lstatSync(filePath).mtimeMs >= STALE_SNAPSHOT_AGE_MS) fs.rmSync(filePath, { force: true });
+      if (now - fs.lstatSync(filePath).mtimeMs >= STALE_SNAPSHOT_AGE_MS) removeFileSync(filePath);
     } catch {
       // Retried by the next snapshot.
     }
@@ -102,7 +103,7 @@ function snapshotSqliteDatabase(sourcePath, { stagingDir, maxBytes = MAX_SQLITE_
     return readCapped(snapshotPath, maxBytes);
   } finally {
     for (const suffix of ['', '-journal', ...DATABASE_JOURNAL_SUFFIXES]) {
-      fs.rmSync(`${snapshotPath}${suffix}`, { force: true });
+      removeFileSync(`${snapshotPath}${suffix}`);
     }
   }
 }

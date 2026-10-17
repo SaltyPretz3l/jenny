@@ -14,6 +14,13 @@ from sidecar.runtime.request_dispatch_memory import (
     process_memory_method,
 )
 
+# (field, invalid value): a missing title is fine (it is derived), a missing text is not.
+INVALID_TEXT_FIELDS = [
+    ("title", 42),
+    ("lesson_text", None),
+    ("lesson_text", 42),
+]
+
 
 @pytest.fixture()
 def memory_store(tmp_path: Path) -> MemoryStore:
@@ -23,15 +30,24 @@ def memory_store(tmp_path: Path) -> MemoryStore:
 
 
 def _saved_memory_id(store: MemoryStore) -> int:
-    memory, _ = store.save_memory(
+    result = save_memory_candidate(
         session_id="session-1",
-        title="Preference: tea",
-        lesson_text="The user prefers tea.",
-        lesson_kind="preference",
-        confidence=0.9,
-        source_excerpt="I prefer tea",
+        candidate={"lesson_text": "The user prefers tea.", "lesson_kind": "preference"},
+        memory_store=store,
     )
-    return memory.id
+    assert result.memory is not None
+    return result.memory.id
+
+
+def _candidate(field: str, value: object) -> dict[str, object]:
+    candidate: dict[str, object] = {
+        "title": "Preference: tea",
+        "lesson_text": "The user prefers tea.",
+        "lesson_kind": "preference",
+        "source_excerpt": "I prefer tea",
+    }
+    candidate[field] = value
+    return candidate
 
 
 def _dispatch(method: str, params: dict[str, object], store: MemoryStore):
@@ -40,56 +56,30 @@ def _dispatch(method: str, params: dict[str, object], store: MemoryStore):
         message_id=17,
         params={"accept_version": API_VERSION, **params},
         initialized=True,
-        brain_container=SimpleNamespace(
-            stack=SimpleNamespace(memory_store=store)
-        ),
+        brain_container=SimpleNamespace(stack=SimpleNamespace(memory_store=store)),
         logger=logging.getLogger("test.memory_text_validation"),
     )
 
 
-@pytest.mark.parametrize("field", ["title", "lesson_text"])
-@pytest.mark.parametrize("invalid_value", [None, 42], ids=["null", "integer"])
+@pytest.mark.parametrize(("field", "invalid_value"), INVALID_TEXT_FIELDS)
 def test_save_rejects_non_string_text_fields_directly(
-    memory_store: MemoryStore,
-    field: str,
-    invalid_value: object,
+    memory_store: MemoryStore, field: str, invalid_value: object
 ) -> None:
-    candidate: dict[str, object] = {
-        "title": "Preference: tea",
-        "lesson_text": "The user prefers tea.",
-        "lesson_kind": "preference",
-        "confidence": 0.9,
-        "source_excerpt": "I prefer tea",
-    }
-    candidate[field] = invalid_value
-
     with pytest.raises(ValueError, match=rf"candidate\.{field} must be a string"):
         save_memory_candidate(
             session_id="session-1",
-            candidate=candidate,
+            candidate=_candidate(field, invalid_value),
             memory_store=memory_store,
         )
 
 
-@pytest.mark.parametrize("field", ["title", "lesson_text"])
-@pytest.mark.parametrize("invalid_value", [None, 42], ids=["null", "integer"])
+@pytest.mark.parametrize(("field", "invalid_value"), INVALID_TEXT_FIELDS)
 def test_save_rejects_non_string_text_fields_through_dispatch(
-    memory_store: MemoryStore,
-    field: str,
-    invalid_value: object,
+    memory_store: MemoryStore, field: str, invalid_value: object
 ) -> None:
-    candidate: dict[str, object] = {
-        "title": "Preference: tea",
-        "lesson_text": "The user prefers tea.",
-        "lesson_kind": "preference",
-        "confidence": 0.9,
-        "source_excerpt": "I prefer tea",
-    }
-    candidate[field] = invalid_value
-
     outcome = _dispatch(
         MEMORY_SAVE_METHOD,
-        {"session_id": "session-1", "candidate": candidate},
+        {"session_id": "session-1", "candidate": _candidate(field, invalid_value)},
         memory_store,
     )
 
@@ -100,44 +90,24 @@ def test_save_rejects_non_string_text_fields_through_dispatch(
 
 
 @pytest.mark.parametrize("field", ["title", "lesson_text"])
-@pytest.mark.parametrize("invalid_value", [None, 42], ids=["null", "integer"])
 def test_update_rejects_non_string_text_fields_directly(
-    memory_store: MemoryStore,
-    field: str,
-    invalid_value: object,
+    memory_store: MemoryStore, field: str
 ) -> None:
     memory_id = _saved_memory_id(memory_store)
-    patch: dict[str, object] = {
-        "title": "Preference: coffee",
-        "lesson_text": "The user prefers coffee.",
-    }
-    patch[field] = invalid_value
 
-    with pytest.raises(ValueError, match=rf"patch\.{field} must be a string"):
-        update_memory(memory_id=memory_id, patch=patch, memory_store=memory_store)
+    with pytest.raises(ValueError, match=rf"^{field} must be a string"):
+        update_memory(memory_id=memory_id, changes={field: 42}, memory_store=memory_store)
 
 
 @pytest.mark.parametrize("field", ["title", "lesson_text"])
-@pytest.mark.parametrize("invalid_value", [None, 42], ids=["null", "integer"])
 def test_update_rejects_non_string_text_fields_through_dispatch(
-    memory_store: MemoryStore,
-    field: str,
-    invalid_value: object,
+    memory_store: MemoryStore, field: str
 ) -> None:
     memory_id = _saved_memory_id(memory_store)
-    patch: dict[str, object] = {
-        "title": "Preference: coffee",
-        "lesson_text": "The user prefers coffee.",
-    }
-    patch[field] = invalid_value
 
-    outcome = _dispatch(
-        MEMORY_UPDATE_METHOD,
-        {"memory_id": memory_id, "patch": patch},
-        memory_store,
-    )
+    outcome = _dispatch(MEMORY_UPDATE_METHOD, {"memory_id": memory_id, field: 42}, memory_store)
 
     assert outcome is not None
     error = outcome.response["error"]
     assert error["code"] == INVALID_PARAMS_CODE
-    assert error["data"]["detail"] == f"patch.{field} must be a string"
+    assert error["data"]["detail"] == f"{field} must be a string"

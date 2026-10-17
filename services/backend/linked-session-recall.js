@@ -10,6 +10,7 @@ const EXCLUDED_KINDS = new Set([
   'tool_result',
   'proactive_suggestion',
   'slash_command_output',
+  'memory_note',
   'reasoning-only',
 ]);
 const MAX_EXCERPTS_PER_SESSION = 2, MAX_TOTAL_CHARS = 1200;

@@ -112,6 +112,7 @@
         : null;
       commands.set(normalizedName, Object.freeze({
         description: String(description || '').trim(),
+        ...(typeof config.tag === 'string' && config.tag.trim() ? { tag: config.tag.trim().slice(0, 32) } : {}),
         handler,
         requiresSession: config.requiresSession === undefined ? action !== 'attach' : config.requiresSession !== false,
         action,
@@ -136,6 +137,7 @@
         return {
           name,
           description: entry.description,
+          ...(entry.tag ? { tag: entry.tag } : {}),
           action: entry.action,
           actionLabel: entry.action === 'insert' ? 'Insert' : entry.action === 'attach' ? 'Attach' : 'Run',
           ...(entry.skill ? { skill: entry.skill } : {}),
@@ -293,6 +295,7 @@
     const showToastMessage = config.showToastMessage || noop;
     const contextHandler = config.contextHandler || (() => ({ ok: false, code: 'unavailable' }));
     const noteHandler = config.noteHandler || (() => ({ ok: false, code: 'unavailable' }));
+    const unavailable = () => ({ ok: false, code: 'unavailable' });
 
     registry.register('/help', jt('composer.slash.helpDescription', 'List available slash commands'), (invocation) => {
       const entries = registry.listCommands();
@@ -343,6 +346,15 @@
       requiresSession: false,
       action: 'insert',
     });
+    // Row 59 checkpoint 5a: the user's explicit request for a separate, linked chat.
+    registry.register('/linked', jt('composer.slash.linkedDescription', 'Start a separate chat linked to this one'),
+      config.linkedHandler || unavailable, { action: 'insert' });
+    // Memory v2 (row 58 W1): explicit user memory commands; the project comes from the chat.
+    registry.register('/remember', jt('composer.slash.rememberDescription', 'Ask Jenny to remember something'),
+      config.rememberHandler || unavailable, { action: 'insert' });
+    registry.register('/forget', jt('composer.slash.forgetDescription', 'Forget a memory by id or by its words'),
+      config.forgetHandler || unavailable, { action: 'insert' });
+    registry.register('/memory', jt('composer.slash.memoryDescription', 'List what Jenny remembers here'), config.memoryHandler || unavailable);
     return true;
   }
 

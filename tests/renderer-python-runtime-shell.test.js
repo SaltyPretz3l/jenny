@@ -93,18 +93,23 @@ test('renderer formats python_execute output with inline code, tables, images, a
   header.click();
   await waitForUiState(window, () => header.getAttribute('aria-expanded') === 'true'
     && details.hidden === false
-    && window.document.querySelectorAll('.python-output-image').length === 1, {
+    && window.document.querySelectorAll('.inv-artifact-figure--tool img').length === 1, {
     timeoutMs: 5000,
     message: 'the python tool row did not expand with its image output',
   });
 
   assert.equal(header.getAttribute('aria-expanded'), 'true');
   assert.equal(details.hidden, false);
-  assert.equal(window.document.querySelectorAll('.python-output-image').length, 1);
+  assert.equal(window.document.querySelectorAll('.inv-artifact-figure--tool img').length, 1);
   assert.match(
-    window.document.querySelector('.python-output-image').getAttribute('src'),
+    window.document.querySelector('.inv-artifact-figure--tool img').getAttribute('src'),
     /^file:\/\/\/C:\/attachments\/stored-chart-1\.png$/i
   );
+  // The stored chart opens the image viewer through the transcript's delegated click handler.
+  const viewerButton = window.document.querySelector('.inv-artifact-figure--tool img').parentElement;
+  assert.equal(viewerButton.getAttribute('data-image-viewer-open'), 'tool');
+  assert.equal(viewerButton.getAttribute('data-image-id'), 'stored-chart-1');
+  assert.ok(viewerButton.closest('#chatTimeline'));
   assert.equal(window.document.querySelectorAll('.python-table-output table').length, 1);
   assert.match(window.document.querySelector('.python-output-error').textContent, /ZeroDivisionError/);
   assert.match(details.textContent, /print\(2 \+ 2\)/);

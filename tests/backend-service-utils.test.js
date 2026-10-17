@@ -11,10 +11,8 @@ const {
   summarizeToolPayload,
   extractClientMessageId,
   dedupeSessionMessages,
-  buildMemorySuggestionMessages,
   normalizeRecallQueryFragment,
   buildRecallQuery,
-  promptHasExplicitResponseStyleInstruction,
   normalizeManagedToolPreferences,
 } = require('../services/backend/backend-service-utils');
 
@@ -392,34 +390,6 @@ test('dedupeSessionMessages handles null inputs', () => {
   assert.deepEqual(result.mergedMessages, []);
 });
 
-/* ── buildMemorySuggestionMessages ── */
-
-test('buildMemorySuggestionMessages filters empty content', () => {
-  const result = buildMemorySuggestionMessages([
-    { role: 'user', content: 'hello' },
-    { role: 'assistant', content: '' },
-    { role: 'assistant', content: 'world' },
-  ]);
-  assert.deepEqual(result, [{ role: 'user', content: 'hello' }]);
-});
-
-test('buildMemorySuggestionMessages keeps only recent plain user messages when bounded', () => {
-  const result = buildMemorySuggestionMessages([
-    { role: 'user', content: 'first' },
-    { role: 'assistant', content: 'reply 1' },
-    { role: 'user', content: 'second' },
-    { role: 'assistant', kind: 'tool_result', content: 'tool output' },
-    { role: 'user', content: 'third' },
-    { role: 'user', content: 'fourth' },
-  ], { maxUserMessages: 3 });
-
-  assert.deepEqual(result, [
-    { role: 'user', content: 'second' },
-    { role: 'user', content: 'third' },
-    { role: 'user', content: 'fourth' },
-  ]);
-});
-
 /* ── normalizeRecallQueryFragment ── */
 
 test('normalizeRecallQueryFragment collapses whitespace', () => {
@@ -454,19 +424,6 @@ test('buildRecallQuery returns empty for no input', () => {
 test('buildRecallQuery respects maxQueryLength', () => {
   const query = buildRecallQuery([], 'a'.repeat(1000), { maxQueryLength: 50 });
   assert.ok(query.length <= 50);
-});
-
-/* ── promptHasExplicitResponseStyleInstruction ── */
-
-test('promptHasExplicitResponseStyleInstruction detects style patterns', () => {
-  assert.equal(promptHasExplicitResponseStyleInstruction('please be concise'), true);
-  assert.equal(promptHasExplicitResponseStyleInstruction('show me step by step'), true);
-  assert.equal(promptHasExplicitResponseStyleInstruction('be direct'), true);
-});
-
-test('promptHasExplicitResponseStyleInstruction returns false for plain prompts', () => {
-  assert.equal(promptHasExplicitResponseStyleInstruction('what is the weather'), false);
-  assert.equal(promptHasExplicitResponseStyleInstruction(''), false);
 });
 
 test('request-shaped tool preferences never disable an always-on tool', () => {

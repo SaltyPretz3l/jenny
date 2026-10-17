@@ -34,70 +34,14 @@
 
   const { escapeHtml: escapeHtmlText, resolveDefaultTitle } = (typeof globalThis !== 'undefined' && globalThis.stringUtils)
     || (typeof require === 'function' ? require('../shared/string-utils') : null);
+  var treeUi = globalThis.rendererChatsPanelTree || require('./renderer-chats-panel-tree');
+  var unreadUi = globalThis.rendererSessionUnread || (typeof require === 'function' ? require('./renderer-session-unread') : { count: function () { return 0; }, titleClass: function () { return ''; }, markup: function () { return ''; } });
 
-  function sessionTimestamp(session) {
-    var value = session && (session.updated_at || session.created_at);
-    var parsed = value ? new Date(value).valueOf() : 0;
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-
-  function compareSessions(left, right) {
-    var pinDelta = Number(right && right.pinned === true) - Number(left && left.pinned === true);
-    if (pinDelta) return pinDelta;
-    var timeDelta = sessionTimestamp(right) - sessionTimestamp(left);
-    if (timeDelta) return timeDelta;
-    return String(left && left.id || '').localeCompare(String(right && right.id || ''));
-  }
-
-  function groupVisibleSessions(sessions, scope, nowValue) {
-    var now = nowValue instanceof Date ? nowValue : new Date(nowValue || Date.now());
-    if (Number.isNaN(now.valueOf())) now = new Date();
-    var keyPrefix = scope === 'archived' ? 'archived_' : 'recent_';
-    var startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    var startOfYesterday = new Date(startOfToday);
-    var previousSevenDays = new Date(startOfToday);
-    var previousThirtyDays = new Date(startOfToday);
-    startOfYesterday.setDate(startOfToday.getDate() - 1);
-    previousSevenDays.setDate(startOfToday.getDate() - 7);
-    previousThirtyDays.setDate(startOfToday.getDate() - 30);
-    var groups = [
-      { key: keyPrefix + 'pinned', label: jt('sidebar.chats.groups.pinned', 'Pinned'), items: [] },
-      { key: keyPrefix + 'today', label: jt('sidebar.chats.groups.today', 'Today'), items: [] },
-      { key: keyPrefix + 'yesterday', label: jt('sidebar.chats.groups.yesterday', 'Yesterday'), items: [] },
-      { key: keyPrefix + 'previous_7_days', label: jt('sidebar.chats.groups.previous7Days', 'Previous 7 days'), items: [] },
-      { key: keyPrefix + 'previous_30_days', label: jt('sidebar.chats.groups.previous30Days', 'Previous 30 days'), items: [] },
-      { key: keyPrefix + 'older', label: jt('sidebar.chats.groups.older', 'Older'), items: [] },
-    ];
-    sessions.forEach(function (session) {
-      if (session.pinned === true) {
-        groups[0].items.push(session);
-        return;
-      }
-      var timestamp = sessionTimestamp(session);
-      var date = timestamp ? new Date(timestamp) : null;
-      if (date && date >= startOfToday) groups[1].items.push(session);
-      else if (date && date >= startOfYesterday) groups[2].items.push(session);
-      else if (date && date >= previousSevenDays) groups[3].items.push(session);
-      else if (date && date >= previousThirtyDays) groups[4].items.push(session);
-      else groups[5].items.push(session);
-    });
-    return groups.filter(function (group) { return group.items.length > 0; });
-  }
-
-  function formatSessionTime(value, nowValue) {
-    var parsed = value ? new Date(value) : null;
-    if (!parsed || Number.isNaN(parsed.valueOf())) return '';
-    var now = nowValue instanceof Date ? nowValue : new Date(nowValue || Date.now());
-    if (Number.isNaN(now.valueOf())) now = new Date();
-    var minutes = Math.floor(Math.max(now.valueOf() - parsed.valueOf(), 0) / 60000);
-    if (minutes < 1) return 'now';
-    if (minutes < 60) return minutes + 'm';
-    var hours = Math.floor(minutes / 60);
-    if (hours < 24) return hours + 'h';
-    var options = { month: 'short', day: 'numeric' };
-    if (parsed.getFullYear() !== now.getFullYear()) options.year = 'numeric';
-    return parsed.toLocaleDateString(globalThis.jennyI18n?.tag?.(), options);
-  }
+  var compareSessions = treeUi.compareSessions;
+  var groupVisibleSessions = treeUi.groupVisibleSessions;
+  var formatSessionTime = treeUi.formatSessionTime;
+  var survivingNeighborIds = treeUi.survivingNeighborIds;
+  var nearestSurvivingSessionId = treeUi.nearestSurvivingSessionId;
 
   function buildChatsViewModel(options) {
     var o = options || {};
@@ -136,6 +80,9 @@
     var requestedLimit = Number.isFinite(o.visibleLimit) ? Math.max(PAGE_SIZE, o.visibleLimit) : PAGE_SIZE;
     var mountLimit = query ? SEARCH_LIMIT : Math.min(requestedLimit, MAX_VISIBLE);
     var visibleSessions = eligible.slice(0, mountLimit);
+    // Linked chats nest under a parent only when the parent is itself shown here.
+    var tree = treeUi.buildSessionTree({ sessions: visibleSessions, allSessions: sessions, pendingDeletes: pendingDeletes, scope: scope, projectId: projectId, query: query, isActive: o.isActive });
+    var layout = treeUi.layoutGroups(tree, scope, o.now);
     var scopeTotal = scope === 'archived' ? archivedTotal : recentTotal;
     var hasMore = !query && visibleSessions.length < Math.min(matchedCount, MAX_VISIBLE);
     var capped = query ? matchedCount > SEARCH_LIMIT : matchedCount > MAX_VISIBLE && visibleSessions.length >= MAX_VISIBLE;
@@ -156,8 +103,9 @@
       scopeTotal: scopeTotal,
       matchedCount: matchedCount,
       visibleCount: visibleSessions.length,
-      visibleSessions: visibleSessions,
-      groups: groupVisibleSessions(visibleSessions, scope, o.now),
+      visibleSessions: layout.rendered,
+      nodes: tree.nodes,
+      groups: layout.groups,
       hasMore: hasMore,
       capped: capped,
       remaining: Math.max(Math.min(matchedCount, MAX_VISIBLE) - visibleSessions.length, 0),
@@ -193,6 +141,8 @@
     var lastSlowLogAt = 0;
     var lastScopeState = null;
     var rovingSessionId = '';
+    var lastNodes = new Map();
+    var treeChains = new Map();
     // Projects v2 filter: the shared project switcher (lazy) names projects
     // and opens the one project menu; cached once it resolves.
     var projectSwitcher = null;
@@ -286,11 +236,26 @@
       return outcome ? [outcome, state.awayDigest?.digest?.latestTerminalBySession?.[id]] : null;
     }
 
-    function rowSignature(session, active) {
-      var outbox = state.sendOutboxBySession instanceof Map
-        ? state.sendOutboxBySession.get(session.id) || []
-        : [];
+    // Streaming or waiting-for-approval chats: a collapsed parent signals them on its chip.
+    function runtimeActiveIds() {
+      var streams = windowRef.rendererMultiStreamController;
+      var ids = new Set();
+      ['getStreamingSessionIds', 'getApprovalPendingSessionIds'].forEach(function (name) {
+        try { (streams && typeof streams[name] === 'function' ? streams[name]() : []).forEach(function (id) { ids.add(String(id)); }); } catch (_error) { /* best effort */ }
+      });
+      return ids;
+    }
+
+    function toggleChildren(sessionId) {
+      var node = lastNodes.get(sessionId);
+      if (!node || !node.hasChildren) return;
+      treeUi.writeChildrenExpanded({ state: state, bridge: windowRef.jennyShell && windowRef.jennyShell.chatWorkspace, chains: treeChains, onChange: scheduleRender }, sessionId, !node.expanded);
+    }
+
+    function rowSignature(session, active, node) {
+      var outbox = state.sendOutboxBySession instanceof Map ? state.sendOutboxBySession.get(session.id) || [] : [];
       return JSON.stringify({
+        unread: unreadUi.count(session),
         title: resolveDefaultTitle(session.title),
         updatedAt: session.updated_at || session.created_at || '',
         preview: session.last_message_preview || '',
@@ -304,10 +269,11 @@
         lockdown: isOfflineLockdownVisible(session),
         outcome: outcomeFor(session.id),
         outbox: outbox.map(function (item) { return [item && item.id, item && item.revision, item && item.status]; }),
+        tree: treeUi.nodeSignature(node),
       });
     }
 
-    function buildRowContents(session, active, tabStop) {
+    function buildRowContents(session, active, tabStop, node) {
       var title = resolveDefaultTitle(normalizeInlineText(session.title));
       var accessibleTitle = title.length <= 120 ? title : title.slice(0, 117).trim() + '...';
       var isPlugin = session.session_type === 'plugin';
@@ -348,9 +314,10 @@
         tabIndex: tabStop ? 0 : -1,
         dataset: { 'session-open': session.id, 'session-id': session.id },
         trustedHtml: '<span class="session-row__selection" aria-hidden="true"></span><span class="session-row__dot" aria-hidden="true"></span>'
-          + '<span class="conversation-title session-row__title">' + pinMarkup + typeMarkup + lockdownMarkup
+          + '<span class="conversation-title session-row__title' + unreadUi.titleClass(session) + '">' + pinMarkup + typeMarkup + lockdownMarkup
           + '<span class="session-row__title-text">' + escapeHtml(title) + '</span>' + outboxMarkup + '</span>'
-          + '<time class="session-row__time" datetime="' + escapeHtml(timestamp) + '">' + escapeHtml(formatRelativeTime(timestamp)) + '</time>',
+          + unreadUi.markup(session) + '<time class="session-row__time" datetime="' + escapeHtml(timestamp) + '">' + escapeHtml(formatRelativeTime(timestamp)) + '</time>'
+          + treeUi.relationMarkup(session, node),
       });
       var menuMarkup = actionButton({
         id: 'session-menu',
@@ -363,10 +330,10 @@
         dataset: { 'session-action': 'menu', 'session-id': session.id },
         trustedHtml: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.25" cy="8" r="1.25" /><circle cx="8" cy="8" r="1.25" /><circle cx="12.75" cy="8" r="1.25" /></svg>',
       });
-      return openMarkup + menuMarkup;
+      return openMarkup + treeUi.branchMarkup(node, accessibleTitle, actionButton) + menuMarkup;
     }
 
-    function ensureRow(session, active, tabStop) {
+    function ensureRow(session, active, tabStop, node) {
       var row = rowById.get(session.id);
       if (!row) {
         row = documentRef.createElement('li');
@@ -374,19 +341,20 @@
         row.dataset.sessionId = session.id;
         rowById.set(session.id, row);
       }
-      var signature = rowSignature(session, active);
+      var signature = rowSignature(session, active, node);
       var activeElement = documentRef.activeElement;
       var focusedControl = activeElement && row.contains(activeElement)
-        ? (activeElement.matches('[data-session-action="menu"]') ? 'menu' : 'open')
+        ? (activeElement.matches('[data-session-action="menu"]') ? 'menu' : (activeElement.matches('[data-session-toggle]') ? 'toggle' : 'open'))
         : '';
       var renameEditor = row.querySelector('.inv-inline-title-editor');
       if (row.dataset.renderSignature !== signature && !renameEditor) {
         row.dataset.renderSignature = signature;
-        row.innerHTML = buildRowContents(session, active, tabStop);
+        row.innerHTML = buildRowContents(session, active, tabStop, node);
+        var relation = row.querySelector('[id^="' + treeUi.RELATION_ID_PREFIX + '"]');
+        if (relation) row.querySelector('[data-session-open]').setAttribute('aria-describedby', relation.id);
         if (focusedControl) {
-          var replacement = focusedControl === 'menu'
-            ? row.querySelector('[data-session-action="menu"]')
-            : row.querySelector('[data-session-open]');
+          var replacement = row.querySelector(focusedControl === 'menu' ? '[data-session-action="menu"]'
+            : (focusedControl === 'toggle' ? '[data-session-toggle]' : '[data-session-open]'));
           try { replacement && replacement.focus({ preventScroll: true }); }
           catch (_error) { replacement && replacement.focus(); }
         }
@@ -399,6 +367,7 @@
         ? normalizeInlineText(session.plugin_session && session.plugin_session.provider_name)
         : '';
       row.classList.toggle('active', active);
+      treeUi.applyNodeToRow(row, node);
       var openButton = row.querySelector('[data-session-open]');
       var menuButton = row.querySelector('[data-session-action="menu"]');
       openButton && openButton.setAttribute('tabindex', tabStop ? '0' : '-1');
@@ -615,31 +584,6 @@
       }
     }
 
-    function survivingNeighborIds(snapshot, sourceIndex, ids) {
-      var orderedIds = snapshot && snapshot.orderedIds || [];
-      var index = Number.isInteger(sourceIndex) ? sourceIndex : -1;
-      var nextId = '';
-      var previousId = '';
-      for (var next = index + 1; next < orderedIds.length; next += 1) {
-        if (ids.has(orderedIds[next])) {
-          nextId = orderedIds[next];
-          break;
-        }
-      }
-      for (var previous = Math.min(index - 1, orderedIds.length - 1); previous >= 0; previous -= 1) {
-        if (ids.has(orderedIds[previous])) {
-          previousId = orderedIds[previous];
-          break;
-        }
-      }
-      return { nextId: nextId, previousId: previousId };
-    }
-
-    function nearestSurvivingSessionId(snapshot, sourceIndex, ids) {
-      var neighbors = survivingNeighborIds(snapshot, sourceIndex, ids);
-      return neighbors.nextId || neighbors.previousId;
-    }
-
     function chooseRovingSession(model, snapshot) {
       var ids = new Set(model.visibleSessions.map(function (session) { return session.id; }));
       if (snapshot && snapshot.focusedSessionId) {
@@ -765,7 +709,7 @@
         if (section !== sectionCursor) dom.conversationGroups.insertBefore(section, sectionCursor);
         else sectionCursor = section.nextElementSibling;
         group.items.forEach(function (session) {
-          var row = ensureRow(session, session.id === state.currentSessionId, session.id === rovingSessionId);
+          var row = ensureRow(session, session.id === state.currentSessionId, session.id === rovingSessionId, model.nodes.get(session.id));
           usedRows.add(session.id);
           if (row !== rowCursor) list.insertBefore(row, rowCursor);
           else rowCursor = row.nextElementSibling;
@@ -801,7 +745,9 @@
       pendingScrollPolicy = SCROLL_PRESERVE;
       var startedAt = nowMs();
       var scrollAnchor = captureScrollAnchor();
+      var activeIds = runtimeActiveIds();
       var model = buildChatsViewModel({
+        isActive: function (id) { return activeIds.has(id); },
         sessions: state.sessions,
         pendingDeleteIds: pendingDeleteIds(),
         scope: currentScope(),
@@ -823,6 +769,7 @@
           ? jt('sidebar.chats.countOpenAsTabs', '{count} chats · {open} open as tabs', { count: totalChats, open: openTabs })
           : jt('sidebar.chats.countChats', '{count} chats', { count: totalChats }));
       }
+      lastNodes = model.nodes;
       reconcileGroups(model, scrollAnchor);
       renderEmpty(model);
       renderPagination(model);
@@ -939,10 +886,18 @@
 
     function patchRuntimeState() {
       if (disposed) return;
+      var activeIds = runtimeActiveIds();
+      treeUi.patchCollapsedChips(getVisibleSessionElements(), lastNodes, function (id) { return activeIds.has(id); });
       callbacks.afterRenderSessions && callbacks.afterRenderSessions(getVisibleSessionElements());
     }
 
     function handlePanelClick(event) {
+      var toggle = event.target && event.target.closest && event.target.closest('[data-session-toggle]');
+      if (toggle && dom.conversationGroups.contains(toggle)) {
+        event.preventDefault();
+        toggleChildren(toggle.dataset.sessionToggle);
+        return;
+      }
       var action = event.target && event.target.closest && event.target.closest('[data-chats-empty-action]');
       if (!action || !dom.conversationGroups.contains(action)) return;
       if (action.dataset.chatsEmptyAction === 'search') {

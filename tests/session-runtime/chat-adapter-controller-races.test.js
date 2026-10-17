@@ -76,7 +76,7 @@ test('adapter binds the captured route and inference gateway through terminal pr
     assert.equal(options.runtimeExecutionAuthority, prepared.binding);
     assert.equal(typeof options.runtimeOperationGateway.handle, 'function');
     const baseOperation = {
-      api_version: '2026-08-17', schema_version: 1, kind: 'inference',
+      api_version: '2026-10-15', schema_version: 1, kind: 'inference',
       operation_id: 'inference-1', request_id: claim.streamId, session_id: sessionId,
       authority_revision: getTrustedExecutionBinding(prepared.binding).authorityRevision,
     };
@@ -124,7 +124,7 @@ test('a quarantined tool no longer holds the settled chat turn; its late proof f
   service._startManagedSidecarChatStream = async options => {
     gateway = options.runtimeOperationGateway;
     const common = {
-      api_version: '2026-08-17', schema_version: 1, request_id: claim.streamId, session_id: sessionId,
+      api_version: '2026-10-15', schema_version: 1, request_id: claim.streamId, session_id: sessionId,
       authority_revision: getTrustedExecutionBinding(prepared.binding).authorityRevision,
     };
     const inference = { ...common, kind: 'inference', operation_id: 'inference-q' };
@@ -187,7 +187,7 @@ test('startup cancellation retains exact completion after stream-map removal and
     const streamId = options.turnLease.identity.streamId;
     const binding = getTrustedExecutionBinding(options.runtimeExecutionAuthority);
     operation = {
-      api_version: '2026-08-17', schema_version: 1, kind: 'inference',
+      api_version: '2026-10-15', schema_version: 1, kind: 'inference',
       operation_id: 'late-inference-1', request_id: streamId, session_id: sessionId,
       authority_revision: binding.authorityRevision,
     };

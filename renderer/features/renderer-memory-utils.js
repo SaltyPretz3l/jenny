@@ -20,12 +20,10 @@
     getApprovedMemoryKindOptions,
     getApprovedMemoryKindLabel,
     normalizeApprovedMemoryKindFilter,
-    normalizePendingMemorySort,
     normalizeMemoryConfidence,
     normalizeApprovedMemory,
     normalizePendingMemoryCandidate,
     sortMemoriesNewestFirst,
-    sortPendingMemoryCandidates,
     buildApprovedMemorySearchText,
     buildPendingMemoryKey,
   } = sharedUtils;
@@ -50,14 +48,16 @@
       },
       dismissToast = noop,
       openSettingsSection = noop,
+      openSession = noopAsync,
+      scrollMessageIntoView = noopFalse,
     } = callbacks;
+    // Memory page view state (row 58 W4): the scope tab and the lazily loaded
+    // Forgotten and History folds, per scope.
+    const manager = state.memoryManager;
+    if (!manager.scopeTab) manager.scopeTab = 'project_general';
+    if (!(manager.archivedByScope instanceof Map)) manager.archivedByScope = new Map();
+    if (!(manager.operationsByScope instanceof Map)) manager.operationsByScope = new Map();
 
-    const MAX_HANDLED_MEMORY_SUGGESTION_STREAMS = 200;
-    const MAX_DISMISSED_MEMORY_FINGERPRINTS_PER_SESSION = 32;
-    const MAX_DISMISSED_MEMORY_SESSIONS = 200;
-    const handledMemorySuggestionStreams = new Set();
-    const handledMemorySuggestionStreamOrder = [];
-    const dismissedMemoryFingerprintsBySession = new Map();
     let approvedMemoryLoadPromise = null;
     let pendingMemoryLoadPromise = null;
     let memoryStatusLoadPromise = null;
@@ -93,113 +93,6 @@
     function renderMemorySurfaces() {
       if (disposed) return;
       if (state.ui?.activeView === 'settings' && state.ui?.activeSettingsSection === 'memories') renderApprovedMemoryManager();
-    }
-
-    function rememberHandledMemorySuggestionStream(streamId) {
-      const normalizedStreamId = String(streamId || '').trim();
-      if (!normalizedStreamId || handledMemorySuggestionStreams.has(normalizedStreamId)) {
-        return false;
-      }
-      handledMemorySuggestionStreams.add(normalizedStreamId);
-      handledMemorySuggestionStreamOrder.push(normalizedStreamId);
-      while (handledMemorySuggestionStreamOrder.length > MAX_HANDLED_MEMORY_SUGGESTION_STREAMS) {
-        const oldestStreamId = handledMemorySuggestionStreamOrder.shift();
-        if (oldestStreamId) {
-          handledMemorySuggestionStreams.delete(oldestStreamId);
-        }
-      }
-      return true;
-    }
-
-    function getDismissedMemoryFingerprints(sessionId) {
-      const normalizedSessionId = String(sessionId || '').trim();
-      const sessionFingerprints = dismissedMemoryFingerprintsBySession.get(normalizedSessionId) || null;
-      if (sessionFingerprints) rememberDismissedMemorySession(normalizedSessionId, sessionFingerprints);
-      return sessionFingerprints;
-    }
-
-    function trimDismissedMemoryFingerprints(sessionFingerprints) {
-      while (sessionFingerprints.size > MAX_DISMISSED_MEMORY_FINGERPRINTS_PER_SESSION) {
-        const oldestFingerprint = sessionFingerprints.values().next().value;
-        if (!oldestFingerprint) break;
-        sessionFingerprints.delete(oldestFingerprint);
-      }
-    }
-
-    function rememberDismissedMemorySession(sessionId, sessionFingerprints) {
-      dismissedMemoryFingerprintsBySession.delete(sessionId);
-      dismissedMemoryFingerprintsBySession.set(sessionId, sessionFingerprints);
-      while (dismissedMemoryFingerprintsBySession.size > MAX_DISMISSED_MEMORY_SESSIONS) {
-        dismissedMemoryFingerprintsBySession.delete(dismissedMemoryFingerprintsBySession.keys().next().value);
-      }
-    }
-
-    function rememberDismissedMemoryFingerprint(sessionId, fingerprint) {
-      const normalizedSessionId = String(sessionId || '').trim();
-      const normalizedFingerprint = String(fingerprint || '').trim().toLowerCase();
-      if (!normalizedSessionId || !normalizedFingerprint) {
-        return;
-      }
-      let sessionFingerprints = dismissedMemoryFingerprintsBySession.get(normalizedSessionId);
-      if (!sessionFingerprints) {
-        sessionFingerprints = new Set();
-      }
-      sessionFingerprints.delete(normalizedFingerprint);
-      sessionFingerprints.add(normalizedFingerprint);
-      trimDismissedMemoryFingerprints(sessionFingerprints);
-      rememberDismissedMemorySession(normalizedSessionId, sessionFingerprints);
-    }
-
-    function clearDismissedMemoryFingerprint(sessionId, fingerprint) {
-      const normalizedSessionId = String(sessionId || '').trim();
-      const normalizedFingerprint = String(fingerprint || '').trim().toLowerCase();
-      if (!normalizedSessionId || !normalizedFingerprint) {
-        return;
-      }
-      const sessionFingerprints = dismissedMemoryFingerprintsBySession.get(normalizedSessionId);
-      if (!sessionFingerprints) {
-        return;
-      }
-      sessionFingerprints.delete(normalizedFingerprint);
-      if (!sessionFingerprints.size) {
-        dismissedMemoryFingerprintsBySession.delete(normalizedSessionId);
-      } else {
-        rememberDismissedMemorySession(normalizedSessionId, sessionFingerprints);
-      }
-    }
-
-    function clearDismissedMemorySession(sessionId) {
-      const normalizedSessionId = String(sessionId || '').trim();
-      if (!normalizedSessionId) {
-        return;
-      }
-      dismissedMemoryFingerprintsBySession.delete(normalizedSessionId);
-    }
-
-    function rekeyDismissedMemorySession(oldSessionId, newSessionId) {
-      const sourceSessionId = String(oldSessionId || '').trim();
-      const targetSessionId = String(newSessionId || '').trim();
-      if (!sourceSessionId || !targetSessionId || sourceSessionId === targetSessionId) {
-        return targetSessionId || sourceSessionId;
-      }
-      const sourceFingerprints = dismissedMemoryFingerprintsBySession.get(sourceSessionId);
-      if (!sourceFingerprints) {
-        return targetSessionId;
-      }
-      const targetFingerprints = dismissedMemoryFingerprintsBySession.get(targetSessionId) || new Set();
-      for (const fingerprint of sourceFingerprints) {
-        targetFingerprints.add(fingerprint);
-      }
-      dismissedMemoryFingerprintsBySession.delete(sourceSessionId);
-      trimDismissedMemoryFingerprints(targetFingerprints);
-      rememberDismissedMemorySession(targetSessionId, targetFingerprints);
-      return targetSessionId;
-    }
-
-    function resetMemorySuggestionState() {
-      handledMemorySuggestionStreams.clear();
-      handledMemorySuggestionStreamOrder.length = 0;
-      dismissedMemoryFingerprintsBySession.clear();
     }
 
     function isMemoryManagerUnavailable() {
@@ -564,9 +457,10 @@
       getFieldValue: getApprovedMemoryFieldValue,
       hasDraftChanges: hasApprovedMemoryDraftChanges,
       searchText: buildApprovedMemorySearchText,
-      sortPending: sortPendingMemoryCandidates,
+      sortPending: sortMemoriesNewestFirst,
       buildPendingKey: buildPendingMemoryKey,
       canFocus: () => !disposed,
+      pageBusy: () => actionController?.pageBusy?.() || {},
     }) || null;
     let actionController;
 
@@ -588,6 +482,8 @@
         toErrorMessage,
         dismissToast,
         openSettingsSection,
+        openSession,
+        scrollMessageIntoView,
         normalizeApprovedMemoryKindFilter,
       },
       getHubDom,
@@ -604,10 +500,6 @@
         refreshMemoryStatus,
         getPendingMemoryCandidate,
         setPendingMemoryReviewAction,
-        clearDismissedMemoryFingerprint,
-        rememberDismissedMemoryFingerprint,
-        rememberHandledMemorySuggestionStream,
-        getDismissedMemoryFingerprints,
         buildPendingMemoryKey,
       },
     }) || null;
@@ -619,7 +511,6 @@
       };
     const handleApprovedMemorySave = actionController?.handleApprovedMemorySave || noopAsync;
     const handleApprovedMemoryDelete = actionController?.handleApprovedMemoryDelete || noop;
-    const maybeSuggestMemoryCapture = actionController?.maybeSuggestMemoryCapture || noopAsync;
     actionController?.bindMemoryPageEvents?.();
 
     return {
@@ -629,12 +520,8 @@
       renderApprovedMemoryManager,
       handleApprovedMemorySave,
       handleApprovedMemoryDelete,
-      maybeSuggestMemoryCapture,
       openMemoryHub,
       isMemoryManagerUnavailable,
-      clearDismissedMemorySession,
-      rekeyDismissedMemorySession,
-      resetMemorySuggestionState,
       getApprovedMemoryById,
       hasApprovedMemoryDraftChanges,
       upsertApprovedMemoryDraft,

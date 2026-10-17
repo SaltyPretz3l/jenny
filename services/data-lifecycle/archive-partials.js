@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { removeTree } = require('../fs-remove-no-follow');
 
 const PARTIAL_SUFFIX = '.partial';
 const OWNED_PARTIAL_NAME = /^([^/\\]+)\.[0-9a-f]{12}\.partial$/;
@@ -31,7 +32,8 @@ async function removeOwnedPartial(rootPath, partialPath) {
     if (error?.code === 'ENOENT') return true;
     throw error;
   }
-  await fs.promises.rm(partialPath, { recursive: true, force: true });
+  // Never Node's rm: a stale partial in a user-chosen folder may hold a junction (see fs-remove-no-follow).
+  await removeTree(partialPath);
   return true;
 }
 

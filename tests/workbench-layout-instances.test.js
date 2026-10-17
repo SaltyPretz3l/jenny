@@ -23,7 +23,7 @@ test('terminal slots map to view ids and back, capped at four', () => {
 
 test('the default layout homes test-output in the bottom stack and has one terminal', () => {
   const layout = createDefaultLayout();
-  assert.deepEqual(findStack(layout, findView(layout, 'terminal').stackId).views, ['terminal', 'problems', 'run', 'test-runner', 'test-output']);
+  assert.deepEqual(findStack(layout, findView(layout, 'terminal').stackId).views, ['terminal', 'problems', 'run', 'test-runner', 'test-output', 'activity']);
   assert.equal(listViews(layout).filter((id) => terminalSlot(id) > 0).length, 1);
 });
 

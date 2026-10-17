@@ -82,9 +82,9 @@
       || (typeof require === 'function' ? require('./renderer-model-library-folders') : null);
   }
 
-  function resolveImageEngineModule() {
-    return (root && root.modelLibraryImageEngine)
-      || (typeof require === 'function' ? require('./model-library/model-library-image-engine') : null);
+  function resolveEngineBlocksModule() {
+    return (root && root.modelLibraryEngineBlocks)
+      || (typeof require === 'function' ? require('./model-library/model-library-engine-blocks') : null);
   }
 
   function createModelLibrarySectionController(deps) {
@@ -116,7 +116,7 @@
     });
     var pullController = null;
     var foldersController = null;
-    var imageEngineController = null;
+    var engineBlocks = createEngineBlocks();
     var sourceData = null;
     var merged = null;
     var loadSettled = false; // until then the hardware line reads "Checking hardware…"
@@ -158,6 +158,10 @@
       return state.features?.featureFlags?.tools_image_generate_enabled === true;
     }
 
+    // The NInfer block (row 54) follows its own kill switch; an ineligible GPU renders nothing.
+    function ninferFlagEnabled() { return state.features?.featureFlags?.ninfer === true; }
+    function ninferLibraryInput() { return engineBlocks?.ninfer()?.libraryInput() || null; }
+
     function mergeSignature() {
       return [
         activeModel(),
@@ -165,6 +169,7 @@
         JSON.stringify(loadFailureReader.readModelLoadFailure(state.backend)),
         JSON.stringify(state.localEngines?.openaiCompatible?.managed || null),
         Boolean(state.accelerationCatalog),
+        JSON.stringify(ninferLibraryInput()),
       ].join('\n');
     }
 
@@ -221,8 +226,10 @@
           headroomMb: Number(state.accelerationCatalog?.defaults?.vramHeadroomMb) || 2048,
           families: state.accelerationCatalog?.families || [],
         },
+        ninfer: ninferLibraryInput(),
       });
-      var recommended = result.cards.find(function (card) { return card.recommended === true && card.fitState === 'fits' && card.installed !== true; });
+      // The pull-recommendation an empty chat offers is an Ollama tag; an NInfer row downloads through its block.
+      var recommended = result.cards.find(function (card) { return card.recommended === true && card.fitState === 'fits' && card.installed !== true && card.selectedEngine !== 'ninfer'; });
       var previousTag = state.modelRecommendation?.tag;
       state.modelRecommendation = recommended ? { tag: recommended.tag, downloadSizeMb: recommended.downloadSizeMb } : null;
       if (previousTag !== state.modelRecommendation?.tag) windowRef.dispatchEvent(new windowRef.CustomEvent('jenny:model-state-changed'));
@@ -269,34 +276,15 @@
 
     function extrasHtml() {
       return (accelerationFlagEnabled() ? '<div id="modelLibraryFoldersHost"></div>' : '')
-        + (imageEngineFlagEnabled() ? '<div id="modelLibraryImageEngineHost"></div>' : '');
+        + (engineBlocks ? engineBlocks.hostsHtml() : '');
     }
 
-    function imageEngine() {
-      if (disposed || !imageEngineFlagEnabled()) return null;
-      if (!imageEngineController) {
-        var imageEngineModule = resolveImageEngineModule();
-        if (!imageEngineModule || typeof imageEngineModule.createModelLibraryImageEngineController !== 'function') return null;
-        imageEngineController = imageEngineModule.createModelLibraryImageEngineController({
-          windowRef: windowRef,
-          documentRef: documentRef,
-          isEnabled: imageEngineFlagEnabled,
-          hostId: 'modelLibraryImageEngineHost',
-        });
-      }
-      return imageEngineController;
-    }
-
-    function renderImageEngine() {
-      var controller = imageEngine();
-      if (!controller) {
-        // The flag went off: drop the controller and its bridge subscription.
-        if (imageEngineController) imageEngineController.dispose();
-        imageEngineController = null;
-        return;
-      }
-      controller.bind();
-      controller.render();
+    // The NInfer and Image engine blocks (one lifecycle, see model-library-engine-blocks.js).
+    function createEngineBlocks() {
+      var module = resolveEngineBlocksModule();
+      if (typeof module?.createModelLibraryEngineBlocks !== 'function') return null;
+      return module.createModelLibraryEngineBlocks({ windowRef: windowRef, documentRef: documentRef, imageEngineEnabled: imageEngineFlagEnabled,
+        ninferEnabled: ninferFlagEnabled, ninfer: { onState: rebuildFromState, onUse: function (modelId) { runtimeActions.handleUse(modelId); } } });
     }
 
     function folders() {
@@ -414,7 +402,7 @@
       target.innerHTML = toolbarHtml() + (extras ? '' : extrasHtml());
       if (extras) extras.innerHTML = extrasHtml();
       renderFolders();
-      renderImageEngine();
+      if (engineBlocks) engineBlocks.render();
       if (pullFocus) {
         var nextInput = target.querySelector('[data-model-library-section-input="pull-tag"]');
         if (nextInput) {
@@ -594,6 +582,12 @@
     // While Ollama's tag list is unreadable nobody knows whether Ollama has
     // the model: the drawer gets no Ollama facts (it reads that as unknown),
     // and keeps the llama-server ones.
+    // A pin's window list: context_windows, or fp8_kv_windows (the drawer labels their 8-bit cache).
+    function ninferPinWindows(model, key) {
+      var pin = (ninferLibraryInput()?.pins || []).find(function (entry) { return entry.id === model.ninferArtifactId; });
+      return Array.isArray(pin?.[key]) ? pin[key] : [];
+    }
+
     function tuneEngines(model) {
       var engines = model && model.engines ? model.engines : null;
       return engines && sourceData && sourceData.unavailable && sourceData.unavailable.ollamaTags
@@ -819,13 +813,20 @@
           openModelTuning(tag, modelAction, {
             displayName: tuned?.displayName || '',
             engines: tuneEngines(tuned),
-            engineTypeHint: tuned?.libraryGguf ? 'openai-compatible' : '',
+            engineTypeHint: tuned?.libraryGguf || tuned?.selectedEngine === 'ninfer' ? 'openai-compatible' : '',
+            // An NInfer row: the drawer shows the NInfer section (context + MTP) instead of the Engine one.
+            ninfer: tuned?.selectedEngine === 'ninfer' ? { artifactId: tuned.ninferArtifactId, modelId: tuned.tag, contextWindows: ninferPinWindows(tuned, 'context_windows'), fp8KvWindows: ninferPinWindows(tuned, 'fp8_kv_windows'), supportsMtp: tuned.mtp?.eligible === true } : null,
           });
         }
         else if (action === 'remove') {
           pendingConfirmModel = tag;
           renderConfirmModal();
-        } else if (action === 'pull') startPull(tag);
+        } else if (action === 'pull') {
+          // An NInfer row downloads through its block (engine + model, one set-up).
+          var ninferRow = findModel(tag);
+          if (ninferRow && ninferRow.selectedEngine === 'ninfer') void engineBlocks?.ninfer()?.setup();
+          else startPull(tag);
+        }
         else if (action === 'cancel') void ensurePullController().cancel(tag);
         return;
       }
@@ -991,8 +992,8 @@
       pullController = null;
       if (foldersController) foldersController.dispose();
       foldersController = null;
-      if (imageEngineController) imageEngineController.dispose();
-      imageEngineController = null;
+      if (engineBlocks) engineBlocks.dispose();
+      engineBlocks = null;
       hideOwnContextMenu();
       removeConfirmModal();
     }

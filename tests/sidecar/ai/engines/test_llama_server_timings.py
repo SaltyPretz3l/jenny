@@ -357,3 +357,36 @@ class TestPromptCacheCounts:
 
         assert snapshot is not None
         assert snapshot["provider_cached_tokens"] == 8000
+
+
+@pytest.mark.parametrize("with_tools", [False, True])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_measured_progress_is_not_first_token_and_mixed_terminal_survives(
+    engine, monkeypatch, with_tools, enabled,
+):
+    engine._prefill_progress_enabled = enabled
+    engine._configured_context_length = 16384
+    captured = []
+    first_tokens = []
+    monkeypatch.setattr(engine, "_record_first_chunk", lambda: first_tokens.append(True))
+    frames = [
+        {"prompt_progress": {"total": 10000, "cache": 0, "processed": 0},
+         "choices": [{"delta": {"role": "assistant", "content": None}}]},
+        {"prompt_progress": {"total": 10000, "cache": 0, "processed": 10000},
+         "choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}],
+         "usage": _USAGE, "timings": _TIMINGS},
+    ]
+    @contextmanager
+    def response(_self, _method, _path, **kwargs):
+        captured.append(kwargs["json"])
+        yield _FakeSSEStream([f"data: {json.dumps(frame)}" for frame in frames] + ["data: [DONE]"])
+    monkeypatch.setattr(ProviderHttpService, "stream_response", response)
+    generator = engine.stream_with_tools("test", tools=[]) if with_tools else engine.stream("test")
+    items, result = _drain(generator)
+    assert captured[0].get("return_progress", False) is enabled
+    assert len(first_tokens) == 1
+    assert [item.prefill_state for item in items if getattr(item, "kind", "") == "prefill"] == (["start", "sample", "sample", "unavailable"] if enabled else [])
+    assert any(getattr(item, "text", item) == "ok" for item in items)
+    if with_tools:
+        assert result.content == "ok" and result.finish_reason == "stop"
+        assert result.usage.input_tokens == _USAGE["prompt_tokens"]

@@ -1,52 +1,52 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('../inventory/artifact-figure'));
     return;
   }
-  root.rendererTranscriptAttachmentsUtils = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.rendererTranscriptAttachmentsUtils = factory(root.inventoryArtifactFigure || null);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (inventoryArtifactFigure) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  function createTranscriptAttachmentsRenderer(deps) {
-    const { escapeHtml } = deps || {};
-
-    function isLocalAttachmentAssetPath(raw) {
-      const normalized = String(raw || '').trim();
-      if (!normalized) return false;
-      if (/^\\\\/.test(normalized)) return false;
-      if (/^\/\//.test(normalized)) return false;
-      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(normalized) && !/^[a-zA-Z]:[\\/]/.test(normalized)) {
-        return false;
-      }
-      if (/^[a-zA-Z]:[\\/]/.test(normalized)) return true;
-      if (/^\//.test(normalized)) return true;
+  function isLocalAttachmentAssetPath(raw) {
+    const normalized = String(raw || '').trim();
+    if (!normalized) return false;
+    if (/^\\\\/.test(normalized)) return false;
+    if (/^\/\//.test(normalized)) return false;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(normalized) && !/^[a-zA-Z]:[\\/]/.test(normalized)) {
       return false;
     }
-    function toFileAssetUrl(assetPath) {
-      const normalized = String(assetPath || '').trim();
-      if (!normalized) {
-        return '';
-      }
-      if (!isLocalAttachmentAssetPath(normalized)) {
-        return '';
-      }
-      const withForwardSlashes = normalized.replace(/\\/g, '/');
-      const prefixed = withForwardSlashes.startsWith('/') ? withForwardSlashes : `/${withForwardSlashes}`;
-      try {
-        const fileUrl = new URL('file:///');
-        fileUrl.pathname = prefixed;
-        return fileUrl.toString();
-      } catch (_error) {
-        const encodedPath = prefixed
-          .split('/')
-          .map((segment, index) => {
-            if (!segment) return '';
-            if (index === 1 && /^[A-Za-z]:$/.test(segment)) return segment;
-            return encodeURIComponent(segment);
-          })
-          .join('/');
-        return `file://${encodedPath}`;
-      }
+    if (/^[a-zA-Z]:[\\/]/.test(normalized)) return true;
+    if (/^\//.test(normalized)) return true;
+    return false;
+  }
+  function toFileAssetUrl(assetPath) {
+    const normalized = String(assetPath || '').trim();
+    if (!normalized) {
+      return '';
     }
+    if (!isLocalAttachmentAssetPath(normalized)) {
+      return '';
+    }
+    const withForwardSlashes = normalized.replace(/\\/g, '/');
+    const prefixed = withForwardSlashes.startsWith('/') ? withForwardSlashes : `/${withForwardSlashes}`;
+    try {
+      const fileUrl = new URL('file:///');
+      fileUrl.pathname = prefixed;
+      return fileUrl.toString();
+    } catch (_error) {
+      const encodedPath = prefixed
+        .split('/')
+        .map((segment, index) => {
+          if (!segment) return '';
+          if (index === 1 && /^[A-Za-z]:$/.test(segment)) return segment;
+          return encodeURIComponent(segment);
+        })
+        .join('/');
+      return `file://${encodedPath}`;
+    }
+  }
+
+  function createTranscriptAttachmentsRenderer(deps) {
+    const { escapeHtml } = deps || {};
 
     function unavailableMedia(kind) {
       const label = kind === 'audio' ? jt('chat.attachments.audioUnavailable', 'Audio unavailable') : jt('artifacts.image.unavailable', 'Image unavailable');
@@ -71,16 +71,17 @@
                 if (!mediaUrl) {
                   return unavailableMedia('image');
                 }
-                return `
-                  <figure class="message-attachment-card message-attachment-image">
-                    <img
-                      class="message-attachment-image-preview"
-                      src="${escapeHtml(mediaUrl)}"
-                      alt="${escapeHtml(attachment.displayName || jt('artifacts.image.attachment', 'Image attachment'))}"
-                    >
-                    <figcaption class="message-attachment-caption">${escapeHtml(attachment.displayName || jt('artifacts.image.attachment', 'Image attachment'))}</figcaption>
-                  </figure>
-                `;
+                const name = attachment.displayName || jt('artifacts.image.attachment', 'Image attachment');
+                return inventoryArtifactFigure ? inventoryArtifactFigure.renderSourceFigure({
+                  kind: 'attachment', id: String(attachment.id || '').trim(), sessionId: '', src: mediaUrl, alt: name, caption: name,
+                  labels: {
+                    viewAria: jt('chat.artifactFigure.viewAria', 'View {title}', { title: name }),
+                    unavailable: jt('chat.artifactFigure.unavailable', 'Image unavailable'),
+                    copy: jt('chat.artifactFigure.copyImage', 'Copy image'),
+                    saveAs: jt('chat.artifactFigure.saveAs', 'Save as…'),
+                    actions: jt('chat.artifactFigure.actions', 'Image actions'),
+                  },
+                }) : unavailableMedia('image');
               }
               if (isAudio) {
                 if (!mediaUrl) {
@@ -124,5 +125,6 @@
 
   return {
     createTranscriptAttachmentsRenderer,
+    toFileAssetUrl,
   };
 });

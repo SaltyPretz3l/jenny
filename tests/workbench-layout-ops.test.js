@@ -138,7 +138,7 @@ test('moveView to the left edge joins the first views stack', () => {
   const before = snapshot(base);
   const out = moveView(base, 'terminal', { edge: 'left' });
   assertValid(out);
-  assert.equal(shape(out.root), 'row(explorer+search+source-control+terminal,col(E,problems+run+test-runner+test-output!),chat+changes!)');
+  assert.equal(shape(out.root), 'row(explorer+search+source-control+terminal,col(E,problems+run+test-runner+test-output+activity!),chat+changes!)');
   const rail = stackOf(out, 'terminal');
   assert.equal(rail.active, 'terminal');
   assert.equal(rail.collapsed, false);
@@ -148,7 +148,7 @@ test('moveView to the left edge joins the first views stack', () => {
 test('moveView to the right edge joins the last views stack and un-collapses it', () => {
   const out = moveView(createDefaultLayout(), 'terminal', { edge: 'right' });
   assertValid(out);
-  assert.equal(shape(out.root), 'row(explorer+search+source-control,col(E,problems+run+test-runner+test-output!),chat+changes+terminal)');
+  assert.equal(shape(out.root), 'row(explorer+search+source-control,col(E,problems+run+test-runner+test-output+activity!),chat+changes+terminal)');
   assert.equal(stackOf(out, 'terminal').active, 'terminal');
   assert.equal(stackOf(out, 'chat').collapsed, false);
 });
@@ -156,7 +156,7 @@ test('moveView to the right edge joins the last views stack and un-collapses it'
 test('moveView to the bottom edge joins the stack after the editor', () => {
   const out = moveView(createDefaultLayout(), 'explorer', { edge: 'bottom' });
   assertValid(out);
-  assert.equal(shape(out.root), 'row(search+source-control,col(E,terminal+problems+run+test-runner+test-output+explorer),chat+changes!)');
+  assert.equal(shape(out.root), 'row(search+source-control,col(E,terminal+problems+run+test-runner+test-output+activity+explorer),chat+changes!)');
   const bottom = stackOf(out, 'explorer');
   assert.equal(bottom.active, 'explorer');
   assert.equal(bottom.collapsed, false);
@@ -166,7 +166,7 @@ test('moveView to the bottom edge joins the stack after the editor', () => {
 test('moveView creates a new left stack (size 300) when the first child is not a views stack', () => {
   const emptied = applyAll(createDefaultLayout(), LEFT.map((v) => [v, { edge: 'bottom' }]));
   assertValid(emptied);
-  assert.equal(shape(emptied.root), 'row(col(E,terminal+problems+run+test-runner+test-output+explorer+search+source-control),chat+changes!)');
+  assert.equal(shape(emptied.root), 'row(col(E,terminal+problems+run+test-runner+test-output+activity+explorer+search+source-control),chat+changes!)');
   const out = moveView(emptied, 'search', { edge: 'left' });
   assertValid(out);
   assert.equal(out.root.children.length, 3);
@@ -181,7 +181,7 @@ test('moveView creates a new right stack: 380 for chat or changes, 300 otherwise
     ['changes', { edge: 'left' }],
   ]);
   assertValid(noDock);
-  assert.equal(shape(noDock.root), 'row(explorer+search+source-control+chat+changes,col(E,terminal+problems+run+test-runner+test-output!))');
+  assert.equal(shape(noDock.root), 'row(explorer+search+source-control+chat+changes,col(E,terminal+problems+run+test-runner+test-output+activity!))');
   const chat = moveView(noDock, 'chat', { edge: 'right' });
   assertValid(chat);
   assert.equal(chat.root.children[2].size, 380);
@@ -197,10 +197,10 @@ test('moveView creates a new right stack: 380 for chat or changes, 300 otherwise
 test('moveView to the bottom wraps the editor in a col split when nothing sits under it', () => {
   const noBottom = applyAll(createDefaultLayout(), BOTTOM.map((v) => [v, { edge: 'left' }]));
   assertValid(noBottom);
-  assert.equal(shape(noBottom.root), 'row(explorer+search+source-control+terminal+problems+run+test-runner+test-output,E,chat+changes!)');
+  assert.equal(shape(noBottom.root), 'row(explorer+search+source-control+terminal+problems+run+test-runner+test-output+activity,E,chat+changes!)');
   const out = moveView(noBottom, 'terminal', { edge: 'bottom' });
   assertValid(out);
-  assert.equal(shape(out.root), 'row(explorer+search+source-control+problems+run+test-runner+test-output,col(E,terminal),chat+changes!)');
+  assert.equal(shape(out.root), 'row(explorer+search+source-control+problems+run+test-runner+test-output+activity,col(E,terminal),chat+changes!)');
   const wrapped = out.root.children[1];
   assert.equal(wrapped.size, null);
   assert.equal(wrapped.node.children[1].size, 220);
@@ -230,7 +230,7 @@ test('moveView by stack id inserts at a clamped index and activates the view', (
   const bottomId = findView(base, 'terminal').stackId;
   const mid = moveView(base, 'search', { stackId: bottomId, index: 1 });
   assertValid(mid);
-  assert.deepEqual(findStack(mid, bottomId).views, ['terminal', 'search', 'problems', 'run', 'test-runner', 'test-output']);
+  assert.deepEqual(findStack(mid, bottomId).views, ['terminal', 'search', 'problems', 'run', 'test-runner', 'test-output', 'activity']);
   assert.equal(findStack(mid, bottomId).active, 'search');
   assert.equal(findStack(mid, bottomId).collapsed, false);
   assert.equal(findStack(moveView(base, 'search', { stackId: bottomId, index: 99 }), bottomId).views.pop(), 'search');
@@ -270,11 +270,11 @@ function twoGroups() {
 
 test('moveView right of a secondary group adds a views stack right after it in the same row split', () => {
   const base = twoGroups();
-  assert.equal(shape(base.root), 'row(explorer+search+source-control,col(row(E,E),terminal+problems+run+test-runner+test-output!),chat+changes!)');
+  assert.equal(shape(base.root), 'row(explorer+search+source-control,col(row(E,E),terminal+problems+run+test-runner+test-output+activity!),chat+changes!)');
   const before = snapshot(base);
   const out = moveView(base, 'terminal', { group: 'editor-2', side: 'right' });
   assertValid(out);
-  assert.equal(shape(out.root), 'row(explorer+search+source-control,col(row(E,E,terminal),problems+run+test-runner+test-output!),chat+changes!)');
+  assert.equal(shape(out.root), 'row(explorer+search+source-control,col(row(E,E,terminal),problems+run+test-runner+test-output+activity!),chat+changes!)');
   const row = out.root.children[1].node.children[0].node;
   assert.deepEqual(row.children.map((c) => c.node.id), ['editor-1', 'editor-2', stackOf(out, 'terminal').id]);
   assert.equal(row.children[2].size, 300);
@@ -290,7 +290,7 @@ test('moveView to the bottom of the primary group wraps it in a col split', () =
   const base = twoGroups();
   const out = moveView(base, 'chat', { group: 'editor-1', side: 'bottom' });
   assertValid(out);
-  assert.equal(shape(out.root), 'row(explorer+search+source-control,col(row(col(E,chat),E),terminal+problems+run+test-runner+test-output!),changes!)');
+  assert.equal(shape(out.root), 'row(explorer+search+source-control,col(row(col(E,chat),E),terminal+problems+run+test-runner+test-output+activity!),changes!)');
   const wrap = out.root.children[1].node.children[0].node.children[0];
   assert.equal(wrap.size, null, 'the wrapper keeps the primary slot');
   assert.deepEqual(wrap.node.children.map((c) => c.size), [null, 220]);
@@ -301,7 +301,7 @@ test('moveView to the bottom of the primary group wraps it in a col split', () =
   // A lone stack moved beside a group leaves no empty stack or one-child split behind.
   const single = moveView(out, 'changes', { group: 'editor-2', side: 'bottom' });
   assertValid(single);
-  assert.equal(shape(single.root), 'row(explorer+search+source-control,col(row(col(E,chat),col(E,changes)),terminal+problems+run+test-runner+test-output!))');
+  assert.equal(shape(single.root), 'row(explorer+search+source-control,col(row(col(E,chat),col(E,changes)),terminal+problems+run+test-runner+test-output+activity!))');
 });
 
 test('moveView beside a group refuses Files, Search and Git, unknown groups and sides', () => {
@@ -331,11 +331,11 @@ test('moveView beside a group keeps the view bindings', () => {
 
 test('emptying a stack removes it and collapses its single-child split', () => {
   const base = nestedLayout();
-  assert.equal(shape(base.root), 'row(col(explorer,search+source-control),E,col(chat+changes,terminal+problems+run+test-runner+test-output))');
+  assert.equal(shape(base.root), 'row(col(explorer,search+source-control),E,col(chat+changes,terminal+problems+run+test-runner+test-output+activity))');
   const bId = findView(base, 'search').stackId;
   const out = applyAll(base, [['explorer', { stackId: bId }]]);
   assertValid(out);
-  assert.equal(shape(out.root), 'row(search+source-control+explorer,E,col(chat+changes,terminal+problems+run+test-runner+test-output))');
+  assert.equal(shape(out.root), 'row(search+source-control+explorer,E,col(chat+changes,terminal+problems+run+test-runner+test-output+activity))');
   assert.equal(out.root.children[0].node.active, 'explorer');
   assert.equal(out.root.children[0].size, 300);
   // The collapsed split is gone from the tree.
@@ -345,7 +345,7 @@ test('emptying a stack removes it and collapses its single-child split', () => {
     ['changes', { edge: 'left' }],
   ]);
   assertValid(twice);
-  assert.equal(shape(twice.root), 'row(chat+changes,col(explorer,search+source-control),E,terminal+problems+run+test-runner+test-output)');
+  assert.equal(shape(twice.root), 'row(chat+changes,col(explorer,search+source-control),E,terminal+problems+run+test-runner+test-output+activity)');
 });
 
 test('the source stack active view falls to a neighbour', () => {
@@ -395,7 +395,7 @@ test('every move from several layouts passes assertValid and keeps every view on
 
 test('moves on a rail-right / dock-left layout reach every edge', () => {
   const base = fromLegacy({ railSide: 'right', chatDockSide: 'left', chatDockOpen: true });
-  assert.equal(shape(base.root), 'row(chat+changes,col(E,terminal+problems+run+test-runner+test-output!),explorer+search+source-control)');
+  assert.equal(shape(base.root), 'row(chat+changes,col(E,terminal+problems+run+test-runner+test-output+activity!),explorer+search+source-control)');
   const left = moveView(base, 'terminal', { edge: 'left' });
   assertValid(left);
   assert.deepEqual(stackOf(left, 'chat').views, ['chat', 'changes', 'terminal']);
@@ -425,7 +425,7 @@ test('pruneUnavailable drops one unavailable view and keeps ids', () => {
   const before = snapshot(base);
   const out = pruneUnavailable(base, (id) => id !== 'test-runner');
   assert.deepEqual(base, before);
-  assert.deepEqual(stackOf(out, 'terminal').views, ['terminal', 'problems', 'run', 'test-output']);
+  assert.deepEqual(stackOf(out, 'terminal').views, ['terminal', 'problems', 'run', 'test-output', 'activity']);
   assert.equal(stackOf(out, 'terminal').active, 'terminal');
   assert.equal(findView(out, 'test-runner'), null);
   assert.deepEqual(
@@ -434,7 +434,7 @@ test('pruneUnavailable drops one unavailable view and keeps ids', () => {
   );
   assert.equal(
     shape(out.root),
-    'row(explorer+search+source-control,col(E,terminal+problems+run+test-output!),chat+changes!)',
+    'row(explorer+search+source-control,col(E,terminal+problems+run+test-output+activity!),chat+changes!)',
   );
   // Persisted layout keeps every view; normalizing the pruned copy would bring it back.
   assert.equal(findView(normalizeLayout(out), 'test-runner') !== null, true);
@@ -442,7 +442,7 @@ test('pruneUnavailable drops one unavailable view and keeps ids', () => {
 
 test('pruneUnavailable removes the right stack and the root row keeps its flexible child', () => {
   const out = pruneUnavailable(createDefaultLayout(), (id) => id !== 'chat' && id !== 'changes');
-  assert.equal(shape(out.root), 'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output!))');
+  assert.equal(shape(out.root), 'row(explorer+search+source-control,col(E,terminal+problems+run+test-runner+test-output+activity!))');
   assert.deepEqual(out.root.children.map((c) => c.size), [300, null]);
   assert.equal(out.root.children[1].node.children[0].size, null);
   assert.equal(out.root.id, 'split-1');

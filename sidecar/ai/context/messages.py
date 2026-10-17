@@ -9,6 +9,7 @@ from typing import Any
 
 from sidecar.ai.config_models import uses_minimal_system_prompt
 from sidecar.ai.context.compaction import is_compaction_summary_content
+from sidecar.ai.context.context_rows import CONTEXT_ROLE, sanitize_context_row
 from sidecar.ai.context.message_utils import (
     admit_tool_envelope,
     ensure_tool_result_pairing,
@@ -102,6 +103,10 @@ def sanitize_semantic_message(message: Any) -> dict[str, object] | None:
     if not isinstance(role, str) or not role.strip():
         return None
     normalized_role = role.strip().lower()
+    if normalized_role == CONTEXT_ROLE:
+        # Attributed cross-session message or handoff background: kept only as a
+        # fully valid closed envelope, verbatim, and never downgraded to another role.
+        return sanitize_context_row(message)
     # Request history is untrusted input: only semantic dialogue/tool roles are
     # allowed. The single system-role exception is Electron's persisted
     # manual-compaction snapshot (JCA-003): its summary rides the request
@@ -132,22 +137,26 @@ def sanitize_semantic_message(message: Any) -> dict[str, object] | None:
             sanitized["tool_calls"] = sanitized_calls
 
     if normalized_role == "tool":
-        tool_call_id = message.get("tool_call_id")
-        if isinstance(tool_call_id, str) and tool_call_id.strip():
-            sanitized["tool_call_id"] = tool_call_id.strip()
-        name = message.get("name")
-        if isinstance(name, str) and name.strip():
-            sanitized["name"] = name.strip()
-        if message.get("is_error") is True:
-            sanitized["is_error"] = True
-        error_code = message.get("error_code")
-        if isinstance(error_code, str) and error_code.strip():
-            sanitized["error_code"] = error_code.strip()
-        envelope = admit_tool_envelope(message.get("tool_envelope"))
-        if envelope is not None:
-            sanitized["tool_envelope"] = envelope
+        _copy_tool_fields(message, sanitized)
 
     return sanitized
+
+
+def _copy_tool_fields(message: dict[str, Any], sanitized: dict[str, object]) -> None:
+    tool_call_id = message.get("tool_call_id")
+    if isinstance(tool_call_id, str) and tool_call_id.strip():
+        sanitized["tool_call_id"] = tool_call_id.strip()
+    name = message.get("name")
+    if isinstance(name, str) and name.strip():
+        sanitized["name"] = name.strip()
+    if message.get("is_error") is True:
+        sanitized["is_error"] = True
+    error_code = message.get("error_code")
+    if isinstance(error_code, str) and error_code.strip():
+        sanitized["error_code"] = error_code.strip()
+    envelope = admit_tool_envelope(message.get("tool_envelope"))
+    if envelope is not None:
+        sanitized["tool_envelope"] = envelope
 
 
 def has_personality_context_block(context_blocks: Any) -> bool:
@@ -235,15 +244,24 @@ def semantic_message_rounds(
 
     Tool calls and all sibling results are repaired before this function is
     called, so a user-turn boundary is also a safe protocol boundary.  Leading
-    assistant-only persisted history is retained as its own round.
+    assistant-only persisted history is retained as its own round.  Context
+    rows (attributed session messages) are inserted before the user prompt of
+    the turn that admitted them, so they join the FOLLOWING user round and are
+    never evicted separately from it.
     """
     rounds: list[list[dict[str, object]]] = []
     current: list[dict[str, object]] = []
+    has_dialogue = False
     for message in messages:
-        if message.get("role") == "user" and current:
+        role = message.get("role")
+        is_context = role == CONTEXT_ROLE
+        if current and has_dialogue and (is_context or role == "user"):
             rounds.append(current)
             current = []
+            has_dialogue = False
         current.append(message)
+        if not is_context:
+            has_dialogue = True
     if current:
         rounds.append(current)
     return rounds

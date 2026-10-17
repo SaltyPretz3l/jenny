@@ -51,7 +51,7 @@ test('modelsOllamaBlob sends models.ollama_blob RPC request', async () => {
   const request = JSON.parse(body);
   assert.equal(request.method, 'models.ollama_blob');
   assert.deepEqual(request.params, {
-    accept_version: '2026-08-17',
+    accept_version: '2026-10-15',
     model_id: 'gemma4:12b-qat-ud-q4-k-xl',
   });
   assert.equal(payload.available, true);

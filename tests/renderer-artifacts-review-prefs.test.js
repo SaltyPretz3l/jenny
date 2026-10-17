@@ -409,16 +409,18 @@ describe('renderer-artifacts-utils rail width bound (90% of window)', () => {
     assert.equal(h.props['--artifact-review-width'], '420px');
   });
 
-  test('a keyboard step never persists past the resolved max', (t) => {
-    const h = makeWidthHarness(t, { innerWidth: 1000, stored: { width: 420 } });
-    h.pressKey('End');
-    h.pressKey('ArrowLeft'); // ArrowLeft grows the rail
-    assert.equal(
-      JSON.parse(h.store['jenny.artifactReview.v1']).widthBySession['session-1'],
-      900,
-      'the overlay write is clamped at floor(1000*0.9), not the 4000 sanity ceiling'
-    );
-  });
+  for (const [innerWidth, expected] of [[1000, 640], [760, 684]]) {
+    test(`a keyboard step never persists past the resolved max at ${innerWidth}px`, (t) => {
+      const h = makeWidthHarness(t, { innerWidth, stored: { width: 420 } });
+      h.pressKey('End');
+      h.pressKey('ArrowLeft'); // ArrowLeft grows the rail
+      assert.equal(
+        JSON.parse(h.store['jenny.artifactReview.v1']).widthBySession['session-1'],
+        expected,
+        'a docked rail reserves 360px for chat; a drawer is bounded by 90% of the stage'
+      );
+    });
+  }
 });
 
 describe('renderer-artifacts-utils autoOpenedSessionIds FIFO (WS3 Step 10)', () => {

@@ -1,0 +1,23 @@
+# Disposable deb-route image for scripts/packaging/install-native-linux.sh.
+# Ubuntu with apt-get and passwordless sudo, so install.sh takes its .deb route.
+FROM ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install --yes --no-install-recommends \
+        ca-certificates curl jq sudo procps xvfb xauth dbus dbus-x11 xdg-utils \
+        libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 \
+        libatspi2.0-0 libuuid1 libsecret-1-0 libasound2 libgbm1 libdrm2 \
+        libxkbcommon0 libatk-bridge2.0-0 libcups2 libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --shell /bin/sh tester \
+    && printf 'tester ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/tester \
+    && chmod 440 /etc/sudoers.d/tester \
+    && mkdir -p -m 1777 /tmp/.X11-unix
+COPY uname-shim scenario.sh markers.sh /usr/local/lib/jenny-install-native/
+# SHIM_KERNEL=1 only when the host detected a WSL2 Docker kernel (see the harness).
+ARG SHIM_KERNEL=0
+RUN if [ "$SHIM_KERNEL" = 1 ]; then \
+        install -m 755 /usr/local/lib/jenny-install-native/uname-shim /usr/local/bin/uname; \
+    fi
+USER tester
+WORKDIR /home/tester
+ENTRYPOINT ["/bin/sh", "/usr/local/lib/jenny-install-native/scenario.sh"]

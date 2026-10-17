@@ -512,7 +512,8 @@ def _build_approval_plan_for_chat_tests(
                 "prompt_cache_enabled": False,
                 "memory_policy": {
                     "enabled": True,
-                    "include_response_style": True,
+                    "capture": "auto",
+                    "recall": True,
                 },
             }
         ),
@@ -995,6 +996,23 @@ def test_build_chat_send_response_pins_dates_on_request_context(monkeypatch) -> 
     request_context = brain_container.stack.router.last_kwargs["request_context"]
     assert request_context.session_start_date == "2026-03-28"
     assert request_context.current_date == "2026-07-18"
+
+
+def test_chat_send_captures_subagent_preferences_on_request_context() -> None:
+    brain_container = _build_brain_container(ChatDecision(
+        thinking_text=None, response_text="Ready.", approval_request=None, tool_results=(),
+    ))
+    preferences = {"chatgpt": {"defaultModel": "gpt-6.1-sol", "defaultEffort": "low"}}
+    build_chat_send_response(
+        "msg-routing",
+        {"request_id": "req-routing", "subagent_routing": preferences,
+         "messages": [{"role": "user", "content": "Inspect"}]},
+        approvals_pre_granted=True, brain_container=brain_container, invalid_params_code=-32602,
+    )
+    context = brain_container.stack.router.last_kwargs["request_context"]
+    preferences["chatgpt"]["defaultModel"] = "gpt-6-astra"
+    assert context.subagent_routing["chatgpt"]["defaultModel"] == "gpt-6.1-sol"
+    assert context.subagent_routing["chatgpt"]["defaultEffort"] == "low"
 
 
 def test_build_chat_send_response_carries_immutable_execution_context(tmp_path) -> None:
@@ -1942,7 +1960,9 @@ def test_explicit_memory_policy_supersedes_legacy_learning_context() -> None:
             "messages": [{"role": "user", "content": "Do not use memory"}],
             "memory_policy": {
                 "enabled": False,
-                "include_response_style": False,
+                "capture": "ask",
+                "recall": False,
+                "policy_epoch": 4,
                 "project_id": "project_chat_test",
             },
             "learning_context": {
@@ -1963,8 +1983,35 @@ def test_explicit_memory_policy_supersedes_legacy_learning_context() -> None:
 
     kwargs = brain_container.stack.router.last_kwargs
     assert kwargs["learned_lessons"] is None
-    assert kwargs["request_context"].memory_policy.enabled is False
-    assert kwargs["request_context"].memory_policy.project_id == "project_chat_test"
+    policy = kwargs["request_context"].memory_policy
+    assert policy.enabled is False
+    assert policy.project_id == "project_chat_test"
+    assert (policy.capture, policy.recall, policy.policy_epoch) == ("ask", False, 4)
+
+
+def test_legacy_learning_context_turn_runs_with_memory_capture_and_recall_off() -> None:
+    decision = ChatDecision(
+        thinking_text=None,
+        response_text="Ready.",
+        approval_request=None,
+        tool_results=(),
+    )
+    brain_container = _build_brain_container(decision)
+
+    build_chat_send_response(
+        "msg-legacy-learning",
+        {
+            "request_id": "req-legacy-learning",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "learning_context": {"lessons": []},
+        },
+        approvals_pre_granted=True,
+        brain_container=brain_container,
+        invalid_params_code=-32602,
+    )
+
+    policy = brain_container.stack.router.last_kwargs["request_context"].memory_policy
+    assert (policy.enabled, policy.capture, policy.recall) == (False, "off", False)
 
 
 def test_build_chat_send_response_forwards_request_reasoning_effort_to_router() -> None:
@@ -2393,9 +2440,12 @@ def test_approval_sampling_hash_tracks_memory_policy_and_default_compatibility()
 
     assert _hash(None) == _hash(MemoryPolicy())
     assert _hash(MemoryPolicy(enabled=False)) != _hash(MemoryPolicy(enabled=True))
-    assert _hash(MemoryPolicy(include_response_style=False)) != _hash(
-        MemoryPolicy(include_response_style=True)
-    )
+    assert _hash(MemoryPolicy(capture="ask")) != _hash(MemoryPolicy(capture="auto"))
+    assert _hash(MemoryPolicy(capture="off")) != _hash(MemoryPolicy(capture="ask"))
+    assert _hash(MemoryPolicy(recall=False)) != _hash(MemoryPolicy(recall=True))
+    # Neither the epoch nor the per-turn recall query is approval-relevant.
+    assert _hash(MemoryPolicy(policy_epoch=9)) == _hash(MemoryPolicy())
+    assert _hash(MemoryPolicy(recall_query="tea")) == _hash(MemoryPolicy())
 
 
 def test_validate_approval_plan_live_context_detects_request_and_prompt_drift() -> None:
@@ -4293,6 +4343,7 @@ def test_live_approval_prompt_forwards_request_authority_root(root_path) -> None
         plan,
         request_context=replace(
             plan.request_context,
+            subagent_routing={"chatgpt": {"defaultModel": "gpt-6.1-sol", "defaultEffort": "low"}},
             execution_context=ExecutionContext(
                 schema_version=1, authority_revision="revision", project_id="project_resume",
                 root_path=root_path, root_id="root" if root_path else None,
@@ -4323,3 +4374,15 @@ def test_live_approval_prompt_forwards_request_authority_root(root_path) -> None
     assert "request_workspace_root" in captured
     assert captured["request_workspace_root"] == root_path
     assert captured["cache_aware"] is True
+    assert captured["subagent_routing"] == plan.request_context.subagent_routing
+
+
+@pytest.mark.parametrize("field", [{}, {"subagent_routing": None}, {"subagent_routing": []},
+    {"subagent_routing": "bad"}, {"subagent_routing": {"chatgpt": {"defaultEffort": 4}}}])
+def test_chat_send_normalizes_absent_and_malformed_subagent_routing(field):
+    brain_container = _build_brain_container(ChatDecision(None, "Ready.", None, ()))
+    build_chat_send_response("msg-routing-negative",
+        {"request_id": "req-routing-negative", "messages": [{"role": "user", "content": "Inspect"}], **field},
+        approvals_pre_granted=True, brain_container=brain_container, invalid_params_code=-32602)
+    context = brain_container.stack.router.last_kwargs["request_context"]
+    assert context.subagent_routing == ({} if "subagent_routing" in field else None)

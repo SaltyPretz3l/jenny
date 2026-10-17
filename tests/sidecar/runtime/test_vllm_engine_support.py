@@ -757,3 +757,46 @@ def test_extract_reasoning_delta_skips_empty_reasoning_content() -> None:
 def test_extract_reasoning_delta_returns_empty_for_absent_or_malformed(delta: Any) -> None:
     """Absent, wrongly-typed, or non-mapping input degrades to the empty string."""
     assert extract_reasoning_delta(delta) == ""
+
+
+def _manifest_tools() -> list[dict[str, Any]]:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    manifest = json.loads((root / "services" / "tools" / "tool-manifest.json").read_text(encoding="utf-8"))
+    return [tool for tool in manifest["tools"] if isinstance(tool.get("parameters"), dict)]
+
+
+def test_tools_payload_sends_plain_object_schemas_without_top_level_combinators() -> None:
+    # llama.cpp built write_file's grammar from its top-level anyOf (branches holding
+    # only `required`), so every call streamed as `{}` (gate 2026-10-14, F15).
+    tools = _manifest_tools()
+    payload = {entry["function"]["name"]: entry["function"]["parameters"] for entry in vllm_support._build_tools_payload(tools)}
+
+    for name, parameters in payload.items():
+        assert not {"anyOf", "oneOf", "allOf"} & set(parameters), name
+
+    write_file = payload["write_file"]
+    assert {"path", "content"} <= set(write_file["properties"])
+    assert "required" not in write_file
+    assert payload["edit_file"]["required"] == ["file_path"]
+    assert payload["workspace_present"]["required"][0] == "view"
+
+    # Jenny's own copy keeps the full schema for validation.
+    source = next(tool for tool in tools if tool["name"] == "write_file")
+    assert "anyOf" in source["parameters"]
+
+
+def test_provider_tool_parameters_merges_branch_requirements() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"a": {}, "b": {}, "c": {}},
+        "required": ["a"],
+        "anyOf": [{"required": ["b", "c"]}, {"required": ["b"]}],
+        "allOf": [{"required": ["c"]}],
+    }
+
+    flattened = vllm_support._provider_tool_parameters(schema)
+
+    assert flattened == {"type": "object", "properties": {"a": {}, "b": {}, "c": {}}, "required": ["a", "b", "c"]}
+    assert vllm_support._provider_tool_parameters({"type": "object"}) == {"type": "object"}

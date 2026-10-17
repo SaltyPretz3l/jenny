@@ -67,7 +67,6 @@ function createManager(state, options = {}) {
             : session
         );
       },
-      rekeyDismissedMemorySession() {},
       rekeySessionArtifacts() {},
       clearProjectionContextCacheForSession() {},
       rekeyProjectionContextCache(_sourceSessionId, targetSessionId) { return targetSessionId; },
@@ -305,7 +304,6 @@ test('session manager rekeys hydrated projection cache ownership with the sessio
       isInteractiveOtherTrigger() { return false; },
       getActiveSession() { return null; },
       patchSessionSummary() {},
-      rekeyDismissedMemorySession() {},
       rekeySessionArtifacts() {},
       clearProjectionContextCacheForSession() {},
       rekeyProjectionContextCache(sourceSessionId, targetSessionId) {
@@ -339,7 +337,6 @@ test('session manager removeSessionState clears hydrated projection cache owners
       isInteractiveOtherTrigger() { return false; },
       getActiveSession() { return null; },
       patchSessionSummary() {},
-      rekeyDismissedMemorySession() {},
       rekeySessionArtifacts() {},
       clearProjectionContextCacheForSession(sessionId) {
         clearedSessionIds.push(sessionId);

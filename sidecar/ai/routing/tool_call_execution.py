@@ -48,6 +48,11 @@ PLAN_MODE_OUTSIDE_ROOT_HINT = (
 )
 
 
+def _sentence(text: str) -> str:
+    text = text.strip()
+    return text if not text or text.endswith((".", "!", "?")) else f"{text}."
+
+
 def _remaining_deferred_names(
     kernel: Any,
     tool_resolution_context: Any | None,
@@ -240,6 +245,25 @@ def _record_filtered_outcome(  # noqa: PLR0913
     iteration_calls.append(call)
 
 
+def preparation_refusal(request_context: Any, tool_id: str) -> str | None:
+    """The request's deny-by-default reason for a handoff preparation turn, or None."""
+    refusal = getattr(request_context, "preparation_refusal", None)
+    return refusal(tool_id) if callable(refusal) else None
+
+
+def _preparation_blocked(call: Any, request_context: Any) -> Any | None:
+    """Deny-by-default outcome of a handoff preparation turn, or None."""
+    reason = preparation_refusal(request_context, call.tool_id)
+    if reason is None:
+        return None
+    return _blocked_outcome(
+        call,
+        output=_tool_assembly.blocked_tool_message(call.tool_id, reason),
+        error_code=_tool_assembly.blocked_tool_error_code(reason),
+        metadata=_tool_assembly.blocked_tool_metadata(reason),
+    )
+
+
 def pre_filter_tool_calls(  # noqa: PLR0913
     tool_calls: tuple[Any, ...] | list[Any],
     *,
@@ -272,8 +296,13 @@ def pre_filter_tool_calls(  # noqa: PLR0913
         entry = tool_contract.entry(call.tool_id) if tool_contract is not None else None
         descriptor = entry.descriptor if entry is not None else None
 
-        tool_result: Any | None = None
-        if entry is not None and not entry.available and call.tool_id != TOOL_SEARCH_TOOL_NAME:
+        tool_result = _preparation_blocked(call, getattr(runtime, "request_context", None))
+        if (
+            tool_result is None
+            and entry is not None
+            and not entry.available
+            and call.tool_id != TOOL_SEARCH_TOOL_NAME
+        ):
             if entry.reason == TOOL_NOT_EXPOSED_REASON and entry.deferred:
                 tool_result = kernel._build_deferred_outcome(call)
             else:
@@ -472,8 +501,14 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
     allow_resource_deferral: bool = False,
     on_resource_deferral: Any = None,
     restored_first_input: _tool_restored_inputs.RestoredToolInputs | None = None,
-) -> None:
-    """Execute calls once, in model order, preserving every completed outcome."""
+) -> _router.TurnBoundary | None:
+    """Execute calls once, in model order, preserving every completed outcome.
+
+    Returns the end-of-turn boundary when a successful ``propose_session`` /
+    ``complete_session_handoff`` outcome raised one: the unstarted rest of the
+    batch is settled as not executed and the caller must end the turn without
+    another model generation. Every other batch returns ``None``.
+    """
     if restored_first_input is not None and (
         not indexed_calls or indexed_calls[0][0].tool_id == TOOL_SEARCH_TOOL_NAME
     ):
@@ -526,7 +561,11 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     retryable=True,
                 )
             if call.tool_id == TOOL_SEARCH_TOOL_NAME:
-                if route_policy_runtime.hosted_tool_search_denied(getattr(kernel, "_config", None)):
+                kernel_config = getattr(kernel, "_config", None)
+                tool_result = _preparation_blocked(call, request_context)
+                if tool_result is not None:
+                    pass  # a preparation turn never searches (resume callers skip the pre-filter)
+                elif route_policy_runtime.hosted_tool_search_denied(kernel_config):
                     tool_result = _blocked_outcome(
                         call,
                         output=(
@@ -566,7 +605,7 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     )
                 if call_position == 0 and restored_first_input is not None:
                     trusted_execution_kwargs["restored_inputs"] = restored_first_input
-                if call.tool_id == "propose_change":
+                if call.tool_id in {"propose_change", "recall_tool_output"}:
                     # Plan Plus: the overlap and batch rules see this request's
                     # earlier suggestions (router-injected, never model-supplied).
                     trusted_execution_kwargs["request_outcomes"] = tuple(outcomes)
@@ -629,7 +668,7 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 session_id=session_id,
             )
             failure_output = (
-                f"Tool '{call.tool_id}' failed: {exc.message}."
+                f"Tool '{call.tool_id}' failed: {_sentence(exc.message)}"
                 f"{_plan_mode_outside_root_hint(exc.code, request_context)}"
             )
             if (
@@ -671,11 +710,23 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
         working_messages.append(kernel._assistant_tool_call_message(result, call))
         working_messages.append(kernel._tool_result_message(call, tool_result))
         iteration_calls.append(call)
+        boundary = _router.detect_turn_boundary(tool_result)
+        if boundary is not None:
+            settle_after_turn_boundary(
+                kernel=kernel, runtime=runtime, result=result, request_id=request_id,
+                session_id=session_id, boundary=boundary,
+                unstarted_calls=indexed_calls[call_position + 1:], outcomes=outcomes,
+                working_messages=working_messages, iteration_calls=iteration_calls,
+                streamed_event_types=streamed_event_types,
+            )
+            return boundary
+    return None
 
 
 __all__ = [
     "execute_tool_calls_sequentially",
     "pre_filter_tool_calls",
+    "settle_after_turn_boundary",
 ]
 
 
@@ -783,6 +834,68 @@ def settle_dropped_tool_calls(  # noqa: PLR0913 -- mirrors the filtered-outcome 
     return len(dropped_calls)
 
 
+def settle_after_turn_boundary(  # noqa: PLR0913 -- mirrors the dropped-call settler.
+    *,
+    kernel: Any,
+    runtime: Any,
+    result: Any,
+    request_id: str,
+    session_id: str | None,
+    boundary: _router.TurnBoundary,
+    unstarted_calls: Sequence[tuple[Any, int]],
+    outcomes: list[Any],
+    working_messages: list[dict[str, Any]],
+    iteration_calls: list[Any],
+    streamed_event_types: set[str],
+) -> int:
+    """Give every call after an end-of-turn boundary an honest not-executed result.
+
+    The batch's remaining calls were admitted but must not run: the turn ends at
+    the boundary. Each gets a ``tool.executing`` + ``tool.result`` pair (so no
+    row is orphaned) and a failed outcome the model never sees (no generation
+    follows). Reuses CMP-TOOL-0042 (never dispatched).
+    """
+    for call, outcome_index in unstarted_calls:
+        _record_filtered_outcome(
+            kernel=kernel,
+            runtime=runtime,
+            result=result,
+            request_id=request_id,
+            call=call,
+            outcome_index=outcome_index,
+            tool_result=_blocked_outcome(
+                call,
+                output=boundary.not_executed_output(str(getattr(call, "tool_id", "") or "")),
+                error_code=CMP_TOOL_APPROVAL_WINDOW_DROPPED,
+                metadata={
+                    "turn_boundary_not_executed": True,
+                    "reason": boundary.completion_reason,
+                },
+            ),
+            outcomes=outcomes,
+            working_messages=working_messages,
+            iteration_calls=iteration_calls,
+            streamed_event_types=streamed_event_types,
+        )
+    if unstarted_calls:
+        log_event(
+            logger,
+            logging.INFO,
+            component="ai.router",
+            event="ai.router.turn_boundary_calls_settled",
+            message="Settled the unstarted calls of a batch that ended the turn.",
+            status="blocked",
+            data={
+                "settled_count": len(unstarted_calls),
+                "reason": boundary.completion_reason,
+                "code": CMP_TOOL_APPROVAL_WINDOW_DROPPED,
+            },
+            request_id=request_id,
+            session_id=session_id,
+        )
+    return len(unstarted_calls)
+
+
 def prevalidate_call_arguments(
     *,
     kernel: Any,
@@ -831,7 +944,7 @@ def prevalidate_call_arguments(
         return {
             "message": (
                 f"Tool '{call.tool_id}' rejected malformed arguments: "
-                f"{error.message}.{_tools_schema_examples.tool_schema_hint_text(repair_hints)}"
+                f"{_sentence(error.message)}{_tools_schema_examples.tool_schema_hint_text(repair_hints)}"
             ),
             "metadata": {
                 "validation_error": error.message,

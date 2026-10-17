@@ -242,6 +242,46 @@ test('review-bound source digest rejects changed content and removes partial out
   assert.deepEqual(fs.existsSync(destinationRoot) ? fs.readdirSync(destinationRoot) : [], []);
 });
 
+// A locked partial: its own directory removal is always denied, so the partial stays on disk.
+function denyPartialDirectoryRemoval(t) {
+  const originalRmdir = fs.promises.rmdir;
+  t.mock.method(fs.promises, 'rmdir', async function rmdirDenyingPartials(target, ...args) {
+    if (String(target).endsWith('.partial')) throw Object.assign(new Error('denied'), { code: 'EPERM' });
+    return originalRmdir.call(fs.promises, target, ...args);
+  });
+}
+
+// Plants a junction to an outside directory holding `keep`, and makes the first unlink of any link
+// fail with EPERM: the transient lock under which Node's rm followed a junction into its target.
+function plantJunctionWithTransientUnlinkLock(t, linkPath, outside) {
+  fs.mkdirSync(outside, { recursive: true });
+  fs.writeFileSync(path.join(outside, 'keep'), 'keep', 'utf8');
+  try {
+    fs.symlinkSync(outside, linkPath, 'junction');
+  } catch (error) {
+    t.skip(`junction creation unavailable: ${error.code || 'unknown'}`);
+    return null;
+  }
+  const originalUnlink = fs.promises.unlink;
+  const denied = new Set();
+  t.mock.method(fs.promises, 'unlink', async function unlinkLockedOnce(target, ...args) {
+    let isLink = false;
+    try { isLink = fs.lstatSync(target).isSymbolicLink(); } catch { /* missing: unlink reports it */ }
+    if (isLink && !denied.has(path.resolve(target))) {
+      denied.add(path.resolve(target));
+      throw Object.assign(new Error('locked'), { code: 'EPERM' });
+    }
+    return originalUnlink.call(fs.promises, target, ...args);
+  });
+  const rmCalls = [];
+  const originalRm = fs.promises.rm;
+  t.mock.method(fs.promises, 'rm', async function recordRm(target, ...args) {
+    rmCalls.push(path.resolve(target));
+    return originalRm.call(fs.promises, target, ...args);
+  });
+  return { denied, rmCalls };
+}
+
 function cancelAfterFirstEntry() {
   let checks = 0;
   return () => { checks += 1; return checks > 1; };
@@ -255,12 +295,7 @@ const CANCELED_ARCHIVE_ENTRIES = [
 test('a canceled archive whose partial cannot be removed reports the retained partial', async (t) => {
   const root = tempRoot();
   const destinationRoot = path.join(root, 'archives');
-  const originalRm = fs.promises.rm;
-  t.after(() => { fs.promises.rm = originalRm; });
-  fs.promises.rm = async function rmDenyingPartials(target, options) {
-    if (String(target).endsWith('.partial')) throw Object.assign(new Error('denied'), { code: 'EPERM' });
-    return originalRm.call(fs.promises, target, options);
-  };
+  denyPartialDirectoryRemoval(t);
 
   await assert.rejects(createArchive({
     destinationRoot,
@@ -341,12 +376,7 @@ test('a failing stale-partial removal does not fail the new archive', async (t) 
   fs.mkdirSync(stale, { recursive: true });
   const when = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
   fs.utimesSync(stale, when, when);
-  const originalRm = fs.promises.rm;
-  t.after(() => { fs.promises.rm = originalRm; });
-  fs.promises.rm = async function rmDenyingPartials(target, options) {
-    if (String(target).endsWith('.partial')) throw Object.assign(new Error('denied'), { code: 'EPERM' });
-    return originalRm.call(fs.promises, target, options);
-  };
+  denyPartialDirectoryRemoval(t);
 
   const result = await createArchive({
     destinationRoot,
@@ -357,6 +387,34 @@ test('a failing stale-partial removal does not fail the new archive', async (t) 
 
   assert.equal(result.ok, true);
   assert.equal(fs.existsSync(stale), true);
+});
+
+test('a stale partial sweep never enters a junction, even when unlinking it fails transiently', async (t) => {
+  const root = tempRoot();
+  const destinationRoot = path.join(root, 'archives');
+  const stale = path.join(destinationRoot, 'Old.jenny-archive.0123456789ab.partial');
+  const outside = path.join(root, 'outside');
+  const link = path.join(stale, 'data', 'linked');
+  fs.mkdirSync(path.join(stale, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(stale, 'data', 'old.json'), 'old', 'utf8');
+  const probe = plantJunctionWithTransientUnlinkLock(t, link, outside);
+  if (!probe) return;
+  const when = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  fs.utimesSync(stale, when, when);
+
+  const result = await createArchive({
+    destinationRoot,
+    archiveName: 'Next.jenny-archive',
+    encrypted: false,
+    entries: [{ logicalPath: 'settings/preferences.json', category: 'preferences', data: '{}' }],
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(probe.rmCalls, [], 'partial removal must not use Node rm');
+  assert.equal(probe.denied.has(path.resolve(link)), true, 'the junction unlink was locked once');
+  assert.equal(fs.readFileSync(path.join(outside, 'keep'), 'utf8'), 'keep');
+  assert.equal(fs.existsSync(link), false);
+  assert.equal(fs.existsSync(stale), false);
 });
 
 test('the archive README says knowledge folders are not included', async () => {

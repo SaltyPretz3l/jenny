@@ -428,11 +428,11 @@ test('the typography preference remaps the mono face, not just body and display'
   assert.match(foundationCss, /--font-family-mono:[^;]*ui-monospace,\s*Consolas,\s*monospace;/);
 });
 
-test('right-rail panels share one flat --side-panel-bg and gutter token, with no gradient', () => {
+test('right-rail panels share the flat base background and gutter token, with no gradient', () => {
   const foundationCss = readRepoFile('styles/foundation.css');
   const contextCss = readRepoFile('styles/context-panel.css');
-  const bg = foundationCss.match(/--side-panel-bg:\s*([^;]+);/);
-  assert.ok(bg, 'foundation defines --side-panel-bg');
+  const bg = foundationCss.match(/--bg-base:\s*([^;]+);/);
+  assert.ok(bg, 'foundation defines --bg-base');
   assert.doesNotMatch(bg[1], /gradient/);
   assert.match(foundationCss, /--side-panel-gutter:\s*16px;/);
   const rule = (selector) => {
@@ -440,9 +440,9 @@ test('right-rail panels share one flat --side-panel-bg and gutter token, with no
     assert.notEqual(start, -1, selector);
     return contextCss.slice(start, contextCss.indexOf('}', start));
   };
-  assert.match(rule('.chat-context-panel'), /background: var\(--side-panel-bg\);/);
-  assert.match(rule('.artifact-review-panel'), /background: var\(--side-panel-bg\);/);
-  assert.match(rule('.artifact-review-panel.artifact-review-overlay'), /background: var\(--side-panel-bg\);/);
+  assert.match(rule('.chat-context-panel'), /background: var\(--bg-base\);/);
+  assert.match(rule('.artifact-review-panel'), /background: var\(--bg-base\);/);
+  assert.match(rule('.artifact-review-panel.artifact-review-overlay'), /background: var\(--bg-base\);/);
   assert.equal(/artifact-review-header[^{]*\{[^}]*gradient/.test(contextCss), false, 'legacy header gradient is gone');
 });
 

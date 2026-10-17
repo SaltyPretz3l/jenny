@@ -50,7 +50,35 @@ import sys
 # build_turn_tools, text_tool_calls, plan_presentation and compaction_diagnostics, all imported by
 # the tool loop and context modules that were already eager. Settings cohesion: request_safety,
 # read by tool_execution at module scope. The count sat at the 364 cap before the last one.
-_MEASURED_SIDECAR_MODULES = 365
+# 2026-10-15: 374 (row 58 W1). The schema v9 memory store split into six mixin
+# modules imported by store.py at class-definition time (store_v9_migration,
+# store_operations, store_write_support, store_writes, store_undo, store_lifecycle);
+# the same wave deleted families, store_project_move and memory_suggestions. The
+# memory tool handler (tool_execution_memory) loads on first use, not at startup.
+# 2026-10-15: 378 (row 59 cp5a-1). Four new modules, each imported by an already-eager
+# seam: context_rows and session_handoff (messages/token_budget/compaction context-row
+# dispatch), turn_boundary (router and chat_decision_render), handoff_preparation
+# (chat.send param parsing and tool-contract restriction).
+# 2026-10-15: 401 at the landing of rows 58 W2-W4, 59 and 60 on main (each program stayed
+# under its own cap; the union crossed it at the merge). Row 58 W2-W4 +17, reached from the
+# memory service and request dispatch at import time: memory reflection (memory_reflection,
+# request_dispatch_memory_reflection, store_reflection, reflection_checks, reflection_epochs),
+# hybrid recall (hybrid_recall, recall_pipeline, recall_scoring, store_vectors, vector_index,
+# sidecar.ai.semantic.vectors) and store_v10_migration. Row 59 cp5b/cp6 +7: context_rows,
+# session_handoff, session_messages, turn_boundary, handoff_preparation,
+# chat_workspace_capabilities, command_proposal_worker. Row 60 +4: compaction_micro,
+# heuristic_fires, tool_recall, builtins.shell_harness. prefill_progress left the graph (-1).
+# Open follow-up: an eager-import diet for the memory service (reflection and recall are
+# request-time features).
+# 2026-10-15: 390 after that diet (-11). Now loaded on first request: memory reflection
+# (runtime.memory_reflection, request_dispatch_memory_reflection behind a method gate,
+# reflection_checks), the hybrid vector leg (hybrid_recall, vector_index), recall_scoring
+# (first recall), sidecar.ai.semantic + semantic.vectors (first embed step), and the
+# migration steps store_project_migration, store_v9_migration and store_v10_migration
+# (only a database below SCHEMA_VERSION runs them). Still eager by construction: the
+# store_reflection and store_vectors mixins (MemoryStore bases), recall_pipeline and
+# reflection_epochs (built with MemoryService when the container opens the store).
+_MEASURED_SIDECAR_MODULES = 390
 _MAX_SIDECAR_MODULES = _MEASURED_SIDECAR_MODULES + 5
 # Floored as well as capped: without a lower bound, a later graph reduction to
 # (say) 320 would leave this recorded 345 stale and silently widen the slack to
@@ -97,7 +125,12 @@ def test_server_import_graph_stays_within_module_budget() -> None:
         "sidecar.runtime.chat_resume_admission",
         "sidecar.runtime.chat_resume_snapshots",
         "sidecar.runtime.decision_checkpoint",
-    }), "MCP transports and the resume executor must load on request use"
+        "sidecar.runtime.owned_process_tracking",
+        "sidecar.runtime.owned_process_ledger",
+        "sidecar.runtime.owned_process_identity",
+        "sidecar.ai.tools.workspace_mutation_journal_store",
+        "sidecar.ai.tools.workspace_retention",
+    }), "MCP transports, resume execution and journal storage must load on request use"
     assert len(loaded) <= _MAX_SIDECAR_MODULES, (
         f"importing sidecar.server loaded {len(loaded)} sidecar modules; "
         f"the limit is {_MAX_SIDECAR_MODULES}. Investigate the new eager import "

@@ -68,8 +68,9 @@ class ToolExecutor {
       : null;
   }
 
-  async executePreApproved(call, context) {
+  async executePreApproved(call, context, { authorize = null } = {}) {
     context = this._bindExecutionContext(context);
+    if (call.toolName === 'session_message') context = { ...context, authorize };
     const { callId, toolName } = call;
     const preflight = this._preflightTool(call, context, { preApproved: true });
     if (!preflight.tool) {

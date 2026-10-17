@@ -22,6 +22,7 @@ const { WORKSPACE_FS_ERROR_CODES, workspaceFsError } = require('./workspace-ide-
 const { buildPathLogHint } = require('./workspace-ide-path-guard');
 const { readCappedFile } = require('./workspace-ide-file-reads');
 const { SAFETY_COPY_LIMITS, stateOfCapture } = require('./workspace-recovery-safety-copies');
+const { removeFile } = require('./fs-remove-no-follow');
 
 const DEFAULT_MAX_BYTES = SAFETY_COPY_LIMITS.maxFileBytes;
 
@@ -44,7 +45,7 @@ async function replaceLeafAtomically({
     await fs.rename(tempPath, target.operationPath);
     tempCreated = false;
   } catch (error) {
-    if (tempCreated) await fs.rm(tempPath, { force: true }).catch(() => {});
+    if (tempCreated) await removeFile(tempPath, { fsImpl: fs }).catch(() => {});
     throw error;
   }
   await rootOperations.revalidateRoot(root, operation);

@@ -163,7 +163,7 @@ def build_compaction_generate_fn(
                 compaction_runtime.inference_admission,
             ),
         )
-        return str(result.content or "")
+        return _generation_support.compaction_reply_text(result, kernel._config.feature_flags)
 
     return generate_fn
 
@@ -280,6 +280,9 @@ def _try_fallback(
     runtime: Any | None,
     attempt_event_types: set[str],
 ) -> tuple[GenerationResult, set[str]] | None:
+    # A delegate's admitted model must not change after a provider failure.
+    if getattr(getattr(runtime, "request_context", None), "agent_depth", 0) > 0:
+        return None
     if not kernel._config.fallback_models or not _is_fallback_eligible(error):
         return None
     fallback_result = attempt_fallback_generation(

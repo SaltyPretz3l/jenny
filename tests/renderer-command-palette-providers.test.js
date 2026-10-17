@@ -4,6 +4,23 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createPaletteProviders } = require('../renderer/shell/renderer-command-palette-providers');
 
+test('prompt slash rows show the server tag without an action hint', () => {
+  const calls = [];
+  const providers = createPaletteProviders({ state: { ui: {}, sessions: [] }, callbacks: {
+    listSlashCommands: () => [{ name: '/rea-investigate_feature', description: 'Plan · feature', tag: 'rea', available: true },
+      { name: '/help', description: 'Help', available: true }],
+    tryExecuteSlashCommand: command => calls.push(command),
+  } });
+  const items = providers.snapshot();
+  const prompt = items.find(item => item.id === 'slash:/rea-investigate_feature');
+  assert.equal(prompt.group, 'Slash commands');
+  assert.equal(prompt.description, 'Plan · feature');
+  assert.equal(prompt.tag, 'rea');
+  assert.equal(Object.hasOwn(prompt, 'hint'), false);
+  assert.equal(items.find(item => item.id === 'slash:/help').hint, 'Run');
+  prompt.run(); assert.deepEqual(calls, ['/rea-investigate_feature']);
+});
+
 test('the palette cycles the focused session\'s transcript view and names the current and next view', (t) => {
   const previous = { controller: globalThis.rendererTranscriptViewController, utils: globalThis.rendererTranscriptViewUtils };
   const cycleCalls = [];

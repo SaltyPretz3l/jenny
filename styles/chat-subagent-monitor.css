@@ -379,3 +379,5 @@
     transition: none !important;
   }
 }
+/* Live-only metadata shares the completed monitor's type scale and spacing. */
+.subagent-live-estimate { display: block; color: var(--text-muted); }

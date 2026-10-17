@@ -154,6 +154,7 @@ test('managed sidecar config forwards codex CLI runtime settings from integratio
   assert.equal(config.codex_cli_auth_reason, null);
   assert.equal(config.codex_cli_command, 'C:/Tools/codex.exe');
   assert.equal(config.codex_cli_runtime_root, path.join(userDataPath, 'codex-cli-engine'));
+  assert.equal(config.owned_process_ledger_path, path.join(userDataPath, 'owned-processes.json'));
   assert.deepEqual(config.codex_cli_models, ['codex-cli/gpt-5.5']);
   assert.equal(config.codex_cli_request_timeout_seconds, 900);
 });

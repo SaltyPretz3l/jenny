@@ -39,7 +39,8 @@ async function loadRendererTestApp(t, options) {
 
 // Three features.onChanged subscriptions are owned by the loaded modules
 // (renderer-app-lifecycle-composition, renderer-app-shell-bindings and
-// renderer-settings-model-library-section); opening Settings > Extensions binds
+// renderer-settings-model-library-section); opening Settings also binds the
+// subagent routing section's fourth feature listener, and Settings > Extensions binds
 // the skills settings rows' own skills.onChanged (a second one). The legacy Model library's own subscription left
 // with that module in b04edf511.
 test('renderer dispose unsubscribes shell listeners and re-init does not duplicate them', async (t) => {
@@ -72,7 +73,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
     auth: 1,
     backend: 1,
     chat: 1,
-    features: 3,
+    features: 4,
     logs: 1,
     proactive: 0,
     speech: 0,
@@ -98,11 +99,12 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
 
   await app.reloadRendererApp();
 
+  // Settings was already loaded, so re-init also restores its feature listener.
   assert.deepEqual(shell.__getListenerCounts(), {
     auth: 1,
     backend: 1,
     chat: 1,
-    features: 3,
+    features: 4,
     logs: 1,
     proactive: 0,
     speech: 0,
@@ -122,7 +124,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
     auth: 1,
     backend: 1,
     chat: 1,
-    features: 3,
+    features: 4,
     logs: 1,
     proactive: 0,
     speech: 0,

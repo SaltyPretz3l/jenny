@@ -99,6 +99,83 @@ test('an explicit sticky or durationMs from the caller still wins', (t) => {
   assert.equal(app.record(forcedId).sticky, false);
 });
 
+test('dismissToast accepts a dedupe key and tracks the newest toast after re-show', (t) => {
+  const app = mount();
+  t.after(() => app.dispose());
+  const options = { tone: 'danger', dedupeKey: 'chat-stream:s1' };
+  const firstId = app.showToastMessage('Streaming failed.', options);
+  const otherId = app.showToastMessage('Another session failed.', {
+    tone: 'danger', dedupeKey: 'chat-stream:s2',
+  });
+
+  assert.doesNotThrow(() => app.dismissToast('nope'));
+  assert.equal(app.toastStore.getSnapshot().length, 2);
+  app.dismissToast('chat-stream:s1');
+  assert.equal(app.record(firstId), undefined);
+  assert.deepEqual(app.nodes().map((node) => node.dataset.toastId), [otherId]);
+
+  const newestId = app.showToastMessage('Failed again.', options);
+  assert.notEqual(newestId, firstId);
+  assert.equal(app.showToastMessage('Latest failure.', options), newestId);
+  app.dismissToast('chat-stream:s1');
+  assert.equal(app.record(newestId), undefined);
+  app.dismissToast(otherId);
+  assert.deepEqual(app.toastStore.getSnapshot(), []);
+  assert.deepEqual(app.nodes(), []);
+
+  const expiredId = app.showToastMessage('Removed by the store.', options);
+  app.toastStore.dismiss(expiredId);
+  assert.doesNotThrow(() => app.dismissToast('chat-stream:s1'));
+  app.showToastMessage('Retry failed.', options);
+  app.dismissToast('chat-stream:s1');
+  assert.deepEqual(app.toastStore.getSnapshot(), []);
+});
+
+test('dismissToast with shownBefore leaves a toast shown or re-shown at or after that moment', (t) => {
+  const app = mount();
+  t.after(() => app.dispose());
+  let now = 1000;
+  t.mock.method(Date, 'now', () => now);
+  const options = { tone: 'danger', dedupeKey: 'chat-stream:s1' };
+  const before = now - 1;
+  const id = app.showToastMessage('Streaming failed.', options);
+  app.dismissToast('chat-stream:s1', { shownBefore: before });
+  assert.ok(app.record(id), 'a toast shown after the cut-off stays');
+  app.dismissToast('chat-stream:s1', { shownBefore: now });
+  assert.ok(app.record(id), 'a toast shown exactly at the cut-off stays');
+  app.dismissToast('chat-stream:s1', { shownBefore: now + 1 });
+  assert.equal(app.record(id), undefined);
+  now = 2000;
+  const again = app.showToastMessage('Failed again.', options);
+  const cutOff = now + 1;
+  now = 2002;
+  app.showToastMessage('Failed once more.', options);
+  app.dismissToast('chat-stream:s1', { shownBefore: cutOff });
+  assert.ok(app.record(again), 'a re-show after the cut-off stays');
+  app.dismissToast('chat-stream:s1', { shownBefore: now });
+  assert.ok(app.record(again), 'a re-show exactly at the cut-off stays');
+  app.dismissToast('chat-stream:s1', { shownBefore: now + 1 });
+  assert.equal(app.record(again), undefined, 'a re-show before the cut-off is dismissed');
+  app.dismissToast('nope', { shownBefore: before });
+  assert.deepEqual(app.toastStore.getSnapshot(), []);
+});
+
+test('dismissToast resolves dedupe keys for toasts queued outside the visible snapshot', (t) => {
+  const app = mount();
+  t.after(() => app.dispose());
+  const queuedId = app.showToastMessage('Streaming failed.', { tone: 'danger', dedupeKey: 'chat-stream:s1' });
+  for (let index = 0; index < 4; index += 1) {
+    app.showToastMessage(`Failure ${index}`, { tone: 'danger' });
+  }
+  assert.equal(app.toastStore.getOverflowCount(), 1);
+  app.dismissToast('chat-stream:s1');
+  assert.equal(app.toastStore.getOverflowCount(), 0);
+  while (app.toastStore.getSnapshot().length) {
+    app.dismissToast(app.toastStore.getSnapshot()[0].id);
+  }
+  assert.equal(app.record(queuedId), undefined);
+});
+
 test('showShellErrorToast keeps distinct failures apart and coalesces true repeats', (t) => {
   const app = mount();
   t.after(() => app.dispose());

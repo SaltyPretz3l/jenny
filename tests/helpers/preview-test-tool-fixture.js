@@ -111,8 +111,10 @@ function makeContext(root, service, overrides = {}) {
   };
 }
 
+// The settle wait (500 ms by default) is a real timer in the tool; tests that do not assert on
+// its delay run it on the next turn instead, so a file of lifecycle cases does not idle for seconds.
 function makeTool(overrides = {}) {
-  return createPreviewTestTool(overrides);
+  return createPreviewTestTool({ setTimeoutImpl: (fn) => setTimeout(fn, 0), ...overrides });
 }
 
 function callsOf(service, kind) {

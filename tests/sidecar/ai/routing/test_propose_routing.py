@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from sidecar.ai.config import RuntimeConfig
-from sidecar.ai.routing.loop_events import StreamResetEvent
+from sidecar.ai.routing.loop_events import HeuristicFireEvent, StreamResetEvent
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.propose_live_suggestions import (
     LIVE_SUGGESTIONS_ARG as ROUTING_LIVE_SUGGESTIONS_ARG,
@@ -135,9 +135,10 @@ def test_prose_without_a_recorded_suggestion_gets_one_nudge() -> None:
     assert loop.working_messages[-2] == {"role": "assistant", "content": _PROSE}
     assert loop.working_messages[-1] == {"role": "user", "content": PROPOSE_NUDGE}
     assert PROPOSE_NUDGE.startswith("No suggested change was recorded. Call propose_change")
-    assert [type(event) for event in loop.events] == [StreamResetEvent]
+    assert [type(event) for event in loop.events] == [HeuristicFireEvent, StreamResetEvent]
+    assert loop.events[0].name == "propose_nudge"
     # The fold names the real cause: a tool the draft skipped, not the tools (2026-10-05 recheck).
-    assert loop.events[0].reason == "nudge_retry"
+    assert loop.events[1].reason == "nudge_retry"
     assert final_propose_nudge(loop, _reply(), 3) is False
 
 

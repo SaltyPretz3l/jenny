@@ -32,14 +32,10 @@
     renderApprovedMemoryManager: noop,
     handleApprovedMemorySave: noopAsync,
     handleApprovedMemoryDelete: noopAsync,
-    maybeSuggestMemoryCapture: noopAsync,
     upsertApprovedMemoryDraft: noop,
     clearApprovedMemoryDraft: noop,
     getApprovedMemoryById: noopNull,
     hasApprovedMemoryDraftChanges: noopFalse,
-    clearDismissedMemorySession: noop,
-    rekeyDismissedMemorySession: noopStr,
-    resetMemorySuggestionState: noop,
   });
 
   function createShellServiceRegistry(deps) {
@@ -89,6 +85,7 @@
       syncComposerInputHeight = noop,
       loadSessions = noopAsync,
       openSession = noopAsync,
+      scrollMessageIntoView = noopFalse,
       getCurrentMessageById = noopNull,
       setActiveView = noop,
       openSettingsSection = noop,
@@ -131,7 +128,6 @@
     let handlePersonalitySave = noopAsync;
     let handlePersonalityReset = noopAsync;
     let handlePersonalityOpenFolder = noopAsync; let hasPersonalityUnsavedChanges = noopFalse;
-    let memoryContextController = null;
     let proactiveController = null;
     let refreshProactiveState = noopAsync;
     let handleUseProactiveSuggestionMessage = noopAsync;
@@ -158,14 +154,10 @@
     let renderApprovedMemoryManager = MEMORY_CONTROLLER_DEFAULTS.renderApprovedMemoryManager;
     let handleApprovedMemorySave = MEMORY_CONTROLLER_DEFAULTS.handleApprovedMemorySave;
     let handleApprovedMemoryDelete = MEMORY_CONTROLLER_DEFAULTS.handleApprovedMemoryDelete;
-    let maybeSuggestMemoryCapture = MEMORY_CONTROLLER_DEFAULTS.maybeSuggestMemoryCapture;
     let upsertApprovedMemoryDraft = MEMORY_CONTROLLER_DEFAULTS.upsertApprovedMemoryDraft;
     let clearApprovedMemoryDraft = MEMORY_CONTROLLER_DEFAULTS.clearApprovedMemoryDraft;
     let getApprovedMemoryById = MEMORY_CONTROLLER_DEFAULTS.getApprovedMemoryById;
     let hasApprovedMemoryDraftChanges = MEMORY_CONTROLLER_DEFAULTS.hasApprovedMemoryDraftChanges;
-    let clearDismissedMemorySession = MEMORY_CONTROLLER_DEFAULTS.clearDismissedMemorySession;
-    let rekeyDismissedMemorySession = MEMORY_CONTROLLER_DEFAULTS.rekeyDismissedMemorySession;
-    let resetMemorySuggestionState = MEMORY_CONTROLLER_DEFAULTS.resetMemorySuggestionState;
 
     let refreshWorkspaceRootDependents = noopAsync;
 
@@ -218,13 +210,6 @@
       return personalityController;
     }
 
-    function ensureMemoryContextController() {
-      if (memoryContextController) return memoryContextController;
-      memoryContextController = personalityEditorUtils.createMemoryContextEditor?.({ state, windowRef,
-        dom: surfaceDom.settings?.getSectionDom?.('memories') || {} }) || null;
-      registerCleanup(() => memoryContextController?.dispose?.());
-      return memoryContextController;
-    }
     function ensureProactiveController() {
       if (proactiveController) {
         return proactiveController;
@@ -351,19 +336,17 @@
               memoryBadge: getElementById('memoryBadge'),
               memorySummary: getElementById('memorySummary'),
               memoryHealthNote: getElementById('memoryHealthNote'),
-              memoryCapturePreferenceHost: getElementById('memoryCapturePreferenceHost'),
-              pendingMemorySortHost: getElementById('pendingMemorySortHost'),
-              pendingMemoryCount: getElementById('pendingMemoryCount'),
-              pendingMemoryStatus: getElementById('pendingMemoryStatus'),
-              pendingMemoryList: getElementById('pendingMemoryList'),
-              pendingMemoryMoreHost: getElementById('pendingMemoryMoreHost'),
-              memoryProjectFilterHost: getElementById('memoryProjectFilterHost'),
+              memoryTabsHost: getElementById('memoryTabsHost'),
+              memoryMeter: getElementById('memoryMeter'),
               memoryKindFilterHost: getElementById('memoryKindFilterHost'),
               memorySearchHost: getElementById('memorySearchHost'),
-              approvedMemoryCount: getElementById('approvedMemoryCount'),
+              pendingMemoryHost: getElementById('pendingMemoryHost'),
               approvedMemoryStatus: getElementById('approvedMemoryStatus'),
               approvedMemoryList: getElementById('approvedMemoryList'),
               approvedMemoryMoreHost: getElementById('approvedMemoryMoreHost'),
+              memoryForgottenHost: getElementById('memoryForgottenHost'),
+              memoryHistoryHost: getElementById('memoryHistoryHost'),
+              memoryFilesHost: getElementById('memoryFilesHost'),
             },
           };
         },
@@ -376,6 +359,8 @@
           toErrorMessage: (...args) => toErrorMessage(...args),
           dismissToast: (...args) => dismissToast(...args),
           openSettingsSection: (...args) => openSettingsSection(...args),
+          openSession: (...args) => openSession(...args),
+          scrollMessageIntoView: (...args) => scrollMessageIntoView(...args),
         },
       }) || null;
       ({
@@ -385,14 +370,10 @@
         renderApprovedMemoryManager = MEMORY_CONTROLLER_DEFAULTS.renderApprovedMemoryManager,
         handleApprovedMemorySave = MEMORY_CONTROLLER_DEFAULTS.handleApprovedMemorySave,
         handleApprovedMemoryDelete = MEMORY_CONTROLLER_DEFAULTS.handleApprovedMemoryDelete,
-        maybeSuggestMemoryCapture = MEMORY_CONTROLLER_DEFAULTS.maybeSuggestMemoryCapture,
         upsertApprovedMemoryDraft = MEMORY_CONTROLLER_DEFAULTS.upsertApprovedMemoryDraft,
         clearApprovedMemoryDraft = MEMORY_CONTROLLER_DEFAULTS.clearApprovedMemoryDraft,
         getApprovedMemoryById = MEMORY_CONTROLLER_DEFAULTS.getApprovedMemoryById,
         hasApprovedMemoryDraftChanges = MEMORY_CONTROLLER_DEFAULTS.hasApprovedMemoryDraftChanges,
-        clearDismissedMemorySession = MEMORY_CONTROLLER_DEFAULTS.clearDismissedMemorySession,
-        rekeyDismissedMemorySession = MEMORY_CONTROLLER_DEFAULTS.rekeyDismissedMemorySession,
-        resetMemorySuggestionState = MEMORY_CONTROLLER_DEFAULTS.resetMemorySuggestionState,
       } = memoryController || {});
       return memoryController;
     }
@@ -763,10 +744,6 @@
     const handlePersonalityResetSafe = personalitySafe((...args) => handlePersonalityReset(...args));
     const handlePersonalityOpenFolderSafe = personalitySafe((...args) => handlePersonalityOpenFolder(...args));
     const hasPersonalityUnsavedChangesSafe = personalitySafe(() => hasPersonalityUnsavedChanges());
-    const refreshMemoryContextFilesSafe = (...args) => ensureMemoryContextController()?.refresh?.(...args); const renderMemoryContextFilesSafe = (...args) => ensureMemoryContextController()?.render?.(...args);
-    const loadMemoryContextFileSafe = (...args) => ensureMemoryContextController()?.load?.(...args); const setMemoryContextDraftSafe = (...args) => ensureMemoryContextController()?.setDraft?.(...args);
-    const getMemoryContextActiveFileSafe = () => ensureMemoryContextController()?.activeFile?.() || null; const saveMemoryContextFileSafe = (...args) => ensureMemoryContextController()?.save?.(...args);
-    const resetMemoryContextFileSafe = (...args) => ensureMemoryContextController()?.reset?.(...args); const hasMemoryContextUnsavedChangesSafe = () => ensureMemoryContextController()?.hasUnsavedChanges?.() === true;
     const refreshProactiveStateSafe = proactiveSafe((...args) => refreshProactiveState(...args));
     const handleUseProactiveSuggestionMessageSafe = proactiveSafe((...args) => handleUseProactiveSuggestionMessage(...args));
 
@@ -805,7 +782,6 @@
     const refreshPendingMemoriesSafe = memorySafe((...args) => refreshPendingMemories(...args));
     const refreshMemoryStatusSafe = memorySafe((...args) => refreshMemoryStatus(...args));
     const renderApprovedMemoryManagerSafe = memorySafe((...args) => renderApprovedMemoryManager(...args));
-    const maybeSuggestMemoryCaptureSafe = memorySafe((...args) => maybeSuggestMemoryCapture(...args));
     const handleApprovedMemorySaveSafe = memorySafe((...args) => handleApprovedMemorySave(...args));
     const handleApprovedMemoryDeleteSafe = memorySafe((...args) => handleApprovedMemoryDelete(...args));
     const upsertApprovedMemoryDraftSafe = memorySafe((...args) => upsertApprovedMemoryDraft(...args));
@@ -829,13 +805,10 @@
     const prepareChatDockSessionTransitionSafe = (...args) => { try { return ideController?.chatDock?.prepareSessionTransition?.(...args) === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.anchor_capture_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } };
     const revealIdeChangesSafe = (target) => { try { return ideController?.chatDock?.revealChanges?.(target) === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.reveal_changes_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } }; // only a live dock can show it
     const getIdeCommandItemsSafe = ideSafe((...args) => ensureIdeController()?.getIdeCommandItems?.(...args) || []);
-    const openIdeHelpOverlaySafe = ideSafe((...args) => openIdeHelpOverlay(...args)); const openIdeChangeDiffSafe = openIdeAfterLoad('openLedgerChangeById'); const openIdeFileAtLineSafe = openIdeAfterLoad('openFileAtLine'); // an explicit user click may construct it
+    const openIdeHelpOverlaySafe = ideSafe((...args) => openIdeHelpOverlay(...args)); const openIdeChangeDiffSafe = openIdeAfterLoad('openLedgerChangeById'); const openIdeFileAtLineSafe = openIdeAfterLoad('openFileAtLine'); const openIdeTestOutputSafe = openIdeAfterLoad('showActivityOutput'); const openIdeGitViewSafe = openIdeAfterLoad('openGitView'); // an explicit user click may construct it
     const clearApprovedMemoryDraftSafe = memorySafe((...args) => clearApprovedMemoryDraft(...args));
     const getApprovedMemoryByIdSafe = memorySafe((...args) => getApprovedMemoryById(...args));
     const hasApprovedMemoryDraftChangesSafe = memorySafe((...args) => hasApprovedMemoryDraftChanges(...args));
-    const clearDismissedMemorySessionSafe = memorySafe((...args) => clearDismissedMemorySession(...args));
-    const rekeyDismissedMemorySessionSafe = memorySafe((...args) => rekeyDismissedMemorySession(...args));
-    const resetMemorySuggestionStateSafe = memorySafe((...args) => resetMemorySuggestionState(...args));
 
     const companionHandlers = shellStateRuntimeUtils.createCompanionSafeHandlers?.({
       state,
@@ -908,9 +881,7 @@
       handlePersonalitySaveSafe,
       handlePersonalityResetSafe,
       handlePersonalityOpenFolderSafe,
-      hasPersonalityUnsavedChangesSafe, refreshMemoryContextFilesSafe, renderMemoryContextFilesSafe,
-      loadMemoryContextFileSafe, setMemoryContextDraftSafe, getMemoryContextActiveFileSafe,
-      saveMemoryContextFileSafe, resetMemoryContextFileSafe, hasMemoryContextUnsavedChangesSafe,
+      hasPersonalityUnsavedChangesSafe,
       refreshProactiveStateSafe,
       handleUseProactiveSuggestionMessageSafe,
       refreshSkillsStateSafe,
@@ -926,22 +897,18 @@
       refreshPendingMemoriesSafe,
       refreshMemoryStatusSafe,
       renderApprovedMemoryManagerSafe,
-      maybeSuggestMemoryCaptureSafe,
       handleApprovedMemorySaveSafe,
       handleApprovedMemoryDeleteSafe,
       upsertApprovedMemoryDraftSafe,
       ensureIdeController, ensureIdeLoaded,
       renderIdeSafe,
       activateIdeSafe,
-      layoutIdeEditorSafe, reconcileChatDockHostSafe, prepareChatDockSessionTransitionSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, revealIdeChangesSafe,
+      layoutIdeEditorSafe, reconcileChatDockHostSafe, prepareChatDockSessionTransitionSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, openIdeTestOutputSafe, openIdeGitViewSafe, revealIdeChangesSafe,
       getIdeCommandItemsSafe,
       openIdeHelpOverlaySafe,
       clearApprovedMemoryDraftSafe,
       getApprovedMemoryByIdSafe,
       hasApprovedMemoryDraftChangesSafe,
-      clearDismissedMemorySessionSafe,
-      rekeyDismissedMemorySessionSafe,
-      resetMemorySuggestionStateSafe,
       refreshCompanionStateSafe,
       shouldRenderHomePanelSafe,
       renderHomePanelSafe,

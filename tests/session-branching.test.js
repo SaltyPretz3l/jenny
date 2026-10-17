@@ -1,6 +1,8 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const { forkSession } = require('../services/backend/session-branching');
+const E = require('../services/backend/session-message-envelope');
+const F = require('./helpers/session-mail-fixtures');
 // forkSessionWithArtifacts and the artifact rewrite/strip helpers are covered
 // in tests/session-branching-fork-artifacts.test.js (split to respect the
 // test-file size gate).
@@ -346,5 +348,80 @@ describe('forkSession', () => {
     assert.deepEqual(branchedToolResult.generated_artifacts, []);
     assert.equal(branchedToolResult.artifacts_not_carried, undefined);
     assert.equal(branchedToolResult.metadata.artifacts_not_carried, undefined);
+  });
+});
+
+describe('forkSession and addressed session messages', () => {
+  const sessionWithMail = () => {
+    const envelope = F.makeEnvelope(1, { body: 'handoff from another chat' });
+    const included = E.buildIncludedRow(envelope, { turn_id: 'turn_1', timestamp: F.iso(1) });
+    const receipt = E.buildDiscardReceiptRow(F.makeEnvelope(2, { body: 'dismissed' }), { timestamp: F.iso(2) });
+    return {
+      sess_mail: {
+        id: 'sess_mail',
+        title: 'Mail chat',
+        messages: [
+          { id: 'msg_1', role: 'user', content: 'First' },
+          { id: 'msg_2', role: 'assistant', content: 'Response 1' },
+          receipt,
+          included,
+          { id: 'msg_3', role: 'user', content: 'Second' },
+          { id: 'msg_4', role: 'assistant', content: 'Response 2' },
+        ],
+        session_mail: {
+          schema_version: 1,
+          next_receive_sequence: 2,
+          inbox: [{
+            envelope, receipt_id: F.uuid(3001), receive_sequence: 1, delivered_at: F.iso(), read_at: null,
+            source_receipt_confirmed_at: null, source_absent: false,
+            context: { state: 'included', turn_id: 'turn_1', snapshot_id: F.uuid(6001), included_at: F.iso(), canonical_message_id: included.id },
+          }],
+          discarded: [], outbox: [F.makeOutbox(1)], authorizations: [], report_reservations: [], admission_snapshots: [F.makeSnapshot(1)],
+          reporting_enabled: false,
+        },
+        coordination_revision: 7,
+        linked_session_ids: [],
+        last_model_used: '',
+        preferred_model: '',
+        reasoning_effort: 'default',
+        conversation_mode: 'chat',
+        context_preferences: {},
+      },
+    };
+  };
+
+  it('copies context rows verbatim as inert history, with their canonical ids', () => {
+    const store = createMockSessionStore(sessionWithMail());
+    const branch = forkSession(store, 'sess_mail', 'msg_3');
+    assert.ok(branch);
+    const messages = store.getSession(branch.id).messages;
+    assert.deepEqual(messages.map((m) => m.id).filter((id) => /^ctx/.test(id)), [`ctxr_${F.uuid(2)}`, `ctx_${F.uuid(1)}`]);
+    const row = messages.find((m) => m.id === `ctx_${F.uuid(1)}`);
+    assert.equal(row.role, 'context');
+    assert.equal(row.content, 'handoff from another chat');
+    assert.equal(row.turn_id, 'turn_1');
+    assert.ok(!row.client_message_id, 'a context row is not re-keyed like an ordinary copy');
+    assert.equal(messages.find((m) => m.id === `ctxr_${F.uuid(2)}`).disposition, 'discarded');
+    assert.deepEqual(messages.filter((m) => m.role !== 'context').map((m) => m.content), ['First', 'Response 1', 'Second']);
+  });
+
+  it('never copies the mailbox: no inbox, outbox, snapshots, authorizations or revision', () => {
+    const store = createMockSessionStore(sessionWithMail());
+    const before = JSON.stringify(store.getSession('sess_mail').session_mail);
+    const branch = forkSession(store, 'sess_mail', 'msg_4');
+    const forked = store.getSession(branch.id);
+    assert.deepEqual(forked.session_mail.inbox, []);
+    assert.deepEqual(forked.session_mail.outbox, []);
+    assert.deepEqual(forked.session_mail.admission_snapshots, []);
+    assert.deepEqual(forked.session_mail.authorizations, []);
+    assert.equal(forked.session_mail.next_receive_sequence, 1);
+    assert.equal(forked.coordination_revision, 0);
+    assert.equal(JSON.stringify(store.getSession('sess_mail').session_mail), before, 'the source mailbox is untouched');
+  });
+
+  it('a context row cannot be a fork target', () => {
+    const store = createMockSessionStore(sessionWithMail());
+    assert.equal(forkSession(store, 'sess_mail', `ctx_${F.uuid(1)}`), null);
+    assert.equal(forkSession(store, 'sess_mail', `ctxr_${F.uuid(2)}`), null);
   });
 });

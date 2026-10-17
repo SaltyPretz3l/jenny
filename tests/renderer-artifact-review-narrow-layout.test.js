@@ -124,7 +124,8 @@ test('R1: rail at its End with a 265px sidebar keeps a 320px chat column and a c
     assert.equal(layout.valuemax, '775', 'End lands on 90% of the stage less the 360px reserve');
     assert.equal(layout.panelWidth, 775);
     assert.ok(layout.tracks[0] >= MIN_PANE_WIDTH_PX, `the chat track keeps the composer floor (${layout.tracks.join(' ')})`);
-    assert.ok(layout.wrap >= MIN_PANE_WIDTH_PX - 1, `the composer wrap is ${layout.wrap}px`);
+    // Row 59: the composer is the pane-relative measure, the chat track less the 16px reading gutters.
+    assert.ok(layout.wrap >= layout.tracks[0] - 2 * 16 - 1, `the composer wrap is ${layout.wrap}px in a ${layout.tracks[0]}px chat track`);
     assertOneCleanLine(await measureButtons(page, '#composerWrap'), 'rail at End, streaming');
     assert.equal(layout.hintInsideWrap, true, 'the run-mode hint stays inside the composer wrap');
     await page.close();

@@ -133,6 +133,8 @@
           startOnLoad: false,
           securityLevel: 'strict',
           theme: 'base',
+          layout: 'dagre',
+          look: 'classic',
           darkMode: true,
         },
         labelStyles: {
@@ -197,6 +199,9 @@
         startOnLoad: false,
         securityLevel: 'strict',
         theme: 'base',
+        // Preserve Jenny's diagram layout and palette treatment across Mermaid 12.
+        layout: 'dagre',
+        look: 'classic',
         darkMode: !isLightPalette,
         themeVariables: {
           background,

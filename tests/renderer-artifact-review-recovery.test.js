@@ -5,7 +5,7 @@ const { JSDOM } = require('jsdom');
 const { createArtifactManager } = require('../renderer/features/renderer-artifacts-utils');
 const { createArtifactPanelV2 } = require('../renderer/features/renderer-artifact-panel-v2-render');
 
-function setup(t, { failRead = false, empty = false } = {}) {
+function setup(t, { failRead = false, empty = false, workspaceWidth = 800 } = {}) {
   const dom = new JSDOM('<body><button id="opener">Open</button><div id="workspace"><div id="chatView"><aside id="artifactReviewPanel"></aside></div></div>', { url: 'https://jenny.test' });
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
@@ -28,7 +28,7 @@ function setup(t, { failRead = false, empty = false } = {}) {
   const chrome = createArtifactPanelV2({ panelEl, state, windowRef: dom.window });
   chrome.installed();
   const nodes = Object.fromEntries([...doc.querySelectorAll('[id]')].map(node => [node.id, node]));
-  nodes.workspace.getBoundingClientRect = () => ({ width: 800 });
+  nodes.workspace.getBoundingClientRect = () => ({ width: workspaceWidth });
   const manager = createArtifactManager({ state, dom: nodes, callbacks: {
     getActiveSession: () => ({ id: 's' }), escapeHtml: value => String(value || '').replaceAll('<', '&lt;'), appendClientLog: () => {},
     panelV2: chrome,
@@ -64,10 +64,11 @@ test('real manager settles a failed read, exposes Retry, and recovers', async t 
 });
 
 test('explicit drawer open focuses the title, not Close; Escape restores the opener without stealing child Escape', async t => {
-  const h = setup(t, { empty: true });
+  const h = setup(t, { empty: true, workspaceWidth: 760 });
   const opener = h.doc.getElementById('opener');
   opener.focus();
   await h.manager.openArtifactTarget('');
+  assert.equal(h.panelEl.classList.contains('artifact-review-overlay'), true, 'the narrow-stage drawer is open');
   assert.equal(h.doc.activeElement.id, 'artifactReviewDetailTitle', 'a quick Enter or Space cannot close the panel it just opened');
   const handled = new h.dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
   handled.preventDefault(); h.panelEl.dispatchEvent(handled);

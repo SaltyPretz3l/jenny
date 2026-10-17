@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable
 
 from sidecar.ai.routing.iteration_limits import (
@@ -9,7 +10,7 @@ from sidecar.ai.routing.iteration_limits import (
 )
 from sidecar.ai.tools.sanitization import sanitize_tool_output
 
-MAX_TELEMETRY_IDENTIFIER_CHARS = 96
+MAX_TELEMETRY_IDENTIFIER_CHARS = 138
 MAX_TELEMETRY_TOKENS = 2_147_483_647
 MAX_DISTINCT_ROUTES = 6
 
@@ -120,10 +121,21 @@ def aggregate_usage(task_reports: Iterable[dict[str, Any]]) -> dict[str, Any] | 
     providers: list[str] = []
     models: list[str] = []
     estimated = False
+    report_count = 0
+    reported_count = 0
+    partial = False
     for report in task_reports:
+        if not isinstance(report, dict) or report.get("status") in {
+            "queued", "rejected", "skipped_budget"
+        } or report.get("terminal_reason") in {"rejected", "capacity_unavailable"}:
+            continue
+        report_count += 1
         usage = report.get("usage") if isinstance(report, dict) else None
         if not isinstance(usage, dict):
             continue
+        partial = partial or usage.get('partial') is True
+        if _bounded_token_count(usage.get('total_tokens')) is not None:
+            reported_count += 1
         for field, current in totals.items():
             value = _bounded_token_count(usage.get(field))
             if value is not None:
@@ -142,6 +154,8 @@ def aggregate_usage(task_reports: Iterable[dict[str, Any]]) -> dict[str, Any] | 
     if not result:
         return None
     result["estimated"] = estimated
+    if partial or reported_count < report_count:
+        result['partial'] = True
     return result
 
 
@@ -154,7 +168,7 @@ def _bounded_token_count(value: Any) -> int | None:
 def _safe_identifier(value: Any) -> str:
     if not isinstance(value, str):
         return ""
-    if any(token in value for token in ("\\", "/", ":\\")):
+    if not re.fullmatch(r'(?:codex-cli/)?[A-Za-z0-9][A-Za-z0-9._:-]{0,127}', value):
         return ""
     text = sanitize_tool_output(
         value,

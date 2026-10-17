@@ -136,6 +136,29 @@ test('fail-closed profile takes precedence over a crashed managed llama-server',
   });
 });
 
+// Row 54: the managed_server facet (llama-server or NInfer) wins over llama_server.
+test('managed_server drives the tone; the watchdog stop names NInfer and the watts', () => {
+  const watchdog = snapshotWithProfiles([readyProfile()]);
+  watchdog.runtime.llama_server = { state: 'stopped', alias: '', last_error: '' };
+  watchdog.runtime.managed_server = { kind: 'ninfer', state: 'crashed', alias: 'qwen3.8-27b-nvfp4', stopped_by: 'watchdog', watchdog_watts: 595 };
+  assert.deepEqual(deriveRuntimeHealthState(watchdog), {
+    tone: 'danger',
+    label: 'Blocked',
+    summary: 'The power watchdog stopped NInfer (595 W). Restart it from the status pill when the card has cooled.',
+  });
+  const crashed = snapshotWithProfiles([readyProfile()]);
+  crashed.runtime.managed_server = { kind: 'ninfer', state: 'crashed', alias: 'qwen3.8-27b-nvfp4', stopped_by: '' };
+  assert.equal(deriveRuntimeHealthState(crashed).summary,
+    'The local model server stopped unexpectedly (qwen3.8-27b-nvfp4). It restarts when you send your next message.');
+  // A ready managed_server hides a stale crashed llama_server; null falls back to it.
+  const ready = snapshotWithProfiles([readyProfile()]);
+  ready.runtime.llama_server = { state: 'crashed', alias: 'old' };
+  ready.runtime.managed_server = { kind: 'ninfer', state: 'ready', alias: 'qwen3.8-27b-nvfp4', stopped_by: '' };
+  assert.deepEqual(deriveRuntimeHealthState(ready), deriveRuntimeHealthState(snapshotWithProfiles([readyProfile()])));
+  ready.runtime.managed_server = null;
+  assert.equal(deriveRuntimeHealthState(ready).tone, 'danger');
+});
+
 test('returns warning when any profile roundtrip did not pass', () => {
   const result = deriveRuntimeHealthState(snapshotWithProfiles([
     readyProfile({ model_id: 'shaky-model', roundtrip: { passed: false } }),

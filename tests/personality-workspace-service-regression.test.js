@@ -2,12 +2,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 
 const { PersonalityWorkspaceService } = require('../services/personality-workspace-service');
 const { CONTEXT_FILE_MAX_BYTES } = require('../services/personality-workspace-service');
+const { removeTree } = require('../services/fs-remove-no-follow');
 
 async function createWorkspace(t) {
   const userDataPath = await fs.mkdtemp(path.join(os.tmpdir(), 'jenny-personality-regression-'));
@@ -198,4 +200,51 @@ test('migration rollback restores archives across devices and cleans snapshot ba
   assert.equal(await fs.readFile(path.join(workspacePath, '.personality-state.json'), 'utf8'), '{"version":2}\n');
   assert.equal((await fs.readdir(workspacePath)).some((name) => name.includes('.rollback-')), false);
   await assert.rejects(fs.access(path.join(workspacePath, 'legacy')));
+});
+
+function isLink(target) {
+  try { return fsSync.lstatSync(target).isSymbolicLink(); } catch (_error) { return false; }
+}
+
+test('v3 memory removal never enters a junction, even when unlinking it fails transiently', async (t) => {
+  const userDataPath = await fs.mkdtemp(path.join(os.tmpdir(), 'jenny-personality-junction-'));
+  t.after(() => removeTree(userDataPath));
+  const workspacePath = path.join(userDataPath, 'personality', 'default-workspace');
+  const memoryPath = path.join(workspacePath, 'memory');
+  const outside = path.join(userDataPath, 'outside');
+  await fs.mkdir(memoryPath, { recursive: true });
+  await fs.mkdir(outside);
+  await fs.writeFile(path.join(outside, 'keep'), 'outside the workspace\n');
+  await fs.writeFile(path.join(memoryPath, '2026-01-01.md'), 'a memory note\n');
+  // A user-made link inside memory/ (or a planted one): the archive pass skips it and then removes
+  // the whole memory tree, so a transient lock on the link must not send the removal into its target.
+  const link = path.join(memoryPath, 'linked-notes');
+  fsSync.symlinkSync(outside, link, 'junction');
+
+  const realUnlink = fs.unlink;
+  let injected = 0;
+  t.mock.method(fs, 'unlink', async (target, ...args) => {
+    if (injected === 0 && isLink(target)) {
+      injected += 1;
+      throw Object.assign(new Error('simulated transient lock'), { code: 'EPERM' });
+    }
+    return realUnlink(target, ...args);
+  });
+  const realRm = fs.rm;
+  const rmTargets = [];
+  t.mock.method(fs, 'rm', async (target, ...args) => {
+    rmTargets.push(path.resolve(String(target)));
+    return realRm(target, ...args);
+  });
+
+  const state = await new PersonalityWorkspaceService({ userDataPath }).getState({ agentName: 'Jenny' });
+
+  assert.equal(injected, 1, 'the memory removal unlinked the link through the injectable no-follow path');
+  assert.deepEqual(rmTargets, [], 'Node rm (which follows a junction after EPERM) is not used');
+  assert.equal(await fs.readFile(path.join(outside, 'keep'), 'utf8'), 'outside the workspace\n');
+  assert.equal(isLink(link), false);
+  await assert.rejects(fs.lstat(memoryPath), { code: 'ENOENT' });
+  assert.ok(state.migration.archivedFiles.includes('memory/2026-01-01.md'));
+  assert.equal(await fs.readFile(path.join(workspacePath, 'legacy', 'memory', '2026-01-01.md'), 'utf8'),
+    'a memory note\n');
 });

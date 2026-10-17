@@ -23,6 +23,7 @@
 @import url("./styles/sidebar.css");
 @import url("./styles/view-panel.css");
 @import url("./styles/chats-panel.css");
+@import url("./styles/chats-panel-tree.css");
 @import url("./styles/attention-inbox.css");
 @import url("./styles/away-digest.css");
 @import url("./styles/chats-panel-selection.css");
@@ -46,7 +47,9 @@
 @import url("./styles/chat-tools.css");
 @import url("./styles/chat-calendar-block.css");
 @import url("./styles/chat-tool-diff.css");
-@import url("./styles/chat-task-chip.css");
+@import url("./styles/chat-proposal-cards.css");
+@import url("./styles/chat-session-messages.css");
+@import url("./styles/chat-messages.css");
 @import url("./styles/chat-tool-markers.css");
 @import url("./styles/chat-tool-block-v2.css");
 @import url("./styles/chat-machinery.css");
@@ -108,18 +111,23 @@
 @import url("./styles/artifact-html-preview.css");
 @import url("./styles/diagnostics-page.css");
 @import url("./styles/diagnostics-activity.css");
-@import url("./styles/diagnostics-health.css");
+@import url("./styles/diagnostics-performance.css");
+@import url("./styles/diagnostics-overview.css");
 @import url("./styles/chat-media-queries.css");
 @import url("./styles/chat-subagent-monitor.css");
 @import url("./styles/chat-subagent-monitor-detail.css");
 @import url("./styles/ide-chat-dock.css");
 @import url("./styles/changes-view.css");
+@import url("./styles/chat-changes-detail.css");
 @import url("./styles/suggestion-bar.css");
 @import url("./styles/ide-chat-session-picker.css");
 @import url("./styles/settings.css");
 @import url("./styles/context-panel.css");
 @import url("./styles/artifact-panel.css");
 @import url("./styles/chat-panes.css");
+@import url("./styles/chat-session-rail.css");
+@import url("./styles/chat-session-rail-performance.css");
+@import url("./styles/image-viewer.css");
 @import url("./styles/task-rail.css");
 @import url("./styles/project-notes-rail.css");
 @import url("./styles/workbench-health-pill.css");
@@ -130,3 +138,5 @@
 @import url("./styles/quick-settings.css");
 @import url("./styles/scratchpad-capture.css");
 @import url("./styles/scratchpad-pin.css");
+
+@import url("./styles/activity-monitor.css");

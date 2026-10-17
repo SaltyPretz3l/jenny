@@ -154,7 +154,6 @@ function buildDeps(overrides = {}) {
     refreshGpuMemorySample: async () => null,
     getCurrentSystemStatsPayload: () => ({ cpu: 0 }),
     buildFeatureStatePayload: () => ({ flags: {} }),
-    getProcessLogWriter: () => null,
     getLogRedactionPrefixes: () => [],
     trashItemImpl: null,
     showItemInFolderImpl: null,

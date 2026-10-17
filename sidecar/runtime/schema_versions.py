@@ -7,6 +7,7 @@ from sidecar.runtime.runtime_gap_schema import RUNTIME_GAP_SCHEMA_VERSION
 
 def get_all_schema_versions() -> list[dict[str, object]]:
     """Return sidecar-owned schema/API versions for status surfaces."""
+    from sidecar.ai.conversations.store import CONVERSATION_INDEX_SCHEMA_VERSION
     from sidecar.ai.engines.ollama_catalog_cache import (
         SCHEMA_VERSION as OLLAMA_CATALOG_CACHE_SCHEMA_VERSION,
     )
@@ -70,6 +71,17 @@ def get_all_schema_versions() -> list[dict[str, object]]:
             # unreadable file is set aside and rebuilt from the source folders.
             "forward_policy": "reject_future_rebuild_corrupt_cache",
             "source": "sidecar/ai/semantic/store.py",
+        },
+        {
+            "id": "sidecar.conversation_index",
+            "surface": "Conversation index",
+            "owner": "sidecar",
+            "kind": "sqlite_schema",
+            "version": CONVERSATION_INDEX_SCHEMA_VERSION,
+            # Derived cache: a newer schema is refused (never written), an
+            # unreadable file is set aside and rebuilt from Electron's sessions.
+            "forward_policy": "reject_future_rebuild_corrupt_cache",
+            "source": "sidecar/ai/conversations/store.py",
         },
         {
             "id": "sidecar.runtime_gap",

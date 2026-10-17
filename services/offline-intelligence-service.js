@@ -208,7 +208,7 @@ function buildUnavailableReason({
   if (forcedRouteBlocked) {
     return t(
       'main.offlineIntelligence.llamaServerNotForced',
-      'Force local inference cannot use {model} yet: it runs on llama-server. Choose an Ollama model in Model Library.',
+      'Force local inference cannot use {model} yet: it runs on llama-server or NInfer. Choose an Ollama model in Model Library.',
       { model: preferredLocalModel }
     );
   }

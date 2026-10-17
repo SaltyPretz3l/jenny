@@ -6,16 +6,22 @@
   var retention = logContractUtils.LOG_RETENTION || {};
   var CURRENT_LIMIT = Number(retention.diagnosticsCurrentRunLimit) || 750;
   var PRIOR_LIMIT = Number(retention.diagnosticsPriorRunLimit) || 250;
+  var TABS = Object.freeze(['overview', 'activity', 'runs']);
+  // The Overview metrics/issues split, in percent of the metrics column.
+  var OVERVIEW_METRICS = Object.freeze({ min: 40, max: 75, initial: 60 });
   function ensure(state) {
     state.ui = state.ui || {}; state.ui.logs = state.ui.logs || {};
     var value = state.ui.logs;
-    if (!['overview', 'activity', 'runs'].includes(value.activeTab)) value.activeTab = 'overview';
+    if (!TABS.includes(value.activeTab)) value.activeTab = TABS[0];
     if (!value.selectedRunId) value.selectedRunId = '';
     if (!value.levelFilter) value.levelFilter = 'all';
     if (!value.sourceFilter) value.sourceFilter = 'all';
     if (typeof value.query !== 'string') value.query = '';
     if (typeof value.autoScroll !== 'boolean') value.autoScroll = true;
     if (!value.selectedEntryId) value.selectedEntryId = '';
+    value.overviewMetricsPercent = Number.isFinite(value.overviewMetricsPercent)
+      ? Math.max(OVERVIEW_METRICS.min, Math.min(OVERVIEW_METRICS.max, value.overviewMetricsPercent))
+      : OVERVIEW_METRICS.initial;
     return value;
   }
   function resetLogsViewState(state) {
@@ -188,6 +194,14 @@
           if (!status || typeof status !== 'object' || Array.isArray(status)) throw new Error('status unavailable');
           options.state.diagnosticsStatus = status;
         }],
+        ['ollama_daemon', async function () {
+          try {
+            var detection = await shell.setup?.detectOllama?.();
+            if (!isDisposed()) options.state.ollamaDaemonDetection = detection || null;
+          } catch (_error) {
+            if (!isDisposed()) options.state.ollamaDaemonDetection = null;
+          }
+        }],
         ['scheduler', async function () {
           try {
             var scheduler = await shell.scheduler?.getState?.();
@@ -247,9 +261,9 @@
         options.state.diagnosticsSnapshot = Object.assign({}, snapshot, {
           integrity: markIncomplete(snapshot.integrity, reasons),
           active_run: markRun(snapshot.active_run),
-          prior_run: markRun(snapshot.prior_run),
         });
       }
+      options.state.diagnosticsRefreshedAt = Date.now();
       options.renderIfVisible();
       if (failed.length) throw new Error('Diagnostics refresh incomplete: ' + failed.join(', '));
       return { complete: true };
@@ -267,6 +281,8 @@
     return Object.freeze({ refresh: refresh });
   }
   return Object.freeze({
+    TABS: TABS,
+    OVERVIEW_METRICS: OVERVIEW_METRICS,
     ensureDiagnosticsViewState: ensure,
     resetLogsViewState: resetLogsViewState,
     focusDiagnosticsTarget: focusDiagnosticsTarget,

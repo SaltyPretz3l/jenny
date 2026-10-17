@@ -80,6 +80,7 @@ class _FinalResponseMixin:
         # Hub-owned methods (defined on ``_ToolLoopRun`` in tool_loop_run.py).
         # Never executed -- ``TYPE_CHECKING`` is False at runtime.
         def _finish(self, loop_result: Any, *, reason: str) -> Any: ...
+        def _finish_empty_generation(self, result: Any) -> Any | None: ...
         def grant_gate_iteration(self) -> bool: ...
 
     def _sub_agent_report_disposition(
@@ -479,6 +480,9 @@ class _FinalResponseMixin:
                 _tl_hub.loop_event_emit.emit_stream_reset_for_retry(
                     runtime, self.streamed_event_types, reason="reflexive_retry")
                 return None
+            outcome = self._finish_empty_generation(result)
+            if outcome is not None:
+                return outcome
         context_window = resolve_checkpoint_context_window(
             self.kernel._engine,
             self.kernel._config,
@@ -627,6 +631,7 @@ class _FinalResponseMixin:
         )
 
         # -- Current-info unavailability fallback (web search disabled) ----
+        fire = _tl_hub.heuristic_fires.emit_heuristic_fire
         if (
             not self.outcomes
             and current_info_unavailable_response is not None
@@ -645,6 +650,7 @@ class _FinalResponseMixin:
                 data={"iteration": _iteration},
                 request_id=request_id,
             )
+            fire(runtime, "current_info_canned_reply")
             _tl_hub.loop_event_emit.emit_stream_reset_for_retry(
                 runtime,
                 self.streamed_event_types,
@@ -676,6 +682,12 @@ class _FinalResponseMixin:
         ):
             if not self.tool_nudge_attempted and _iteration < self.iteration_total:
                 self.tool_nudge_attempted = True
+                fire(
+                    runtime, "tool_use_nudge", action="retry",
+                    trigger=(
+                        "explicit_tool_request" if explicitly_requested_tools else "fake_tool_use"
+                    ),
+                )
                 _tl_hub.loop_event_emit.emit_stream_reset_for_retry(
                     runtime,
                     self.streamed_event_types,
@@ -744,6 +756,10 @@ class _FinalResponseMixin:
                 return None
 
             no_retry_capacity = not self.tool_nudge_attempted
+            fire(
+                runtime, "tool_use_nudge", action="fallback",
+                trigger="explicit_tool_request" if explicitly_requested_tools else "fake_tool_use",
+            )
             _tl_hub.log_event(
                 logger,
                 logging.WARNING,
@@ -843,6 +859,7 @@ class _FinalResponseMixin:
                 and _iteration < self.iteration_total
             ):
                 self.post_tool_continuation_attempted = True
+                fire(runtime, "post_tool_recovery", trigger=recovery_trigger, action="retry")
                 _tl_hub.loop_event_emit.emit_stream_reset_for_retry(
                     runtime,
                     self.streamed_event_types,
@@ -867,6 +884,7 @@ class _FinalResponseMixin:
                 )
                 return None
             if fallback_text:
+                fire(runtime, "post_tool_recovery", trigger=recovery_trigger, action="fallback")
                 _tl_hub.loop_event_emit.emit_stream_reset_for_retry(
                     runtime,
                     self.streamed_event_types,

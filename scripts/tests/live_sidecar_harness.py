@@ -19,7 +19,7 @@ import urllib.request
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -46,7 +46,9 @@ class JsonRpcSidecar:
         command: Sequence[str] | None = None,
         cwd: Path = ROOT,
         env: dict[str, str] | None = None,
+        api_version: str | None = None,
     ) -> None:
+        self._api_version = API_VERSION if api_version is None else api_version
         self._messages: queue.Queue[dict[str, Any] | BaseException] = queue.Queue()
         self._stderr_chunks: list[bytes] = []
         self._stderr_lock = threading.Lock()
@@ -79,6 +81,7 @@ class JsonRpcSidecar:
         params: dict[str, Any],
         *,
         timeout_seconds: float,
+        on_request: Callable[[dict], dict | None] | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         message_id = self._next_id
         self._next_id += 1
@@ -87,15 +90,19 @@ class JsonRpcSidecar:
         notifications: list[dict[str, Any]] = []
         while True:
             message = self._next_message(deadline)
-            if message.get("id") == message_id:
+            if message.get("id") == message_id and "method" not in message:
                 return message, notifications
             if "method" in message:
                 notifications.append(message)
+                if "id" in message and on_request is not None:
+                    result = on_request(message)
+                    if isinstance(result, dict):
+                        self._write({"jsonrpc": "2.0", "id": message["id"], "result": result})
 
     def inspect(self, *, timeout_seconds: float = 30.0) -> dict[str, Any]:
         response, _ = self.request(
             "harness.inspect",
-            {"accept_version": API_VERSION},
+            {"accept_version": self._api_version},
             timeout_seconds=timeout_seconds,
         )
         result = response.get("result")
@@ -109,7 +116,7 @@ class JsonRpcSidecar:
         try:
             self.request(
                 "shutdown",
-                {"accept_version": API_VERSION},
+                {"accept_version": self._api_version},
                 timeout_seconds=timeout_seconds,
             )
         except Exception:  # noqa: BLE001 - cleanup is best effort

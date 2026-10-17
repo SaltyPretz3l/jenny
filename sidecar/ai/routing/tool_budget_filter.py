@@ -121,6 +121,7 @@ def build_system_prompt_for_statuses(
         "tool_statuses": list(tool_statuses),
         "latest_user_content": context.latest_user_content,
         "engine_type": kernel._config.engine_type,
+        "subagent_routing": getattr(context.request_context, "subagent_routing", None),
         "native_tool_schemas": _tool_assembly.engine_receives_native_tool_schemas(
             getattr(kernel, "_engine", None)
         ),
@@ -422,12 +423,18 @@ def _budget_preferred_tool_names(
     family_names = _budget_relevant_family_names(relevant_text, tool_contract)
     recent_successes = _recent_successful_tool_names(context.semantic_history)
     active_status_names = _active_status_tool_names(context)
+    # Row 53: a preset MCP server's starter set fills the slots the request's own
+    # picks leave, so it never evicts a relevance, repair or pairing guarantee.
+    starters = _tool_search.preset_starter_tool_names(
+        entry.descriptor for entry in tool_contract.entries
+    )
     return ordered_unique_names(
         (
             *(name for name in candidate_names if name in enabled_tools),
             *(name for name in active_status_names if name in candidate_names),
             *(name for name in family_names if name in candidate_names),
             *(name for name in recent_successes if name in candidate_names),
+            *(name for name in candidate_names if name in starters),
         )
     )
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,6 +13,7 @@ from sidecar.ai.container import (
     _default_mcp_servers,
     _sub_agent_slot_allocator_for_config,
 )
+from sidecar.ai.mcp.transport_base import MCPTransport
 
 
 def test_default_mcp_servers_forward_web_configuration(tmp_path: Path) -> None:
@@ -190,6 +192,21 @@ def test_default_mcp_servers_forward_shell_security_and_git_tracking_flags(
     args = list(servers[0].args)
     assert args[args.index("--shell-security-enabled") + 1] == "1"
     assert args[args.index("--git-tracking-enabled") + 1] == "1"
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ["shell_noninteractive_env", "shell_head_tail_output", "edit_match_fallbacks"],
+)
+def test_default_mcp_servers_forward_row60_default_on_flags(tmp_path: Path, flag: str) -> None:
+    option = f"--{flag.replace('_', '-')}-enabled"
+
+    default_args = list(_default_mcp_servers(RuntimeConfig(), tmp_path)[0].args)
+    off_config = RuntimeConfig(feature_flags={flag: False})
+    off_args = list(_default_mcp_servers(off_config, tmp_path)[0].args)
+
+    assert default_args[default_args.index(option) + 1] == "1"
+    assert off_args[off_args.index(option) + 1] == "0"
 
 
 def test_default_mcp_servers_shell_security_and_git_tracking_default_off(
@@ -802,3 +819,94 @@ def test_create_engine_without_a_store_still_loads() -> None:
 
     assert selection.engine_type == "mock"
     assert selection.model == "mock-v1"
+
+
+class _ReconfigureTransport(MCPTransport):
+    def __init__(self, server_name: str) -> None:
+        self._server_name = server_name
+        self.close_calls = 0
+
+    @property
+    def server_name(self) -> str:
+        return self._server_name
+
+    def list_tools(self, *, cancel_handle=None):
+        return [{"name": "lookup", "description": "Look up.", "inputSchema": {"type": "object"}}]
+
+    def call_tool(self, tool_name, arguments, **_kwargs):
+        return {"content": [{"type": "text", "text": "ok"}]}
+
+    def list_resources(self, **_kwargs):
+        return {"resources": []}
+
+    def read_resource(self, uri, **_kwargs):
+        return {"contents": []}
+
+    def list_resource_templates(self, **_kwargs):
+        return {"resourceTemplates": []}
+
+    def list_prompts(self, *, cancel_handle: Any = None) -> list[dict[str, Any]]:
+        return []
+
+    def get_prompt(self, name: str, arguments: dict[str, str], **_kwargs: Any) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+def test_reconfigure_reuses_live_mcp_servers_and_a_failed_candidate_hands_them_back(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    # Row 53 S3: a refresh with an unchanged server row keeps the live process
+    # (rea costs ~3 s and ~400 MiB per respawn); a candidate that fails after
+    # adopting it returns it, so the published generation still owns it.
+    import sidecar.ai.container as container_mod
+    from sidecar.ai.config import MCPServerConfig
+    from sidecar.ai.mcp.client import MCPClient
+
+    spawned: list[_ReconfigureTransport] = []
+
+    def _build(_client, server, **_kwargs):
+        spawned.append(_ReconfigureTransport(server.name))
+        return spawned[-1]
+
+    _install_light_container_stubs(monkeypatch, container_mod, tmp_path)
+    harness_fails = {"on": False}
+
+    def _harness_builder(**_kwargs):
+        if harness_fails["on"]:
+            raise RuntimeError("injected harness construction failure")
+        return MagicMock(inspect=MagicMock())
+
+    monkeypatch.setattr(container_mod, "HarnessSnapshotBuilder", _harness_builder)
+    monkeypatch.setattr(container_mod, "MCPClient", MCPClient)
+    monkeypatch.setattr(MCPClient, "_build_transport", _build)
+    server = MCPServerConfig(name="rea", transport="stdio", command="rea")
+    monkeypatch.setattr(container_mod, "_default_mcp_servers", lambda _config, _root: (server,))
+
+    from sidecar.ai.container import BrainContainer
+
+    container = BrainContainer()
+    first_stack = container.configure({})
+    assert len(spawned) == 1
+    live = spawned[0]
+
+    harness_fails["on"] = True
+    with pytest.raises(RuntimeError, match="injected harness"):
+        container.configure({})
+    assert container.stack is first_stack
+    assert live.close_calls == 0
+    assert first_stack.mcp_client._transports["rea"] is live
+    assert first_stack.mcp_client._reuse.owns(live)
+
+    harness_fails["on"] = False
+    second_stack = container.configure({})
+    assert len(spawned) == 1
+    assert second_stack.mcp_client._transports["rea"] is live
+    assert second_stack.mcp_client.execute_tool("mcp__rea__lookup", {}).output == "ok"
+    assert live.close_calls == 0  # the retired first generation closed only what it owned
+
+    container.close()
+    assert live.close_calls == 1

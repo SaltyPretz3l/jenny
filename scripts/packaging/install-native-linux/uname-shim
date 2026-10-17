@@ -1,0 +1,9 @@
+#!/bin/sh
+# Harness-only uname wrapper, installed by the Dockerfiles only when the Docker
+# daemon runs on a WSL2 kernel (Docker Desktop on Windows). install.sh refuses a
+# "microsoft"/"WSL" kernel by design; this rewrites `uname -r` and nothing else.
+if [ "$#" -eq 1 ] && [ "$1" = -r ]; then
+    echo 6.8.0-harness
+    exit 0
+fi
+exec /bin/uname "$@"

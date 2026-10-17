@@ -487,6 +487,7 @@ function buildAssistantCompletionTerminalMutation({
   exchangeTitle = '',
   resumableStop = null,
   discardedDrafts = null,
+  completion = null,
   timestamp = new Date().toISOString(),
   includeAssistantMessage = true,
 }) {
@@ -500,7 +501,7 @@ function buildAssistantCompletionTerminalMutation({
       finalizedAt: timestamp,
       client_message_id: String(messageId || ''),
       model_used: String(model || ''),
-      ...buildTerminalMessageExtras({ resumableStop, discardedDrafts }),
+      ...buildTerminalMessageExtras({ resumableStop, discardedDrafts, completion }),
       ...buildAssistantTranscriptFields({
         parentStreamId,
         phases,
@@ -549,6 +550,7 @@ async function settleAssistantCompletion(adapter, {
   exchangeTitle = '',
   resumableStop = null,
   discardedDrafts = null,
+  completion = null,
   timestamp = new Date().toISOString(),
   persistAssistantMessage = null,
 }) {
@@ -566,6 +568,7 @@ async function settleAssistantCompletion(adapter, {
     exchangeTitle,
     resumableStop,
     discardedDrafts,
+    completion,
     timestamp,
   });
   const persist =

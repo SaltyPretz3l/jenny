@@ -15,7 +15,6 @@
       finishSidebarResize,
       getCurrentRuntimePreferences,
       getIdeCommandItems: getIdeCommandItemsCb = () => [],
-      getLogEntryById,
       ensureLogRowMounted = () => false,
       handleDeleteSessionWithWorkspace,
       handleLinkedSessionPopover = () => {},
@@ -49,6 +48,24 @@
       toggleChatsScope,
     } = callbacks;
 
+    // Addressed messaging (row 59 cp4): the row menu's "Send to chat..." and the sidebar unread
+    // count between summary refreshes. Both are absent where the bridge is (hosted browser).
+    const chatMessagesBridge = windowRef.jennyShell?.chatMessages || null;
+    const sendToChatReady = Boolean(chatMessagesBridge && root.rendererChatSendModal && root.inventoryStepModal);
+    if (chatMessagesBridge) {
+      root.rendererChatMessagesReview?.getDefaultReview?.({ appendClientLog, openSession: (sessionId) => activateWorkspaceSession(sessionId, { mode: 'replace' }) });
+      registerCleanup(root.rendererSessionUnread?.bindUnreadSync?.({
+        bridge: chatMessagesBridge,
+        apply: (sessionId, unread) => {
+          const sessions = Array.isArray(state.sessions) ? state.sessions : [];
+          const current = sessions.find((session) => session?.id === sessionId);
+          if (!current || (current.unread_message_count || 0) === unread) return;
+          state.sessions = sessions.map((session) => (session === current ? { ...session, unread_message_count: unread } : session));
+          renderSessions();
+        },
+      }) || noop);
+    }
+
     // Session row actions (nav overhaul W7): context menu, inline rename,
     // pin/archive meta, and undo-windowed delete. Created before the event
     // bindings (which surface its menu) and the palette (which lists its
@@ -80,6 +97,13 @@
         // "Link sessions…" (row menu) opens the rail's linked-session popover
         // anchored on the row's ⋯, so linking works with a single open chat.
         openLinkedSessions: (sessionId, anchor) => handleLinkedSessionPopover(sessionId, anchor),
+        openSendToChat: sendToChatReady
+          ? (sessionId, trigger) => root.rendererChatSendModal.getDefaultModal({ showToast: showToastMessage, toastSource: constants.TOAST_SOURCE?.sessionAction, appendClientLog }).open({
+            sourceSessionId: sessionId,
+            sourceProjectId: (state.sessions || []).find((session) => session?.id === sessionId)?.project_id || '',
+            trigger,
+          })
+          : undefined,
       },
     }) || null;
 
@@ -147,6 +171,8 @@
         },
         openSession: (...a) => activateWorkspaceSession(...a),
         setActiveView,
+        openSetupTile: (...args) => callbacks.openSetupTile?.(...args),
+        openSettingsSection: (...args) => callbacks.openSettingsSection?.(...args),
         getActiveStreamIdForCancel: () => (
           multiStreamController?.getActiveStreamIdForCancel?.(state.currentSessionId)
           || state.activeStreamId
@@ -154,7 +180,6 @@
         ),
         isSendPreflightPending,
         resetAttachmentQueue,
-        getLogEntryById,
         ensureLogRowMounted,
         scrollLogsToBottom,
         navigateToDiagnosticsTrace: (...a) => navigateToDiagnosticsTrace(...a),

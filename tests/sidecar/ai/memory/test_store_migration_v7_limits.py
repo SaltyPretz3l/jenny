@@ -15,7 +15,7 @@ from sidecar.ai.memory.contracts import (
     MAX_SESSION_ID_CHARS,
     MAX_SOURCE_EXCERPT_CHARS,
     MAX_TITLE_CHARS,
-    build_content_digest,
+    build_text_digest,
     normalize_spaces,
 )
 from sidecar.ai.memory.store import MemoryStore
@@ -32,7 +32,7 @@ CONTENT_LIMITS = {
     "title": MAX_TITLE_CHARS,
     "lesson_text": MAX_LESSON_TEXT_CHARS,
     "source_excerpt": MAX_SOURCE_EXCERPT_CHARS,
-    "family_key": MAX_FAMILY_KEY_CHARS,
+    # v9 drops family_key, so its v7 truncation is no longer observable.
     "provenance": MAX_PROVENANCE_CHARS,
 }
 
@@ -97,7 +97,7 @@ def test_approved_content_survives_v7_limits_and_store_reopens(tmp_path: Path) -
     connection = _create_v6_database(path)
     original_text = {
         "title": "T" * 150,
-        "lesson_text": "L" * 300,
+        "lesson_text": "L" * (MAX_LESSON_TEXT_CHARS + 60),
         "source_excerpt": "E" * (MAX_SOURCE_EXCERPT_CHARS + 1),
         "family_key": "F" * (MAX_FAMILY_KEY_CHARS + 1),
         "provenance": "P" * (MAX_PROVENANCE_CHARS + 1),
@@ -120,15 +120,15 @@ def test_approved_content_survives_v7_limits_and_store_reopens(tmp_path: Path) -
         for field, limit in CONTENT_LIMITS.items():
             assert len(rows[7][field]) == limit
             assert rows[7][field] == original_text[field][:limit]
-        assert rows[7]["content_fingerprint"] == build_content_digest(
-            "preference", original_text["lesson_text"][:MAX_LESSON_TEXT_CHARS]
+        assert rows[7]["content_fingerprint"] == build_text_digest(
+            original_text["lesson_text"][:MAX_LESSON_TEXT_CHARS]
         )
         assert rows[7]["created_at"] == CREATED_AT
         assert rows[7]["updated_at"] == UPDATED_AT
-        short["content_fingerprint"] = build_content_digest(
-            str(short["lesson_kind"]), str(short["lesson_text"])
-        )
+        short["content_fingerprint"] = build_text_digest(str(short["lesson_text"]))
+        short.pop("family_key")
         assert {field: rows[8][field] for field in short} == short
+        assert "family_key" not in rows[8]
         quarantine = connection.execute(
             "SELECT source_table, source_row_id, reason_code, raw_payload "
             "FROM memory_quarantine ORDER BY source_row_id"

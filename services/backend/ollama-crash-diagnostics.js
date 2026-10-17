@@ -40,11 +40,7 @@ const FATAL_OLLAMA_STDERR_PATTERNS = [
 ];
 
 function isFatalOllamaStderrLine(line) {
-  const text = String(line || '').trim();
-  if (!text) {
-    return false;
-  }
-  return FATAL_OLLAMA_STDERR_PATTERNS.some((entry) => entry.pattern.test(text));
+  return classifyOllamaCrash([line]) !== null;
 }
 
 // Scan a captured stderr tail (array of lines or a single joined string) and
@@ -53,12 +49,9 @@ function classifyOllamaCrash(stderrTail) {
   const lines = Array.isArray(stderrTail)
     ? stderrTail
     : String(stderrTail || '').split(/\r?\n/);
-  for (const rawLine of lines) {
-    const text = String(rawLine || '').trim();
-    if (!text) {
-      continue;
-    }
-    for (const entry of FATAL_OLLAMA_STDERR_PATTERNS) {
+  for (const entry of FATAL_OLLAMA_STDERR_PATTERNS) {
+    for (const rawLine of lines) {
+      const text = String(rawLine || '').trim();
       if (entry.pattern.test(text)) {
         return { likelyCause: entry.likelyCause, remediation: entry.remediation };
       }

@@ -35,7 +35,7 @@ function runtimeRequest(id, overrides = {}) {
     id,
     method: 'runtime.operation',
     params: {
-      api_version: '2026-08-17',
+      api_version: '2026-10-15',
       schema_version: 1,
       request_id: 'request-1',
       session_id: 'session-1',
@@ -113,7 +113,7 @@ test('cancelled inference can settle its captured lease without admitting furthe
     authorityRevision: 'authority-1', assertCurrent: () => {},
     route: captureRuntimeRoute({ engine_type: 'ollama', provider_id: 'ollama',
       configuration_revision: 'config-1', requires_gpu: true, resource_class: 'local' }) });
-  const base = { api_version: '2026-08-17', schema_version: 1, request_id: 'request-1',
+  const base = { api_version: '2026-10-15', schema_version: 1, request_id: 'request-1',
     session_id: 'session-1', authority_revision: 'authority-1', operation_id: 'inference-1', kind: 'inference' };
   const unregister = retainRuntimeSettlementHandler(client, 'request-1', params => gateway.handle(params));
   const controller = new AbortController();

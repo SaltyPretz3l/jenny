@@ -160,7 +160,26 @@ test('feature settings payload defaults the webSearch slice when unset', () => {
   });
 
   assert.deepEqual(payload.webSearch, { provider: 'duckduckgo', searxngUrl: '' });
-  assert.deepEqual(payload.memory, { captureSuggestions: true });
+  assert.deepEqual(payload.memory, { takeNotes: true, askBeforeSaving: false, pauseSaving: false, useInChats: true });
+});
+
+test('memory-only feature settings persist without reconfiguring the sidecar', async () => {
+  const harness = createFeaturePatchHarness();
+  const calls = [];
+  const payload = await applyFeatureSettingsPatch({
+    patch: { memory: { pauseSaving: true } },
+    shellConfigService: harness.shellConfigService,
+    backendService: {
+      setFeatureFlags() { calls.push('flags'); },
+      refreshManagedConfig() { calls.push('refresh'); },
+    },
+    env: {},
+    platform: 'win32',
+  });
+
+  assert.deepEqual(calls, []);
+  assert.deepEqual(payload.memory, { takeNotes: true, askBeforeSaving: false, pauseSaving: true, useInChats: true });
+  assert.equal(harness.getState().memory.pauseSaving, true);
 });
 
 function createFeaturePatchHarness() {
@@ -168,7 +187,7 @@ function createFeaturePatchHarness() {
     tools: {},
     webSearch: { provider: 'duckduckgo', searxngUrl: '' },
     featureOverrides: {},
-    memory: { captureSuggestions: true },
+    subagentRouting: { codex: { defaultEffort: '' } },
   };
   return {
     shellConfigService: {
@@ -181,6 +200,7 @@ function createFeaturePatchHarness() {
           tools: { ...state.tools, ...(patch.tools || {}) },
           webSearch: { ...state.webSearch, ...(patch.webSearch || {}) },
           featureOverrides: { ...state.featureOverrides, ...(patch.featureOverrides || {}) },
+          subagentRouting: { ...state.subagentRouting, ...(patch.subagentRouting || {}) },
           memory: { ...state.memory, ...(patch.memory || {}) },
         };
         return structuredClone(state);
@@ -191,11 +211,11 @@ function createFeaturePatchHarness() {
   };
 }
 
-test('memory-only feature settings persist without reconfiguring the sidecar', async () => {
+test('routing-only feature settings persist without reconfiguring the sidecar', async () => {
   const harness = createFeaturePatchHarness();
   const calls = [];
-  const payload = await applyFeatureSettingsPatch({
-    patch: { memory: { captureSuggestions: false } },
+  await applyFeatureSettingsPatch({
+    patch: { subagentRouting: { codex: { defaultEffort: 'high' } } },
     shellConfigService: harness.shellConfigService,
     backendService: {
       setFeatureFlags() { calls.push('flags'); },
@@ -206,15 +226,14 @@ test('memory-only feature settings persist without reconfiguring the sidecar', a
   });
 
   assert.deepEqual(calls, []);
-  assert.deepEqual(payload.memory, { captureSuggestions: false });
-  assert.equal(harness.getState().memory.captureSuggestions, false);
+  assert.deepEqual(harness.getState().subagentRouting, { codex: { defaultEffort: 'high' } });
 });
 
-test('mixed memory and runtime feature settings retain managed refresh behavior', async () => {
+test('mixed routing and runtime feature settings retain managed refresh behavior', async () => {
   const harness = createFeaturePatchHarness();
   const calls = [];
   await applyFeatureSettingsPatch({
-    patch: { memory: { captureSuggestions: false }, tools: { web: true } },
+    patch: { subagentRouting: { codex: { defaultEffort: 'high' } }, tools: { web: true } },
     shellConfigService: harness.shellConfigService,
     backendService: {
       setFeatureFlags() { calls.push('flags'); },
@@ -227,13 +246,13 @@ test('mixed memory and runtime feature settings retain managed refresh behavior'
   assert.deepEqual(calls, ['flags', 'feature_settings_updated']);
 });
 
-test('mixed memory and runtime feature settings roll back both slices when refresh fails', async () => {
+test('mixed routing and runtime feature settings roll back both slices when refresh fails', async () => {
   const harness = createFeaturePatchHarness();
   const flagCalls = [];
   const broadcasts = [];
   await assert.rejects(
     () => applyFeatureSettingsPatch({
-      patch: { memory: { captureSuggestions: false }, tools: { web: true } },
+      patch: { subagentRouting: { codex: { defaultEffort: 'high' } }, tools: { web: true } },
       shellConfigService: harness.shellConfigService,
       backendService: {
         setFeatureFlags(flags) { flagCalls.push(flags); },
@@ -248,8 +267,8 @@ test('mixed memory and runtime feature settings roll back both slices when refre
 
   assert.equal(flagCalls.length, 2, 'next and restored flags must both reach the backend');
   assert.deepEqual(harness.getState().tools, {});
-  assert.deepEqual(harness.getState().memory, { captureSuggestions: true });
-  assert.deepEqual(broadcasts.at(-1).memory, { captureSuggestions: true });
+  assert.deepEqual(harness.getState().subagentRouting, { codex: { defaultEffort: '' } });
+  assert.deepEqual(broadcasts.at(-1).memory, { takeNotes: true, askBeforeSaving: false, pauseSaving: false, useInChats: true });
 });
 
 test('failed managed feature refresh reapplies restored config and preserves the original error', async () => {

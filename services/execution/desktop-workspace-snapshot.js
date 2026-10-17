@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { sandboxError, digest } = require('./sandbox-errors');
+const { removeTree } = require('../fs-remove-no-follow');
 const LIMITS = Object.freeze({ bytes: 64 * 1024 * 1024, entries: 2048, depth: 32, pathBytes: 4096 });
 function inside(root, candidate) {
   const relative = path.relative(root, candidate);
@@ -163,6 +164,6 @@ async function removeSnapshot({ directory, stagingRoot }) {
     }
   }
   if (process.platform !== 'win32') await writable(resolved);
-  await fs.rm(resolved, { recursive: true, force: true });
+  await removeTree(resolved, { fsImpl: fs });
 }
 module.exports = { createWorkspaceSnapshot, verifyWorkspaceSnapshot, removeSnapshot, LIMITS, inside };

@@ -341,6 +341,12 @@
       return origin;
     }
 
+    function startedFromLabel(sessionId) {
+      const rows = globalRef.rendererSessionMessageRows || (typeof require === 'function' ? require('./renderer-session-message-rows') : null);
+      const sessions = Array.isArray(state?.sessions) ? state.sessions : [];
+      return rows?.buildStartedFromLabel?.(sessions.find((entry) => String(entry?.id || '') === sessionId), sessions) || '';
+    }
+
     function renderOriginChip() {
       sweepSessionOrigins();
       if (!chatOriginChip || !chatOriginLabel) return;
@@ -370,8 +376,13 @@
           clearPendingOrigin();
         }
       }
+      // A chat a parent started (checkpoint 5a, summary spawned_from) keeps "Started from {parent}" at the top for good.
+      const startedFrom = origin && !hasAssistantReply ? '' : startedFromLabel(currentSessionId);
       if (origin && !hasAssistantReply) {
         chatOriginLabel.textContent = origin;
+        chatOriginChip.classList.remove('hidden');
+      } else if (startedFrom) {
+        chatOriginLabel.textContent = startedFrom;
         chatOriginChip.classList.remove('hidden');
       } else {
         chatOriginChip.classList.add('hidden');

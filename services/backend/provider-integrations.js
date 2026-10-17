@@ -54,12 +54,15 @@ function createProviderIntegrationRegistry(integrations = []) {
           if (
             !id
             || seen.has(id)
-            || (desiredEngineType && provider && provider !== desiredEngineType)
+            || (desiredEngineType && provider && provider !== desiredEngineType
+              && !(options.includeAvailable === true && model.available === true))
           ) {
             continue;
           }
           seen.add(id);
-          merged.push(cloneValue(model));
+          const entry = cloneValue(model);
+          if (provider && !entry.engine_type) entry.engine_type = provider;
+          merged.push(entry);
         }
       }
       return merged;

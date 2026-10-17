@@ -465,48 +465,6 @@ test('runBackgroundTask drives the real collaborator: forwards normalized task+p
   service.dispose();
 });
 
-// Lines 692-693 — trimDismissedMemoryFingerprints trims when over limit
-
-test('trimDismissedMemoryFingerprints removes oldest entries when over MAX_DISMISSED_MEMORY_FINGERPRINTS', () => {
-  const { MAX_DISMISSED_MEMORY_FINGERPRINTS } = require('../services/backend/backend-service');
-  const { service } = createMinimalService();
-
-  // Fill to MAX + 2 so trimming fires twice
-  for (let i = 0; i < MAX_DISMISSED_MEMORY_FINGERPRINTS + 2; i++) {
-    service._dismissedMemoryFingerprints.add(`fp-${i}`);
-  }
-
-  const beforeSize = service._dismissedMemoryFingerprints.size;
-  assert.equal(beforeSize, MAX_DISMISSED_MEMORY_FINGERPRINTS + 2);
-
-  service.trimDismissedMemoryFingerprints();
-
-  // After trim: size must be <= MAX_DISMISSED_MEMORY_FINGERPRINTS
-  assert.ok(
-    service._dismissedMemoryFingerprints.size <= MAX_DISMISSED_MEMORY_FINGERPRINTS,
-    `size after trim must be <= ${MAX_DISMISSED_MEMORY_FINGERPRINTS}, got ${service._dismissedMemoryFingerprints.size}`
-  );
-  // Oldest entries (fp-0, fp-1) must have been deleted
-  assert.equal(service._dismissedMemoryFingerprints.has('fp-0'), false,
-    'oldest fingerprint fp-0 must have been trimmed');
-  assert.equal(service._dismissedMemoryFingerprints.has('fp-1'), false,
-    'oldest fingerprint fp-1 must have been trimmed');
-  service.dispose();
-});
-
-test('trimDismissedMemoryFingerprints is a no-op when under MAX_DISMISSED_MEMORY_FINGERPRINTS', () => {
-  const { MAX_DISMISSED_MEMORY_FINGERPRINTS } = require('../services/backend/backend-service');
-  const { service } = createMinimalService();
-
-  service._dismissedMemoryFingerprints.add('fp-only');
-  service.trimDismissedMemoryFingerprints();
-
-  assert.equal(service._dismissedMemoryFingerprints.size, 1, 'size must be unchanged when under limit');
-  assert.equal(service._dismissedMemoryFingerprints.has('fp-only'), true,
-    'only entry must be preserved when under limit');
-  service.dispose();
-});
-
 // Lines 779-780 — getCodexCliState delegates to codexCliRuntimeService.getState
 
 test('getCodexCliState forwards call to codexCliRuntimeService.getState and returns result', () => {

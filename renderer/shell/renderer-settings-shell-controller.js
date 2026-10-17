@@ -179,14 +179,6 @@
       handlePersonalityReset,
       handlePersonalityOpenFolder,
       hasPersonalityUnsavedChanges,
-      refreshMemoryContextFiles,
-      renderMemoryContextFiles,
-      loadMemoryContextFile,
-      setMemoryContextDraft,
-      getMemoryContextActiveFile,
-      saveMemoryContextFile,
-      resetMemoryContextFile,
-      hasMemoryContextUnsavedChanges,
       showToastMessage,
       showShellErrorToast,
       toErrorMessage,
@@ -306,7 +298,6 @@
       offline: () => Promise.resolve(refreshOfflineState?.()),
       personality: () => Promise.resolve(refreshPersonalityWorkspace?.()),
       memories: () => runRefreshBatch('memories', [
-        { name: 'memory_context_files', run: () => refreshMemoryContextFiles?.() },
         { name: 'approved_memories', run: () => refreshApprovedMemories?.({ force: true }) },
         { name: 'pending_memories', run: () => refreshPendingMemories?.({ force: true }) },
         { name: 'memory_status', run: () => refreshMemoryStatus?.({ force: true }) },
@@ -315,6 +306,7 @@
       // Runtime limits polls on its own; being shown (again) restarts the
       // poll, which the hidden view's content-visibility would never do.
       // (Runs moved to Diagnostics on 2026-10-03.)
+      tools: () => { settingsEventBindings?.sectionShown?.('tools'); },
       runtimeLimits: () => { settingsEventBindings?.sectionShown?.('runtimeLimits'); },
       advanced: () => { settingsEventBindings?.sectionShown?.('advanced'); },
     });
@@ -463,9 +455,7 @@
     }
 
     function confirmSettingsSectionChange(nextSectionId, previousSectionId) {
-      const hasUnsavedChanges = previousSectionId === 'personality'
-        ? hasPersonalityUnsavedChanges?.() === true
-        : previousSectionId === 'memories' && hasMemoryContextUnsavedChanges?.() === true;
+      const hasUnsavedChanges = previousSectionId === 'personality' && hasPersonalityUnsavedChanges?.() === true;
       if (!hasUnsavedChanges || nextSectionId === previousSectionId) return true;
       return typeof globalWindow?.confirm === 'function'
         ? globalWindow.confirm(jt('settings.shell.unsavedContextChangesConfirm', 'You have unsaved context-file changes. Leave this section without saving?'))
@@ -672,12 +662,6 @@
         handlePersonalitySave,
         handlePersonalityReset,
         handlePersonalityOpenFolder,
-        renderMemoryContextFiles,
-        loadMemoryContextFile,
-        setMemoryContextDraft,
-        getMemoryContextActiveFile,
-        saveMemoryContextFile,
-        resetMemoryContextFile,
         showToastMessage,
         showShellErrorToast,
         toErrorMessage,

@@ -87,3 +87,31 @@ test('shell log store preserves WARN and ERROR evidence before DEBUG and INFO', 
   assert.ok(entries.some((entry) => entry.event === 'critical.first'));
   assert.ok(!entries.some((entry) => entry.event === 'debug.latest'));
 });
+
+test('shell log store evicts warnings before older errors', () => {
+  const store = new ShellLogStore({ limit: 50 });
+  store.append({ level: 'ERROR', event: 'error.first' });
+  for (let index = 0; index < 50; index += 1) store.append({ level: 'WARN', event: `warn.${index}` });
+  assert.equal(store.list()[0].event, 'error.first');
+  assert.equal(store.getStats().dropped_by_level.WARN, 1);
+  assert.equal(store.getStats().dropped_by_level.ERROR, 0);
+});
+
+test('shell log store reuses inserted byte sizes for count and byte evictions', () => {
+  const stringify = JSON.stringify;
+  let calls = 0;
+  const countStore = new ShellLogStore({ limit: 50 });
+  const byteStore = new ShellLogStore({ maxBytes: 1024 });
+  try {
+    JSON.stringify = (...args) => { calls += 1; return stringify(...args); };
+    for (let index = 0; index < 51; index += 1) countStore.append({ event: `event.${index}` });
+    byteStore.append({ data: { blob: 'x'.repeat(2000) } });
+  } finally {
+    JSON.stringify = stringify;
+  }
+  assert.equal(calls, 52);
+  const retainedBytes = countStore.list().reduce((sum, entry) => sum + Buffer.byteLength(JSON.stringify(entry)), 0);
+  assert.equal(countStore.getStats().retained_bytes, retainedBytes);
+  assert.equal(byteStore.getStats().retained_bytes, 0);
+  assert.equal(byteStore.getStats().retained_count, 0);
+});

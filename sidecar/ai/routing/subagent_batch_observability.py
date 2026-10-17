@@ -60,6 +60,8 @@ def emit_progress(  # noqa: PLR0913 - agent.progress payload is fixed.
     usage: dict[str, Any] | None = None,
     terminal_reason: str | None = None,
     source: str = SUBAGENT_BATCH_TOOL_NAME,
+    activity: dict[str, Any] | None = None,
+    reasoning_effort: str | None = None,
 ) -> None:
     """Write a bounded progress notification without affecting tool truth."""
 
@@ -110,6 +112,10 @@ def emit_progress(  # noqa: PLR0913 - agent.progress payload is fixed.
                     payload[key] = value
         if terminal_reason:
             payload["terminal_reason"] = terminal_reason
+        if activity is not None:
+            payload['child_activity'] = activity
+        if reasoning_effort:
+            payload['reasoning_effort'] = safe_batch_text(reasoning_effort, max_chars=16)
         writer(
             notification(
                 AGENT_PROGRESS_METHOD,

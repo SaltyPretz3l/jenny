@@ -370,6 +370,17 @@ class WorkspaceGitService {
     }, { signal });
   }
 
+  // Read seam for sibling application services (proposal binding capture): the handler runs
+  // inside the same flag/root/toplevel/resource-admission envelope as every read above and
+  // receives the service-owned admitted exec, so its Git children get the same containment.
+  async readWithExec(op, handler, { signal = null } = {}) {
+    return this._withRepo(String(op || 'readWithExec'), (root, operationSignal) => handler({
+      root,
+      signal: operationSignal,
+      exec: (args, options = {}) => this._exec(root, args, { ...options, signal: operationSignal }),
+    }), { signal });
+  }
+
   async getDiff({ path: relInput = null, staged = false, signal = null } = {}) {
     return this._withRepo('getDiff', async (root, operationSignal) => {
       let relPath = null;

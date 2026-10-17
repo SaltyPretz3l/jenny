@@ -27,6 +27,7 @@
     'renderRun',
     'renderTestRunner',
     'renderTestOutput',
+    'renderActivity',
   ]);
 
   function createIdeLayout(deps) {

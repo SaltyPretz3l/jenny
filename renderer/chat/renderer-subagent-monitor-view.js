@@ -106,10 +106,15 @@
 
   // The answer goes through the sanitized markdown pipeline; if it is
   // unavailable the text is escaped, never injected.
+  const answerCache = new Map();
   function renderAnswerHtml(text) {
+    if (answerCache.has(text)) return answerCache.get(text);
     const render = markdownRenderer();
     const html = render ? render(text, { mermaid: 'plain' }) : '';
-    return typeof html === 'string' && html ? html : `<p>${escapeHtml(text)}</p>`;
+    const result = typeof html === 'string' && html ? html : `<p>${escapeHtml(text)}</p>`;
+    if (answerCache.size >= 3) answerCache.delete(answerCache.keys().next().value);
+    answerCache.set(text, result);
+    return result;
   }
 
   function iconButton(id, className, trustedHtml, label) {
@@ -190,7 +195,9 @@
 
   function renderChildRow(child, selectedKey) {
     const selected = child.key === selectedKey;
-    const meta = statusParts(child, child.stepCount ? stepCountLabel(child.stepCount) : '').join(' · ');
+    const trailing = [child.stepCount ? stepCountLabel(child.stepCount) : ''];
+    if (!child.terminal) trailing.push(child.model, child.reasoningEffort, tokenLabel(child.usage?.total_tokens));
+    const meta = statusParts(child, trailing.filter(Boolean).join(' · ')).join(' · ');
     return actionButton({
       id: 'subagent-select',
       plain: true,
@@ -203,6 +210,7 @@
         + '<span class="subagent-tree-copy">'
         + `<span class="subagent-tree-label">${escapeHtml(child.label)}</span>`
         + `<span class="subagent-tree-meta">${meta}</span>`
+        + (!child.terminal && child.summary ? `<span class="subagent-tree-meta">${escapeHtml(child.summary)}</span>` : '')
         + '</span>'
         + ICON_CHEVRON,
     });
@@ -226,6 +234,7 @@
     const parts = [jtn('chat.subagentMonitor.taskCount', viewModel.childCount, { count: viewModel.childCount }, '{count} task', '{count} tasks')];
     if (viewModel.totalSteps > 0) parts.push(stepCountLabel(viewModel.totalSteps));
     parts.push(tokenLabel(viewModel.totalTokens));
+    if (viewModel.partialUsage) parts.push(jt('chat.subagentMonitor.partialUsage', 'partially reported'));
     return `<div class="subagent-monitor-footer"><span>${escapeHtml(parts.join(' · '))}</span></div>`;
   }
 
@@ -259,8 +268,10 @@
 
   function stepRow(step) {
     const failed = step.ok === false;
-    return `<li class="subagent-step subagent-step--${failed ? 'error' : 'ok'}">`
-      + stateDot(failed ? 'danger' : 'success')
+    const pending = step.status === 'running';
+    const interrupted = step.status === 'interrupted';
+    return `<li class="subagent-step subagent-step--${pending || interrupted ? 'pending' : failed ? 'error' : 'ok'}">`
+      + stateDot(pending ? 'pending' : interrupted ? 'muted' : failed ? 'danger' : 'success')
       + '<span class="subagent-step-copy">'
       + `<span class="subagent-step-name">${escapeHtml(step.display || step.tool)}</span>`
       + (step.target ? `<span class="subagent-step-target">${escapeHtml(step.target)}</span>` : '')
@@ -269,9 +280,9 @@
   }
 
   function renderSteps(child, idSuffix) {
-    if (!child.terminal) {
+    if (!child.terminal && !child.steps?.length) {
       return `<p class="subagent-live-summary">${escapeHtml(child.summary)}</p>`
-        + `<p class="subagent-step-note">${escapeHtml(jt('chat.subagentMonitor.stepsPending', 'Steps appear when this subagent finishes.'))}</p>`;
+        + `<p class="subagent-step-note">${escapeHtml(jt('chat.subagentMonitor.liveStepsPending', 'Tool steps appear here as they run.'))}</p>`;
     }
     const steps = child.steps || [];
     if (!steps.length) {
@@ -302,7 +313,12 @@
   // answers, so its missing answer means a report written before the monitor
   // kept one: say so. A failed child's summary is its error, nothing was lost.
   function renderAnswerSection(child) {
-    if (!child.terminal) return '';
+    if (!child.terminal) {
+      if (!child.activity?.text) return '';
+      return section(jt('chat.subagentMonitor.liveResponse', 'Live response'),
+        `<div class="subagent-answer">${renderAnswerHtml(child.activity.text)}</div>`
+        + (child.activity.text_truncated ? `<p class="subagent-step-note">${escapeHtml(jt('chat.subagentMonitor.liveTextTruncated', 'Live text limit reached. The final answer appears when this task finishes.'))}</p>` : ''));
+    }
     if (child.answer) {
       return section(jt('chat.subagentMonitor.sectionAnswer', 'Answer'), `<div class="subagent-answer">${renderAnswerHtml(child.answer)}</div>`);
     }
@@ -333,7 +349,7 @@
   function renderDetailBody(viewModel, idSuffix) {
     const child = viewModel.selected;
     if (!child) return emptyBody();
-    const status = statusParts(child, child.model);
+    const status = statusParts(child, [child.model, child.reasoningEffort].filter(Boolean).join(' · '));
     const uncertainties = child.uncertainties?.length
       ? `<ul class="subagent-uncertainty-list">${child.uncertainties.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
       : '';
@@ -365,9 +381,14 @@
   function renderDetailFooter(viewModel, idSuffix) {
     const child = viewModel.selected;
     if (!child) return '';
-    const usage = child.usage || viewModel.usage;
+    // The child's own accounting only: the batch subtotal stays in the tree footer.
+    const usage = child.usage || null;
     const elapsed = childElapsed(child, viewModel.elapsedMs);
-    const summary = `<span class="subagent-usage-summary">${escapeHtml(tokenLabel(usage?.total_tokens))}${elapsed ? ` · ${elapsed}` : ''}</span>`;
+    const estimate = child.terminal ? null : child.activity?.visible_output_tokens_estimate;
+    const estimateText = Number.isSafeInteger(estimate)
+      ? jt('chat.subagentMonitor.liveTokenEstimate', '~{count} visible-output tokens (current response)', { count: modelUtils.formatTokens?.(estimate) }) : '';
+    const partial = usage?.partial ? ` · ${escapeHtml(jt('chat.subagentMonitor.partialUsage', 'partially reported'))}` : '';
+    const summary = `<span class="subagent-usage-summary">${escapeHtml(tokenLabel(usage?.total_tokens))}${partial}${elapsed ? ` · ${elapsed}` : ''}${estimateText ? `<span class="subagent-live-estimate">${escapeHtml(estimateText)}</span>` : ''}</span>`;
     const rows = usage ? usageRows(usage) : '';
     if (!rows) return `<div class="subagent-monitor-footer">${summary}</div>`;
     const route = [usage.provider, usage.model].filter(Boolean).join(' · ');
@@ -396,10 +417,70 @@
       : { header: renderTreeHeader(viewModel, idSuffix), body: renderTreeBody(viewModel), footer: renderTreeFooter(viewModel) };
   }
 
+  // Keep unchanged nodes (including selected live text) through activity frames.
+  function updateMarkup(host, html) {
+    const template = host.ownerDocument.createElement('template');
+    template.innerHTML = html;
+    const selection = host.ownerDocument.defaultView?.getSelection?.();
+    const selected = selection && !selection.isCollapsed ? selection.anchorNode : null;
+    function patch(parent, incoming) {
+      const previous = [...parent.childNodes];
+      [...incoming.childNodes].forEach((next, index) => {
+        const current = previous[index];
+        if (!current) { parent.append(next.cloneNode(true)); return; }
+        if (current.nodeType !== next.nodeType || current.nodeName !== next.nodeName) {
+          current.replaceWith(next.cloneNode(true)); return;
+        }
+        if (current.nodeType === 3) {
+          if (current.nodeValue !== next.nodeValue && current !== selected) current.nodeValue = next.nodeValue;
+          return;
+        }
+        if (current.nodeType !== 1 || current.isEqualNode(next)) return;
+        if (selected && current.classList.contains('subagent-answer') && current.contains(selected)) return;
+        for (const attribute of [...current.attributes]) if (!next.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+        for (const attribute of [...next.attributes]) if (current.getAttribute(attribute.name) !== attribute.value) current.setAttribute(attribute.name, attribute.value);
+        patch(current, next);
+      });
+      previous.slice(incoming.childNodes.length).forEach((node) => node.remove());
+    }
+    patch(host, template.content);
+  }
+
+  function preserveLiveState(host, write) {
+    const body = host?.querySelector?.('.subagent-monitor-body');
+    const page = body?.getAttribute?.('data-subagent-page');
+    const scrollTop = Number(body?.scrollTop || 0);
+    const active = host?.ownerDocument?.activeElement;
+    const focusAttribute = ['data-inv-collapsible', 'data-subagent-select', 'data-subagent-back', 'data-subagent-close'].find((name) => host?.contains?.(active) && active?.hasAttribute?.(name));
+    const focusedId = focusAttribute ? active.getAttribute(focusAttribute) : null;
+    const open = new Set([...(host?.querySelectorAll?.('[data-inv-collapsible][aria-expanded="true"]') || [])]
+      .map((el) => el.getAttribute('data-inv-collapsible')));
+    write();
+    const nextBody = host?.querySelector?.('.subagent-monitor-body');
+    for (const el of host?.querySelectorAll?.('[data-inv-collapsible]') || []) {
+      const id = el.getAttribute('data-inv-collapsible');
+      if (open.has(id)) {
+        el.setAttribute('aria-expanded', 'true');
+        const content = host.ownerDocument?.getElementById?.(id);
+        if (content && host.contains(content)) {
+          content.hidden = false;
+          content.setAttribute('data-state', 'open');
+          content.classList?.add('expanded');
+        }
+      }
+
+    }
+    const focusTarget = focusAttribute && [...host.querySelectorAll(`[${focusAttribute}]`)].find((el) => el.getAttribute(focusAttribute) === focusedId);
+    if (focusTarget && focusTarget !== host.ownerDocument.activeElement) focusTarget.focus?.({ preventScroll: true });
+    if (nextBody && nextBody.getAttribute('data-subagent-page') === page) nextBody.scrollTop = scrollTop;
+  }
+
   return {
     inlineSummaryMarkup,
     renderLiveSummary,
     renderMonitor,
     renderTerminalSummary,
+    preserveLiveState,
+    updateMarkup,
   };
 });

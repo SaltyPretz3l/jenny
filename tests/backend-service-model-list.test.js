@@ -388,3 +388,31 @@ test('managed sidecar listModels appends configured Codex CLI models to picker c
     ['codex-cli/default', 'codex-cli/gpt-5.5']
   );
 });
+
+// Gate 2026-10-14 F17: a managed server's model was grouped as a user-run
+// "OpenAI-compatible" endpoint in the composer picker.
+test('managed sidecar listModels marks NInfer and managed llama-server models', async () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-userdata-managed-model-kind-'));
+  trackDirectory(userDataPath);
+
+  const service = createManagedService(userDataPath, {
+    getLlamaServerManager: () => ({ getStatus: () => ({ state: 'ready', alias: 'qwen3.8-27b' }) }),
+  });
+  service.currentEngineType = 'openai-compatible';
+  service.ninferRuntime = { artifacts: { artifacts: [{ id: 'pin-1', model_id: 'ninfer-qwen' }] } };
+  service.sidecarClient = {
+    async modelsList(engineType) {
+      if (engineType === 'openai-compatible') {
+        return { models: [{ id: 'ninfer-qwen' }, { id: 'qwen3.8-27b:latest' }, { id: 'remote-model' }], available: true, reason: '' };
+      }
+      return { models: [{ id: 'gemma4:e4b' }], available: true, reason: '' };
+    },
+  };
+
+  const models = await service.listModels();
+
+  assert.deepEqual(
+    models.data.map((entry) => [entry.id, entry.managed || '']),
+    [['ninfer-qwen', 'ninfer'], ['qwen3.8-27b:latest', 'llama-server'], ['remote-model', ''], ['gemma4:e4b', '']]
+  );
+});

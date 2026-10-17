@@ -101,6 +101,7 @@
     // Project Notes (renderer-project-notes-entry.js is always loaded; the rail loads lazily).
     let projectNotesRailController = null;
     let projectNotesEntry = null;
+    let memoryChatEntry = null;
     // Artifact Panel V2: per-entry validation for the per-session width map —
     // non-empty string key, finite positive number, clamped to the static
     // 320..560 range; malformed entries dropped; oversized maps trimmed to the
@@ -281,10 +282,10 @@
     function syncOwnerLine(panelEl, mode) {
       if (!panelEl || typeof panelEl.querySelector !== 'function') return;
       // The Subagent Monitor's record ends with its mode, its panel or its session (renderer-subagent-rail.js).
-      if (mode !== 'context') subagentRailController?.handleLayoutSync?.(mode, !panelEl.classList?.contains('hidden'));
-      const sessionId = isSplitLayout() && (mode === 'artifact' || mode === 'context' || mode === 'subagents')
-        ? sidePanelOwner.resolvePanelSessionId(state)
-        : '';
+      if (mode !== 'context' && mode !== 'activity') subagentRailController?.handleLayoutSync?.(mode, !panelEl.classList?.contains('hidden'));
+      // Changes (code_review) and Activity name their owner in one-pane view too (row 59 checkpoint 2).
+      const named = mode === 'code_review' || mode === 'activity' || (isSplitLayout() && (mode === 'artifact' || mode === 'context' || mode === 'subagents'));
+      const sessionId = Boolean(sidePanelOwner) && named ? sidePanelOwner.resolvePanelSessionId(state) : '';
       const title = sessionId
         ? String(findSession(sessionId)?.title || '').trim() || jt('chat.empty.newSession', 'New session')
         : '';
@@ -458,13 +459,14 @@
             // Late-bound like the code-review rail: the preview controller is
             // built after the surface (it needs the surface's rail helpers).
             renderFilePreviewSurface: (surface) => filePreviewController?.renderRailContent?.(surface),
-            renderTasksSurface: (surface) => taskRailController?.renderRailContent?.(surface),
+            renderTasksSurface: (surface) => ensureTaskRailController()?.renderRailContent?.(surface) === true,
             renderSubagentsSurface: (surface) => subagentRailController?.renderSubagentsSurface?.(surface) === true,
             renderNotesSurface: (surface) => ensureProjectNotesRail()?.renderRailContent?.(surface) === true,
             resetFilePreview: () => filePreviewController?.reset?.(),
             panelV2: panelV2Controller,
             sidePanel,
             getRunStartedAt: () => runStartedAt,
+            getScrollCoordinators: () => callbacks.getScrollCoordinators?.() || [], // the side-panel column motion's reader anchor
           },
         }) || null;
         if (artifactSurfaceController && !artifactSurfaceBound) {
@@ -476,6 +478,7 @@
         ensureFilePreviewController();
         ensureTaskRailController();
         ensureProjectNotesEntry();
+        ensureMemoryChatEntry();
         ensureSubagentRail();
         if (panelV2Controller) {
           panelV2Controller.bind();
@@ -561,8 +564,10 @@
           getWorkspaceId: codeReviewRailDeps.getWorkspaceId || (() => 'default'),
           getSessionMessages: () => codeReviewRailDeps.getSessionMessages?.(getSessionId()) || [],
           openInWorkspace: codeReviewRailDeps.openChangeInWorkspace || null,
+          claimOwner: (sessionId) => sidePanel.claim(sessionId),
           getUndoController: getChangesUndoController,
           setArtifactRailMode: (mode) => artifactSurfaceController?.setArtifactRailMode?.(mode),
+          openArtifactRail: (mode) => artifactSurfaceController?.openArtifactRail?.(mode),
           renderArtifactReviewPanel: () => artifactSurfaceController?.renderArtifactReviewPanel?.(),
           syncArtifactReviewLayout: () => artifactSurfaceController?.syncArtifactReviewLayout?.(),
           appendClientLog: (...args) => appendClientLog(...args),
@@ -741,6 +746,26 @@
       return projectNotesEntry;
     }
 
+    // The memory chip's Undo delegate (renderer-memory-chat-entry.js, row 58 W1).
+    function ensureMemoryChatEntry() {
+      if (memoryChatEntry) return memoryChatEntry;
+      if (typeof windowRef?.rendererMemoryChatEntry?.createMemoryChatEntry !== 'function') return null;
+      try {
+        memoryChatEntry = windowRef.rendererMemoryChatEntry.createMemoryChatEntry({
+          state, windowRef,
+          appendClientLog: (...args) => appendClientLog(...args),
+          showToastMessage: (...args) => showToastMessage(...args),
+        }) || null;
+        memoryChatEntry?.bind?.();
+        const built = memoryChatEntry;
+        registerCleanup(() => built?.dispose?.());
+      } catch (error) {
+        memoryChatEntry = null;
+        appendClientLog('ERROR', 'memory.chat_entry_init_failed', { message: error?.message || String(error) });
+      }
+      return memoryChatEntry;
+    }
+
     // The Project Notes rail (renderer-project-notes-rail.js): resolved at CALL
     // time because the modules load on first open. Publishes the host the entry drives.
     function ensureProjectNotesRail() {
@@ -805,6 +830,9 @@
     function openArtifactTarget() {
       return ensureArtifactSurface()?.openArtifactTarget?.(...arguments);
     }
+    // The session rail's detail entry points (renderer-chat-workspace-detail.js) drive the panels this bridge owns; configured at
+    // construction and lazy, so a rail click builds the artifact surface and code review rail on first use.
+    globalRef.rendererChatWorkspaceDetail?.configure?.({ claimOwner: (sessionId) => sidePanel.claim(sessionId), openArtifact: (ref) => openArtifactTarget(ref, { source: 'session-rail' }), openChanges: (context) => { ensureArtifactSurface(); return ensureCodeReviewRail()?.openWorkingTree?.(context) === true; }, closePanel: () => artifactSurfaceController?.collapseArtifactReview?.() });
 
     function jumpToArtifactSource(...args) {
       return ensureArtifactSurface()?.jumpToArtifactSource?.(...args);
@@ -888,6 +916,10 @@
       toggleEl.addEventListener('click', primeFromToggle);
       registerCleanup(() => toggleEl.removeEventListener('click', primeFromToggle));
     })();
+
+    // The memory chip's Undo is one document-level delegate; bind it now, so a
+    // chat whose artifact surface was never built still undoes a note.
+    ensureMemoryChatEntry();
 
     // A monitor Open can arrive before anything built the artifact surface; the
     // pane controllers call this to build the rail instead of falling back to

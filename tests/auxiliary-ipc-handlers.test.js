@@ -427,22 +427,13 @@ test('auxiliary IPC exposes the structured memory status snapshot', async () => 
   assert.deepEqual(await handlers.get('memory:status')({}), expected);
 });
 
-test('memory dismissal IPC forwards canonical-session and legacy General signatures', () => {
-  const calls = [];
-  const handlers = registerMinimalHandlers({
-    backendService: {
-      dismissMemorySuggestion(...args) {
-        calls.push(args);
-      },
-    },
-  });
+test('retired memory suggestion and dismissal IPC channels are not registered', () => {
+  const handlers = registerMinimalHandlers({ backendService: {} });
 
-  handlers.get('memory:dismiss')({}, 'session-alpha', 'fingerprint');
-  handlers.get('memory:dismiss')({}, 'legacy-fingerprint');
-  assert.deepEqual(calls, [
-    ['session-alpha', 'fingerprint'],
-    ['legacy-fingerprint', undefined],
-  ]);
+  assert.equal(handlers.has('memory:suggest-for-session'), false);
+  assert.equal(handlers.has('memory:dismiss'), false);
+  assert.equal(handlers.has('memory:list-pending'), true);
+  assert.equal(handlers.has('memory:delete-pending'), true);
 });
 
 test('memory update and delete IPC forward project identity positionally', async () => {
@@ -455,12 +446,12 @@ test('memory update and delete IPC forward project identity positionally', async
   });
   const patch = { title: 'Project memory' };
 
-  await handlers.get('memory:update')({}, 7, patch, 'project_garden');
-  await handlers.get('memory:delete')({}, 7, 'project_garden');
+  await handlers.get('memory:update')({}, 7, patch, 'project_garden', { expectedRevision: 2 });
+  await handlers.get('memory:delete')({}, 7, 'project_garden', 'not-an-object');
 
   assert.deepEqual(calls, [
-    ['update', 7, patch, 'project_garden'],
-    ['delete', 7, 'project_garden'],
+    ['update', 7, patch, 'project_garden', { expectedRevision: 2 }],
+    ['delete', 7, 'project_garden', {}],
   ]);
 });
 

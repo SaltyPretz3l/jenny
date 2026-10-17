@@ -20,8 +20,41 @@ const {
 } = require('./session-turn-actor');
 const { INTERACTIVE_ERROR_CODES } = require('./error-codes');
 const { resolveSkillsAuthority } = require('../skills-project-scope');
+const { normalizeHandoffPreparation, normalizeSessionHandoff } = require('./session-handoff-context');
 const LOCAL_INFERENCE_ENGINE_TYPES = new Set(['ollama', 'vllm']);
 const SKILL_INVOCATION_ID_PATTERN = /^(bundled|user|project)\/[A-Za-z0-9_][A-Za-z0-9._-]*(\/[A-Za-z0-9_][A-Za-z0-9._-]*){0,7}$/;
+
+// Proposal decision correlation (row 59 checkpoint 3, D8): a closed record the
+// application attaches to a continuation turn it authored itself. It rides only
+// in the durable work input, never on the persisted user message; anything that
+// is not exactly this shape is dropped.
+const PROPOSAL_DECISION_CHOICES = new Set(['commit', 'test_first', 'do_it_here']);
+function normalizeProposalDecision(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const { proposal_id: proposalId, decision_id: decisionId, accepted_revision: revision, choice } = value;
+  if (Object.keys(value).length !== 4 || !/^proposal_[0-9a-f]{64}$/u.test(String(proposalId))
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(String(decisionId))
+    || !Number.isSafeInteger(revision) || revision < 1 || !PROPOSAL_DECISION_CHOICES.has(choice)) return undefined;
+  return { proposal_id: proposalId, decision_id: decisionId, accepted_revision: revision, choice };
+}
+
+// Linked-chat handoff fields (row 59 checkpoint 5a): both are application-authored, ride only in
+// the durable work input, and are never reachable from the renderer submission contract. A
+// present but malformed value is refused (not dropped): dropping the preparation field would
+// run an ordinary full-tool turn, and dropping the handoff would run the child without its Background.
+function normalizeInternalHandoffFields({ sessionHandoffPreparation, sessionHandoff }) {
+  const refuse = (field) => Object.assign(new Error(`The ${field} request field is malformed.`),
+    { code: 'session_handoff_invalid', retryable: false });
+  const preparation = sessionHandoffPreparation == null ? null : normalizeHandoffPreparation(sessionHandoffPreparation);
+  if (sessionHandoffPreparation != null && !preparation) throw refuse('sessionHandoffPreparation');
+  const handoff = sessionHandoff == null ? null : normalizeSessionHandoff(sessionHandoff);
+  if (sessionHandoff != null && !handoff) throw refuse('sessionHandoff');
+  if (preparation && handoff) throw refuse('sessionHandoff');
+  return {
+    ...(preparation ? { sessionHandoffPreparation: preparation } : {}),
+    ...(handoff ? { sessionHandoff: handoff } : {}),
+  };
+}
 
 function getSessionSummary(store, sessionId) {
   if (typeof store?.getSessionSummary === 'function') {
@@ -129,6 +162,9 @@ async function prepareLocalEngineChatRequest(service, {
   skillInvocation,
   editedMessageId,
   failureRetry,
+  proposalDecision,
+  sessionHandoffPreparation,
+  sessionHandoff,
 }, options = {}) {
   const cancellation = options?.cancellation;
   const throwIfStartCancelled = () => {
@@ -151,6 +187,8 @@ async function prepareLocalEngineChatRequest(service, {
     MAX_INTERACTIVE_ROUNDS
   );
   const sessionKey = String(sessionId || '').trim();
+  const normalizedProposalDecision = normalizeProposalDecision(proposalDecision);
+  const handoffFields = normalizeInternalHandoffFields({ sessionHandoffPreparation, sessionHandoff });
   const normalizedSkillInvocation = resolveSkillInvocation(service, skillInvocation, sessionKey);
   const normalizedContextPreferences = normalizeContextPreferences(
     typeof contextPreferences !== 'undefined'
@@ -203,6 +241,8 @@ async function prepareLocalEngineChatRequest(service, {
     skillInvocation: normalizedSkillInvocation,
     editedMessageId,
     failureRetry,
+    ...(normalizedProposalDecision ? { proposalDecision: normalizedProposalDecision } : {}),
+    ...handoffFields,
   };
 }
 

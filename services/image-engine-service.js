@@ -9,6 +9,7 @@ const { downloadPinnedFile } = require('./pinned-download');
 const { extractWheel } = require('./pdf-addon-wheel');
 const { GITHUB_UPDATE_HOSTS } = require('./github-release-client');
 const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
+const { removeTree, removeTreeSync } = require('./fs-remove-no-follow');
 
 const ENGINE_DIRECTORY = 'engines';
 const INSTALL_RECORD = '.jenny-engine-install.json';
@@ -202,7 +203,7 @@ class ImageEngineService extends EventEmitter {
     if (this.busy || this.disposed) return this.getState();
     try {
       this._assertRoot();
-      this._sweepStaging();
+      for (const dir of this._stagingEntries()) removeTreeSync(dir, { fsImpl: this.fsImpl });
       if (this._regularFile(this.stateFile)) {
         const record = JSON.parse(this.fsImpl.readFileSync(this.stateFile, 'utf8'));
         if (record.version === 1) {
@@ -316,7 +317,7 @@ class ImageEngineService extends EventEmitter {
         this._checkCancelled(op);
         this._phase('verifying');
         if (digest.toLowerCase() !== asset.sha256.toLowerCase()) {
-          await this.fsImpl.promises.rm(wheelPath, { force: true });
+          await this._removeTree(wheelPath);
           throw engineError('hash_mismatch');
         }
         this._phase('extracting');
@@ -339,9 +340,9 @@ class ImageEngineService extends EventEmitter {
       op.published = true;
       this._phase('publishing');
       this._assertRoot();
-      await this.fsImpl.promises.rm(path.join(this.root, this.manifest.tag), { recursive: true, force: true });
+      await this._removeTree(path.join(this.root, this.manifest.tag));
       await this._renameWithRetry(extract, path.join(this.root, this.manifest.tag));
-      await this.fsImpl.promises.rm(staging, { recursive: true, force: true });
+      await this._removeTree(staging);
       stagingCreated = false;
       this.installedTag = this.manifest.tag;
       // The published record already makes the engine recognisable, so a state write failure is not an install failure.
@@ -357,11 +358,13 @@ class ImageEngineService extends EventEmitter {
             : !error.code && this.progress.phase === 'extracting' ? 'image_engine_archive_invalid'
               : !error.code && this.progress.phase === 'downloading' ? 'download_failed' : 'image_engine_install_failed');
       this.lastError = reason;
-      this._log('WARN', 'install_failed', { reason });
+      // A cancel is the user's choice, not a failure for Diagnostics to flag.
+      if (reason === 'cancelled') this._log('INFO', 'install_cancelled', {});
+      else this._log('WARN', 'install_failed', { reason });
       result = { ok: false, reason };
     } finally {
       if (stagingCreated) {
-        try { this._assertRoot(); await this.fsImpl.promises.rm(staging, { recursive: true, force: true }); }
+        try { this._assertRoot(); await this._removeTree(staging); }
         catch (_error) { this._log('WARN', 'cleanup_failed', { reason: 'image_engine_cleanup_failed' }); }
       }
       this.operation = null;
@@ -455,16 +458,15 @@ class ImageEngineService extends EventEmitter {
     }
   }
 
-  _sweepStaging() {
+  // Never Node's rm here: it follows a junction after a transient Windows EPERM (see fs-remove-no-follow).
+  _removeTree(target) { return removeTree(target, { fsImpl: this.fsImpl }); }
+
+  _stagingEntries() {
     let names;
     try { names = this.fsImpl.readdirSync(this.root); }
-    catch (error) { if (error.code === 'ENOENT') return; throw error; }
-    for (const name of names) {
-      if (!name.startsWith('staging-')) continue;
-      const dir = path.join(this.root, name);
-      const stat = this.fsImpl.lstatSync(dir);
-      if (stat.isDirectory() || stat.isSymbolicLink()) this.fsImpl.rmSync(dir, { recursive: true, force: true });
-    }
+    catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+    return names.filter((name) => name.startsWith('staging-')).map((name) => path.join(this.root, name))
+      .filter((dir) => { const stat = this.fsImpl.lstatSync(dir); return stat.isDirectory() || stat.isSymbolicLink(); });
   }
 
   // The user's own executable may live inside an older generation; that directory is theirs to keep.
@@ -489,7 +491,7 @@ class ImageEngineService extends EventEmitter {
         if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
         if (this._readInstallRecord(dir)?.tag !== name && name !== this.stateTag) continue;
         if (this._holdsCustomExecutable(dir)) continue;
-        await this.fsImpl.promises.rm(dir, { recursive: true, force: true });
+        await this._removeTree(dir);
         this._log('INFO', 'superseded_removed', { tag: name });
       } catch (_error) { this._log('WARN', 'superseded_remove_failed', { tag: name }); }
     }
@@ -501,8 +503,8 @@ class ImageEngineService extends EventEmitter {
     if (this.configError) return { ok: false, reason: this.configError };
     return this._mutate(async () => {
       this._assertRoot();
-      await this.fsImpl.promises.rm(path.join(this.root, this.manifest.tag), { recursive: true, force: true });
-      this._sweepStaging();
+      await this._removeTree(path.join(this.root, this.manifest.tag));
+      for (const dir of this._stagingEntries()) await this._removeTree(dir);
       await this._removeSupersededGenerations();
       this.installedTag = null;
     }, 'image_engine_remove_failed');
@@ -551,7 +553,7 @@ class ImageEngineService extends EventEmitter {
       await this.fsImpl.promises.writeFile(temp, `${JSON.stringify({ version: 1, installed_tag: this.installedTag,
         custom_executable: this.customExecutable, updated_at: this.now() }, null, 2)}\n`, { flag: 'wx' });
       await this._renameWithRetry(temp, this.stateFile);
-    } finally { await this.fsImpl.promises.rm(temp, { force: true }); }
+    } finally { await this._removeTree(temp); }
   }
 
   _phase(phase) { this.progress.phase = phase; this._emit(); }

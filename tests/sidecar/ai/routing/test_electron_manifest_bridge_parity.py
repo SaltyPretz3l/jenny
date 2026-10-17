@@ -35,15 +35,29 @@ _MANIFEST_PATH = (
 # literal on purpose -- the review beat `ask_user` skipped.
 REQUEST_OWNED_CHILD_TOOLS = frozenset({"session_spawn", "session_wait", "session_result"})
 
+# Offered only in a trusted handoff preparation turn (never in an ordinary payload).
+PREPARATION_ONLY_TOOLS = frozenset({"complete_session_handoff"})
+
 EXPECTED_ELECTRON_BRIDGE_TOOLS = frozenset(
     {
         "ask_user",
         "automation_list",
         "automation_read",
+        # Added deliberately (row 59 cp5a): a model-facing session proposal tool and
+        # the preparation-only handoff completion. Both are record producers like
+        # `propose_command`; the second is offered only with `handoff_preparation`.
+        "complete_session_handoff",
         "exit_plan_mode",
         "home",
         "jenny_status",
         "preview_test",
+        # Added deliberately (row 59 cp3): record-only proposal producers. Flag-less,
+        # read-only and non-side-effecting like `ask_user`, so Plan and Propose
+        # turns keep them; they never run a command or touch Git themselves.
+        "propose_command",
+        "propose_git_action",
+        "propose_session",
+        "session_message",
         # Added deliberately (WO-10): `task_board` writes durable agent_task
         # follow-ups into the Open Loops store through Electron; side-effecting,
         # so it is withheld from the plan-mode schema like `verify`.
@@ -53,6 +67,9 @@ EXPECTED_ELECTRON_BRIDGE_TOOLS = frozenset(
         # (read is allowed there); the Electron read-only gate refuses its
         # append/replace, as it does task_board's writes.
         "project_notes",
+        "conversations_recent",
+        "conversation_open",
+        "conversations_search",
         # Added deliberately: `verify` runs one of the user's own saved Test
         # Runner configurations through WorkspaceTestRunnerService. It is the
         # first Electron-owned tool that is NOT read-only, so it is correctly
@@ -102,6 +119,7 @@ def _kernel(workspace_root: str, **overrides: bool) -> SimpleNamespace:
         "tools_home_enabled": True,
         "tools_task_board_enabled": True,
         "tools_project_notes_enabled": True,
+        "tools_conversations_enabled": True,
         "tools_workspace_root": workspace_root,
         "mode": "assist",
     }
@@ -124,6 +142,8 @@ def _payload_names(kernel: SimpleNamespace, *, plan_mode: bool) -> set[str]:
         plan_mode=plan_mode,
         read_only=plan_mode,
         workspace_root_present=True,
+        # A negotiated desktop: `session_message` needs the latched session_messages grant.
+        session_messages_enabled=True,
     )
     payload = tool_resolution.build_tool_payload(
         kernel, None, request_context=request_context
@@ -147,7 +167,7 @@ def test_electron_owned_manifest_tools_reach_the_provider_schema(tmp_path) -> No
         for entry in _electron_owned_entries()
         if (entry.get("availability") or {}).get("plan_mode_only")
     }
-    expected = EXPECTED_ELECTRON_BRIDGE_TOOLS - plan_mode_only
+    expected = EXPECTED_ELECTRON_BRIDGE_TOOLS - plan_mode_only - PREPARATION_ONLY_TOOLS
 
     missing = sorted(expected - names)
     assert not missing, (
@@ -164,7 +184,7 @@ def test_electron_owned_read_only_tools_reach_the_plan_mode_schema(tmp_path) -> 
         entry["name"]
         for entry in _electron_owned_entries()
         if entry.get("read_only") is True
-    } & EXPECTED_ELECTRON_BRIDGE_TOOLS
+    } & (EXPECTED_ELECTRON_BRIDGE_TOOLS - PREPARATION_ONLY_TOOLS)
 
     # Plan mode is read-only, so write-capable Electron tools are correctly
     # withheld; every read-only one -- including `ask_user`, which the plan-mode
@@ -191,6 +211,7 @@ def test_electron_owned_read_only_tools_reach_the_plan_mode_schema(tmp_path) -> 
         ("tools_home_enabled", {"home"}),
         ("tools_task_board_enabled", {"task_board"}),
         ("tools_project_notes_enabled", {"project_notes"}),
+        ("tools_conversations_enabled", {"conversations_recent", "conversation_open", "conversations_search"}),
     ],
 )
 def test_manifest_config_flags_still_gate_their_bridge_groups(

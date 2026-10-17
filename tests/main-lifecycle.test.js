@@ -288,3 +288,103 @@ test('runtime shutdown stops scheduler before the backend service', async () => 
     'emergency',
   ]);
 });
+
+function createQuitEvent() {
+  return {
+    prevented: false,
+    preventDefault() {
+      this.prevented = true;
+    },
+  };
+}
+
+test('a quit preflight returning false cancels the quit and keeps the app open', async () => {
+  const exitCalls = [];
+  const logs = [];
+  let stopCallCount = 0;
+  let preflightCalls = 0;
+  const lifecycle = new MainLifecycleController({
+    appExit: (code) => exitCalls.push(code),
+    stopRuntime: async () => { stopCallCount += 1; },
+    quitPreflight: async () => { preflightCalls += 1; return false; },
+    log: (level, event) => logs.push({ level, event }),
+  });
+  const event = createQuitEvent();
+
+  await lifecycle.handleBeforeQuit(event);
+
+  assert.equal(event.prevented, true);
+  assert.equal(preflightCalls, 1);
+  assert.equal(stopCallCount, 0);
+  assert.deepEqual(exitCalls, []);
+  assert.equal(lifecycle.isAppQuitting(), false);
+  assert.ok(logs.some(({ event: name }) => name === 'lifecycle.quit_cancelled_by_preflight'));
+});
+
+test('a quit preflight returning true runs the normal graceful shutdown', async () => {
+  const order = [];
+  const lifecycle = new MainLifecycleController({
+    appExit: (code) => order.push(`exit:${code}`),
+    stopRuntime: async () => { order.push('stop-runtime'); },
+    quitPreflight: async () => { order.push('preflight'); return true; },
+  });
+
+  await lifecycle.handleBeforeQuit(createQuitEvent());
+
+  assert.deepEqual(order, ['preflight', 'stop-runtime', 'exit:0']);
+  assert.equal(lifecycle.isAppQuitting(), true);
+});
+
+test('a throwing quit preflight fails open and quits', async () => {
+  const exitCalls = [];
+  const lifecycle = new MainLifecycleController({
+    appExit: (code) => exitCalls.push(code),
+    stopRuntime: async () => {},
+    quitPreflight: async () => { throw new Error('renderer gone'); },
+  });
+
+  await lifecycle.handleBeforeQuit(createQuitEvent());
+
+  assert.deepEqual(exitCalls, [0]);
+});
+
+test('requestEmergencyShutdown and a preflight:false before-quit never call quitPreflight', async () => {
+  let preflightCalls = 0;
+  const quitPreflight = async () => { preflightCalls += 1; return false; };
+  const emergency = new MainLifecycleController({
+    appExit: () => {},
+    stopRuntime: async () => {},
+    quitPreflight,
+  });
+  await emergency.requestEmergencyShutdown({ exitCode: 1 });
+
+  const exitCalls = [];
+  const sessionEnd = new MainLifecycleController({
+    appExit: (code) => exitCalls.push(code),
+    stopRuntime: async () => {},
+    quitPreflight,
+  });
+  const event = createQuitEvent();
+  await sessionEnd.handleBeforeQuit(event, { preflight: false });
+
+  assert.equal(preflightCalls, 0);
+  assert.equal(event.prevented, true);
+  assert.deepEqual(exitCalls, [0]);
+});
+
+test('query-session-end skips the quit preflight so OS logoff never blocks on a dialog', async () => {
+  const window = new FakeWindow();
+  const exitCalls = [];
+  let preflightCalls = 0;
+  const lifecycle = new MainLifecycleController({
+    appExit: (code) => exitCalls.push(code),
+    stopRuntime: async () => {},
+    quitPreflight: async () => { preflightCalls += 1; return false; },
+  });
+  registerMainWindowSessionEndHandlers(window, lifecycle);
+
+  await window.emitAsync('query-session-end', createQuitEvent());
+
+  assert.equal(preflightCalls, 0);
+  assert.deepEqual(exitCalls, [0]);
+});

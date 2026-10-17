@@ -29,9 +29,14 @@ const ELECTRON_BRIDGE_TOOL_NAMES = new Set([
   'image_generate',
   'home',
   'task_board',
-  'project_notes',
+  'project_notes', 'conversations_recent', 'conversation_open', 'conversations_search',
   'exit_plan_mode',
   'ask_user',
+  'propose_git_action',
+  'propose_command',
+  'propose_session',
+  'complete_session_handoff',
+  'session_message',
 ]);
 
 function normalizeBridgeArguments(value) {
@@ -257,6 +262,53 @@ function bridgeFailure(toolName, output, errorCode = TOOL_ERROR_CODES.EXECUTION_
 const { executeSandboxCommand, sandboxEnabled, ALLOWED: SANDBOX_BRIDGE_TOOLS } = require('../execution/command-bridge');
 const { trackSandboxBridgeRequest } = require('../execution/execution-settlement');
 
+// A render outlives a lost sidecar transport, whose response could only be
+// dropped. The owning managed request aborts it and awaits its settlement before
+// terminal teardown; a result that still landed is recorded through the
+// persistence path the transport can no longer reach. A completed result stays
+// tracked until its tool.result is handled: a reply written just before the
+// transport died never comes back as one.
+function trackImageBridgeExecution(service, streamId, signal, execute, recordLate, callId) {
+  service._imageBridgeExecutions ||= new Map();
+  const executions = service._imageBridgeExecutions;
+  const entry = { controller: new AbortController(), lost: false, callId, completed: null, recordLate };
+  entry.release = () => {
+    executions.get(streamId)?.delete(entry);
+    if (executions.get(streamId)?.size === 0) executions.delete(streamId);
+  };
+  const forward = () => entry.controller.abort(signal.reason);
+  signal.addEventListener('abort', forward, { once: true });
+  if (signal.aborted) forward();
+  if (!executions.has(streamId)) executions.set(streamId, new Set());
+  executions.get(streamId).add(entry);
+  entry.settled = Promise.resolve().then(() => execute(entry.controller.signal)).then((result) => {
+    if (entry.lost) { recordLate(result); entry.release(); } else entry.completed = { result };
+    return result;
+  }, (error) => { entry.release(); throw error; }).finally(() => signal.removeEventListener('abort', forward));
+  return entry.settled;
+}
+
+function imageBridgeEntries(service, streamId) {
+  return [...(service?._imageBridgeExecutions?.get(streamId) || [])];
+}
+
+async function abortImageBridgeExecutions(service, streamId) {
+  const entries = imageBridgeEntries(service, streamId);
+  for (const entry of entries) {
+    if (entry.completed) { entry.release(); entry.recordLate(entry.completed.result); continue; }
+    entry.lost = true;
+    entry.controller.abort();
+  }
+  await Promise.allSettled(entries.map((entry) => entry.settled));
+}
+
+// The request settled normally: its handled results need no loss path.
+function releaseImageBridgeExecutions(service, streamId, callId = null) {
+  for (const entry of imageBridgeEntries(service, streamId)) {
+    if (entry.completed && (callId === null || entry.callId === callId)) entry.release();
+  }
+}
+
 async function executeElectronToolRequest(
   service,
   {
@@ -266,9 +318,11 @@ async function executeElectronToolRequest(
     abortSignal = null,
     executionAuthority = null,
     sandboxAuthorization = null,
+    authorize = null,
     canonicalReadOnly = true,
     runtimeDecisionControl = null,
     logicalTurnId = null,
+    sessionIncarnation = null,
     beforeProducer = null,
   } = {}
 ) {
@@ -290,6 +344,14 @@ async function executeElectronToolRequest(
   } catch (_error) {
     return bridgeFailure(toolName, 'Session execution authority is stale or cancelled.',
       TOOL_ERROR_CODES.DISABLED);
+  }
+  // Handoff preparation turn (row 59 cp5a, D5): the request-bound capability lets exactly one tool
+  // through and lets that tool run nowhere else. The sidecar enforces the same contract.
+  const preparing = Boolean(trustedExecution?.handoffPreparation);
+  if (preparing !== (toolName === 'complete_session_handoff')) {
+    return bridgeFailure(toolName, preparing
+      ? 'Only the session handoff is available in a handoff preparation turn.'
+      : 'The session handoff is available only in a handoff preparation turn.', TOOL_ERROR_CODES.DISABLED);
   }
   const scopedSessionId = trustedExecution?.sessionId
     || String(sessionId || payload.session_id || '').trim();
@@ -403,6 +465,7 @@ async function executeElectronToolRequest(
       sessionId: scopedSessionId,
       streamId: scopedStreamId,
       logicalTurnId,
+      sessionIncarnation,
       workingDirectory,
       backendService: service,
       abortSignal,
@@ -415,7 +478,8 @@ async function executeElectronToolRequest(
         }),
         runtimeDecision: payload.runtime_decision,
       } : {}),
-    }
+    },
+    { authorize }
   );
   if (!result || typeof result !== 'object' || Array.isArray(result)) {
     return bridgeFailure(toolName, 'Electron tool bridge returned a malformed executor result.');
@@ -487,6 +551,8 @@ function buildManagedSidecarChatSendOptions({
   onNotificationObserved,
   onApprovalObserved,
   executionAuthority = null,
+  turnIdentity = null,
+  commandResourceStartToolCallId = null,
 }) {
   const recordStreamActivity = typeof noteStreamActivity === 'function'
     ? noteStreamActivity
@@ -529,6 +595,19 @@ function buildManagedSidecarChatSendOptions({
       return false;
     }
   }
+  async function authorizeSessionMessage(params) {
+    const resumeIdle = suspendIdleWatchdog();
+    const resumeTransport = suspendTransportTimeout();
+    try {
+      onApprovalObserved?.();
+      runtime.persistToolBoundarySegment?.();
+      return await waitForAuthorizedToolApproval(params);
+    } finally {
+      resumeTransport();
+      if (typeof resumeIdle === 'function') resumeIdle();
+      else recordStreamActivity();
+    }
+  }
   return {
     signal: controller.signal,
     timeoutMs,
@@ -549,6 +628,9 @@ function buildManagedSidecarChatSendOptions({
           toolContext,
           handleToolNotification,
         });
+        if (notification?.method === 'tool.result') {
+          releaseImageBridgeExecutions(service, streamId, String(notification.params?.tool_call_id || ''));
+        }
       } catch (handlerError) {
         service._emitServiceLog('ERROR', 'chat.notification_handler_error', {
           sessionId: resolvedSessionId,
@@ -605,7 +687,9 @@ function buildManagedSidecarChatSendOptions({
       }
     },
     onElectronToolRequest: require('./runtime-electron-start-gate').createElectronStartGate({
-      enabled: params => Boolean(controller._runtimeDecisionControl)
+      enabled: params => (Boolean(controller._runtimeDecisionControl)
+        || (typeof commandResourceStartToolCallId === 'string' && commandResourceStartToolCallId.length > 0
+          && params.tool_name === 'run_command' && params.tool_call_id === commandResourceStartToolCallId))
         && params.request_id === streamId && params.session_id === resolvedSessionId
         && (ELECTRON_BRIDGE_TOOL_NAMES.has(params.tool_name) || params.tool_name === 'run_command')
         && !['ask_user', 'exit_plan_mode', 'session_spawn', 'session_wait', 'session_result'].includes(params.tool_name),
@@ -639,7 +723,10 @@ function buildManagedSidecarChatSendOptions({
       const suspendsIdle = params?.tool_name === 'ask_user' || params?.tool_name === 'image_generate';
       if (!suspendsIdle) {
         return executeElectronToolRequest(service, {
+          authorize: params?.tool_name === 'session_message' ? authorizeSessionMessage : null,
           beforeProducer,
+          logicalTurnId: turnIdentity?.turnId ?? null,
+          sessionIncarnation: turnIdentity?.sessionIncarnation ?? null,
           params,
           sessionId: resolvedSessionId,
           streamId,
@@ -649,17 +736,28 @@ function buildManagedSidecarChatSendOptions({
       }
       // Human answers and image renders can take minutes without stream activity.
       const resumeAfterAnswers = suspendIdleWatchdog();
+      const run = (abortSignal, producer = beforeProducer) => executeElectronToolRequest(service, {
+        beforeProducer: producer,
+        runtimeDecisionControl: controller._runtimeDecisionControl,
+        logicalTurnId: turnEventCollector?.turnId || streamId,
+        params,
+        sessionId: resolvedSessionId,
+        streamId,
+        abortSignal,
+        executionAuthority,
+      });
       try {
-        return await executeElectronToolRequest(service, {
-          beforeProducer,
-          runtimeDecisionControl: controller._runtimeDecisionControl,
-          logicalTurnId: turnEventCollector?.turnId || streamId,
-          params,
-          sessionId: resolvedSessionId,
-          streamId,
-          abortSignal: controller.signal,
-          executionAuthority,
-        });
+        if (params?.tool_name !== 'image_generate') return await run(controller.signal);
+        let producerAcknowledged = beforeProducer === null;
+        const announceProducer = beforeProducer ? async () => {
+          await beforeProducer(); producerAcknowledged = true;
+        } : null;
+        return await trackImageBridgeExecution(service, streamId, controller.signal,
+          (signal) => run(signal, announceProducer), (result) => {
+            if (producerAcknowledged) runtime.handleNotification({ method: 'tool.result',
+              params: { ...result, tool_call_id: params.tool_call_id, tool_input: params.arguments } },
+            { toolContext, handleToolNotification });
+          }, String(params.tool_call_id || ''));
       } finally {
         if (typeof resumeAfterAnswers === 'function') {
           resumeAfterAnswers();
@@ -674,6 +772,8 @@ function buildManagedSidecarChatSendOptions({
 }
 
 module.exports = {
+  abortImageBridgeExecutions,
+  releaseImageBridgeExecutions,
   buildManagedSidecarChatSendOptions,
   ELECTRON_BRIDGE_TOOL_NAMES,
   executeElectronToolRequest,

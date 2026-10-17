@@ -1,4 +1,7 @@
 const { buildFeatureFlags } = require('./feature-flags');
+const { normalizeSubagentRouting } = require('./subagent-routing-settings');
+const { normalizeMemorySettings } = require('./shell-config-normalizers');
+const { getReasoningEffortProfile } = require('../reasoning-effort-profiles');
 const { WEB_SEARCH_PROVIDER_KEY_IDS } = require('./backend/secure-store');
 const { getBridgeChannel, registerIpcInvokeHandlers } = require('./ipc-contract');
 const {
@@ -14,6 +17,26 @@ function buildEffectiveFeatureFlags({ shellConfigService, env = process.env } = 
 
 function resolveConfiguredTools(configState = {}) {
   return normalizeToolSettings(configState.tools, configState);
+}
+
+// Read existing catalog owners; this payload contains public metadata only.
+function buildSubagentModelCatalogs(backendService) {
+  const chatgpt = backendService?.chatgptModelCatalogService?.snapshot?.() || {};
+  const cached = backendService?._modelListLastResult?.value?.data || [];
+  const chatgptModels = chatgpt.models || cached.filter((row) => row.engine_type === 'chatgpt');
+  const codexModels = backendService?.codexCliRuntimeService?.getModelCatalog?.() || [];
+  const normalize = (rows, provider) => rows.slice(0, 128).map((row) => ({
+    id: String(row.id || ''), label: String(row.label || row.name || row.id || ''),
+    available: row.available !== false,
+    reasoning_efforts: [...new Set([...(provider === 'codex-cli' ? ['default'] : []),
+      ...(getReasoningEffortProfile(row.id, row.capabilities || row)?.efforts || [])])],
+  })).filter((row) => row.id);
+  return {
+    chatgpt: { models: normalize(chatgptModels, 'chatgpt'), stale: chatgpt.stale === true,
+      available: backendService?.chatgptAuthService?.hasCredential?.() === true },
+    'codex-cli': { models: normalize(codexModels, 'codex-cli'), stale: false,
+      available: codexModels.some((row) => row.available !== false) },
+  };
 }
 
 const TOOL_AVAILABILITY_OVERRIDES = Object.freeze({
@@ -78,9 +101,9 @@ function buildFeatureStatePayload({
 
   return {
     tools: resolveConfiguredTools(configState),
-    memory: {
-      captureSuggestions: configState.memory?.captureSuggestions !== false,
-    },
+    subagentRouting: normalizeSubagentRouting(configState.subagentRouting),
+    subagentModelCatalogs: buildSubagentModelCatalogs(backendService),
+    memory: normalizeMemorySettings(configState.memory),
     webSearch: {
       provider: String(configState.webSearch?.provider || 'duckduckgo'),
       searxngUrl: String(configState.webSearch?.searxngUrl || ''),
@@ -159,8 +182,11 @@ function buildFeatureStatePayload({
   };
 }
 
+// Routing preferences ride the next chat request; refreshing the stack here
+// would disrupt children already executing under their admitted selections.
 const RUNTIME_SETTINGS_KEYS = ['tools', 'webSearch', 'featureOverrides'];
-const FEATURE_SETTINGS_KEYS = [...RUNTIME_SETTINGS_KEYS, 'memory'];
+// memory stays out of RUNTIME_SETTINGS_KEYS: its policy rides each chat request.
+const FEATURE_SETTINGS_KEYS = [...RUNTIME_SETTINGS_KEYS, 'memory', 'subagentRouting'];
 const transactionTails = new WeakMap();
 let awaitedCommitService = null;
 

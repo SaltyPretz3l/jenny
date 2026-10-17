@@ -413,6 +413,75 @@ def test_issued_calls_survive_prose_and_repetition(text, count, healing):
     assert len(result.calls) == count
 
 
+CALL = '{"name":"read_file","arguments":{"path":"a.txt"}}'
+SECOND_CALL = '{"name":"read_file","arguments":{"path":"b.txt"}}'
+MADE_UP = '{"output": "hello world", "exit_code": 0}'
+
+
+# Gate F26 (2026-10-14): asked to write a call out, the model fenced it and
+# followed it with a made-up result; every shape below was promoted to a real
+# call before the result-follows rule (fence debris and the open fence healed
+# through Formats 2 and 4).
+@pytest.mark.parametrize("healing", [False, True])
+@pytest.mark.parametrize("text", [
+    f"```json\n{CALL}\n```\n{MADE_UP}",
+    f"```json\n{CALL}\n{MADE_UP}\n```",
+    f"```json\n{CALL}\n{MADE_UP}",
+    f"```json\n{CALL}\n```\n```json\n{MADE_UP}\n```",
+    f"Here is the call:\n{CALL}\n{MADE_UP}",
+], ids=["result_after_fence", "result_inside_fence", "open_fence", "result_fenced", "bare"])
+def test_call_followed_by_a_made_up_result_is_shown_not_issued(text, healing, caplog):
+    configure_tool_call_healing({"tool_call_reliability_net_enabled": healing})
+    with caplog.at_level("INFO", logger="sidecar.ai.tools.inband_parser"):
+        result = extract_inband_tool_calls_detailed(text, KNOWN_TOOLS)
+    assert result.calls == ()
+    assert result.remaining_text == text
+    assert result.failed_attempt is False
+    assert not any(message.startswith("Extracted") for message in caplog.messages)
+
+
+@pytest.mark.parametrize("healing", [False, True])
+@pytest.mark.parametrize("text", [
+    f"```json\n{CALL}\n```\nThat should find the files.",
+    f"```json\n{CALL}\n```\n\n  \n",
+    f"```json\n{CALL}\n```\nOutput:\nhello world",
+    f"```json\n{CALL}\n```\n[README](README.md) has the details.",
+    f"```json\n{CALL}\n```\n[Waiting for the tool result]",
+    f"```json\n{CALL}\n```\n```json\n{{\"output\": \"12",
+    f"```json\n{CALL}\n```\n```json\n{{\"name\":\"python_execute\",\"arguments\":{{\"code\":\"1\"}}}}\n```",
+    f"```json\n{CALL}\n```\n{{\"tool\":\"read_file\",\"args\":{{\"path\":\"b.txt\"}}}}",
+], ids=["commentary", "trailing_whitespace", "prose_result", "link", "bracket_note",
+        "truncated_fence", "unknown_tool_call", "call_dialect"])
+def test_a_call_followed_by_prose_or_another_call_stays_issued(text, healing):
+    configure_tool_call_healing({"tool_call_reliability_net_enabled": healing})
+    result = extract_inband_tool_calls_detailed(text, KNOWN_TOOLS)
+    assert len(result.calls) == 1
+    assert result.calls[0].arguments == {"path": "a.txt"}
+    assert CALL not in result.remaining_text
+
+
+def test_two_bare_calls_stay_issued_under_healing():
+    configure_tool_call_healing({"tool_call_reliability_net_enabled": True})
+    result = extract_inband_tool_calls_detailed(f"{CALL}\n{SECOND_CALL}", KNOWN_TOOLS)
+    assert [call.arguments["path"] for call in result.calls] == ["a.txt", "b.txt"]
+
+
+@pytest.mark.parametrize("healing", [False, True])
+def test_an_argument_free_second_call_to_a_known_tool_is_not_a_result(healing):
+    configure_tool_call_healing({"tool_call_reliability_net_enabled": healing})
+    text = f"```json\n{CALL}\n```\n```json\n{{\"name\":\"glob_files\"}}\n```"
+    result = extract_inband_tool_calls_detailed(text, KNOWN_TOOLS)
+    assert [call.tool_id for call in result.calls] == ["read_file", "glob_files"]
+
+
+@pytest.mark.parametrize("healing", [False, True])
+def test_an_example_fence_with_a_result_does_not_veto_the_issued_call(healing):
+    configure_tool_call_healing({"tool_call_reliability_net_enabled": healing})
+    text = f"```json\n{CALL}\n```\nFor example:\n```json\n{SECOND_CALL}\n```\n{MADE_UP}"
+    result = extract_inband_tool_calls_detailed(text, KNOWN_TOOLS)
+    assert [call.arguments["path"] for call in result.calls] == ["a.txt"]
+
+
 WRITE_TOOLS = KNOWN_TOOLS | frozenset({"write_file"})
 
 

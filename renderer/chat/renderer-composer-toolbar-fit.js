@@ -49,6 +49,7 @@
 
     var compact = false;
     var remembered = 0;
+    var expandedAvailable = null;
     var lastHost;
     var frame = 0;
     var scheduled = false;
@@ -66,7 +67,7 @@
       scheduled = false;
       if (disposed) return;
       var host = getHost();
-      if (host !== lastHost && compact) remembered = 0;
+      if (host !== lastHost && compact) { remembered = 0; expandedAvailable = null; }
       lastHost = host;
       var reading = measure() || {};
       var available = Number(reading.available) || 0;
@@ -75,8 +76,17 @@
         var needed = Number(reading.needed) || 0;
         if (needed > available + TOLERANCE_PX) {
           remembered = needed;
+          expandedAvailable = available;
           setCompact(true);
+          schedule();
         }
+        return;
+      }
+      if (expandedAvailable !== null) {
+        // Compact mode may reclaim the sprite gutter and widen this toolbar.
+        // That gained space disappears on expansion, so it cannot prove a fit.
+        remembered += Math.max(0, available - expandedAvailable);
+        expandedAvailable = null;
         return;
       }
       if (available + TOLERANCE_PX >= remembered) {

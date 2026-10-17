@@ -1,10 +1,10 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('../inventory/artifact-figure'));
     return;
   }
-  root.rendererArtifactsProjection = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.rendererArtifactsProjection = factory(root.inventoryArtifactFigure);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (artifactFigure) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const IMAGE_FILTER = 'image';
   const TOOL_OUTPUT_FILTER = 'tool_output';
@@ -332,7 +332,7 @@
 
   function artifactDedupKey(artifact, index) {
     const artifactType = String(artifact?.artifactType || '').trim();
-    if (artifactType === GENERATED_FILE_FILTER) {
+    if (artifactType === GENERATED_FILE_FILTER || artifact?.sourceKind === 'generated_artifact') {
       const artifactId = String(artifact?.generatedFile?.artifactId || artifact?.id || '').trim();
       if (artifactId) return `generated:${artifactId}`;
     }
@@ -403,14 +403,16 @@
       const pairedToolCall = pairedToolContext?.toolCall || null;
       const toolName = String(toolResult?.tool_name || pairedToolCall?.tool_name || 'Tool').trim() || 'Tool';
       const artifactSourceMessageId = String(pairedToolContext?.sourceMessageId || sourceMessageId).trim() || sourceMessageId;
-      const normalizedGeneratedArtifacts = (Array.isArray(toolResult?.generated_artifacts) ? toolResult.generated_artifacts : [])
-        .map(normalizeGeneratedArtifactMetadata)
-        .filter(Boolean);
-      if (normalizedGeneratedArtifacts.length) {
-        for (const metadata of normalizedGeneratedArtifacts) {
+      // Raw entries ride along: the generation details read provenance the normalized metadata drops.
+      const generatedEntries = (Array.isArray(toolResult?.generated_artifacts) ? toolResult.generated_artifacts : [])
+        .map((entry) => ({ entry, metadata: normalizeGeneratedArtifactMetadata(entry) }))
+        .filter((item) => item.metadata);
+      if (generatedEntries.length) {
+        for (const { entry, metadata } of generatedEntries) {
           if (metadata.artifact_kind === IMAGE_FILTER) {
             const assetPath = resolveTrustedGeneratedImageAssetPath(metadata, sessionId);
             const canResolveViaArtifactRead = !assetPath && canResolveRedactedGeneratedImage(metadata, sessionId);
+            const details = artifactFigure?.generationDetails?.(toolResult, entry);
             artifacts.push({
               id: metadata.artifact_id,
               sessionId,
@@ -431,6 +433,7 @@
                 width: metadata.width,
                 height: metadata.height,
                 sourceKind: metadata.source_kind,
+                ...(details ? { details } : {}),
               },
               tool: {
                 callId,

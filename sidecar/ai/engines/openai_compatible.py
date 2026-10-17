@@ -106,9 +106,19 @@ class OpenAICompatibleEngine(VLLMEngine):
     ) -> None:
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
         super().__init__(host=host, headers=headers)
+        self._prefill_progress_enabled = False
+        self._json_schema_response_format = False
         self._configured_context_length = _positive_int(configured_context_length)
         self._profile_max_output_tokens = _positive_int(profile_max_output_tokens)
         self._profile_thinking_headroom = _positive_int(profile_thinking_headroom) or 0
+
+    def set_prefill_progress_enabled(self, enabled: bool) -> None:
+        """Adopt the application's verified managed-server capability."""
+        self._prefill_progress_enabled = enabled is True
+
+    def set_json_schema_response_format(self, enabled: bool) -> None:
+        """Opt in to llama.cpp's strict ``json_schema`` response_format."""
+        self._json_schema_response_format = enabled is True
 
     def set_profile_output_limits(
         self,

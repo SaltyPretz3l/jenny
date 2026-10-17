@@ -50,6 +50,8 @@
     // and a heads-up that a config's kept output changed (the host repaints that view).
     const onShowOutput = typeof deps.onShowOutput === 'function' ? deps.onShowOutput : () => {};
     const onOutputChange = typeof deps.onOutputChange === 'function' ? deps.onOutputChange : () => {};
+    // An explicit run request from this window, before it starts (the host decides whether its output follows).
+    const onRunRequest = typeof deps.onRunRequest === 'function' ? deps.onRunRequest : () => {};
 
     let cachedState = EMPTY_STATE;
     // Availability is tracked apart from the cached state: a feature_disabled
@@ -141,14 +143,14 @@
 
     const panelActions = {
       showOutput: (configId) => onShowOutput(configId),
-      runConfig: (configId) => callMutationAndToast(
+      runConfig: (configId) => (onRunRequest(configId), callMutationAndToast(
         (api) => api.run({ configId, includeOutput: true }),
     jt('ide.testRunner.startFailed', 'Could not start the test run.'),
         `ide:test-runner:run:${configId}`
       ).then((outcome) => {
         if (outcome.ok) recordRunOutput(outcome.result);
         return outcome;
-      }),
+      })),
       abort: () => callMutationAndToast(
         (api) => api.abort(),
     jt('ide.testRunner.stopFailed', 'Could not stop the test run.'),

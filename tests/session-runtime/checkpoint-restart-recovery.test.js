@@ -108,7 +108,7 @@ async function publishedCrashFixture(t) {
     gateway: { snapshot: () => ({ active: 0, reserved: 0, quarantined: 0 }), tools: {
       validateResourceWait: () => ({ resource_class: 'filesystem', dependency_id: null }),
     } } });
-  const response = await boundary.handleOperation({ api_version: '2026-08-17', schema_version: 1,
+  const response = await boundary.handleOperation({ api_version: '2026-10-15', schema_version: 1,
     kind: 'continuation', phase: 'checkpoint', request_id: attempt.stream_id, session_id: sessionId,
     authority_revision: attempt.authority_revision, operation_id: 'call_1',
     continuation_context: context, tool_calls: snapshots.calls,

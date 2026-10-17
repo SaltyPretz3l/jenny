@@ -26,7 +26,7 @@ def test_windows_uses_resolved_cmd_with_hardening_flags(
     monkeypatch.setattr("sidecar.ai.tools.builtins.shell.os.name", "nt")
     monkeypatch.setattr(
         "sidecar.ai.tools.builtins.shell.shutil.which",
-        lambda name: "C:\\Windows\\System32\\cmd.exe" if name == "cmd.exe" else None,
+        lambda name, path=None: "C:\\Windows\\System32\\cmd.exe" if name == "cmd.exe" else None,
     )
 
     assert _shell_argv('echo "hello" && cd .') == [
@@ -42,7 +42,7 @@ def test_windows_fails_before_bootstrap_when_cmd_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("sidecar.ai.tools.builtins.shell.os.name", "nt")
-    monkeypatch.setattr("sidecar.ai.tools.builtins.shell.shutil.which", lambda _name: None)
+    monkeypatch.setattr("sidecar.ai.tools.builtins.shell.shutil.which", lambda _name, path=None: None)
 
     with pytest.raises(
         ToolExecutionFailure,
@@ -57,7 +57,7 @@ def test_posix_uses_resolved_bin_sh(
     monkeypatch.setattr("sidecar.ai.tools.builtins.shell.os.name", "posix")
     monkeypatch.setattr(
         "sidecar.ai.tools.builtins.shell.shutil.which",
-        lambda name: "/bin/sh" if name == "/bin/sh" else None,
+        lambda name, path=None: "/bin/sh" if name == "/bin/sh" else None,
     )
 
     assert _shell_argv("printf ok && pwd") == [
@@ -71,7 +71,7 @@ def test_posix_fails_before_bootstrap_when_bin_sh_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("sidecar.ai.tools.builtins.shell.os.name", "posix")
-    monkeypatch.setattr("sidecar.ai.tools.builtins.shell.shutil.which", lambda _name: None)
+    monkeypatch.setattr("sidecar.ai.tools.builtins.shell.shutil.which", lambda _name, path=None: None)
 
     with pytest.raises(
         ToolExecutionFailure,
@@ -122,7 +122,7 @@ def _as_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     _use_platform(monkeypatch, "nt")
     monkeypatch.setattr(
         "sidecar.ai.tools.builtins.shell.shutil.which",
-        lambda name: _CMD_EXE if name == "cmd.exe" else None,
+        lambda name, path=None: _CMD_EXE if name == "cmd.exe" else None,
     )
 
 
@@ -130,7 +130,7 @@ def _as_posix(monkeypatch: pytest.MonkeyPatch) -> None:
     _use_platform(monkeypatch, "posix")
     monkeypatch.setattr(
         "sidecar.ai.tools.builtins.shell.shutil.which",
-        lambda name: "/bin/sh" if name == "/bin/sh" else None,
+        lambda name, path=None: "/bin/sh" if name == "/bin/sh" else None,
     )
 
 
@@ -235,3 +235,25 @@ def test_real_posix_shell_runs_every_line(tmp_path: Path) -> None:
     result = run_command_tool({"command": "echo one\necho two"}, WorkspaceGuard(str(tmp_path)))
 
     assert json.loads(result.output)["stdout"].split() == ["one", "two"]
+
+
+
+@pytest.mark.parametrize("article", ["the", "a"])
+def test_powershell_command_not_found_guides_absolute_invocation(monkeypatch, article):
+    monkeypatch.setattr(shell_module.shutil, "which", lambda _name, path=None: None)
+    hint = shell_module._unresolved_command_hint(
+        f"The term 'rustc' is not recognized as {article} name of a cmdlet, function, "
+        "script file, or operable program."
+    )
+    assert "was not found by PowerShell" in hint
+    assert "Check Get-Command" in hint
+    assert "& 'absolute executable path'" in hint
+
+
+def test_powershell_command_not_found_quotes_resolved_executable(monkeypatch):
+    executable = "C:\\Tools With Space\\rustc.exe"
+    monkeypatch.setattr(shell_module.shutil, "which", lambda _name, path=None: executable)
+    hint = shell_module._unresolved_command_hint(
+        "The term 'rustc' is not recognized as the name of a cmdlet"
+    )
+    assert f"& '{executable}'" in hint

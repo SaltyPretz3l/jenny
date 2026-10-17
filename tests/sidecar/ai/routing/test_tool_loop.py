@@ -252,6 +252,35 @@ def test_tool_loop_compaction_requests_mid_turn_mode(
     assert compact_kwargs["mode"] == "mid_turn"
 
 
+def test_tool_loop_compaction_counts_micro_first_passes_per_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop = _tool_loop_compaction_fixture([], [])
+    loop.working_messages = [{"role": "user", "content": "x" * 240}]
+    seen: list[dict[str, Any]] = []
+
+    def _compact(*_args: Any, **kwargs: Any) -> CompactionResult:
+        seen.append(kwargs)
+        return CompactionResult(
+            messages=[{"role": "user", "content": "compacted"}],
+            strategy="micro",
+            tokens_before=64,
+            tokens_after=32,
+            summary_status="not_applicable",
+            summary_failure_code="micro_first",
+        )
+
+    monkeypatch.setattr("sidecar.ai.routing.tool_loop_compaction.compact_context", _compact)
+
+    compact_tool_loop_context(loop, num_tools=0)
+    loop.working_messages = [{"role": "user", "content": "x" * 240}]
+    compact_tool_loop_context(loop, num_tools=0)
+
+    assert [kwargs["micro_passes_used"] for kwargs in seen] == [0, 1]
+    assert seen[0]["policy"] is not None and seen[0]["policy"].micro_first is True
+    assert loop.micro_first_passes == 2
+
+
 def test_tool_loop_compaction_passes_the_turn_prompt_as_task_content(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1459,7 +1488,8 @@ def test_tool_call_budget_is_cumulative_across_generations() -> None:
 
     # The cap was hit on this turn, so the answer carries the resume footer.
     assert decision.response_text == (
-        "Done.\n\nReached this turn's tool limit (2). Reply 'resume' to continue."
+        "Done.\n\nReached this turn's tool limit (2); the reply above was written without "
+        "further tool calls. Reply 'resume' if you want it to keep going."
     )
     assert [call_id for call_id, _arguments in mcp_client.executions] == [
         "mermaid_generate",

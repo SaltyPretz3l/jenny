@@ -62,7 +62,7 @@ test('default layout renders row split, flexible editor cell, nested col split, 
   assert.ok(bottom.querySelector('.wb-stack-header'), 'col collapsed keeps its header');
   assert.equal(bottom.querySelector('.wb-strip'), null);
   assert.equal(bottom.querySelector('.wb-stack-body').hidden, true);
-  assert.equal(bottom.querySelectorAll('[role="tab"]').length, 5);
+  assert.equal(bottom.querySelectorAll('[role="tab"]').length, 6);
   assert.ok(bottom.querySelector('[data-wb-action="more"]'));
   assert.equal(bottom.querySelector('[data-wb-action="collapse"]'), null, 'already collapsed');
   assert.equal(bottom.querySelector('[data-wb-action="maximize"]'), null, 'collapsed cannot maximize');
@@ -197,8 +197,8 @@ test('size and count changes patch in place', () => {
 test('pruneUnavailable: a missing view loses its tab; a vanished dock leaves the editor flexible', () => {
   const rig = setup({ unavailable: ['test-runner'] });
   assert.equal(rig.tab('test-runner'), null);
-  assert.equal(rig.stackEl('stack-2').querySelectorAll('[role="tab"]').length, 4);
-  assert.equal(rig.state.layout.root.children[1].node.children[1].node.views.length, 5, 'persisted layout untouched');
+  assert.equal(rig.stackEl('stack-2').querySelectorAll('[role="tab"]').length, 5);
+  assert.equal(rig.state.layout.root.children[1].node.children[1].node.views.length, 6, 'persisted layout untouched');
 
   const bare = setup({ unavailable: ['chat', 'changes'] });
   assert.equal(bare.stackEl('stack-3'), null);

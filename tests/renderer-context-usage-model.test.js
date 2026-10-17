@@ -394,3 +394,15 @@ test('a streaming turn counts its reasoning and the memo follows the growing tai
   const done = store.buildCachedEstimate('s1', source, options);
   assert.equal(done.usedTokens, settled.usedTokens, 'a settled turn no longer counts its reasoning');
 });
+
+test('row 59 cp5a: the Background preamble length matches the sidecar constant plus its blank line', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'sidecar', 'ai', 'context', 'session_handoff.py'), 'utf8');
+  const match = source.match(/^SESSION_HANDOFF_PREAMBLE = "([^"]+)"/m);
+  assert.ok(match, 'the sidecar preamble constant is a single-line string');
+  assert.equal(model.HANDOFF_PREAMBLE_CHARS, match[1].length + 2);
+  const row = { id: 'ctxh_x', role: 'context', kind: 'session_handoff', content: 'bg', session_handoff: { source_session_id: 'sess_p' } };
+  const plain = { id: 'u', role: 'user', content: '' };
+  assert.ok(model.estimateContextMessagesTokens([row]) > model.estimateContextMessagesTokens([plain]) + 60, 'the preamble is counted');
+});

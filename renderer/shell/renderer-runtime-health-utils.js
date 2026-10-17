@@ -121,10 +121,19 @@
       };
     }
 
-    const llamaServer = runtime.llama_server;
+    // The managed server (llama-server or NInfer, row 54); llama_server when the snapshot predates it.
+    const managed = runtime.managed_server;
+    const llamaServer = managed && typeof managed === 'object' ? managed : runtime.llama_server;
     if (llamaServer && typeof llamaServer === 'object' && !Array.isArray(llamaServer)) {
       const alias = typeof llamaServer.alias === 'string' ? llamaServer.alias.trim() : '';
       const lastError = typeof llamaServer.last_error === 'string' ? llamaServer.last_error.trim() : '';
+      if (llamaServer.state === 'crashed' && llamaServer.kind === 'ninfer' && llamaServer.stopped_by === 'watchdog') {
+        return {
+          tone: 'danger',
+          label: jt('titlebar.runtimeHealth.blocked', 'Blocked'),
+          summary: jt('titlebar.runtimeHealth.serverWatchdogPlain', 'The power watchdog stopped NInfer ({watts} W). Restart it from the status pill when the card has cooled.', { watts: Number(llamaServer.watchdog_watts) || 0 }),
+        };
+      }
       if (llamaServer.state === 'crashed') {
         return {
           tone: 'danger',

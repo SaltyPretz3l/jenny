@@ -177,6 +177,10 @@ test('chat shell controller binds child wiring once', async () => {
       createContextCommand() {
         return async function noopContextCommand() {};
       },
+      createMemoryCommandHandlers(deps) {
+        calls.push(`memoryCommands:${typeof deps.getMemoryApi}:${typeof deps.injectOutput}`);
+        return { memoryHandler: () => { calls.push('memoryHandler'); return { ok: true }; } };
+      },
     },
   });
 
@@ -187,8 +191,9 @@ test('chat shell controller binds child wiring once', async () => {
   assert.equal(eventCallbacks.setSessionMessages('session-1', ['resolved question']), 'updated');
   assert.deepEqual(messageUpdates, [['session-1', ['resolved question']], { runtimeOnly: true }]);
 
-  assert.deepEqual(controller.listSlashCommands(), ['/help', '/context', '/compact', '/note']);
+  assert.deepEqual(controller.listSlashCommands(), ['/help', '/context', '/compact', '/note', '/linked', '/remember', '/forget', '/memory']);
   await controller.tryExecuteSlashCommand('/compact');
+  await controller.tryExecuteSlashCommand('/memory');
 
   await controller.handleStopActiveStream();
   controller.handleSend();
@@ -197,6 +202,7 @@ test('chat shell controller binds child wiring once', async () => {
   controller.dispose();
 
   assert.deepEqual(calls, [
+    'memoryCommands:undefined:function',
     'createSendController',
     'createComposerV2FlowController',
     'createStreamHandler',
@@ -204,6 +210,7 @@ test('chat shell controller binds child wiring once', async () => {
     'streamHandler.register',
     'chatEvents.bind',
     'compact:session-1:slash',
+    'memoryHandler',
     'handleStopActiveStream',
     'handleSend',
     'chatEvents.dispose',

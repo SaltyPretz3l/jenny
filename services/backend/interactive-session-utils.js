@@ -107,6 +107,9 @@ function isEmptySessionSummary(session) {
   if (!session || typeof session !== 'object') {
     return false;
   }
+  // Received-message rows (role context) are not conversation: a chat whose only
+  // rows are addressed mail or discard receipts still takes its first prompt's title.
+  if (Array.isArray(session.messages)) return session.messages.every((message) => message?.role === 'context');
   return Math.max(Number(session.message_count || 0), 0) === 0;
 }
 

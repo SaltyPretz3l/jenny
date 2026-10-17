@@ -23,7 +23,7 @@ function encodeChatSendFrame(params) {
     jsonrpc: '2.0',
     id: 1,
     method: 'chat.send',
-    params: { accept_version: '2026-08-17', ...params },
+    params: { accept_version: '2026-10-15', ...params },
   });
 }
 

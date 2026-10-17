@@ -63,7 +63,6 @@ function createRealNormalizedMessage() {
       isInteractiveOtherTrigger: () => false,
       getActiveSession: () => null,
       patchSessionSummary() {},
-      rekeyDismissedMemorySession() {},
       rekeySessionArtifacts() {},
     },
   }).createNormalizedMessage;
@@ -186,7 +185,6 @@ function createHarness(options = {}) {
       refreshSnapshots: async () => {},
       showToastMessage(message, options) { calls.toasts.push({ message, options }); },
       dismissStreamErrors() {},
-      maybeSuggestMemoryCapture: async () => {},
       appendClientLog() {},
       handlePresenceStreamEvent(payload) { calls.presence.push(payload); },
       getInteractiveComposerStatusNotice() { return ''; },
@@ -436,6 +434,22 @@ test('stream handler patches a transient agent_status widget onto the pending as
 
   const completedMessage = harness.state.messagesBySession.get('session-1')[0];
   assert.equal(completedMessage.agent_status, null);
+});
+
+test('live child frames preserve full model IDs and reject stale snapshots everywhere', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.restore());
+  const base = { type: 'agent_status', sessionId: 'session-1', streamId: 'stream-live',
+    requestId: 'stream-live', taskId: 'batch', taskType: 'sub_agent', source: 'delegate',
+    childTaskId: 'child', status: 'running', model: `codex-cli/${'m'.repeat(128)}` };
+  await harness.emit({ type: 'started', sessionId: base.sessionId, streamId: base.streamId });
+  await harness.emit({ ...base, summary: 'Current', childActivity: { sequence: 2, text: 'Current' } });
+  await harness.emit({ ...base, summary: 'Stale', childActivity: { sequence: 1, text: 'Stale' } });
+  const pending = harness.state.messagesBySession.get('session-1')[0];
+  assert.equal(pending.agent_status.model, base.model);
+  assert.equal(pending.agent_status.summary, 'Current');
+  assert.equal(pending.agent_status_steps[0].model, base.model);
+  assert.equal(pending.agent_status_steps[0].childActivity.sequence, 2);
 });
 
 test('stream handler accumulates agent_status_steps across sequential stages on the pending shell', async (t) => {

@@ -87,11 +87,18 @@ EXEMPT = {
     # root prompt fix, 2026-09-18; 592 -> 514 lines). Same extraction-not-hub
     # shape as ollama_runtime.py above.
     (ROOT / "sidecar" / "ai" / "context" / "builder.py").resolve(),
-    # Crossed the budget (6 -> 7) by exactly the one mixin that keeps the store
-    # a composition of per-concern files: the project-delete memory move lives in
-    # store_project_move.py (Projects manager, 2026-09-27) beside the approved and
-    # pending mixins. Same extraction-not-hub shape as ollama_runtime.py above.
+    # The memory store hub is a composition of per-concern mixin files (approved,
+    # pending, lifecycle, undo) plus its bootstrap, operations and shared leaves;
+    # each split keeps one file small rather than growing a hub. The schema v9
+    # program (row 58) retired the project-move mixin and kept this shape. Same
+    # extraction-not-hub shape as ollama_runtime.py above.
     (ROOT / "sidecar" / "ai" / "memory" / "store.py").resolve(),
+    # The provider seam maps every wire role to engine messages; it crossed the
+    # budget (6 -> 7) by the one import that renders the negotiated context role
+    # (row 59 checkpoint 4, addressed session messages). Rendering in the caller
+    # instead would let a context row become the vision anchor, which indexes
+    # source messages inside this function.
+    (ROOT / "sidecar" / "ai" / "routing" / "engine_messages.py").resolve(),
 }
 
 
@@ -100,6 +107,25 @@ EXEMPT = {
 # existing read/checkpoint/result owners. Keep these explicit edges narrowly capped;
 # do not obscure security ownership with forwarding modules or general exemptions.
 WIRING_CAPS = {
+    # Read-only context.preview composes the canonical prompt, overlays, tools
+    # and counters without entering chat/inference orchestration. Keep its
+    # nine direct owners, including history admission/framing, visible and
+    # capped (CHAT_PANEL_SUMMARY_FIXES.md).
+    (ROOT / "sidecar/ai/context/preview.py").resolve(): 9,
+    # Row-48 review (2026-10-09): keep canonical error and request-preference
+    # owners explicit instead of importing incidental re-exports through
+    # delegate_contracts/config. Parent-reviewed composition edges, exactly 7.
+    (ROOT / "sidecar/ai/routing/subagent_scheduler.py").resolve(): 7,
+    (ROOT / "sidecar/ai/routing/subagent_model_routing.py").resolve(): 7,
+    # Rise of Nations reliability (2026-10-09): the temporary-script runner
+    # adds one bounded interpreter/probe owner (6 -> 7). Parent-reviewed:
+    # preserve explicit execution/security imports and cap this composition
+    # seam exactly, rather than forwarding dependencies through shell.py.
+    (ROOT / "sidecar/ai/tools/builtins/temp_script.py").resolve(): 7,
+    # Measured prefill adds the bounded request-local progress owner (12 -> 13),
+    # keeping coalescing, suppression and attempt retirement outside the size-capped
+    # stream orchestrator. Independently reviewed: explicit edge, no forwarding facade.
+    (ROOT / "sidecar/ai/routing/generation_runtime_stream.py").resolve(): 13,
     # Desktop command sandbox adds one independent execution-policy owner at
     # these configuration/dispatch composition seams (DESKTOP_COMMAND_SANDBOX.md).
     # Exact caps preserve explicit security imports rather than hiding them in facades.
@@ -107,7 +133,6 @@ WIRING_CAPS = {
     # Combined hosted worker and desktop sandbox integration adds two canonical
     # policy owners (6 -> 8): hosted direct-dispatch fencing and desktop approval
     # routing. Independently reviewed; retain both visible security dependencies.
-    (ROOT / "sidecar/ai/routing/tool_execution.py").resolve(): 8,
     (ROOT / "sidecar/ai/tools/assembly.py").resolve(): 8,
     # Plan Plus (2026-10-05): the pure matching helpers moved to edit_matching.py
     # so propose_change validates with exactly edit_file's matching (7 -> 8).
@@ -140,6 +165,15 @@ WIRING_CAPS = {
     # handler has. Exact cap keeps the cancellation dependency a visible import
     # rather than one forwarded through the sandbox module.
     (ROOT / "sidecar/ai/tools/builtins/python_runtime/tool.py").resolve(): 7,
+    # Row 60 (2026-10-15, harness A/B): the router re-bound reads the default-on
+    # shell_head_tail_output flag owner (28 -> 29), and the background-job runner
+    # takes its env and head+tail truncation from the shell_harness owner (7 -> 8).
+    # Parent-reviewed explicit edges; the concrete pins below are retired for them.
+    (ROOT / "sidecar/ai/routing/tool_execution.py").resolve(): 29,
+    # Row 60 W2: microcompaction and the compaction policy moved out to
+    # compaction_micro (compaction.py 597 -> ~520 lines), one new edge (6 -> 7).
+    (ROOT / "sidecar/ai/context/compaction.py").resolve(): 7,
+    (ROOT / "sidecar/ai/tools/builtins/shell_background.py").resolve(): 8,
 }
 
 
@@ -158,14 +192,12 @@ CONCRETE_EDGE_BASELINE = {
     (ROOT / "sidecar/ai/routing/sub_agent_invocation.py").resolve(): 7,
     (ROOT / "sidecar/ai/routing/tool_budget_filter.py").resolve(): 9,
     (ROOT / "sidecar/ai/routing/tool_call_execution.py").resolve(): 13,
-    (ROOT / "sidecar/ai/routing/tool_execution.py").resolve(): 28,
     (ROOT / "sidecar/ai/routing/tool_loop_calls.py").resolve(): 13,
     (ROOT / "sidecar/ai/routing/tool_loop_finalize.py").resolve(): 8,
     (ROOT / "sidecar/ai/routing/tool_loop_recovery.py").resolve(): 7,
     (ROOT / "sidecar/ai/tools/assembly.py").resolve(): 9,
     (ROOT / "sidecar/ai/tools/workspace_manifest.py").resolve(): 7,
     (ROOT / "sidecar/ai/tools/builtins/file_state.py").resolve(): 8,
-    (ROOT / "sidecar/ai/tools/builtins/shell_background.py").resolve(): 7,
 }
 
 

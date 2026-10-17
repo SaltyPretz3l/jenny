@@ -41,6 +41,13 @@
     Object.freeze(['renderer/features/renderer-changes-undo.js', 'rendererChangesUndo']),
   ]);
 
+  // The Working tree page (row 59 checkpoint 2) loads lazily with the Changes view; the IDE never uses it.
+  const WORKING_TREE_SCRIPTS = Object.freeze([
+    Object.freeze(['renderer/chat/renderer-unified-diff-parse.js', 'rendererUnifiedDiffParse']),
+    Object.freeze(['renderer/features/renderer-changes-working-tree-render.js', 'rendererChangesWorkingTreeRender']),
+    Object.freeze(['renderer/features/renderer-changes-working-tree.js', 'rendererChangesWorkingTree']),
+  ]);
+
   const SCOPES = new Set(['change', 'turn', 'file', 'session', 'suggested']);
 
   /**
@@ -54,6 +61,13 @@
       if (isReady()) continue;
       const ok = typeof ensureScript === 'function' ? await ensureScript({ src, isReady, log }) : false;
       if (!ok) return null;
+    }
+    // Best effort: without the Working tree page the panel keeps the ledger view only.
+    for (const [src, globalName] of WORKING_TREE_SCRIPTS) {
+      const isReady = () => Boolean(globalRef[globalName]);
+      if (isReady()) continue;
+      const ok = typeof ensureScript === 'function' ? await ensureScript({ src, isReady, log }) : false;
+      if (!ok) break;
     }
     return globalRef.rendererChangesView || null;
   }
@@ -72,11 +86,20 @@
       openInWorkspace = null,
       getUndoController = function noUndo() { return null; },
       setArtifactRailMode = function noopSetArtifactRailMode() {},
+      // The rail's shared open path (mode, open, chat view, saved); without it
+      // a closed side panel only changed mode and the review never showed.
+      openArtifactRail = null,
       renderArtifactReviewPanel = function noopRenderArtifactReviewPanel() {},
       syncArtifactReviewLayout = function noopSyncArtifactReviewLayout() {},
       appendClientLog = function noopAppendClientLog() {},
       showComposerActionError = function noopShowComposerActionError() {},
       escapeHtml,
+      // Working tree page (row 59 checkpoint 2): the explicit owner claim, the bridge, and the two hand-offs.
+      claimOwner = null,
+      getChatWorkspace = function defaultChatWorkspace() { return (globalThis.jennyShell && globalThis.jennyShell.chatWorkspace) || null; },
+      getWorkingTreeModule = function defaultWorkingTreeModule() { return globalThis.rendererChangesWorkingTree || null; },
+      openWorkingTreeFile = function defaultOpenFile(path) { return globalThis.rendererChatWorkspaceDetail?.openInWorkspace?.(path); },
+      openInGit = function defaultOpenInGit() { return globalThis.rendererChatWorkspaceDetail?.openInGit?.(); },
     } = deps || {};
 
     if (!state) {
@@ -90,6 +113,13 @@
     let viewLoad = null;
     let hostEl = null;
     let pendingReveal = null;
+    // 'working_tree' only when opened from the session rail; a transcript "Review changes" keeps the ledger.
+    let pageScope = 'this_chat';
+    let ownerSessionId = '';
+    let workingTree = null;
+    let pageEl = null;
+    let workingTreeEl = null;
+    let pendingFocus = false;
     // Closure-scope so the opener cannot leak into serializable UI state.
     let previousFocusEl = null;
 
@@ -176,18 +206,59 @@
         return false;
       }
       capturePreviousFocus();
+      pageScope = 'this_chat';
+      ownerSessionId = '';
       pendingReveal = {
         scope,
         toolCallId: normalizeId(payload?.toolCallId),
         turnId: scope === 'session' ? '' : normalizeId(payload?.turnId),
         fileKey: scope === 'change' || scope === 'file' ? normalizeId(payload?.fileKey) : '',
       };
-      setMode('code_review');
-      syncArtifactReviewLayout();
+      if (typeof openArtifactRail === 'function') {
+        openArtifactRail('code_review');
+      } else {
+        setMode('code_review');
+        syncArtifactReviewLayout();
+      }
       ensureView().then((ready) => {
         if (disposed) return;
         if (!ready) {
           pendingReveal = null;
+          showComposerActionError(
+            new Error(jt('changes.view.loadFailed', 'The Changes view could not be loaded.')),
+            jt('codeReview.unavailableTitle', 'Code Review Unavailable')
+          );
+          return;
+        }
+        renderArtifactReviewPanel();
+      });
+      return true;
+    }
+
+    /**
+     * The session rail's Changes row: the read-only working-tree page for `ownerSessionId` (the panel
+     * owner, never the active session). `opener` gets focus back when the panel closes.
+     */
+    function openWorkingTree({ ownerSessionId: owner, opener } = {}) {
+      const id = normalizeId(owner);
+      // The page module loads lazily through ensureView() below; a load failure falls back to the ledger (applyScope).
+      if (!id) return false;
+      if (typeof claimOwner === 'function') claimOwner(id);
+      ownerSessionId = id;
+      pageScope = 'working_tree';
+      pendingReveal = null;
+      pendingFocus = true;
+      if (opener && opener.isConnected && typeof opener.focus === 'function') previousFocusEl = opener;
+      else capturePreviousFocus();
+      if (typeof openArtifactRail === 'function') {
+        openArtifactRail('code_review');
+      } else {
+        setMode('code_review');
+        syncArtifactReviewLayout();
+      }
+      ensureView().then((ready) => {
+        if (disposed) return;
+        if (!ready) {
           showComposerActionError(
             new Error(jt('changes.view.loadFailed', 'The Changes view could not be loaded.')),
             jt('codeReview.unavailableTitle', 'Code Review Unavailable')
@@ -211,14 +282,60 @@
       if (!panel) return null;
       if (!hostEl || !panel.contains(hostEl)) {
         const doc = panel.ownerDocument;
+        if (workingTree) workingTree.unmount();
         panel.innerHTML = '';
+        pageEl = doc.createElement('div');
+        pageEl.className = 'changes-detail-page';
+        workingTreeEl = doc.createElement('div');
         hostEl = doc.createElement('div');
         hostEl.className = 'changes-view-host';
-        panel.appendChild(hostEl);
+        pageEl.append(workingTreeEl, hostEl);
+        panel.appendChild(pageEl);
       }
       panel.classList.remove('hidden');
       if (surface.detailEmpty) surface.detailEmpty.classList.add('hidden');
       return hostEl;
+    }
+
+    function ensureWorkingTree() {
+      if (workingTree) return workingTree;
+      const module = getWorkingTreeModule();
+      if (!module || typeof module.createChangesWorkingTree !== 'function') return null;
+      workingTree = module.createChangesWorkingTree({
+        // The page follows the panel's session (the claimed owner in split view, so a focus change never
+        // retargets it), which is also the session the owner line names; the opener's owner is the fallback.
+        getSessionId: () => normalizeId(getActiveSessionId()) || ownerSessionId,
+        getBridge: getChatWorkspace,
+        openInWorkspace: (path) => openWorkingTreeFile(path),
+        openInGit: () => openInGit(),
+        onScopeChange: (next) => { pageScope = next === 'working_tree' ? 'working_tree' : 'this_chat'; applyScope(); },
+        log: appendClientLog,
+        escapeHtml,
+      });
+      return workingTree;
+    }
+
+    // The switch's two pages share one host: the working tree page or the ledger view.
+    function applyScope() {
+      if (!pageEl || !hostEl || !workingTreeEl) return;
+      const page = ensureWorkingTree();
+      pageEl.dataset.changesScope = page ? pageScope : 'this_chat';
+      if (!page) {
+        workingTreeEl.hidden = true;
+        hostEl.hidden = false;
+        view?.mount(hostEl);
+        return;
+      }
+      workingTreeEl.hidden = false;
+      page.mount(workingTreeEl);
+      page.setScope(pageScope);
+      hostEl.hidden = pageScope === 'working_tree';
+      if (pageScope === 'working_tree') view?.unmount();
+      else view?.mount(hostEl);
+      if (pendingFocus && pageScope === 'working_tree') {
+        pendingFocus = false;
+        workingTreeEl.querySelector('.inv-segmented-option[aria-checked="true"]')?.focus?.({ preventScroll: true });
+      }
     }
 
     function renderRailContent(surface) {
@@ -228,7 +345,8 @@
         ensureView().then((ready) => { if (ready && !disposed) renderArtifactReviewPanel(); });
         return;
       }
-      view.mount(host);
+      applyScope();
+      if (pageScope !== 'this_chat') return;
       if (pendingReveal) {
         const reveal = pendingReveal;
         pendingReveal = null;
@@ -256,7 +374,11 @@
       disposed = true;
       if (view) view.dispose();
       view = null;
+      if (workingTree) workingTree.dispose();
+      workingTree = null;
       hostEl = null;
+      pageEl = null;
+      workingTreeEl = null;
       if (!bound || !artifactReviewPanel) return;
       bound = false;
       artifactReviewPanel.removeEventListener('keydown', handleRailKeydown);
@@ -266,12 +388,14 @@
       bind,
       dispose,
       openCodeReviewTarget,
+      openWorkingTree,
       closeCodeReview,
       renderRailContent,
       handleRailKeydown,
       getView: () => view,
+      getWorkingTree: () => workingTree,
     };
   }
 
-  return { CHANGES_VIEW_SCRIPTS, createCodeReviewRail, loadChangesViewModules };
+  return { CHANGES_VIEW_SCRIPTS, WORKING_TREE_SCRIPTS, createCodeReviewRail, loadChangesViewModules };
 });

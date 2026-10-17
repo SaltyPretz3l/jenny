@@ -1,12 +1,18 @@
-"""Versioned one-shot MCP inspection request dispatch."""
+"""Versioned MCP inspection and prompt request dispatch."""
 
 from __future__ import annotations
 
+import re
 import threading
 from typing import Any
 
-from sidecar.ai.error_codes import CMP_PROTO_VERSION_MISMATCH
-from sidecar.protocol import MCP_INSPECT_METHOD
+from sidecar.ai.error_codes import (
+    CMP_MCP_CONFIG_INVALID,
+    CMP_MCP_SERVER_FAILED,
+    CMP_PROTO_VERSION_MISMATCH,
+)
+from sidecar.protocol import MCP_INSPECT_METHOD, MCP_PROMPT_GET_METHOD
+from sidecar.runtime.chat_models import TerminalChatStateError
 from sidecar.runtime.multiplexer import TurnCancellationHandle
 from sidecar.runtime.outcomes import ProcessOutcome
 from sidecar.runtime.rpc import result_response, validate_method_version
@@ -14,6 +20,7 @@ from sidecar.runtime.rpc import result_response, validate_method_version
 _INSPECTION_LOCK = threading.Lock()
 _INSPECTION_CANCEL_HANDLES: dict[Any, TurnCancellationHandle] = {}
 JSONRPC_CANCEL_REQUEST_METHOD = "$/cancelRequest"
+_JENNY_CODE_RE = re.compile(r"^CMP-[A-Z]+-\d{4}$")
 
 
 def inspect_server(params: Any, **kwargs: Any) -> dict[str, Any]:
@@ -60,6 +67,55 @@ def process_mcp_cancel_notification(message: dict[str, Any]) -> bool:
     return True
 
 
+def _prompt_params_valid(params: Any) -> bool:
+    return (
+        isinstance(params, dict)
+        and isinstance(params.get("server"), str)
+        and isinstance(params.get("name"), str)
+        and isinstance(params.get("arguments"), dict)
+        and all(isinstance(key, str) and isinstance(value, str)
+                for key, value in params["arguments"].items())
+    )
+
+
+def _get_prompt_result(params: Any, brain_container: Any, cancel_handle: Any) -> dict[str, Any]:
+    if not _prompt_params_valid(params):
+        return {"ok": False, "failure": {"code": CMP_MCP_CONFIG_INVALID,
+                                          "reason": "params_invalid"}}
+    client = getattr(getattr(brain_container, "stack", None), "mcp_client", None)
+    if client is None:
+        return {"ok": False, "failure": {"code": CMP_MCP_SERVER_FAILED,
+                                          "reason": "mcp_unavailable", "retryable": False}}
+    return _fetch_prompt_text(client, params, cancel_handle)
+
+
+def _fetch_prompt_text(client: Any, params: dict[str, Any], cancel_handle: Any) -> dict[str, Any]:
+    from sidecar.ai.mcp.exceptions import MCPError
+    from sidecar.ai.mcp.tool_surface import ToolSurfaceError
+
+    try:
+        text = client.get_prompt(
+            params["server"], params["name"], params["arguments"], cancel_handle=cancel_handle,
+        )
+        return {"ok": True, "server": params["server"], "name": params["name"],
+                "text": text, "chars": len(text)}
+    except MCPError as error:
+        # A stdio server's error.data.code is copied into MCPError.code verbatim; only a
+        # Jenny code may leave the sidecar.
+        code = error.code if _JENNY_CODE_RE.fullmatch(str(error.code)) else CMP_MCP_SERVER_FAILED
+        return {"ok": False, "failure": {"code": code, "reason": "prompt_failed",
+                                          "retryable": error.retryable}}
+    except ToolSurfaceError as error:
+        return {"ok": False, "failure": {"code": CMP_MCP_SERVER_FAILED, "reason": error.reason,
+                                          "retryable": False, "detail": error.log_data()}}
+    except TerminalChatStateError:
+        return {"ok": False, "failure": {"code": CMP_MCP_SERVER_FAILED,
+                                          "reason": "prompt_cancelled", "retryable": True}}
+    except Exception as error:  # noqa: BLE001
+        return {"ok": False, "failure": {"code": CMP_MCP_SERVER_FAILED,
+                                          "reason": type(error).__name__[:64]}}
+
+
 def process_mcp_method(  # noqa: PLR0913 - matches the shared dispatcher seam
     method: str,
     message_id: Any,
@@ -69,7 +125,7 @@ def process_mcp_method(  # noqa: PLR0913 - matches the shared dispatcher seam
     logger: Any,
 ) -> ProcessOutcome | None:
     del logger
-    if method != MCP_INSPECT_METHOD:
+    if method not in {MCP_INSPECT_METHOD, MCP_PROMPT_GET_METHOD}:
         return None
     with _INSPECTION_LOCK:
         cancel_handle = _INSPECTION_CANCEL_HANDLES.get(message_id)
@@ -87,14 +143,17 @@ def process_mcp_method(  # noqa: PLR0913 - matches the shared dispatcher seam
             return ProcessOutcome(initialized, False, version_error, [])
         if message_id is None:
             return ProcessOutcome(initialized, False, None, [])
-        runtime_config = brain_container.stack.config
-        result = inspect_server(
-            params,
-            allow_private_addresses=bool(
-                getattr(runtime_config, "tools_web_allow_private_addresses", False)
-            ),
-            cancel_handle=cancel_handle,
-        )
+        if method == MCP_PROMPT_GET_METHOD:
+            result = _get_prompt_result(params, brain_container, cancel_handle)
+        else:
+            runtime_config = brain_container.stack.config
+            result = inspect_server(
+                params,
+                allow_private_addresses=bool(
+                    getattr(runtime_config, "tools_web_allow_private_addresses", False)
+                ),
+                cancel_handle=cancel_handle,
+            )
         return ProcessOutcome(initialized, False, result_response(message_id, result), [])
     finally:
         complete_mcp_inspection(message_id, cancel_handle)

@@ -20,6 +20,7 @@ from sidecar.ai.feature_flags import (
     is_feature_flag_enabled,
 )
 from sidecar.ai.routing.router import ChatDecision
+from sidecar.ai.routing.turn_boundary import TurnBoundary
 from sidecar.ai.routing.turn_event_contract import build_canonical_turn_event
 from sidecar.ai.thinking_guard import resolve_thinking_budget_chars
 from sidecar.ai.tools.trusted_attachments import attachment_refs
@@ -379,7 +380,11 @@ def _chat_response_from_decision(
     )
     failed_tool_result_count = len(decision.tool_results) - successful_tool_result_count
     fallback_applied = False
-    if not visible_response_text.strip() and decision.tool_results:
+    # A turn that ended at a session-proposal boundary may have no visible text.
+    turn_boundary = getattr(decision, "turn_boundary", None)
+    if not isinstance(turn_boundary, TurnBoundary):
+        turn_boundary = None
+    if not visible_response_text.strip() and decision.tool_results and turn_boundary is None:
         visible_response_text = _toolwork_only_fallback(
             successful=successful_tool_result_count,
             failed=failed_tool_result_count,
@@ -511,6 +516,7 @@ def _chat_response_from_decision(
                 if getattr(decision, "resumable_stop", None)
                 else {}
             ),
+            **(turn_boundary.done_params() if turn_boundary is not None else {}),
         },
     )
     if live_notification_writer is not None:

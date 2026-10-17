@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 
 const { loadModel } = require('../services/backend/backend-runtime');
 const { managedLoadPatch } = require('../services/backend/managed-engine-load');
+const { managedModelKey } = require('../services/shell-config-engines');
 
 test('managed load failures carry their cause while a reused server remains unloaded', () => {
   for (const [state, lastError, expectedCause] of [
@@ -48,6 +49,40 @@ function makeManagedLlamaLoadService({ managerState = 'ready', managerError = ''
   };
   return service;
 }
+
+test('a managed GGUF overrides the derived Ollama engine before sidecar initialization', async () => {
+  const service = makeManagedLlamaLoadService();
+  const model = 'qwen3.8-27b-ud-q6_k';
+  const managed = service.configService.getLocalEngines().openaiCompatible.managed;
+  managed.perModel[managedModelKey(model)] = { ...managed.perModel['ornith-9b'] };
+  service.configService.getState = () => ({ preferredEngineType: 'ollama' });
+  service._modelEngineHints = new Map();
+  await loadModel(service, model);
+  assert.deepEqual(service.calls.find(([name]) => name === 'initialize'), [
+    'initialize', { reason: 'model_load', requestedModel: model, requestedEngineType: 'openai-compatible' },
+  ]);
+  assert.equal(service.calls.some(([name]) => name === 'ensureRunning'), true);
+  assert.equal(service.calls.some(([name]) => name === 'stop'), false);
+  assert.deepEqual(service.logs.find(({ event }) => event === 'backend.model_load_engine_hint_overridden'), {
+    level: 'INFO', event: 'backend.model_load_engine_hint_overridden',
+    details: { model, requested_engine: 'ollama', managed_kind: 'llama-server', source: '' },
+  });
+});
+
+test('an explicit or catalog-hinted Ollama engine for a tag that is also managed keeps Ollama', async () => {
+  for (const [request, hints] of [
+    [{ model: 'ornith:9b', engine_type: 'ollama' }, new Map()],
+    ['ornith:9b', new Map([['ornith:9b', 'ollama']])],
+  ]) {
+    const service = makeManagedLlamaLoadService();
+    service._modelEngineHints = hints;
+    await loadModel(service, request);
+    assert.deepEqual(service.calls.find(([name]) => name === 'initialize'), [
+      'initialize', { reason: 'model_load', requestedModel: 'ornith:9b', requestedEngineType: 'ollama' },
+    ]);
+    assert.equal(service.logs.some(({ event }) => event === 'backend.model_load_engine_hint_overridden'), false);
+  }
+});
 test('managed llama-server load unloads Ollama, starts the server, and persists the selection after initialization', async () => {
   const service = makeManagedLlamaLoadService();
   await loadModel(service, { model: 'ornith:9b', engine_type: 'openai-compatible' });

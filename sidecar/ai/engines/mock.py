@@ -90,7 +90,9 @@ class MockEngine(BaseEngine):
         system: str = "",
         messages: Optional[List[EngineMessage]] = None,
         response_format: Optional["ResponseFormat"] = None,
+        cancel_handle: Any = None,
     ) -> str:
+        _ = cancel_handle  # No transport to sever.
         _ = max_tokens
         _ = temperature
         _ = reasoning_effort

@@ -3,6 +3,10 @@
 Local LLMs may describe tool usage in prose or semi-structured text instead
 of producing structured ``tool_calls`` in the API response.  This module
 extracts those in-band tool call attempts so the agent loop can execute them.
+A fenced or bare call that the model follows with a made-up result object is
+shown, not issued (gate F26, 2026-10-14: "write the call out, do not call it");
+the parser sees only the reply, never the user's instruction, so that is the
+whole of the user-intent coverage here.
 """
 
 from __future__ import annotations
@@ -75,6 +79,61 @@ def _shown_not_issued(text: str, start: int, *, fenced: bool = False) -> bool:
     stripped = line.strip()
     return (stripped.startswith(">") or stripped[-1:] in {"'", '"'}
             or _EXAMPLE_MARKER_RE.search(line) is not None)
+
+
+# Whitespace and fence lines between a call and the JSON object that follows it.
+_RESULT_LEAD_RE = re.compile(r"(?:\s*(?:```|~~~)[^\n]*)*\s*(?=\{)")
+_CALL_NAME_KEYS = ("name", "tool", "function")
+_CALL_ARGS_KEYS = ("arguments", "parameters", "args", "input")
+
+
+def _result_follows(text: str, end: int, known_tool_names: frozenset[str]) -> bool:
+    """Whether a JSON object that is not a call follows the call ending at ``end``.
+
+    An issued call waits for the real result; a reply that goes on to write
+    one (``{"output": ...}``) is showing the call (F26). Fences and blank lines
+    in between do not count. Only an object that parses counts (a truncated or
+    prose-like brace is not a result), and one shaped like a call, in any
+    dialect, known tool or not, or an argument-free call to a known tool,
+    keeps a multi-call reply issued.
+    """
+    match = _RESULT_LEAD_RE.match(text, end)
+    if match is None:
+        return False
+    try:
+        value, _end = json.JSONDecoder().raw_decode(text, match.end())
+    except ValueError:
+        return False
+    if not isinstance(value, dict):
+        return False
+    named = any(key in value for key in _CALL_NAME_KEYS)
+    return not named or not (
+        any(key in value for key in _CALL_ARGS_KEYS)
+        or str(value.get("name") or "").strip() in known_tool_names
+    )
+
+
+def _is_call(raw_json: str, known_tool_names: frozenset[str]) -> bool:
+    obj, _tags = _parse_dict_with_tags(raw_json)
+    return _build_tool_call_from_dict(obj, known_tool_names) is not None
+
+
+def _fenced_calls_shown(text: str, known_tool_names: frozenset[str]) -> int:
+    """How many Format 2 candidates the reply shows next to a made-up result (0: issued)."""
+    matches = list(_TOOL_CALL_MD_RE.finditer(text))
+    for match in matches:
+        # A fence labelled as an example is never issued, so its result is no veto.
+        if _shown_not_issued(text, match.start(), fenced=True):
+            continue
+        payload = match.group(1)
+        inner = extract_balanced_json_objects(payload)
+        if not inner or not _is_call(inner[0], known_tool_names):
+            continue
+        after_call = payload.find(inner[0]) + len(inner[0])
+        if (len(inner) > 1 and _result_follows(payload, after_call, known_tool_names)) \
+                or _result_follows(text, match.end(), known_tool_names):
+            return len(matches)
+    return 0
 
 
 def _code_spans(text: str) -> List[Tuple[int, int]]:
@@ -240,6 +299,7 @@ def _extract_balanced_calls(
     with empty arguments.
     """
     calls: List[ToolCallRequest] = []
+    remaining_before = remaining
     code_spans = _code_spans(text)
     for candidate in extract_balanced_json_objects(text):
         position = text.find(candidate)
@@ -249,11 +309,15 @@ def _extract_balanced_calls(
         if obj is None or not isinstance(obj.get("arguments"), dict):
             continue
         call = _build_tool_call_from_dict(obj, known_tool_names)
-        if call is not None:
-            repair_tags = heal_tags or ("balanced_extraction",)
-            record_repair(repair_tags)
-            calls.append(replace(call, argument_repairs=repair_tags))
-            remaining = remaining.replace(candidate, "", 1)
+        if call is None:
+            continue
+        if _result_follows(text, position + len(candidate), known_tool_names):
+            logger.info("Skipped %d bare tool call(s): a result follows the call", len(calls) + 1)
+            return [], remaining_before
+        repair_tags = heal_tags or ("balanced_extraction",)
+        record_repair(repair_tags)
+        calls.append(replace(call, argument_repairs=repair_tags))
+        remaining = remaining.replace(candidate, "", 1)
     return calls, remaining
 
 
@@ -312,9 +376,13 @@ def extract_inband_tool_calls_detailed(
 
     # --- Format 2: Markdown code blocks ---
     if not calls:
-        calls, remaining = _extract_wrapped_calls(
-            text, remaining, known_tool_names, _TOOL_CALL_MD_RE
-        )
+        shown = _fenced_calls_shown(text, known_tool_names)
+        if shown:
+            logger.info("Skipped %d fenced tool call(s): a result follows the call", shown)
+        else:
+            calls, remaining = _extract_wrapped_calls(
+                text, remaining, known_tool_names, _TOOL_CALL_MD_RE
+            )
 
     # --- Format 3: function-call syntax tool_name({...}) ---
     if not calls:

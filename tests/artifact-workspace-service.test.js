@@ -342,7 +342,14 @@ test('ArtifactWorkspaceService redacts paths from renderer-facing mutation resul
   service._writeFileAtomic = async (targetPath) => { filesystemPaths.push(targetPath); };
   service.getSessionScratchDir = async () => path.dirname(artifactPath);
   service._assertRealPathInside = async (targetPath) => { filesystemPaths.push(targetPath); };
-  service._fs = { rm: async (targetPath) => { filesystemPaths.push(targetPath); } };
+  const unlinkedPaths = [];
+  service._fs = {
+    lstat: async (targetPath) => {
+      filesystemPaths.push(targetPath);
+      return { isDirectory: () => false, isSymbolicLink: () => false };
+    },
+    unlink: async (targetPath) => { filesystemPaths.push(targetPath); unlinkedPaths.push(targetPath); },
+  };
 
   const results = [
     await service.saveArtifact('session-safe', 'artifact_safe_note', 'updated'),
@@ -357,6 +364,8 @@ test('ArtifactWorkspaceService redacts paths from renderer-facing mutation resul
   assert.equal(results.every((result) => result.artifact.absolute_path === '[redacted:path]'), true);
   assert.equal(JSON.stringify(results).includes(artifactPath), false);
   assert.equal(filesystemPaths.every((targetPath) => targetPath === artifactPath), true);
+  // Only the available artifact is removed from disk; the missing one is a no-op.
+  assert.deepEqual(unlinkedPaths, [artifactPath]);
 });
 
 test('ArtifactWorkspaceService resolves redacted artifact paths from safe display path', async () => {

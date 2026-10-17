@@ -437,7 +437,9 @@
         // Queue projection: the place in line stays unknown until the runtime
         // reports it, so the strip can say "queued" without inventing a number.
         prompt: String(visiblePrompt || ''), position: null, workStatus: 'pending',
-        revision: 0, submissionSequence: null };
+        revision: 0, submissionSequence: null,
+        // Narrow per-send hook (/linked): called once with this send's runtime admission receipt.
+        onAdmission: typeof context.settings?.onAdmission === 'function' ? context.settings.onAdmission : null };
       // An idle Send is direct; only work behind an active turn or another
       // pending Send belongs in the strip. Sticky: it stays queued until admitted.
       entry.queued = multiStreamController?.isSessionSendBusy?.(entry.sessionId) === true
@@ -547,7 +549,7 @@
             // A wait is explained in the composer; only a decision interrupts.
             const refusal = _error?.result ? refusalFor(_error.result) : null;
             if (refusal?.severity === 'calm') {
-              c.setComposerStatusNotice(refusal.notice, { owner: 'runtime:refusal', tone: 'warning' });
+              c.setComposerStatusNotice(refusal.notice, { owner: 'runtime:refusal', tone: 'warning', sessionId: entry.sessionId });
             } else {
               c.showComposerActionError?.(new Error(refusal?.hint
                 || jt('runtime.ui.failedAction', 'The change could not be applied. Refresh and try again.')),
@@ -576,6 +578,8 @@
       if (entry.sessionId !== receipt.session_id || (entry.workId && entry.workId !== receipt.work_id)
         || (entry.turnId && entry.turnId !== receipt.turn_id)) return false;
       entry.admitted = true; entry.workId = receipt.work_id; entry.turnId = receipt.turn_id;
+      const onAdmission = entry.onAdmission; entry.onAdmission = null;
+      if (onAdmission) { try { onAdmission({ ...receipt }); } catch (_error) { /* an observer never blocks admission */ } }
       pending.delete(entry.key);
       helpers.adoptPersistedUserMessageIdInStore(entry.sessionId, entry.userId, receipt.user_message_id);
       const messages = c.getSessionMessages(entry.sessionId).map(row => row.id === receipt.user_message_id

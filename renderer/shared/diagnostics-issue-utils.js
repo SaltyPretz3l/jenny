@@ -1,9 +1,10 @@
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) { module.exports = factory(); return; }
-  root.diagnosticsIssueUtils = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  if (typeof module === 'object' && module.exports) { module.exports = factory(function () { return require('./diagnostics-issue-explanations'); }); return; }
+  root.diagnosticsIssueUtils = factory(function () { return root.rendererDiagnosticsIssueExplanations || {}; });
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (getExplanations) {
   'use strict';
   var RANK = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
+  function severityRank(level) { return RANK[level] || 0; }
   function text(value) { return String(value == null ? '' : value).trim(); }
   function dataOf(entry) {
     return entry && entry.data && typeof entry.data === 'object' ? entry.data
@@ -11,7 +12,8 @@
   }
   function errorCode(entry) {
     var data = dataOf(entry);
-    return text(data.error_code || data.errorCode || data.code || entry && entry.error_code);
+    var code = typeof data.code === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{1,63}$/.test(data.code) ? data.code : '';
+    return text(data.error_code || data.errorCode || code || entry && entry.error_code);
   }
   function correlations(entry) {
     var data = dataOf(entry); var out = {};
@@ -35,19 +37,32 @@
     if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) return aTime - bTime;
     return (aSequence || 0) - (bSequence || 0);
   }
+  function issueIdentity(entry) {
+    var component = text(entry.component) || text(entry.layer || entry.source) || 'unknown';
+    var event = text(entry.event) || 'unknown.event';
+    var code = errorCode(entry); var level = text(entry.level).toUpperCase();
+    var data = dataOf(entry); var layer = text(entry.layer || entry.source);
+    var dedupeKey = layer === 'renderer' || component.startsWith('renderer.') ? text(data.dedupe_key) : '';
+    var matches = getExplanations().matchIssueVariant;
+    var variant = matches ? matches({ event: event, severity: level, message: text(entry.message || data.message || event) }) : false;
+    return { component: component, event: event, error_code: code, severity: level,
+      key: [component, event, code, level, dedupeKey, variant].join('\u0000') };
+  }
+  function issueEntryMatches(group, entry) {
+    if (!group || !entry) return false;
+    var identity = issueIdentity(entry);
+    return (identity.severity === 'WARN' || identity.severity === 'ERROR') && group.key === identity.key;
+  }
   function groupIssues(entries) {
     var groups = new Map();
     (Array.isArray(entries) ? entries : []).forEach(function (entry) {
       var level = text(entry && entry.level).toUpperCase();
       if (level !== 'WARN' && level !== 'ERROR') return;
-      var component = text(entry.component) || text(entry.layer || entry.source) || 'unknown';
-      var event = text(entry.event) || 'unknown.event';
-      var code = errorCode(entry);
-      var key = [component, event, code].join('\u0000');
+      var identity = issueIdentity(entry); var key = identity.key;
       var current = groups.get(key);
-      if (!current) current = { key: key, component: component, event: event, error_code: code, count: 0, severity: level, latest: entry, remediation: '', remediationEntry: null };
+      if (!current) current = Object.assign({}, identity, { count: 0, latest: entry, entry_ids: [], remediation: '', remediationEntry: null });
       current.count += 1;
-      if ((RANK[level] || 0) > (RANK[current.severity] || 0)) current.severity = level;
+      current.entry_ids.push(entry.entry_id || entry.origin_entry_id || entry.sequence);
       if (compareEntriesChronologically(entry, current.latest) >= 0) current.latest = entry;
       var remediation = text(dataOf(entry).remediation);
       if (remediation && (!current.remediationEntry || compareEntriesChronologically(entry, current.remediationEntry) >= 0)) {
@@ -64,14 +79,18 @@
         error_code: group.error_code,
         count: group.count,
         severity: group.severity,
+        entry_ids: group.entry_ids,
+        data: data,
+        layer: text(group.latest.layer || group.latest.source),
         message: text(group.latest.message || data.message || group.event),
         ts: text(group.latest.ts),
         remediation: group.remediation,
         correlations: correlations(group.latest),
       };
     }).sort(function (a, b) {
-      return (RANK[b.severity] - RANK[a.severity]) || String(b.ts).localeCompare(String(a.ts));
+      return severityRank(b.severity) - severityRank(a.severity)
+        || compareEntriesChronologically(b, a) || String(b.ts).localeCompare(String(a.ts));
     });
   }
-  return Object.freeze({ groupIssues: groupIssues, errorCode: errorCode, correlations: correlations, compareEntriesChronologically: compareEntriesChronologically });
+  return Object.freeze({ groupIssues: groupIssues, issueEntryMatches: issueEntryMatches, severityRank: severityRank, errorCode: errorCode, correlations: correlations, compareEntriesChronologically: compareEntriesChronologically });
 });

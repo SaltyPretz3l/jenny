@@ -17,10 +17,19 @@ from sidecar.protocol import (
     CATALOG_STATUS_METHOD,
     CHAT_COMPACT_METHOD,
     COMMIT_GENERATE_MESSAGE_METHOD,
+    CONTEXT_PREVIEW_METHOD,
+    CONVERSATIONS_EMBED_STEP_METHOD,
+    CONVERSATIONS_INDEX_SESSION_METHOD,
+    CONVERSATIONS_INDEX_STATE_METHOD,
+    CONVERSATIONS_PURGE_METHOD,
+    CONVERSATIONS_SEARCH_METHOD,
     HARDWARE_PROFILE_METHOD,
     HARDWARE_VRAM_USAGE_METHOD,
     MCP_INSPECT_METHOD,
+    MCP_PROMPT_GET_METHOD,
+    MEMORY_EMBED_STEP_METHOD,
     MEMORY_LIST_METHOD,
+    MEMORY_REFLECT_METHOD,
     MODELS_LIST_METHOD,
     MODELS_OLLAMA_BLOB_METHOD,
     MODELS_RESIDENT_METHOD,
@@ -40,6 +49,8 @@ from sidecar.protocol import (
     WORKSPACE_UNDO_CHANGE_SET_METHOD,
 )
 from sidecar.runtime.chat import session_id_from_params
+from sidecar.runtime.inference_admission import bind_auxiliary_cancel_handle
+from sidecar.runtime.multiplexer import DuplicateRequestIdError
 from sidecar.runtime.outcomes import ProcessOutcome
 from sidecar.runtime.request_dispatch_mcp import (
     complete_mcp_inspection,
@@ -53,6 +64,7 @@ DEFAULT_MAX_ACTIVE_HARDWARE_PROFILE_WORKERS = 2
 DEFAULT_MAX_ACTIVE_COMPACT_WORKERS = 1
 DEFAULT_MAX_ACTIVE_MCP_INSPECT_WORKERS = 1
 AUXILIARY_FAMILY_BY_METHOD: dict[str, str] = {
+    CONTEXT_PREVIEW_METHOD: "context_preview",
     MODELS_LIST_METHOD: "models",
     MODELS_UNLOAD_METHOD: "models",
     MODELS_RESIDENT_METHOD: "models",
@@ -62,9 +74,13 @@ AUXILIARY_FAMILY_BY_METHOD: dict[str, str] = {
     # caller caches that rejection as "no GGUF source" for 30s.
     MODELS_OLLAMA_BLOB_METHOD: "blob",
     MEMORY_LIST_METHOD: "memory",
+    # Memory vector indexing (row 58 W4): one step at a time, off the dispatch loop.
+    MEMORY_EMBED_STEP_METHOD: "memory_index",
     HARDWARE_VRAM_USAGE_METHOD: "probe",
     SUGGESTIONS_GENERATE_METHOD: "inference",
     COMMIT_GENERATE_MESSAGE_METHOD: "inference",
+    # Background reflection (row 58 W2): preemptible through chat.cancel.
+    MEMORY_REFLECT_METHOD: "inference",
     WORKSPACE_LIST_CHANGE_SETS_METHOD: "workspace_recovery",
     WORKSPACE_PREFLIGHT_UNDO_METHOD: "workspace_recovery",
     WORKSPACE_UNDO_CHANGE_SET_METHOD: "workspace_recovery",
@@ -85,26 +101,48 @@ AUXILIARY_FAMILY_BY_METHOD: dict[str, str] = {
     CATALOG_PURGE_METHOD: "catalog",
     CATALOG_SEARCH_METHOD: "catalog_read",
     CATALOG_STATUS_METHOD: "catalog_read",
+    # Conversation index: writes (index/purge/embed) one at a time; searches and
+    # the state read stay available while a write runs.
+    CONVERSATIONS_INDEX_SESSION_METHOD: "conversation_index",
+    CONVERSATIONS_PURGE_METHOD: "conversation_index",
+    CONVERSATIONS_EMBED_STEP_METHOD: "conversation_index",
+    CONVERSATIONS_SEARCH_METHOD: "conversation_read",
+    CONVERSATIONS_INDEX_STATE_METHOD: "conversation_read",
 }
 DEFAULT_MAX_WORKERS_BY_FAMILY: dict[str, int] = {
+    "context_preview": 2,
     "models": 2,
     # Must stay >= OLLAMA_SOURCE_BATCH in services/main/llama-server-ipc-handlers.js.
     "blob": 4,
     "memory": 2,
+    "memory_index": 1,
     "probe": 1,
     "inference": 1,
     "workspace_recovery": 1,
     "catalog": 1,
     "catalog_read": 2,
+    "conversation_index": 1,
+    "conversation_read": 2,
 }
 AUXILIARY_WORKER_METHODS = frozenset((
     HARDWARE_PROFILE_METHOD,
     CHAT_COMPACT_METHOD,
     MCP_INSPECT_METHOD,
+    MCP_PROMPT_GET_METHOD,
     *AUXILIARY_FAMILY_BY_METHOD,
 ))
 RequestRunner = Callable[..., ProcessOutcome]
 OutcomeSender = Callable[..., None]
+AUXILIARY_CANCELLED_REASON = "auxiliary_cancelled"
+
+
+def _cancelled_response(message_id: Any) -> dict[str, Any]:
+    return error_response(
+        message_id,
+        code=-32000,
+        message="auxiliary request cancelled",
+        data={"reason": AUXILIARY_CANCELLED_REASON},
+    )
 
 
 class AuxiliaryTransport(Protocol):
@@ -168,18 +206,23 @@ def create_process_message_runner(  # explicit server dependencies
         *,
         write_frame: Callable[[dict[str, Any]], None] | None = None,
         response_reader_factory: Any | None = None,
+        cancel_handle: Any | None = None,
     ) -> ProcessOutcome:
         try:
-            return request_runner()(
-                message,
-                initialized,
-                brain_container=brain_container(),
-                logger=logger,
-                write_message=write_frame or write_message,
-                read_message=read_message,
-                response_reader_factory=response_reader_factory,
-            )
+            with bind_auxiliary_cancel_handle(cancel_handle):
+                return request_runner()(
+                    message,
+                    initialized,
+                    brain_container=brain_container(),
+                    logger=logger,
+                    write_message=write_frame or write_message,
+                    read_message=read_message,
+                    response_reader_factory=response_reader_factory,
+                )
         except InferenceAdmissionError as error:
+            if cancel_handle is not None and cancel_handle.cancelled:
+                # A cancel that ended the admit exchange is a cancel, not a refusal.
+                raise
             return ProcessOutcome(
                 initialized=initialized,
                 shutdown_requested=False,
@@ -210,7 +253,21 @@ def _prune_finished_workers(worker_threads: set[Any]) -> None:
         worker_threads.discard(thread)
 
 
-def _make_auxiliary_worker(  # noqa: PLR0913
+def _register_auxiliary_cancel_handle(
+    method_label: str, message: dict[str, Any], transport: AuxiliaryTransport
+) -> Any | None:
+    """Make an inference-family request a chat.cancel target by its request_id."""
+    if AUXILIARY_FAMILY_BY_METHOD.get(method_label) != "inference":
+        return None
+    params = message.get("params")
+    request_id = params.get("request_id") if isinstance(params, dict) else None
+    register = getattr(transport, "register_auxiliary_handle", None)
+    if not isinstance(request_id, str) or not request_id.strip() or not callable(register):
+        return None
+    return register(request_id)
+
+
+def _make_auxiliary_worker(  # noqa: PLR0913, C901 -- one worker lifecycle
     *,
     method_label: str,
     message: dict[str, Any],
@@ -222,25 +279,63 @@ def _make_auxiliary_worker(  # noqa: PLR0913
     on_finish: Callable[[], None] | None = None,
 ) -> Callable[[], None]:
     def _worker() -> None:
+        cancel_handle: Any | None = None
+        started_at = time.monotonic()
         try:
             if shutdown_gate.closed:
                 return
             params = message.get("params")
+            runner_kwargs: dict[str, Any] = {}
             if isinstance(params, dict) and "inference_context" in params:
-                outcome = request_runner(
-                    message,
-                    True,
-                    write_frame=transport.send_control,
-                    response_reader_factory=getattr(
+                runner_kwargs = {
+                    "write_frame": transport.send_control,
+                    "response_reader_factory": getattr(
                         transport, "approval_reader_factory", None
                     ),
-                )
-            else:
-                outcome = request_runner(message, True)
+                }
+            cancel_handle = _register_auxiliary_cancel_handle(method_label, message, transport)
+            if cancel_handle is not None:
+                runner_kwargs["cancel_handle"] = cancel_handle
+                cancel_handle.raise_if_cancelled()
+            outcome = request_runner(message, True, **runner_kwargs)
             shutdown_gate.deliver(
                 lambda: outcome_sender(outcome, multiplexer=transport)
             )
-        except InferenceAdmissionError as error:
+        except DuplicateRequestIdError:
+            if shutdown_gate.closed or message.get("id") is None:
+                return
+            shutdown_gate.deliver(lambda: transport.send_control(error_response(
+                message.get("id"), code=-32600,
+                message=f"duplicate active {method_label} request id")))
+        except Exception as error:  # noqa: BLE001 -- every exit answers the request once
+            if cancel_handle is None or not cancel_handle.cancelled:
+                _answer_worker_error(error)
+                return
+            logger.info(
+                "Auxiliary request cancelled",
+                extra={
+                    "event": "sidecar.runtime.auxiliary_cancelled",
+                    "request_id": cancel_handle.request_id,
+                    "method": method_label,
+                    "elapsed_ms": int((time.monotonic() - started_at) * 1000),
+                },
+            )
+            if shutdown_gate.closed or message.get("id") is None:
+                return
+            shutdown_gate.deliver(
+                lambda: transport.send_control(_cancelled_response(message.get("id")))
+            )
+        finally:
+            if cancel_handle is not None:
+                unregister = getattr(transport, "unregister_auxiliary_handle", None)
+                if callable(unregister):
+                    unregister(cancel_handle)
+            if on_finish is not None:
+                on_finish()
+
+    def _answer_worker_error(error: Exception) -> None:
+        # Called from _worker's except block, so logger.exception keeps the traceback.
+        if isinstance(error, InferenceAdmissionError):
             if shutdown_gate.closed or message.get("id") is None:
                 return
             reason = error.reason
@@ -254,28 +349,25 @@ def _make_auxiliary_worker(  # noqa: PLR0913
                     )
                 )
             )
-        except Exception as error:
-            if shutdown_gate.closed:
-                return
-            error_type = type(error).__name__
-            logger.exception("fatal %s worker error", method_label)
-            if message.get("id") is None:
-                return
-            try:
-                shutdown_gate.deliver(
-                    lambda: transport.send_control(
-                        error_response(
-                            message.get("id"),
-                            code=-32603,
-                            message=f"internal error: {error_type}",
-                        )
+            return
+        if shutdown_gate.closed:
+            return
+        error_type = type(error).__name__
+        logger.exception("fatal %s worker error", method_label)
+        if message.get("id") is None:
+            return
+        try:
+            shutdown_gate.deliver(
+                lambda: transport.send_control(
+                    error_response(
+                        message.get("id"),
+                        code=-32603,
+                        message=f"internal error: {error_type}",
                     )
                 )
-            except Exception:  # noqa: BLE001
-                logger.debug("failed to send %s worker error", method_label)
-        finally:
-            if on_finish is not None:
-                on_finish()
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("failed to send %s worker error", method_label)
 
     return _worker
 
@@ -379,17 +471,15 @@ def start_mcp_inspect_worker_if_allowed(  # noqa: PLR0913
     shutdown_gate: AuxiliaryWorkerGate | None = None,
 ) -> bool:
     message_id = message.get("id")
+    method_label = str(message.get("method") or MCP_INSPECT_METHOD)
     handle, created = prepare_mcp_inspection(message_id)
     if not created:
         if message_id is not None:
             transport.send_control(error_response(
-                message_id,
-                code=-32600,
-                message="duplicate active mcp.inspect request id",
-            ))
+                message_id, code=-32600, message=f"duplicate active {method_label} request id"))
         return False
     started = start_auxiliary_worker_if_allowed(
-        method_label="mcp.inspect",
+        method_label=method_label,
         limit_event="sidecar.runtime.mcp_inspect_worker_limit_exceeded",
         limit_reason="too_many_mcp_inspect_requests",
         message=message,
@@ -467,7 +557,7 @@ def route_auxiliary_request(  # noqa: PLR0913 -- explicit server-loop wiring
         if multiplexer is not None
         else (lambda outcome, **_kwargs: write_outcome_direct(outcome))
     )
-    if method == MCP_INSPECT_METHOD:
+    if method in {MCP_INSPECT_METHOD, MCP_PROMPT_GET_METHOD}:
         return start_mcp_inspect_worker_if_allowed(
             message=message,
             transport=transport,

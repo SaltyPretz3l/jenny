@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,7 +17,7 @@ from sidecar.ai.tools.builtins.skills import (
     configure_skill_tool,
     load_skill_tool,
 )
-from sidecar.ai.tools.contracts import ToolExecutionFailure
+from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 
@@ -302,3 +304,228 @@ def test_configure_skill_tool_with_none_config_clears_scopes(tmp_path: Path) -> 
     with pytest.raises(ToolExecutionFailure) as excinfo:
         load_skill_tool({"name": "some_skill"}, _guard())
     assert excinfo.value.code == CMP_TOOL_SKILL_NOT_FOUND
+
+
+# ── references/<file>.md reads (row 53 S6) ───────────────────────────
+
+
+def _write_reference(skill_path: Path, file_name: str, body: str) -> Path:
+    references_dir = skill_path.parent / "references"
+    references_dir.mkdir(exist_ok=True)
+    reference_path = references_dir / file_name
+    reference_path.write_text(body, encoding="utf-8")
+    return reference_path
+
+
+def test_skill_md_result_shape_is_pinned(tmp_path: Path) -> None:
+    bundled_root = tmp_path / "bundled"
+    skill_path = _write_skill(bundled_root, "pinned", body="Pinned body.\n")
+    configure_skill_tool({"skills_bundled_root": str(bundled_root)})
+
+    result = load_skill_tool({"name": "pinned", "scope": "bundled"}, _guard())
+
+    assert result == ToolHandlerResult(
+        output=skill_path.read_text(encoding="utf-8"),
+        metadata={"scope": "bundled", "name": "pinned", "truncated": False},
+    )
+
+
+def test_reference_returns_file_body_with_reference_metadata(tmp_path: Path) -> None:
+    bundled_root = tmp_path / "bundled"
+    skill_path = _write_skill(bundled_root, "rea", body="See references/x.md.\n")
+    _write_reference(skill_path, "x.md", "# Reference X\n\nDetail.\n")
+    configure_skill_tool({"skills_bundled_root": str(bundled_root)})
+
+    result = load_skill_tool(
+        {"name": "rea", "scope": "bundled", "reference": "references/x.md"}, _guard()
+    )
+
+    assert result == ToolHandlerResult(
+        output="# Reference X\n\nDetail.\n",
+        metadata={
+            "scope": "bundled",
+            "name": "rea",
+            "truncated": False,
+            "reference": "references/x.md",
+        },
+    )
+
+
+def test_reference_read_is_bounded_by_the_skill_directory_not_the_scope(tmp_path: Path) -> None:
+    # Astra W2 F2: the bounded reader re-checks containment at open time; for a
+    # reference that authority is the skill directory, so a link swapped in after
+    # validation cannot hand back a sibling skill's file. SKILL.md keeps the scope.
+    bundled_root = tmp_path / "bundled"
+    skill_path = _write_skill(bundled_root, "rea", body="See references/x.md.\n")
+    _write_reference(skill_path, "x.md", "# Reference X\n")
+    configure_skill_tool({"skills_bundled_root": str(bundled_root)})
+    seen: list[Path] = []
+    real_reader = skills_module.read_bounded_context_text
+
+    def spy(path: Path, *, authorized_root: Path, **kwargs: object) -> object:
+        seen.append(authorized_root)
+        return real_reader(path, authorized_root=authorized_root, **kwargs)  # type: ignore[arg-type]
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(skills_module, "read_bounded_context_text", spy)
+        load_skill_tool({"name": "rea", "scope": "bundled", "reference": "references/x.md"}, _guard())
+        load_skill_tool({"name": "rea", "scope": "bundled"}, _guard())
+
+    assert seen == [skill_path.parent.resolve(), bundled_root]
+
+
+@pytest.mark.parametrize(
+    "bad_reference",
+    [
+        "../x.md",
+        "references/../SKILL.md",
+        "references/sub/x.md",
+        "references/x.txt",
+        "references/.hidden.md",
+        "references/x.md\n",
+        "references\\x.md",
+        "/references/x.md",
+        "C:/skills/rea/references/x.md",
+        "SKILL.md",
+        " references/x.md",
+        5,
+    ],
+)
+def test_malformed_reference_is_refused_before_any_filesystem_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad_reference: object
+) -> None:
+    bundled_root = tmp_path / "bundled"
+    skill_path = _write_skill(bundled_root, "rea")
+    _write_reference(skill_path, "x.md", "body\n")
+    configure_skill_tool({"skills_bundled_root": str(bundled_root)})
+
+    def _no_filesystem(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a malformed reference must not reach the filesystem")
+
+    monkeypatch.setattr(skills_module, "_resolve_skill_path", _no_filesystem)
+    monkeypatch.setattr(skills_module, "_available_skill_labels", _no_filesystem)
+
+    with pytest.raises(ToolExecutionFailure) as excinfo:
+        load_skill_tool({"name": "rea", "reference": bad_reference}, _guard())
+
+    assert excinfo.value.code == CMP_TOOL_INVALID_PATH
+    assert "references/<file>.md" in excinfo.value.message
+
+
+def _outside_references(tmp_path: Path) -> Path:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "x.md").write_text("outside secret\n", encoding="utf-8")
+    return outside
+
+
+def test_symlinked_references_dir_outside_skill_is_refused(tmp_path: Path) -> None:
+    bundled_root = tmp_path / "bundled"
+    skill_path = _write_skill(bundled_root, "rea")
+    outside = _outside_references(tmp_path)
+    try:
+        (skill_path.parent / "references").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+    configure_skill_tool({"skills_bundled_root": str(bundled_root)})
+
+    with pytest.raises(ToolExecutionFailure) as excinfo:
+        load_skill_tool({"name": "rea", "reference": "references/x.md"}, _guard())
+
+    assert excinfo.value.code == CMP_TOOL_INVALID_PATH
+    assert "outside secret" not in excinfo.value.message
+
+
+def test_symlinked_reference_file_outside_skill_is_refused(tmp_path: Path) -> None:
+    bundled_root = tmp_path / "bundled"
+    skill_path = _write_skill(bundled_root, "rea")
+    outside = _outside_references(tmp_path)
+    (skill_path.parent / "references").mkdir()
+    try:
+        (skill_path.parent / "references" / "x.md").symlink_to(outside / "x.md")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+    configure_skill_tool({"skills_bundled_root": str(bundled_root)})
+
+    with pytest.raises(ToolExecutionFailure) as excinfo:
+        load_skill_tool({"name": "rea", "reference": "references/x.md"}, _guard())
+
+    assert excinfo.value.code == CMP_TOOL_INVALID_PATH
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="directory junctions are Windows-only")
+def test_junction_references_dir_outside_skill_is_refused(tmp_path: Path) -> None:
+    bundled_root = tmp_path / "bundled"
+    skill_path = _write_skill(bundled_root, "rea")
+    outside = _outside_references(tmp_path)
+    junction = skill_path.parent / "references"
+    created = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+        capture_output=True,
+        check=False,
+    )
+    if created.returncode != 0 or not junction.exists():
+        pytest.skip("directory junction could not be created")
+    configure_skill_tool({"skills_bundled_root": str(bundled_root)})
+
+    with pytest.raises(ToolExecutionFailure) as excinfo:
+        load_skill_tool({"name": "rea", "reference": "references/x.md"}, _guard())
+
+    assert excinfo.value.code == CMP_TOOL_INVALID_PATH
+
+
+def test_missing_reference_is_not_found(tmp_path: Path) -> None:
+    bundled_root = tmp_path / "bundled"
+    skill_path = _write_skill(bundled_root, "rea")
+    _write_reference(skill_path, "present.md", "body\n")
+    configure_skill_tool({"skills_bundled_root": str(bundled_root)})
+
+    with pytest.raises(ToolExecutionFailure) as excinfo:
+        load_skill_tool({"name": "rea", "reference": "references/absent.md"}, _guard())
+
+    assert excinfo.value.code == CMP_TOOL_SKILL_NOT_FOUND
+    assert "unknown skill reference 'references/absent.md'" in excinfo.value.message
+
+
+def test_reference_in_disabled_user_scope_is_refused(tmp_path: Path) -> None:
+    user_root = tmp_path / "user"
+    skill_path = _write_skill(user_root, "reverse-engineer-anything")
+    _write_reference(skill_path, "x.md", "user reference\n")
+    configure_skill_tool({"skills_user_root": str(user_root), "skills_user_enabled": False})
+
+    with pytest.raises(ToolExecutionFailure) as excinfo:
+        load_skill_tool(
+            {"name": "reverse-engineer-anything", "scope": "user", "reference": "references/x.md"},
+            _guard(),
+        )
+
+    assert excinfo.value.code == CMP_TOOL_SKILL_NOT_FOUND
+    assert "user reference" not in excinfo.value.message
+
+
+def test_reference_of_disabled_skill_id_is_refused(tmp_path: Path) -> None:
+    bundled_root = tmp_path / "bundled"
+    skill_path = _write_skill(bundled_root, "rea")
+    _write_reference(skill_path, "x.md", "body\n")
+    configure_skill_tool(
+        {"skills_bundled_root": str(bundled_root), "skills_disabled_ids": ("bundled/rea",)}
+    )
+
+    with pytest.raises(ToolExecutionFailure) as excinfo:
+        load_skill_tool({"name": "rea", "reference": "references/x.md"}, _guard())
+
+    assert excinfo.value.code == CMP_TOOL_SKILL_NOT_FOUND
+
+
+def test_oversized_reference_hits_the_skill_size_bound(tmp_path: Path) -> None:
+    bundled_root = tmp_path / "bundled"
+    skill_path = _write_skill(bundled_root, "rea")
+    _write_reference(skill_path, "big.md", "y" * (16 * 1024))
+    configure_skill_tool({"skills_bundled_root": str(bundled_root)})
+
+    result = load_skill_tool({"name": "rea", "reference": "references/big.md"}, _guard())
+
+    assert result.metadata["truncated"] is True
+    assert result.metadata["reference"] == "references/big.md"
+    assert result.output.startswith("y" * MAX_SKILL_FILE_BYTES)
+    assert result.output.endswith(f"[skill content truncated at {MAX_SKILL_FILE_BYTES} bytes]")

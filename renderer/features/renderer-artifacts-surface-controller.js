@@ -422,13 +422,20 @@
       const assetPath = String(artifact?.image?.assetPath || '').trim();
       if (assetPath) return toFileAssetUrl(assetPath);
       const dataKey = imageArtifactDataKey(artifact);
-      return dataKey ? loadedImageArtifactDataUrls.get(dataKey) || '' : '';
+      const dataUrl = dataKey ? loadedImageArtifactDataUrls.get(dataKey) || '' : '';
+      // Re-insert on read, so eviction drops the least recently shown image.
+      if (dataUrl) { loadedImageArtifactDataUrls.delete(dataKey); loadedImageArtifactDataUrls.set(dataKey, dataUrl); }
+      return dataUrl;
     }
-    function clearImageArtifactDataForSession(sessionId) {
+    // keepLoaded: an artifact id's image bytes never change, so a session refresh keeps the
+    // loaded and in-flight images (no reload flash, no duplicate read) and only retries failures.
+    function clearImageArtifactDataForSession(sessionId, { keepLoaded = false } = {}) {
       const key = String(sessionId || '').trim();
       if (!key) return;
-      for (const dataKey of [...loadedImageArtifactDataUrls.keys()]) if (dataKey.startsWith(`${key}:`)) loadedImageArtifactDataUrls.delete(dataKey);
-      for (const dataKey of [...loadingImageArtifactDataKeys]) if (dataKey.startsWith(`${key}:`)) loadingImageArtifactDataKeys.delete(dataKey);
+      if (!keepLoaded) {
+        for (const dataKey of [...loadedImageArtifactDataUrls.keys()]) if (dataKey.startsWith(`${key}:`)) loadedImageArtifactDataUrls.delete(dataKey);
+        for (const dataKey of [...loadingImageArtifactDataKeys]) if (dataKey.startsWith(`${key}:`)) loadingImageArtifactDataKeys.delete(dataKey);
+      }
       for (const failureKey of [...failedImageArtifactKeys]) if (failureKey.startsWith(`${key}:`)) failedImageArtifactKeys.delete(failureKey);
     }
     function pruneLoadedImageArtifactDataUrls() {
@@ -451,6 +458,7 @@
         : String(error?.message || error || fallback || jt('common.unknownError', 'Unknown error.'));
     }
 
+    const isLive = (token) => artifactOperationTarget.isCurrent(token) || artifactOperationTarget.matchesSelection(token);
     async function loadGeneratedImageArtifactAsset(artifact) {
       if (!isGeneratedImageArtifactReadRequired(artifact)) return;
       const dataKey = imageArtifactDataKey(artifact);
@@ -470,8 +478,9 @@
       try {
         const artifactId = String(artifact?.image?.artifactId || artifact?.id || '').trim();
         const payload = await window.jennyShell.artifacts.read(artifact.sessionId, artifactId);
-        // isCurrent() is false for a disposed target, so it is the whole check.
-        if (!artifactOperationTarget.isCurrent(token)) return;
+        // Both are false for a disposed target. A re-selection of this same
+        // image bumps the generation, but this read is still what it shows.
+        if (!isLive(token)) return;
         const dataUrl = String(payload?.asset_data_url || payload?.assetDataUrl || '').trim();
         if (/^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/u.test(dataUrl)) {
           loadedImageArtifactDataUrls.set(dataKey, dataUrl);
@@ -481,12 +490,12 @@
           failedImageArtifactKeys.add(failureKey);
         }
       } catch (error) {
-        if (!artifactOperationTarget.isCurrent(token)) return;
+        if (!isLive(token)) return;
         failedImageArtifactKeys.add(failureKey);
         state.artifacts.lastError = formatError(error, jt('artifacts.errors.imageLoadFailed', 'Image artifact load failed.'));
       } finally {
         loadingImageArtifactDataKeys.delete(dataKey);
-        if (artifactOperationTarget.isCurrent(token)) {
+        if (isLive(token)) {
           state.artifacts.loading = false;
           renderArtifactsPanel();
           renderArtifactReviewPanel();
@@ -713,9 +722,9 @@
     function handleImagePreviewError(event) {
       const preview = event?.target;
       if (!preview || !preview.classList?.contains('artifact-preview-image')) return;
-      const artifact = getSelectedArtifact();
-      const artifactId = String(artifact?.id || '').trim();
-      const failureKey = imageArtifactFailureKey(artifact?.sessionId, artifactId);
+      // The image that failed owns the key, whatever is selected by now.
+      const [sessionId, ...artifactId] = String(preview.closest?.('[data-artifact-key]')?.dataset.artifactKey || '').split(':');
+      const failureKey = imageArtifactFailureKey(sessionId, artifactId.join(':'));
       if (failureKey) failedImageArtifactKeys.add(failureKey);
       renderArtifactsPanel();
       renderArtifactReviewPanel();
@@ -886,6 +895,8 @@
       // image kind
       resolveImagePreviewUrl,
       isGeneratedImageArtifactReadRequired,
+      isImageArtifactLoading: (artifact) => loadingImageArtifactDataKeys.has(imageArtifactDataKey(artifact)),
+      showToastMessage,
       hasImageArtifactLoadFailed: (artifact) => failedImageArtifactKeys.has(imageArtifactFailureKey(artifact?.sessionId, artifact?.id)),
       // web/chart kinds
       getArtifactViewMode,

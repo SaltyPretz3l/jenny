@@ -168,6 +168,7 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         tool_statuses: list[RuntimeToolStatus] | tuple[RuntimeToolStatus, ...] | None = None,
         latest_user_content: str = "",
         engine_type: str = "",
+        subagent_routing: Any = None,
         native_tool_schemas: bool = False,
         include_skills: bool = True,
         include_bootstrap: bool = True,
@@ -252,7 +253,9 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         tool_loop_guidance_block = self._render_tool_loop_guidance(tool_statuses)
         if tool_loop_guidance_block:
             prompt_blocks.append(tool_loop_guidance_block)
-        subagent_guidance_block = self._render_subagent_selection_guidance(tool_statuses)
+        subagent_guidance_block = self._render_subagent_selection_guidance(
+            tool_statuses, subagent_routing=subagent_routing,
+        )
         if subagent_guidance_block:
             prompt_blocks.append(subagent_guidance_block)
         if skills_block:

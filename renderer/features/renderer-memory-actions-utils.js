@@ -10,6 +10,8 @@
   const windowRef = globalRef.window || globalRef;
   const MEMORY_RENDER_BATCH_SIZE = 200;
   const sharedMemoryUtils = globalRef.rendererMemorySharedUtils || {};
+  const pageActionsUtils = globalRef.rendererMemoryPageActionsUtils
+    || (typeof require === 'function' ? require('./renderer-memory-page-actions-utils') : {});
   const memoryActionsV2Utils = globalRef.rendererMemoryActionsV2Utils
     || (typeof require === 'function' ? require('./renderer-memory-actions-v2-utils') : {});
   const defaultNormalizeApprovedMemoryKindFilter = typeof sharedMemoryUtils.normalizeApprovedMemoryKindFilter === 'function'
@@ -27,8 +29,8 @@
     } = deps || {};
 
     const { TOAST_SOURCE = {} } = constants;
-    const CAPTURE_PREFERENCE_KEY = 'jenny.memory.captureSuggestions';
     let disposed = false;
+    let pageActions = null;
     let searchTimer = null;
     registerCleanup(function disposeMemoryActions() {
       disposed = true;
@@ -37,7 +39,6 @@
     });
 
     const {
-      appendClientLog = function noop() {},
       showToastMessage = function noop() {},
       showShellErrorToast = function noop() {},
       toErrorMessage = function fallbackToErrorMessage(error) { return String(error?.message || error || ''); },
@@ -60,10 +61,6 @@
       refreshMemoryStatus = async function noopAsync() { return { status: null }; },
       getPendingMemoryCandidate = function noopNull() { return null; },
       setPendingMemoryReviewAction = function noop() {},
-      clearDismissedMemoryFingerprint = function noop() {},
-      rememberDismissedMemoryFingerprint = function noop() {},
-      rememberHandledMemorySuggestionStream = function noopFalse() { return false; },
-      getDismissedMemoryFingerprints = function noopNull() { return null; },
       buildPendingMemoryKey = function fallbackBuildPendingMemoryKey(sessionId, contentFingerprint) {
         return `${String(sessionId || '')}::${String(contentFingerprint || '')}`;
       },
@@ -73,77 +70,69 @@
       return windowRef.jennyShell?.memory || null;
     }
 
-    function setCaptureSuggestionsEnabled(enabled) {
-      state.features = state.features && typeof state.features === 'object' ? state.features : {};
-      state.features.memory = {
-        ...(state.features.memory && typeof state.features.memory === 'object' ? state.features.memory : {}),
-        captureSuggestions: enabled === true,
-      };
-    }
-
-    function readLegacyCapturePreference() {
-      try {
-        const value = windowRef.localStorage?.getItem(CAPTURE_PREFERENCE_KEY);
-        return value === null || value === undefined ? null : value !== '0';
-      } catch (_error) {
-        return null;
-      }
-    }
-
-    function removeLegacyCapturePreference() {
-      try { windowRef.localStorage?.removeItem(CAPTURE_PREFERENCE_KEY); } catch (_error) { /* retry next launch */ }
-    }
-
-    function logCapturePreferenceFailure(event, error) {
-      appendClientLog('WARN', event, { message: toErrorMessage(error, 'Could not save memory capture preference.') });
-    }
-
-    /* The switch persists through the shared Settings coordinator: written to
-     * the features bridge, adopted only from the echoed preference. The legacy
-     * localStorage value is a launch-time migration record: it is cleared once
-     * the owner acknowledges a value and kept (and honored) while it has not. */
+    /* The four memory v2 switches persist through the shared Settings
+     * coordinator: written to the features bridge, adopted only from the
+     * echoed `memory` section. */
+    const POLICY_KEYS = ['takeNotes', 'askBeforeSaving', 'pauseSaving', 'useInChats'];
     const load = (path) => (typeof require === 'function' ? require(path) : null);
     const fieldBinding = globalRef.rendererSettingsFieldBinding || load('../shell/renderer-settings-field-binding');
-    const captureDescriptor = (globalRef.rendererSettingsFieldDescriptors || load('../shell/renderer-settings-field-descriptors'))
-      ?.getSettingDescriptor?.('memoryCaptureSuggestions') || null;
-    const captureRegistry = fieldBinding && captureDescriptor ? fieldBinding.createSettingsAdapterRegistry() : null;
-    captureRegistry?.register({
+    const descriptorSource = globalRef.rendererSettingsFieldDescriptors || load('../shell/renderer-settings-field-descriptors');
+    const policyDescriptors = ['memoryTakeNotes', 'memoryAskBeforeSaving', 'memoryPauseSaving', 'memoryUseInChats']
+      .map((id) => descriptorSource?.getSettingDescriptor?.(id)).filter(Boolean);
+    const policyRegistry = fieldBinding && policyDescriptors.length ? fieldBinding.createSettingsAdapterRegistry() : null;
+    const readPolicy = (source) => ({
+      takeNotes: source?.takeNotes !== false,
+      askBeforeSaving: source?.askBeforeSaving === true,
+      pauseSaving: source?.pauseSaving === true,
+      useInChats: source?.useInChats !== false,
+    });
+    policyRegistry?.register({
       id: 'memory',
       mode: 'patch',
       optimistic: false,
-      read: () => ({ captureSuggestions: state.features?.memory?.captureSuggestions !== false }),
-      normalize: (value) => ({ captureSuggestions: value?.captureSuggestions !== false }),
+      read: () => readPolicy(state.features?.memory),
+      normalize: readPolicy,
       write: (payload) => {
         const updateSettings = windowRef.jennyShell?.features?.updateSettings;
         if (typeof updateSettings !== 'function') throw new Error('Feature settings are unavailable.');
-        return updateSettings({ memory: { captureSuggestions: payload.captureSuggestions === true } });
+        const patch = {};
+        POLICY_KEYS.forEach((key) => { if (typeof payload?.[key] === 'boolean') patch[key] = payload[key]; });
+        return updateSettings({ memory: patch });
       },
       ack: (result, payload) => {
-        const persisted = result?.memory?.captureSuggestions;
-        if (typeof persisted !== 'boolean' || persisted !== (payload.captureSuggestions === true)) {
-          throw new Error('Feature settings returned an invalid memory preference acknowledgement.');
-        }
-        return { captureSuggestions: persisted };
+        const persisted = result?.memory;
+        POLICY_KEYS.forEach((key) => {
+          if (typeof payload?.[key] === 'boolean' && persisted?.[key] !== payload[key]) {
+            throw new Error('Feature settings returned an invalid memory preference acknowledgement.');
+          }
+        });
+        return readPolicy(persisted);
       },
       apply: (next) => {
         if (disposed) return;
-        setCaptureSuggestionsEnabled(next.captureSuggestions);
+        state.features = state.features && typeof state.features === 'object' ? state.features : {};
+        state.features.memory = readPolicy(next);
         renderMemorySurfaces();
       },
-      onSettled: (ok) => { if (ok && !disposed) removeLegacyCapturePreference(); },
     });
 
-    const legacyCapturePreference = readLegacyCapturePreference();
-    if (captureRegistry && legacyCapturePreference !== null) {
-      setCaptureSuggestionsEnabled(legacyCapturePreference);
-      captureRegistry.write(captureDescriptor, legacyCapturePreference)
-        .catch((error) => logCapturePreferenceFailure('memory.capture_preference_adoption_failed', error));
+    // A write names the revision the user saw; the sidecar answers `conflict` when it moved on.
+    function revisionOptions(memory) {
+      return Number.isSafeInteger(memory?.revision) && memory.revision > 0 ? { expectedRevision: memory.revision } : {};
     }
 
-    function isSuccessfulMemorySave(result) {
-      return result?.created === true
-        || Boolean(result?.memory && typeof result.memory === 'object' && !Array.isArray(result.memory));
+    // The draft and the editor stay as they are; the list refresh brings in the current row.
+    async function reportMemoryConflict(memory, message) {
+      showToastMessage(message, {
+        title: jt('memory.titles.changed', 'Memory Changed'),
+        tone: 'warning',
+        source: TOAST_SOURCE.memory,
+        dedupeKey: `${TOAST_SOURCE.memory}:conflict:${memory.id}`,
+      });
+      await refreshApprovedMemories({ force: true });
     }
+
+    const editConflictMessage = () => jt('memory.toasts.editConflict', 'This memory changed somewhere else, so your edit wasn\'t saved. Check the latest version and save again.');
 
     function focusElement(control) {
       if (!control || typeof control.focus !== 'function') return;
@@ -193,9 +182,6 @@
         : { key: '', target: null };
       state.memoryManager.pendingFocusKey = focusTarget.key;
       state.memoryManager.pendingFocusAppliedKey = '';
-      if (focusTarget.key) {
-        state.memoryManager.pendingFilter = 'all';
-      }
       openSettingsSection('memories', { refresh: true, source: 'memory' });
     }
 
@@ -208,16 +194,18 @@
         reportUnavailableAction(jt('memory.titles.updateUnavailable', 'Memory Update Unavailable'), jt('memory.errors.editingUnavailable', 'Approved memory editing is unavailable.'), 'update');
         return;
       }
-      const patch = {
-        title: getApprovedMemoryFieldValue(memory, 'title'),
-        lesson_text: getApprovedMemoryFieldValue(memory, 'lesson_text'),
-      };
+      // The sidecar re-derives the title from changed text; a user edit marks the row protected.
+      const patch = { lesson_text: getApprovedMemoryFieldValue(memory, 'lesson_text') };
       setApprovedMemoryPendingAction(memory.id, 'save');
       renderMemorySurfaces();
       let saveSucceeded = false;
       try {
-        const updated = await memoryApi.update(memory.id, patch, memory.project_id || undefined);
+        const updated = await memoryApi.update(memory.id, patch, memory.project_id || undefined, revisionOptions(memory));
         if (disposed) return;
+        if (updated?.status === 'conflict') {
+          await reportMemoryConflict(memory, editConflictMessage());
+          return;
+        }
         if (updated?.updated !== true) {
           throw new Error('Could not update approved memory.');
         }
@@ -243,7 +231,7 @@
           setApprovedMemoryPendingAction(memory.id, '');
           renderMemorySurfaces();
           focusMemoryControl(saveSucceeded
-            ? `[data-memory-action="edit"][data-memory-id="${memory.id}"]`
+            ? `[data-memory-page-action="menu"][data-memory-id="${memory.id}"]`
             : `[data-memory-action="save"][data-memory-id="${memory.id}"]`);
         }
       }
@@ -257,12 +245,15 @@
         reportUnavailableAction(jt('memory.titles.deleteUnavailable', 'Memory Delete Unavailable'), jt('memory.errors.deletionUnavailable', 'Approved memory deletion is unavailable.'), 'delete');
         return;
       }
-      const deletedSnapshot = { ...memory };
       setApprovedMemoryPendingAction(memory.id, 'delete');
       renderMemorySurfaces();
       try {
-        const deleted = await memoryApi.delete(memory.id, memory.project_id || undefined);
+        const deleted = await memoryApi.delete(memory.id, memory.project_id || undefined, revisionOptions(memory));
         if (disposed) return;
+        if (deleted?.status === 'conflict') {
+          await reportMemoryConflict(memory, jt('memory.toasts.deleteConflict', 'This memory changed somewhere else, so it wasn\'t deleted. Check the latest version and try again.'));
+          return;
+        }
         if (deleted?.deleted !== true) {
           throw new Error('Could not delete approved memory.');
         }
@@ -271,14 +262,18 @@
           setEditingMemoryId(null);
         }
         const undoDedupeKey = `${TOAST_SOURCE.memory}:deleted:${memory.id}`;
+        // Undo inverts the recorded delete in the row's own project; no operation, no Undo.
+        const deleteOperationId = deleted.undoable === true && typeof deleted.operation_id === 'string'
+          ? deleted.operation_id
+          : '';
         // dismissToast takes the id showToastMessage returns, not the dedupeKey.
         let undoToastId = '';
-        undoToastId = showToastMessage(jt('memory.toasts.removed', 'I removed that memory.'), {
-          title: jt('memory.titles.deleted', 'Memory Deleted'),
+        undoToastId = showToastMessage(jt('memory.page.forgotToast', 'Jenny will forget that. Undo, or restore it later from Forgotten.'), {
+          title: jt('memory.page.forgotTitle', 'Memory Forgotten'),
           tone: 'success',
           source: TOAST_SOURCE.memory,
           dedupeKey: undoDedupeKey,
-          actions: [
+          actions: !deleteOperationId ? [] : [
             {
               id: 'undo-delete',
               label: jt('memory.actions.undo', 'Undo'),
@@ -286,17 +281,10 @@
               onClick: async () => {
                 dismissToast(undoToastId);
                 try {
-                  if (typeof memoryApi.save !== 'function') throw new Error('Memory restore is unavailable.');
-                  const restored = await memoryApi.save(deletedSnapshot.session_id || '', {
-                    title: deletedSnapshot.title,
-                    lesson_text: deletedSnapshot.lesson_text,
-                    lesson_kind: deletedSnapshot.lesson_kind,
-                    confidence: deletedSnapshot.confidence,
-                    source_excerpt: deletedSnapshot.source_excerpt,
-                    content_fingerprint: deletedSnapshot.content_fingerprint,
-                  });
+                  if (typeof memoryApi.undoChange !== 'function') throw new Error('Memory restore is unavailable.');
+                  const restored = await memoryApi.undoChange(deleteOperationId, memory.project_id || undefined);
                   if (disposed) return;
-                  if (!isSuccessfulMemorySave(restored)) throw new Error('Could not restore memory.');
+                  if (restored?.status !== 'saved') throw new Error('Could not restore memory.');
                   showToastMessage(jt('memory.toasts.restored', 'Memory restored.'), {
                     title: jt('memory.titles.undoSuccessful', 'Undo Successful'),
                     tone: 'success',
@@ -324,6 +312,7 @@
           refreshApprovedMemories({ force: true }),
           refreshPendingMemories({ force: true }),
           refreshMemoryStatus({ force: true }),
+          pageActions?.refreshFolds(),
         ]);
       } catch (error) {
         if (disposed) return;
@@ -340,85 +329,16 @@
       }
     }
 
+    // Forget archives the row (with its suppression); Undo and the Forgotten
+    // fold bring it back, so it needs no confirmation step.
     function handleApprovedMemoryDelete(memoryId) {
       if (disposed) return;
       const memory = getApprovedMemoryById(memoryId);
-      if (!memory) {
-        return;
-      }
-      const deleteDedupeKey = `${TOAST_SOURCE.memory}:confirm-delete:${memory.id}`;
-      let confirmToastId = '';
-      confirmToastId = showToastMessage(
-        jt('memory.toasts.deleteConfirm', 'Delete "{title}"? You can undo this for a short time.', { title: memory.title }),
-        {
-          title: jt('memory.titles.confirmDelete', 'Confirm Delete'),
-          tone: 'warning',
-          sticky: true,
-          source: TOAST_SOURCE.memory,
-          dedupeKey: deleteDedupeKey,
-          actions: [
-            {
-              id: 'confirm-delete',
-              label: jt('common.delete', 'Delete'),
-              kind: 'danger',
-              onClick: () => {
-                dismissToast(confirmToastId);
-                executeApprovedMemoryDelete(memory);
-              },
-            },
-            {
-              id: 'cancel-delete',
-              label: jt('common.cancel', 'Cancel'),
-              kind: 'secondary',
-              onClick: () => {
-                dismissToast(confirmToastId);
-              },
-            },
-          ],
-        }
-      );
+      if (memory) executeApprovedMemoryDelete(memory);
     }
 
-    async function handleRemoveProvenance(memoryId) {
-      if (disposed) return;
-      const memory = getApprovedMemoryById(memoryId);
-      const memoryApi = getMemoryApi();
-      if (!memory) return;
-      if (!memoryApi || typeof memoryApi.update !== 'function') {
-        reportUnavailableAction(jt('memory.titles.sourceRemovalUnavailable', 'Source Removal Unavailable'), jt('memory.errors.sourceRemovalUnavailable', 'Memory source removal is unavailable.'), 'source');
-        return;
-      }
-      setApprovedMemoryPendingAction(memory.id, 'source');
-      renderMemorySurfaces();
-      let removalSucceeded = false;
-      try {
-        const result = await memoryApi.update(memory.id, {
-          title: memory.title,
-          lesson_text: memory.lesson_text,
-          remove_provenance: true,
-        }, memory.project_id || undefined);
-        if (disposed) return;
-        if (result?.updated !== true) throw new Error('Could not remove memory source.');
-        removalSucceeded = true;
-        await refreshApprovedMemories({ force: true });
-      } catch (error) {
-        if (disposed) return;
-        showShellErrorToast(toErrorMessage(error, jt('memory.errors.removeSource', 'Could not remove memory source.')), {
-          title: jt('memory.titles.sourceRemovalFailed', 'Source Removal Failed'), source: TOAST_SOURCE.memory,
-          dedupeKey: `${TOAST_SOURCE.memory}:source:error:${memory.id}`,
-        });
-      } finally {
-        if (!disposed) {
-          setApprovedMemoryPendingAction(memory.id, '');
-          renderMemorySurfaces();
-          focusMemoryControl(removalSucceeded
-            ? `[data-memory-action="edit"][data-memory-id="${memory.id}"]`
-            : `[data-memory-action="remove-provenance"][data-memory-id="${memory.id}"]`);
-        }
-      }
-    }
-
-    async function handlePendingReview(action, sessionId, fingerprint) {
+    // projectId: the project the proposal was queued in (its chat may have moved since).
+    async function handlePendingReview(action, sessionId, fingerprint, projectId) {
       if (disposed) return;
       if (action !== 'approve' && action !== 'discard') return;
       const memoryApi = getMemoryApi();
@@ -432,17 +352,28 @@
       renderMemorySurfaces();
       try {
         if (action === 'approve') {
-          if (typeof memoryApi.save !== 'function') throw new Error('Memory approval is unavailable.');
-          const saved = await memoryApi.save(sessionId, candidate);
+          if (typeof memoryApi.acceptPending !== 'function') throw new Error('Memory approval is unavailable.');
+          // The sidecar resolves the queued row and writes it into its own project.
+          const accepted = await memoryApi.acceptPending(sessionId, fingerprint, projectId || undefined);
           if (disposed) return;
-          if (!isSuccessfulMemorySave(saved)) throw new Error('Memory approval is unavailable.');
+          if (accepted?.status === 'refused') {
+            const refusal = accepted.reason === 'suppressed'
+              ? jt('memory.toasts.pendingSuppressed', 'You asked me to forget this, so I didn\'t save it.')
+              : jt('memory.toasts.pendingUnavailable', 'This memory can no longer be saved.');
+            showToastMessage(refusal, {
+              title: jt('memory.titles.reviewUnavailable', 'Memory Review Unavailable'),
+              tone: 'warning',
+              source: TOAST_SOURCE.memory,
+              dedupeKey: `${TOAST_SOURCE.memory}:review:refused:${fingerprint}`,
+            });
+          } else if (accepted?.status !== 'saved') {
+            throw new Error('Memory approval is unavailable.');
+          }
         } else {
           if (typeof memoryApi.deletePending !== 'function') throw new Error('Pending memory dismissal is unavailable.');
-          const deleted = await memoryApi.deletePending(sessionId, fingerprint);
+          const deleted = await memoryApi.deletePending(sessionId, fingerprint, projectId || undefined);
           if (disposed) return;
           if (deleted?.deleted !== true) throw new Error('Pending memory dismissal is unavailable.');
-          if (typeof memoryApi.dismiss === 'function') await memoryApi.dismiss(sessionId, fingerprint);
-          if (disposed) return;
         }
         await Promise.all([
           refreshApprovedMemories({ force: true }),
@@ -464,146 +395,53 @@
       }
     }
 
-    async function maybeSuggestMemoryCapture(payload, options = {}) {
-      if (disposed) return;
-      const streamId = String(payload?.streamId || '').trim();
-      const sessionId = String(payload?.sessionId || '').trim();
-      const memoryApi = getMemoryApi();
-      if (state.features?.memory?.captureSuggestions === false
-        || !streamId || !sessionId || !rememberHandledMemorySuggestionStream(streamId)) {
+    function startEditing(memoryId) {
+      if (disposed || !getApprovedMemoryById(memoryId)) return;
+      setEditingMemoryId(memoryId);
+      renderMemorySurfaces();
+      focusMemoryControl(`[data-memory-draft-field="lesson_text"][data-memory-id="${memoryId}"]`);
+    }
+
+    pageActions = pageActionsUtils.createMemoryPageActions?.({
+      state,
+      getHubDom,
+      constants: { TOAST_SOURCE },
+      callbacks: { ...callbacks, showToastMessage, showShellErrorToast, dismissToast, toErrorMessage },
+      helpers: {
+        getApprovedMemoryById,
+        renderMemorySurfaces,
+        refreshApprovedMemories,
+        refreshMemoryStatus,
+        startEditing,
+        forgetMemory: handleApprovedMemoryDelete,
+        revisionOptions,
+      },
+    }) || null;
+    registerCleanup(() => pageActions?.dispose());
+
+    function handleListClick(event) {
+      if (event.target.closest('[data-memory-list-action]')) {
+        state.memoryManager.approvedVisibleLimit = (Number(state.memoryManager.approvedVisibleLimit) || MEMORY_RENDER_BATCH_SIZE) + MEMORY_RENDER_BATCH_SIZE;
+        renderMemorySurfaces();
         return;
       }
-      if (!memoryApi || typeof memoryApi.suggestForSession !== 'function') {
+      const actionButton = event.target.closest('[data-memory-action]');
+      if (actionButton) {
+        const memoryId = Number(actionButton.dataset.memoryId);
+        const action = String(actionButton.dataset.memoryAction || '');
+        if (!Number.isInteger(memoryId) || memoryId <= 0) return;
+        if (action === 'cancel') {
+          clearApprovedMemoryDraft(memoryId);
+          setEditingMemoryId(null);
+          renderMemorySurfaces();
+          focusMemoryControl(`[data-memory-page-action="menu"][data-memory-id="${memoryId}"]`);
+        } else if (action === 'save') handleApprovedMemorySave(memoryId);
         return;
       }
-
-      try {
-        const result = await memoryApi.suggestForSession(sessionId);
-        if (disposed) return;
-        if (options.signal?.aborted === true) return;
-        if (options.guard && typeof options.guard.isCurrent === 'function'
-          && options.guard.isCurrent() !== true) return;
-        const suggestions = Array.isArray(result?.suggestions) ? result.suggestions : [];
-        const candidate = suggestions[0];
-        if (!candidate || typeof candidate !== 'object') {
-          return;
-        }
-        const candidateFingerprint = String(candidate.content_fingerprint || '').trim().toLowerCase();
-        if (candidateFingerprint && getDismissedMemoryFingerprints(sessionId)?.has(candidateFingerprint)) {
-          return;
-        }
-
-        appendClientLog('INFO', 'memory.suggested', {
-          sessionId,
-          streamId,
-          lessonKind: String(candidate.lesson_kind || ''),
-          fingerprint: candidateFingerprint,
-        });
-
-        let toastId = '';
-        const dedupeKey = `${TOAST_SOURCE.memory}:${sessionId}`;
-        toastId = showToastMessage(
-          String(candidate.lesson_text || jt('memory.suggestions.captureFallback', 'I noticed something worth remembering.')),
-          {
-            title: jt('memory.titles.rememberPrompt', 'Remember this?'),
-            tone: 'warning',
-            sticky: true,
-            source: TOAST_SOURCE.memory,
-            dedupeKey,
-            actions: [
-              {
-                id: 'remember',
-                label: jt('memory.actions.remember', 'Remember'),
-                kind: 'primary',
-                onClick: async () => {
-                  try {
-                    const saved = await memoryApi.save(sessionId, candidate);
-                    if (disposed) return;
-                    if (!isSuccessfulMemorySave(saved)) throw new Error('Memory save is unavailable.');
-                    clearDismissedMemoryFingerprint(sessionId, candidateFingerprint);
-                    dismissToast(toastId);
-                    await Promise.all([
-                      refreshApprovedMemories({ force: true }),
-                      refreshPendingMemories({ force: true }),
-                      refreshMemoryStatus({ force: true }),
-                    ]);
-                    showToastMessage(
-                      saved?.created === false ? jt('memory.toasts.alreadySaved', 'I already had that saved.') : jt('memory.toasts.saved', "I'll remember that."),
-                      {
-                        title: jt('memory.titles.saved', 'Memory Saved'),
-                        tone: 'success',
-                        source: TOAST_SOURCE.memory,
-                        dedupeKey: `${dedupeKey}:saved`,
-                      }
-                    );
-                    appendClientLog('INFO', 'memory.saved', {
-                      sessionId,
-                      streamId,
-                      created: saved?.created === true,
-                      fingerprint: candidateFingerprint,
-                    });
-                  } catch (error) {
-                    if (disposed) return;
-                    appendClientLog('ERROR', 'memory.save_failed', {
-                      sessionId,
-                      streamId,
-                      message: toErrorMessage(error, 'Could not save memory.'),
-                    });
-                    showShellErrorToast(toErrorMessage(error, jt('memory.errors.save', 'Could not save memory.')), {
-                       title: jt('memory.titles.saveFailed', 'Memory Save Failed'),
-                      source: TOAST_SOURCE.memory,
-                      dedupeKey: `${dedupeKey}:error`,
-                    });
-                  }
-                },
-              },
-              {
-                id: 'open-memory-hub',
-                label: jt('memory.actions.review', 'Review in Memory'),
-                kind: 'secondary',
-                onClick: () => {
-                  dismissToast(toastId);
-                  openMemoryHub({
-                    pendingTarget: {
-                      sessionId,
-                      contentFingerprint: candidateFingerprint,
-                    },
-                  });
-                },
-              },
-              {
-                id: 'dismiss',
-                label: jt('memory.actions.notNow', 'Not now'),
-                kind: 'secondary',
-                onClick: () => {
-                  if (disposed) return;
-                  rememberDismissedMemoryFingerprint(sessionId, candidateFingerprint);
-                  if (typeof memoryApi.dismiss === 'function') {
-                    memoryApi.dismiss(sessionId, candidateFingerprint).catch((error) => {
-                      appendClientLog('WARN', 'memory.dismiss_failed', {
-                        fingerprint: candidateFingerprint,
-                        message: String(error?.message || error),
-                      });
-                    });
-                  }
-                  dismissToast(toastId);
-                  appendClientLog('INFO', 'memory.dismissed', {
-                    sessionId,
-                    streamId,
-                    fingerprint: candidateFingerprint,
-                  });
-                },
-              },
-            ],
-          }
-        );
-      } catch (error) {
-        appendClientLog('WARN', 'memory.suggest_failed', {
-          sessionId,
-          streamId,
-          message: toErrorMessage(error, 'Could not suggest memory.'),
-        });
-      }
+      const pendingButton = event.target.closest('[data-pending-memory-action]');
+      if (!pendingButton) return;
+      const data = pendingButton.dataset;
+      handlePendingReview(String(data.pendingMemoryAction || ''), String(data.sessionId || ''), String(data.fingerprint || ''), String(data.projectId || ''));
     }
 
     function bindMemoryPageEvents() {
@@ -620,7 +458,7 @@
           const memory = getApprovedMemoryById(memoryId);
           const saveButton = draftField.closest('article[data-memory-id]')?.querySelector('[data-memory-action="save"]');
           if (saveButton) {
-            saveButton.disabled = !memory || !hasApprovedMemoryDraftChanges(memory);
+            saveButton.disabled = !memory || !hasApprovedMemoryDraftChanges(memory) || !String(draftField.value || '').trim();
           }
           return;
         }
@@ -636,75 +474,37 @@
         }, 150);
       }
       function handleChange(event) {
-        if (event.target.id === 'memoryManagerKindFilter') {
-          state.memoryManager.filter = normalizeApprovedMemoryKindFilter(event.target.value);
-          state.memoryManager.approvedVisibleLimit = MEMORY_RENDER_BATCH_SIZE;
-        } else if (event.target.id === 'memoryManagerProjectFilter') {
-          state.memoryManager.projectFilter = String(event.target.value || '').trim() || 'all';
-          state.memoryManager.approvedVisibleLimit = MEMORY_RENDER_BATCH_SIZE;
-        } else if (event.target.id === 'pendingMemorySort') {
-          state.memoryManager.pendingSort = String(event.target.value || 'newest');
-          state.memoryManager.pendingVisibleLimit = MEMORY_RENDER_BATCH_SIZE;
-        }
-        else return;
+        if (event.target.id !== 'memoryManagerKindFilter') return;
+        state.memoryManager.filter = normalizeApprovedMemoryKindFilter(event.target.value);
+        state.memoryManager.approvedVisibleLimit = MEMORY_RENDER_BATCH_SIZE;
         renderMemorySurfaces();
       }
       function handleClick(event) {
-        const pageAction = event.target.closest('[data-memory-page-action]');
-        if (pageAction) {
-          if (pageAction.dataset.memoryPageAction === 'show-more-approved') {
-            state.memoryManager.approvedVisibleLimit = (Number(state.memoryManager.approvedVisibleLimit) || MEMORY_RENDER_BATCH_SIZE) + MEMORY_RENDER_BATCH_SIZE;
-          } else if (pageAction.dataset.memoryPageAction === 'show-more-pending') {
-            state.memoryManager.pendingVisibleLimit = (Number(state.memoryManager.pendingVisibleLimit) || MEMORY_RENDER_BATCH_SIZE) + MEMORY_RENDER_BATCH_SIZE;
-          }
-          renderMemorySurfaces();
-          return;
-        }
-        const actionButton = event.target.closest('[data-memory-action]');
-        if (actionButton) {
-          const memoryId = Number(actionButton.dataset.memoryId);
-          const action = String(actionButton.dataset.memoryAction || '');
-          if (!Number.isInteger(memoryId) || memoryId <= 0) return;
-          if (action === 'edit') {
-            setEditingMemoryId(memoryId);
-            renderMemorySurfaces();
-            focusMemoryControl(`[data-memory-draft-field="title"][data-memory-id="${memoryId}"]`);
-          }
-          else if (action === 'cancel') {
-            clearApprovedMemoryDraft(memoryId);
-            setEditingMemoryId(null);
-            renderMemorySurfaces();
-            focusMemoryControl(`[data-memory-action="edit"][data-memory-id="${memoryId}"]`);
-          }
-          else if (action === 'save') handleApprovedMemorySave(memoryId);
-          else if (action === 'delete') handleApprovedMemoryDelete(memoryId);
-          else if (action === 'remove-provenance') handleRemoveProvenance(memoryId);
-          return;
-        }
-        const pendingButton = event.target.closest('[data-pending-memory-action]');
-        if (pendingButton) handlePendingReview(String(pendingButton.dataset.pendingMemoryAction || ''), String(pendingButton.dataset.sessionId || ''), String(pendingButton.dataset.fingerprint || ''));
+        if (pageActions?.handleClick(event)) return;
+        handleListClick(event);
+      }
+      function handleKeydown(event) {
+        pageActions?.handleKeydown(event);
       }
       memorySection.addEventListener('input', handleInput);
       memorySection.addEventListener('change', handleChange);
       memorySection.addEventListener('click', handleClick);
+      memorySection.addEventListener('keydown', handleKeydown);
       const fieldListeners = [];
-      if (captureRegistry) {
+      if (policyRegistry) {
         fieldBinding.bindSettingFields({
           container: memorySection,
-          descriptors: [captureDescriptor],
-          registry: captureRegistry,
+          descriptors: policyDescriptors,
+          registry: policyRegistry,
           registerListener: (target, type, handler) => {
             target.addEventListener(type, handler);
             fieldListeners.push([type, handler]);
           },
-          onError: (_descriptor, error, shown) => {
-            if (disposed) return;
-            logCapturePreferenceFailure('memory.capture_preference_update_failed', error);
-            if (shown?.inline) return;
-            showShellErrorToast(jt('memory.toasts.capturePreferenceNotSaved', 'Could not save the memory capture preference.'), {
-              title: jt('memory.titles.preferenceNotSaved', 'Memory Preference Not Saved'),
+          onError: (_descriptor, _error, shown) => {
+            if (disposed || shown?.inline) return;
+            showShellErrorToast(jt('memory.toasts.policyNotSaved', 'Could not save the memory setting.'), {
               source: TOAST_SOURCE.memory,
-              dedupeKey: `${TOAST_SOURCE.memory}:capture-preference:error`,
+              dedupeKey: `${TOAST_SOURCE.memory}:policy:error`,
             });
           },
         });
@@ -714,16 +514,21 @@
         memorySection.removeEventListener('input', handleInput);
         memorySection.removeEventListener('change', handleChange);
         memorySection.removeEventListener('click', handleClick);
+        memorySection.removeEventListener('keydown', handleKeydown);
         fieldListeners.forEach(([type, handler]) => memorySection.removeEventListener(type, handler));
       });
     }
 
     return {
       bindMemoryPageEvents,
+      pageBusy: () => ({
+        archived: new Set((state.memoryManager.archivedByScope.get(state.memoryManager.scopeTab) || [])
+          .map((row) => row.id).filter((id) => pageActions?.isArchivedBusy(id))),
+        operations: pageActions?.busyOperationIds() || new Set(),
+      }),
       openMemoryHub,
       handleApprovedMemorySave,
       handleApprovedMemoryDelete,
-      maybeSuggestMemoryCapture,
     };
   }
 

@@ -40,7 +40,7 @@ function buildEntry(params, { summaryPersisted, includeText }) {
     dropped_messages: nonNegativeInt(params?.dropped_messages),
     dropped_bytes: nonNegativeInt(params?.dropped_bytes),
     summary_source_dropped_messages: nonNegativeInt(params?.summary_source_dropped_messages),
-    input_complete: params?.input_complete !== false,
+    input_complete: typeof params?.input_complete === 'boolean' ? params.input_complete : null,
     covered_through_tool_call_id: text(params?.covered_through_tool_call_id, 128),
     summary_persisted: summaryPersisted === true,
     at: new Date().toISOString(),

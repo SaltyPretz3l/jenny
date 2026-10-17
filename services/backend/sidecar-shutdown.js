@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+const { frozenInterpreter } = require('./owned-process-recovery');
 const { buildSandboxLayout } = require('./path-utils');
 const {
   getProcessCommandLineSync,
@@ -100,7 +101,9 @@ function shutdownManagedSidecarSync({
   logger,
   isProcessAliveImpl = isProcessAlive,
   getProcessCommandLineSyncImpl = getProcessCommandLineSync,
+  findFrozenInterpreterImpl = frozenInterpreter,
   nowImpl = Date.now,
+  recoverOwnedProcesses = () => {},
 } = {}) {
   const log = normalizeLogger(logger);
   const startedAt = nowImpl();
@@ -151,21 +154,33 @@ function shutdownManagedSidecarSync({
   }
 
   log('INFO', 'sidecar.force_kill', { pid });
+  // A packaged onefile pid is the bootloader; its exit alone leaves the interpreter
+  // (the ledger owner) alive, so that child is killed and confirmed first. An unresolved
+  // child signals nothing: the bootloader stays tracked and ownership is retained.
+  let interpreter;
   try {
-    killResult = forceKillProcessTreeSync(pid, {
-      platform,
-      spawnSyncImpl,
-    });
-    if (killResult && killResult.error) {
-      throw killResult.error;
+    interpreter = state?.launchSource === 'packaged-binary'
+      ? findFrozenInterpreterImpl(pid, { platform }) : null;
+  } catch (_error) { interpreter = { state: 'unresolved' }; }
+  if (interpreter?.state === 'unresolved') killError = new Error('onefile interpreter unresolved');
+  const killAndConfirm = (target) => {
+    try {
+      killResult = forceKillProcessTreeSync(target, {
+        platform,
+        spawnSyncImpl,
+      });
+      if (killResult && killResult.error) {
+        throw killResult.error;
+      }
+    } catch (error) {
+      killError = error;
     }
-  } catch (error) {
-    killError = error;
-  }
+    return verifyProcessExitedSync(target, {
+      isProcessAliveImpl,
+    });
+  };
 
-  const killed = verifyProcessExitedSync(pid, {
-    isProcessAliveImpl,
-  });
+  const killed = !killError && (!interpreter || killAndConfirm(interpreter.pid)) && killAndConfirm(pid);
   if (killed) {
     try {
       clearManagedSidecarState(userDataPath);
@@ -191,6 +206,7 @@ function shutdownManagedSidecarSync({
     confirmed: killed,
   });
 
+  recoverOwnedProcesses();
   return { hadState: true, killed, pid };
 }
 

@@ -10,7 +10,7 @@ function releaseRuntimeMutation(service, work, checkpoint, assertCleanup) {
   if (proof.released) return true;
   assertRuntimeContinuationProtocol(service.sidecarClient);
   return service.sidecarClient.request('workspace.release_runtime_checkpoint', {
-    accept_version: '2026-08-17', schema_version: 1, checkpoint,
+    accept_version: '2026-10-15', schema_version: 1, checkpoint,
     workspace_root: work.authority.root_path, device_id: String(work.authority.device_id),
     inode: String(work.authority.inode),
   }, { timeoutMs: 15000 }).then(result => {

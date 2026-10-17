@@ -34,6 +34,7 @@ from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.ai.tools.workspace_mutation_journal_contract import workspace_identity
 from sidecar.ai.tools.workspace_mutation_journal_store import WorkspaceMutationJournalStore
+from sidecar.ai.tools.workspace_mutation_live_owner import owned_mutation_attribution
 from sidecar.ai.tools.workspace_restore import (
     WorkspaceRestoreError,
     list_change_sets,
@@ -414,47 +415,45 @@ def _write_change_set(
     lifecycle: MutationChangeSetLifecycle,
 ) -> dict[str, object]:
     change_set_id = _uuid7()
-    attribution = {
-        "_jenny_session_id": params.session_id,
-        "_jenny_turn_id": params.apply_id,
-        "_jenny_change_set_id": change_set_id,
-    }
-    snapshots = {key: state.snapshot for key, state in states.items()}
-    applied: list[dict[str, object]] = []
-    failed_index: int | None = None
-    for index, plan in enumerate(plans):
-        result = _write_one(plan, guard, attribution, snapshots.get(plan.key))
-        if result is None:
-            failed_index = index
-            break
-        written = result.metadata.get("written_snapshot")
-        snapshots[plan.key] = written if isinstance(written, dict) else None
-        applied.append(_applied_result(plan, result))
-    final = lifecycle.finalize(change_set_id, tool_failed=failed_index is not None)
-    if not final.ok and applied:
-        # The journal could not record the outcome, so neither "applied" nor a
-        # rollback can be proven: say so with the change set id, never claim either.
-        raise WorkspaceRestoreError(
-            "suggested_change_rollback_failed",
-            "Suggested changes were written but the change could not be recorded for undo.",
-            details={"change_set_id": change_set_id, "status": "needs_review",
-                     "cause": "finalize_failed"},
+    with owned_mutation_attribution(lifecycle.store, guard.require_root(),
+            change_set_id=change_set_id, session_id=params.session_id,
+            turn_id=params.apply_id) as attribution:
+        snapshots = {key: state.snapshot for key, state in states.items()}
+        applied: list[dict[str, object]] = []
+        failed_index: int | None = None
+        for index, plan in enumerate(plans):
+            result = _write_one(plan, guard, attribution, snapshots.get(plan.key))
+            if result is None:
+                failed_index = index
+                break
+            written = result.metadata.get("written_snapshot")
+            snapshots[plan.key] = written if isinstance(written, dict) else None
+            applied.append(_applied_result(plan, result))
+        final = lifecycle.finalize(change_set_id, tool_failed=failed_index is not None)
+        if not final.ok and applied:
+            # The journal could not record the outcome, so neither "applied" nor a
+            # rollback can be proven: say so with the change set id, never claim either.
+            raise WorkspaceRestoreError(
+                "suggested_change_rollback_failed",
+                "Suggested changes were written but the change could not be recorded for undo.",
+                details={"change_set_id": change_set_id, "status": "needs_review",
+                         "cause": "finalize_failed"},
+            )
+        record = final.record if final.ok else None
+        if failed_index is None and record is not None and record.get("state") == "committed":
+            _maintain(lifecycle.store, guard.require_root())
+            return _result("applied", {"change_set_id": change_set_id}, applied)
+        _roll_back(lifecycle.store, guard.require_root(), change_set_id, record)
+        failed_at = len(plans) if failed_index is None else failed_index
+        return _result(
+            "rolled_back",
+            {"change_set_id": change_set_id} if record is not None else None,
+            [
+                _item_result(plan.item.suggestion_id, "refused",
+                             "write_failed" if index == failed_at else "rolled_back")
+                for index, plan in enumerate(plans)
+            ],
         )
-    record = final.record if final.ok else None
-    if failed_index is None and record is not None and record.get("state") == "committed":
-        _maintain(lifecycle.store, guard.require_root())
-        return _result("applied", {"change_set_id": change_set_id}, applied)
-    _roll_back(lifecycle.store, guard.require_root(), change_set_id, record)
-    failed_at = len(plans) if failed_index is None else failed_index
-    return _result(
-        "rolled_back",
-        {"change_set_id": change_set_id} if record is not None else None,
-        [
-            _item_result(plan.item.suggestion_id, "refused",
-                         "write_failed" if index == failed_at else "rolled_back")
-            for index, plan in enumerate(plans)
-        ],
-    )
 
 
 def _write_one(

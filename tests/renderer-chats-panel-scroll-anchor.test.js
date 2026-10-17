@@ -81,3 +81,25 @@ test('scroll restoration keeps the browser\'s own anchoring adjustment instead o
   controller.dispose();
   dom.window.close();
 });
+
+test('collapsing a parent above the viewport keeps the anchor row at its viewport offset', () => {
+  const { dom, document, groups, state, controller } = createHarness();
+  const created = (minutes) => new Date(Date.UTC(2026, 7, 14, 11, minutes, 0)).toISOString();
+  [2, 3, 4].forEach((index, order) => {
+    state.sessions[index].spawned_from = { parent_session_id: 'session-1', proposal_id: `proposal_${index}`, created_at: created(order) };
+  });
+  controller.renderNow();
+  assert.equal(controller.getVisibleSessionElements().length, 100, 'nesting keeps the flat order of the rows');
+  groups.scrollTop = 50 * ROW_HEIGHT + 7;
+  const anchorRow = document.querySelector('[data-session-id="session-50"]');
+
+  state.sessions[1].children_expanded = false;
+  controller.renderNow();
+
+  assert.equal(controller.getVisibleSessionElements().length, 97, 'the three collapsed children leave the DOM');
+  assert.equal(document.querySelector('[data-session-id="session-3"]'), null);
+  assert.equal(anchorRow.getBoundingClientRect().top, -7, 'the anchor row keeps its viewport offset');
+  assert.equal(groups.scrollTop, 47 * ROW_HEIGHT + 7);
+  controller.dispose();
+  dom.window.close();
+});

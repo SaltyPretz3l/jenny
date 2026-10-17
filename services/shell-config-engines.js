@@ -42,7 +42,22 @@ const DEFAULT_LOCAL_ENGINES = Object.freeze({
     device: 'cpu',
     dims: 0,
   }),
+  // The managed NInfer runtime (row 54): lastUsedArtifactId is the boot
+  // autostart / chat preflight target and is mutually exclusive with
+  // openaiCompatible.managed.lastUsedTag (one managed server owns the GPU).
+  // The watchdog is opt-in; its thresholds are the user's (a card limited
+  // below 450 W wants a lower trip point).
+  ninfer: Object.freeze({
+    lastUsedArtifactId: '',
+    suggestionDismissed: false,
+    contextSize: 153600,
+    mtp: true,
+    vision: true,
+    watchdog: Object.freeze({ enabled: false, maxWatts: 460, maxTempC: 83 }),
+  }),
 });
+const NINFER_ARTIFACT_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const NINFER_CONTEXT_SIZES = Object.freeze([16384, 32768, 65536, 131072, 153600, 262144]);
 const DEFAULT_CODEX_CLI = Object.freeze({
   enabled: false,
   commandPath: '',
@@ -285,6 +300,29 @@ function normalizeEmbeddingSettings(value, { platform = process.platform } = {})
   };
 }
 
+// Total over older configs (a missing block reads back as the defaults), so
+// no CONFIG_VERSION bump. Thresholds are bounded, never trusted raw.
+function normalizeNinferSettings(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const defaults = DEFAULT_LOCAL_ENGINES.ninfer;
+  const watchdogSource = source.watchdog && typeof source.watchdog === 'object' && !Array.isArray(source.watchdog)
+    ? source.watchdog : {};
+  const bounded = (raw, min, max, fallback) => (Number.isInteger(raw) && raw >= min && raw <= max ? raw : fallback);
+  return {
+    lastUsedArtifactId: typeof source.lastUsedArtifactId === 'string' && NINFER_ARTIFACT_ID.test(source.lastUsedArtifactId)
+      ? source.lastUsedArtifactId : '',
+    suggestionDismissed: source.suggestionDismissed === true,
+    contextSize: NINFER_CONTEXT_SIZES.includes(source.contextSize) ? source.contextSize : defaults.contextSize,
+    mtp: source.mtp !== false,
+    vision: source.vision !== false,
+    watchdog: {
+      enabled: watchdogSource.enabled === true,
+      maxWatts: bounded(watchdogSource.maxWatts, 100, 1000, defaults.watchdog.maxWatts),
+      maxTempC: bounded(watchdogSource.maxTempC, 40, 110, defaults.watchdog.maxTempC),
+    },
+  };
+}
+
 function normalizeLocalEngines(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return {
@@ -294,6 +332,7 @@ function normalizeLocalEngines(value = {}) {
       source.openaiCompatible ?? source.openai_compatible,
     ),
     embedding: normalizeEmbeddingSettings(source.embedding),
+    ninfer: normalizeNinferSettings(source.ninfer),
   };
 }
 
@@ -442,6 +481,9 @@ module.exports = {
   normalizeManagedLlamaServer,
   normalizeOpenAICompatibleSettings,
   normalizeEmbeddingSettings,
+  normalizeNinferSettings,
+  NINFER_ARTIFACT_ID,
+  NINFER_CONTEXT_SIZES,
   normalizeLocalEngines,
   normalizePreferredEngineType,
   normalizeLastChatgptModel,

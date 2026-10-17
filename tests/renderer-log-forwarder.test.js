@@ -3,6 +3,7 @@ const assert = require('node:assert');
 
 const { createClientLogForwarder } = require('../renderer/shell/renderer-log-forwarder');
 const { createClientLogBatchHandler } = require('../services/main/client-log-forwarding');
+const { DiagnosticLogService } = require('../services/diagnostic-log-service');
 
 function createManualTimers() {
   const pending = new Map();
@@ -127,12 +128,9 @@ test('forwarder send failures never throw out of enqueue/flush', () => {
   assert.strictEqual(successBatches[0].entries[0].event, 'after-recovery');
 });
 
-test('main batch handler writes normalized renderer entries to the process log writer', () => {
-  const written = [];
-  const handler = createClientLogBatchHandler({
-    getProcessLogWriter: () => ({ write: (entry) => written.push(entry) }),
-    env: {},
-  });
+test('main batch handler appends normalized renderer entries to the diagnostic log service', () => {
+  const service = new DiagnosticLogService({ runId: 'current' });
+  const handler = createClientLogBatchHandler({ getDiagnosticLogService: () => service, env: {} });
   handler(null, {
     entries: [
       { source: 'renderer', layer: 'renderer', level: 'INFO', event: 'chat.send', message: 'ok' },
@@ -141,6 +139,7 @@ test('main batch handler writes normalized renderer entries to the process log w
     ],
     dropped_count: 0,
   });
+  const written = service.list();
   assert.strictEqual(written.length, 2);
   assert.strictEqual(written[0].layer, 'renderer');
   assert.strictEqual(written[0].event, 'chat.send');
@@ -150,34 +149,25 @@ test('main batch handler writes normalized renderer entries to the process log w
 });
 
 test('main batch handler drops DEBUG entries unless agent mode enables them', () => {
-  const written = [];
-  const makeHandler = (env) => createClientLogBatchHandler({
-    getProcessLogWriter: () => ({ write: (entry) => written.push(entry) }),
-    env,
-  });
+  const service = new DiagnosticLogService({ runId: 'current' });
+  const makeHandler = (env) => createClientLogBatchHandler({ getDiagnosticLogService: () => service, env });
   makeHandler({})(null, {
     entries: [{ source: 'renderer', level: 'DEBUG', event: 'noisy' }],
   });
-  assert.strictEqual(written.length, 0);
+  assert.strictEqual(service.list().length, 0);
   makeHandler({ JENNY_AGENT_DEV: '1' })(null, {
     entries: [{ source: 'renderer', level: 'DEBUG', event: 'wanted' }],
   });
-  assert.strictEqual(written.length, 1);
-  assert.strictEqual(written[0].level, 'DEBUG');
+  assert.strictEqual(service.list().length, 1);
+  assert.strictEqual(service.list()[0].level, 'DEBUG');
 });
 
-test('main batch handler isolates malformed entries and missing writer', () => {
-  const handler = createClientLogBatchHandler({
-    getProcessLogWriter: () => null,
-    env: {},
-  });
-  assert.doesNotThrow(() => handler(null, { entries: [{ level: 'INFO' }] }));
-  const written = [];
-  const writingHandler = createClientLogBatchHandler({
-    getProcessLogWriter: () => ({ write: (entry) => written.push(entry) }),
-    env: {},
-  });
+test('main batch handler isolates malformed batches and a missing log service', () => {
+  const handler = createClientLogBatchHandler({ getDiagnosticLogService: () => null, env: {} });
+  assert.doesNotThrow(() => handler(null, { entries: [{ level: 'INFO' }], dropped_count: 3 }));
+  const service = new DiagnosticLogService({ runId: 'current' });
+  const writingHandler = createClientLogBatchHandler({ getDiagnosticLogService: () => service, env: {} });
   assert.doesNotThrow(() => writingHandler(null, 'not-a-batch'));
   assert.doesNotThrow(() => writingHandler(null, { entries: 'nope' }));
-  assert.strictEqual(written.length, 0);
+  assert.strictEqual(service.list().length, 0);
 });

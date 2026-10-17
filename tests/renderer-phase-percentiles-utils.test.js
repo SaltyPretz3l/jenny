@@ -1,253 +1,68 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { JSDOM } = require('jsdom');
 
 const {
-  buildRuntimeHealthSummary,
-  renderPhasePercentilesPane,
+  PHASE_ORDER,
+  buildPhaseTimingView,
+  classifyBackendPhase,
+  deriveVerdict,
+  phaseLabel,
 } = require('../renderer/shell/renderer-phase-percentiles-utils.js');
 
-function createClassList() {
-  const values = new Set();
-  return {
-    toggle(name, force) {
-      if (force) {
-        values.add(name);
-      } else {
-        values.delete(name);
-      }
-    },
-    contains(name) {
-      return values.has(name);
-    },
-  };
+function tableOf(payload) {
+  const view = buildPhaseTimingView(payload);
+  return { view, doc: new JSDOM(view.markup).window.document };
 }
 
-function createNode() {
-  return {
-    hidden: false,
-    textContent: '',
-    innerHTML: '',
-    classList: createClassList(),
-    dataset: {},
-  };
-}
-
-test('runtime health renders as a user-facing slice outside dev mode', () => {
-  const dom = {
-    diagnosticsBadge: createNode(),
-    diagnosticsSummary: createNode(),
-    diagnosticsStatus: createNode(),
-    phasePercentilesTable: createNode(),
-    phasePercentilesResetButton: createNode(),
-  };
-
-  renderPhasePercentilesPane({
-    phasePercentilesState: {
-      loading: false,
-      error: '',
-      payload: {
-        generated_at: '2026-04-21T15:00:00.000Z',
-        phases: {
-          provider_request_start_to_first_chunk: {
-            count: 2,
-            p50: 120,
-            p95: 190,
-            p99: 190,
-          },
-          first_chunk_to_first_visible_token: {
-            count: 2,
-            p50: 24,
-            p95: 32,
-            p99: 32,
-          },
-        },
-        targets: {
-          provider_request_start_to_first_chunk: { p50: 150, p95: 400 },
-          first_chunk_to_first_visible_token: { p50: 20, p95: 100 },
-        },
-      },
+test('the timing view lists only measured steps, in pipeline order, and counts them', () => {
+  const { view, doc } = tableOf({
+    phases: {
+      completion_to_terminal_persist: { count: 4, p50: 10, p95: 20, p99: 30 },
+      click_to_optimistic_render: { count: 5, p50: 1, p95: 2, p99: 3 },
+      provider_request_start_to_first_chunk: { count: 0, p50: 9, p95: 9, p99: 9 },
+      custom_step: { count: 2, p50: 7, p95: 8, p99: 9 },
     },
-    runtimeHealthState: {
-      backend: { phase: 'ready', retryable: true },
-      status: { engine: 'ollama', model: 'qwen3.6:latest' },
-      modelList: { available: true, active_model: 'qwen3.6:latest' },
-      offline: { localChatReady: true },
-    },
-    dom,
+    targets: { click_to_optimistic_render: { p50: 5, p95: 10 } },
   });
-
-  assert.match(dom.diagnosticsBadge.textContent, /healthy/i);
-  assert.match(dom.diagnosticsSummary.textContent, /ollama/i);
-  assert.match(dom.diagnosticsSummary.textContent, /qwen3\.6/i);
-  assert.match(dom.diagnosticsStatus.textContent, /first chunk/i);
-  assert.match(dom.phasePercentilesTable.innerHTML, /Provider start to first chunk/);
-  assert.match(dom.phasePercentilesTable.innerHTML, /scope="col"/);
-  assert.equal(dom.phasePercentilesResetButton.disabled, false);
+  assert.deepEqual(Array.from(doc.querySelectorAll('tbody tr')).map((row) => row.cells[0].textContent),
+    ['Click to optimistic render', 'Completion to terminal persist', 'Custom Step']);
+  assert.equal(view.measured, 3);
+  assert.equal(view.total, PHASE_ORDER.length + 1, 'the pipeline plus the extra step the payload names');
+  assert.equal(view.chats, 5, 'the busiest step counts the chats');
 });
 
-function buildHealthyDom() {
-  return {
-    diagnosticsBadge: createNode(),
-    diagnosticsSummary: createNode(),
-    diagnosticsStatus: createNode(),
-    phasePercentilesTable: createNode(),
-    phasePercentilesResetButton: createNode(),
-  };
-}
-
-test('empty phase evidence collapses into a concise no-samples state', () => {
-  const dom = buildHealthyDom();
-  renderPhasePercentilesPane({
-    ...buildHealthyState(),
-    dom,
-  });
-  assert.match(dom.phasePercentilesTable.innerHTML, /No latency samples yet/);
-  assert.doesNotMatch(dom.phasePercentilesTable.innerHTML, /<table/);
-  assert.doesNotMatch(dom.phasePercentilesTable.innerHTML, /TBD|EMPTY/);
-  assert.equal(dom.diagnosticsStatus.textContent, 'No timings recorded in this app launch yet.');
-  assert.equal(dom.phasePercentilesResetButton.disabled, true);
+test('nothing measured builds no table at all', () => {
+  for (const payload of [null, undefined, {}, { phases: {}, targets: {} }, { phases: { click_to_optimistic_render: { count: 0 } } }]) {
+    const view = buildPhaseTimingView(payload);
+    assert.equal(view.markup, '');
+    assert.equal(view.measured, 0);
+    assert.equal(view.chats, 0);
+  }
 });
 
-test('unavailable runtime does not recommend sending a chat for latency samples', () => {
-  const dom = buildHealthyDom();
-  renderPhasePercentilesPane({
-    phasePercentilesState: { loading: false, error: '', payload: { phases: {}, targets: {} } },
-    runtimeHealthState: {
-      backend: { phase: 'failed' },
-      status: { engine: 'ollama', model: 'qwen3.6:latest' },
-      modelList: { available: true, active_model: 'qwen3.6:latest' },
-      offline: {},
-    },
-    dom,
-  });
-  assert.equal(dom.diagnosticsBadge.textContent, 'Unavailable');
-  assert.equal(dom.diagnosticsBadge.dataset.tone, 'danger');
-  assert.match(dom.diagnosticsSummary.textContent, /unavailable until the backend recovers/i);
-  assert.match(dom.phasePercentilesTable.innerHTML, /unavailable until the backend recovers/i);
-  assert.doesNotMatch(dom.diagnosticsSummary.textContent, /send a local chat/i);
-  assert.doesNotMatch(dom.phasePercentilesTable.innerHTML, /send a local chat/i);
+test('step labels follow the interface language and unknown steps are humanized', () => {
+  assert.equal(phaseLabel('provider_request_start_to_first_chunk'), 'Provider start to first chunk');
+  assert.equal(phaseLabel('some_new_step'), 'Some New Step');
 });
 
-test('warning harness evidence cannot downgrade an unavailable backend', () => {
-  const summary = buildRuntimeHealthSummary({
-    phasePercentilesState: { loading: false, error: '', payload: { phases: {}, targets: {} } },
-    runtimeHealthState: {
-      backend: { phase: 'failed' },
-      status: { engine: 'ollama', model: 'qwen3.6:latest' },
-      modelList: { available: true, active_model: 'qwen3.6:latest' },
-      offline: {},
-    },
-    harnessSnapshot: { runtime: {} },
-    deriveRuntimeHealthState() {
-      return { tone: 'warning', summary: 'Degraded: stale capability profile' };
-    },
-  });
-  assert.equal(summary.badge, 'Unavailable');
-  assert.match(summary.summary, /stale capability profile/i);
+test('the verdict compares both percentiles with the target and never guesses without one', () => {
+  const target = { p50: 100, p95: 400 };
+  assert.equal(deriveVerdict({ count: 1, p50: 100, p95: 400 }, target), 'pass');
+  assert.equal(deriveVerdict({ count: 1, p50: 140, p95: 400 }, target), 'warn');
+  assert.equal(deriveVerdict({ count: 1, p50: 100, p95: 700 }, target), 'fail');
+  assert.equal(deriveVerdict({ count: 0, p50: 1, p95: 1 }, target), 'empty');
+  assert.equal(deriveVerdict({ count: 1, p50: null, p95: null }, target), 'empty');
+  assert.equal(deriveVerdict({ count: 1, p50: 1, p95: 1 }, {}), 'empty');
 });
 
-function buildHealthyState() {
-  return {
-    phasePercentilesState: { loading: false, error: '', payload: { phases: {}, targets: {} } },
-    runtimeHealthState: {
-      backend: { phase: 'ready' },
-      status: { engine: 'ollama', model: 'qwen3.6:latest' },
-      modelList: { available: true, active_model: 'qwen3.6:latest' },
-      offline: { localChatReady: true },
-    },
-  };
-}
-
-test('Phase 7 harnessSnapshot override switches badge to Blocked when tone is danger', () => {
-  const dom = buildHealthyDom();
-  renderPhasePercentilesPane({
-    ...buildHealthyState(),
-    harnessSnapshot: { runtime: {} },
-    deriveRuntimeHealthState() {
-      return { tone: 'danger', label: 'Blocked', summary: 'Blocked: probe failed for qwen3.6:latest' };
-    },
-    dom,
-  });
-  assert.equal(dom.diagnosticsBadge.textContent, 'Blocked');
-  assert.match(dom.diagnosticsSummary.textContent, /Blocked: probe failed for qwen3\.6:latest/);
-});
-
-test('Phase 7 harnessSnapshot override switches badge to Degraded when tone is warning', () => {
-  const dom = buildHealthyDom();
-  renderPhasePercentilesPane({
-    ...buildHealthyState(),
-    harnessSnapshot: { runtime: {} },
-    deriveRuntimeHealthState() {
-      return { tone: 'warning', label: 'Degraded', summary: 'Degraded: tools disabled for qwen3.6:latest' };
-    },
-    dom,
-  });
-  assert.equal(dom.diagnosticsBadge.textContent, 'Degraded');
-  assert.match(dom.diagnosticsSummary.textContent, /Degraded: tools disabled for qwen3\.6:latest/);
-});
-
-test('Phase 7 override joins a summary that already ends a sentence without a doubled period', () => {
-  const dom = buildHealthyDom();
-  renderPhasePercentilesPane({
-    ...buildHealthyState(),
-    harnessSnapshot: { runtime: {} },
-    deriveRuntimeHealthState() {
-      return { tone: 'warning', summary: 'qwen3.6’s capability check is out of date. Jenny will check it again.' };
-    },
-    dom,
-  });
-  assert.match(dom.diagnosticsSummary.textContent, /check it again\. Runtime health:/);
-  assert.doesNotMatch(dom.diagnosticsSummary.textContent, /\.\./);
-});
-
-test('Phase 7 override does not fire when tone is success', () => {
-  const dom = buildHealthyDom();
-  renderPhasePercentilesPane({
-    ...buildHealthyState(),
-    harnessSnapshot: { runtime: {} },
-    deriveRuntimeHealthState() {
-      return { tone: 'success', label: 'Healthy', summary: 'Healthy' };
-    },
-    dom,
-  });
-  assert.match(dom.diagnosticsBadge.textContent, /healthy/i);
-  assert.doesNotMatch(dom.diagnosticsSummary.textContent, /Blocked|Degraded/);
-});
-
-test('Phase 7 override is skipped while phase percentiles are loading', () => {
-  const dom = buildHealthyDom();
-  renderPhasePercentilesPane({
-    phasePercentilesState: { loading: true, error: '', payload: null },
-    runtimeHealthState: { backend: { phase: 'ready' }, status: {}, modelList: {}, offline: {} },
-    harnessSnapshot: { runtime: {} },
-    deriveRuntimeHealthState() {
-      return { tone: 'danger', label: 'Blocked', summary: 'Blocked: ignored' };
-    },
-    dom,
-  });
-  assert.equal(dom.diagnosticsBadge.textContent, 'Refreshing');
-  assert.doesNotMatch(dom.diagnosticsSummary.textContent, /Blocked: ignored/);
-});
-
-test('Phase 7 override is silent when deriveRuntimeHealthState throws', () => {
-  const dom = buildHealthyDom();
-  renderPhasePercentilesPane({
-    ...buildHealthyState(),
-    harnessSnapshot: { runtime: {} },
-    deriveRuntimeHealthState() {
-      throw new Error('boom');
-    },
-    dom,
-  });
-  assert.match(dom.diagnosticsBadge.textContent, /healthy/i);
-});
-
-test('Phase 7 override is skipped when deriveRuntimeHealthState is not provided', () => {
-  const dom = buildHealthyDom();
-  renderPhasePercentilesPane({
-    ...buildHealthyState(),
-    harnessSnapshot: { runtime: {} },
-    dom,
-  });
-  assert.match(dom.diagnosticsBadge.textContent, /healthy/i);
+test('backend phases classify into the groups the Overview reasons about', () => {
+  assert.equal(classifyBackendPhase('ready'), 'ready');
+  assert.equal(classifyBackendPhase(' Initialized '), 'ready');
+  assert.equal(classifyBackendPhase('model_loading'), 'loading');
+  assert.equal(classifyBackendPhase('model_acquiring'), 'acquiring');
+  assert.equal(classifyBackendPhase('model_unavailable'), 'model_unavailable');
+  assert.equal(classifyBackendPhase('crashed'), 'unavailable');
+  assert.equal(classifyBackendPhase('sidecar_spawned'), 'starting');
+  assert.equal(classifyBackendPhase(undefined), 'unknown');
 });

@@ -7,6 +7,7 @@ const {
   LOG_RETENTION,
   SECRET_SHAPE_RE,
   collapseRedactedPathTails,
+  isSensitiveLogKey,
   redactLogReportValue,
   redactLogText,
 } = require('../renderer/shared/log-contract-utils');
@@ -423,4 +424,103 @@ test('log report redaction handles circular values without throwing', () => {
 
   assert.equal(redacted.token, '[redacted]');
   assert.equal(redacted.self, '[redacted:circular]');
+});
+
+for (const [input, expected] of [
+  ['GITHUB_TOKEN=abc123xyz', 'GITHUB_TOKEN=[redacted]'],
+  ['OPENAI_API_KEY=abcdef123456', 'OPENAI_API_KEY=[redacted]'],
+  ['DB_PASSWORD=hunter2', 'DB_PASSWORD=[redacted]'],
+  ['HF_TOKEN=abcd1234', 'HF_TOKEN=[redacted]'],
+  ['CLIENT_SECRET=abc', 'CLIENT_SECRET=[redacted]'],
+  ['client_secret=abc', 'client_secret=[redacted]'],
+  ['client-secret=abc', 'client-secret=[redacted]'],
+  ['"api_key": "abcdef123456"', '"api_key": "[redacted]"'],
+  ["'token':'abc'", "'token':'[redacted]'"],
+  ['env={"OPENAI_API_KEY":"abcdef123456"}', 'env={"OPENAI_API_KEY":"[redacted]"}'],
+  ['Authorization: Basic dXNlcjpwYXNzd29yZA==', 'Authorization: [redacted]'],
+  ['Proxy-Authorization: Basic dXNlcjpwYXNzd29yZA==', 'Proxy-Authorization: [redacted]'],
+  ['cwd /home/jane/My Files OPENAI_API_KEY=abc', 'cwd [redacted:path] OPENAI_API_KEY=[redacted]'],
+]) {
+  test(`redactLogText hides prefixed, quoted and Basic secrets: ${input}`, () => {
+    assert.equal(redactLogText(input), expected);
+  });
+}
+
+test('redactLogText keeps key words in prose and token counters readable', () => {
+  for (const input of [
+    'the token count was 12', 'the password was reset', 'tokenizer=12',
+    'total_tokens=12 prompt_tokens=8 max_tokens=100 tokens_per_second=4',
+  ]) assert.equal(redactLogText(input), input);
+});
+
+for (const key of [
+  'x_api_key', 'openai_api_key', 'ssh_private_key', 'proxy_authorization', 'access_key',
+  'CLIENT-SECRET', 'db_password', 'db_passwd', 'credential', 'credentials', 'proxy_credentials', 'hf_token',
+]) {
+  test(`log report redaction hides sensitive key suffix ${key}`, () => {
+    assert.equal(isSensitiveLogKey(key), true);
+    assert.deepEqual(redactLogReportValue({ nested: [{ [key]: 'abc' }] }), {
+      nested: [{ [key]: '[redacted]' }],
+    });
+  });
+}
+
+test('log report redaction preserves token count and rate keys', () => {
+  const counters = {
+    total_tokens: 12, prompt_tokens: 8, completion_tokens: 4, max_tokens: 100,
+    tokens_per_second: 4, token_count: 12, tokenCount: 12,
+  };
+  for (const key of Object.keys(counters)) assert.equal(isSensitiveLogKey(key), false, key);
+  assert.deepEqual(redactLogReportValue(counters), counters);
+});
+
+test('redactLogText handles 200 KB of repeated secret near-matches under 200 ms', () => {
+  const nearMatch = 'OPENAI_API_KEYx=abc client_secrety=abc Authorizationx: Basic abc ';
+  const input = nearMatch.repeat(Math.ceil(200 * 1024 / nearMatch.length)).slice(0, 200 * 1024);
+  const started = process.hrtime.bigint();
+  const output = redactLogText(input);
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.equal(output, input);
+  assert.ok(elapsedMs < 200, `200 KB took ${elapsedMs.toFixed(1)} ms`);
+});
+
+test('Codex auth and runtime messages use shared short-secret and spaced-path redaction', async () => {
+  const { createCodexCliAuthService } = require('../services/backend/codex-cli-auth-service');
+  const { createCodexCliRuntimeService } = require('../services/backend/codex-cli-runtime-service');
+  const message = String.raw`token=abc at C:\Users\example\My Files\codex.json failed`;
+  const expected = 'token=[redacted] at [redacted:path] failed';
+  const auth = createCodexCliAuthService({ checkSetup: async () => ({ ok: false, message }) });
+  assert.equal((await auth.getState()).message, expected);
+  const runtime = createCodexCliRuntimeService({
+    userDataPath: 'C:/Users/example/Jenny',
+    configService: { getState: () => ({ codexCli: { enabled: true } }) },
+    authService: { getState: async () => ({ ok: false, message }) },
+    autoRefresh: false,
+  });
+  assert.equal((await runtime.refresh()).message, expected);
+  assert.equal(runtime.getManagedConfigPatch().codex_cli_auth_reason, expected);
+});
+
+test('shared hostile diagnostics fixture satisfies the canonical Electron redactor', () => {
+  const fixtures = require('./fixtures/diagnostics-hostile-input.json');
+  for (const item of fixtures) {
+    const output = item.value ? JSON.stringify(redactLogReportValue(item.value)) : redactLogText(item.text);
+    for (const hidden of item.hidden) assert.equal(output.includes(hidden), false, `leaked ${hidden}`);
+    for (const visible of item.visible || []) assert.ok(output.includes(visible));
+  }
+});
+
+test('redactLogText hides a whole quoted secret value, spaces and separators included', () => {
+  assert.equal(redactLogText('"password": "correct horse battery"'), '"password": "[redacted]"');
+  assert.equal(redactLogText('password="p@ss;word" next=1'), 'password="[redacted]" next=1');
+  assert.equal(redactLogText("{'token':'a b,c'}"), "{'token':'[redacted]'}");
+  assert.equal(redactLogText('max_tokens="5" note="hi"'), 'max_tokens="5" note="hi"');
+});
+
+test('redactLogText hides a quoted secret past an escaped quote and one longer than its bound', () => {
+  const escaped = redactLogText(String.raw`{"password":"alpha\" beta gamma","next":1}`);
+  assert.equal(escaped, '{"password":"[redacted]","next":1}');
+  const long = redactLogText(`"api_key": "${'word '.repeat(300)}end" tail`);
+  assert.doesNotMatch(long, /word|end/);
+  assert.match(long, /^"api_key": "\[redacted\]"/);
 });

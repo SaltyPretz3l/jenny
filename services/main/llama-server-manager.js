@@ -22,6 +22,7 @@
 // gate, so a permanently failing binary cannot restart-loop.
 
 const fs = require('fs');
+const { peekCapabilities, probeCapabilitiesAsync, supportsPrefillProgress } = require('../backend/llama-server-capabilities');
 const path = require('path');
 
 const {
@@ -385,6 +386,7 @@ function createLlamaServerManager({
       modelTag,
       modelPath,
       runtimeShadowed: runtime.shadowed,
+      featureFlags,
       accel,
       launchOptions: {
         modelTag,
@@ -556,6 +558,10 @@ function createLlamaServerManager({
           onExit,
           onEngineActivity,
         });
+      }
+      if (!nextHandle.reused && plan.featureFlags?.prefill_progress === true) {
+        const capability = await probeCapabilitiesAsync({ binaryPath: launchOptions.binaryPath });
+        log('INFO', 'llama.server.prefill_capability', { supported: supportsPrefillProgress(capability), build: capability.build, commit: capability.commit });
       }
       if (startGeneration !== generation) {
         // stopSync() ran while the child was coming up (emergency shutdown);
@@ -962,6 +968,8 @@ function createLlamaServerManager({
     getApiKey,
     getBaseUrl,
     getStatus,
+    supportsPrefillProgress: () => state === 'ready' && Boolean(runningBinaryPath)
+      && supportsPrefillProgress(peekCapabilities(runningBinaryPath)),
     restart,
     runtimePicks,
     settled,

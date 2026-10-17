@@ -20,10 +20,15 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function startupStarfieldFactory() {
   'use strict';
 
-  // Density rule: the full sky on a wide window, a lighter one below.
+  // The sky is tuned on the default 1600x930 window. The disc, star size and
+  // star count scale from it so any window or display gets the same sky.
+  var REFERENCE_WIDTH_PX = 1600;
+  var REFERENCE_HEIGHT_PX = 930;
   var STAR_COUNT_FULL = 220;
   var STAR_COUNT_LIGHT = 120;
-  var DENSITY_WIDTH_BREAKPOINT_PX = 1100;
+  var STAR_COUNT_MAX = 440;
+  var STAR_SIZE_SCALE_MIN = 0.75;
+  var STAR_SIZE_SCALE_MAX = 1.5;
   var DEVICE_PIXEL_RATIO_CAP = 2;
 
   // Timing. The controller owns the minimum hold; the engine exports it so the
@@ -33,7 +38,8 @@
   var COLLAPSE_MS = 750;
   var MAX_FRAME_STEP_MS = 64;
 
-  // The disc: an ellipse centred on the wordmark, inner sky turning faster.
+  // The disc: an ellipse centred on the wordmark, inner sky turning faster. The
+  // inner edge hugs the wordmark (fixed px); the outer span scales per axis.
   var STACK_CENTRE_OFFSET_PX = 20;
   var DISC_Y_SCALE = 0.68;
   var RADIUS_MIN_PX = 70;
@@ -86,12 +92,16 @@
     return value < 0 ? 0 : (value > 1 ? 1 : value);
   }
 
-  function resolveStarCount(density, viewportWidth) {
+  // Auto density keeps stars per area constant: the full count at the
+  // reference window, more on a bigger one, within [light, max].
+  function resolveStarCount(density, viewportWidth, viewportHeight) {
     if (density === 'full') { return STAR_COUNT_FULL; }
     if (density === 'light') { return STAR_COUNT_LIGHT; }
     var count = Number(density);
     if (Number.isFinite(count) && count > 0) { return Math.floor(count); }
-    return Number(viewportWidth) >= DENSITY_WIDTH_BREAKPOINT_PX ? STAR_COUNT_FULL : STAR_COUNT_LIGHT;
+    var area = (Number(viewportWidth) || 0) * (Number(viewportHeight) || 0);
+    var scaled = Math.round(STAR_COUNT_FULL * area / (REFERENCE_WIDTH_PX * REFERENCE_HEIGHT_PX));
+    return Math.min(Math.max(scaled, STAR_COUNT_LIGHT), STAR_COUNT_MAX);
   }
 
   function readColor(style, token, fallback) {
@@ -123,6 +133,10 @@
     var height = 0;
     var centreX = 0;
     var centreY = 0;
+    var spanX = 0;
+    var spanY = 0;
+    var viewScale = 0;
+    var starScale = 0;
     var rafHandle = 0;
     var lastNow = 0;
     var elapsed = 0;
@@ -160,6 +174,12 @@
         centreX = width / 2;
         centreY = height / 2 - STACK_CENTRE_OFFSET_PX;
       }
+      var scaleX = width / REFERENCE_WIDTH_PX;
+      var scaleY = height / REFERENCE_HEIGHT_PX;
+      spanX = RADIUS_SPAN_PX * scaleX;
+      spanY = RADIUS_SPAN_PX * scaleY;
+      viewScale = Math.sqrt(scaleX * scaleY);
+      starScale = Math.min(Math.max(viewScale, STAR_SIZE_SCALE_MIN), STAR_SIZE_SCALE_MAX);
       var dpr = Math.min(Math.max(Number(win && win.devicePixelRatio) || 1, 1), DEVICE_PIXEL_RATIO_CAP);
       canvas.width = Math.max(1, Math.round(width * dpr));
       canvas.height = Math.max(1, Math.round(height * dpr));
@@ -178,18 +198,21 @@
     function buildStars(count) {
       var built = [];
       for (var i = 0; i < count; i += 1) {
-        var radius = RADIUS_MIN_PX + Math.pow(random(), RADIUS_EXPONENT) * RADIUS_SPAN_PX;
+        // reach: 0 at the inner edge, 1 at the outer; the speed keys on the
+        // reference-window radius so the swirl turns alike at every size.
+        var reach = Math.pow(random(), RADIUS_EXPONENT);
+        var referenceRadius = RADIUS_MIN_PX + reach * RADIUS_SPAN_PX;
         built.push({
-          r: radius,
+          reach: reach,
           theta: random() * FULL_CIRCLE,
-          speed: (ANGULAR_SPEED_BASE + random() * ANGULAR_SPEED_JITTER) / Math.sqrt(radius / ANGULAR_REFERENCE_RADIUS_PX),
+          speed: (ANGULAR_SPEED_BASE + random() * ANGULAR_SPEED_JITTER) / Math.sqrt(referenceRadius / ANGULAR_REFERENCE_RADIUS_PX),
           size: STAR_SIZE_MIN_PX + random() * STAR_SIZE_SPAN_PX,
           alpha: STAR_ALPHA_MIN + random() * STAR_ALPHA_SPAN,
           twinkle: random() * PHASE_SPAN,
           wobble: random() * PHASE_SPAN,
           color: pickColor(),
-          bow: (random() - 0.5) * BOW_SPAN_PX,
-          x: 0, y: 0, sx: 0, sy: 0, tx: 0, ty: 0, nx: 0, ny: 0,
+          bowFactor: random() - 0.5,
+          x: 0, y: 0, sx: 0, sy: 0, tx: 0, ty: 0, bowX: 0, bowY: 0,
         });
       }
       // Group by colour so a frame switches fillStyle three times, not per star.
@@ -204,9 +227,9 @@
     }
 
     function place(star, t) {
-      var radius = star.r + WOBBLE_PX * Math.sin(t * WOBBLE_RATE + star.wobble);
-      star.x = centreX + radius * Math.cos(star.theta) + Math.sin(t * DRIFT_RATE_X + star.twinkle) * DRIFT_PX;
-      star.y = centreY + radius * Math.sin(star.theta) * DISC_Y_SCALE + Math.cos(t * DRIFT_RATE_Y + star.twinkle) * DRIFT_PX;
+      var inner = RADIUS_MIN_PX + WOBBLE_PX * Math.sin(t * WOBBLE_RATE + star.wobble);
+      star.x = centreX + (inner + star.reach * spanX) * Math.cos(star.theta) + Math.sin(t * DRIFT_RATE_X + star.twinkle) * DRIFT_PX;
+      star.y = centreY + (inner + star.reach * spanY) * Math.sin(star.theta) * DISC_Y_SCALE + Math.cos(t * DRIFT_RATE_Y + star.twinkle) * DRIFT_PX;
     }
 
     function drawStill() {
@@ -218,7 +241,7 @@
           place(star, 0);
           ctx.globalAlpha = star.alpha;
           ctx.beginPath();
-          ctx.arc(star.x, star.y, star.size, 0, FULL_CIRCLE);
+          ctx.arc(star.x, star.y, star.size * starScale, 0, FULL_CIRCLE);
           ctx.fill();
         }
       }
@@ -231,7 +254,7 @@
       var eased = collapsing ? easeInOutCubic(p) : 0;
       var arc = collapsing ? Math.sin(p * Math.PI) : 0;
       var landingFade = collapsing ? 1 - clamp01((p - LANDING_FADE_START) / (1 - LANDING_FADE_START)) : 1;
-      var sizeScale = collapsing ? 1 - LANDING_SHRINK * eased : 1;
+      var sizeScale = starScale * (collapsing ? 1 - LANDING_SHRINK * eased : 1);
       ctx.clearRect(0, 0, width, height);
       for (var c = 0; c < 3; c += 1) {
         ctx.fillStyle = fills[c];
@@ -245,8 +268,8 @@
             x = star.x;
             y = star.y;
           } else {
-            x = star.sx + (star.tx - star.sx) * eased + star.nx * star.bow * arc;
-            y = star.sy + (star.ty - star.sy) * eased + star.ny * star.bow * arc;
+            x = star.sx + (star.tx - star.sx) * eased + star.bowX * arc;
+            y = star.sy + (star.ty - star.sy) * eased + star.bowY * arc;
           }
           ctx.globalAlpha = star.alpha * fadeIn * (1 - TWINKLE_DEPTH + TWINKLE_DEPTH * Math.sin(t * TWINKLE_RATE + star.twinkle)) * landingFade;
           ctx.beginPath();
@@ -358,6 +381,7 @@
       var cy = rect && rect.height > 0 ? rect.top + rect.height / 2 : centreY;
       var halfWidth = rect && rect.width > 0 ? Math.min(DESTINATION_HALF_WIDTH_PX, rect.width / 2) : DESTINATION_HALF_WIDTH_PX;
       var halfHeight = rect && rect.height > 0 ? Math.min(DESTINATION_HALF_HEIGHT_PX, rect.height / 2) : DESTINATION_HALF_HEIGHT_PX;
+      var bowSpan = BOW_SPAN_PX * viewScale;
       for (var i = 0; i < stars.length; i += 1) {
         var star = stars[i];
         star.sx = star.x;
@@ -366,9 +390,10 @@
         star.ty = cy + (random() - 0.5) * 2 * halfHeight;
         var nx = -(star.ty - star.sy);
         var ny = star.tx - star.sx;
-        var length = Math.sqrt(nx * nx + ny * ny) || 1;
-        star.nx = nx / length;
-        star.ny = ny / length;
+        // The swoop bows sideways along the path's normal.
+        var bow = star.bowFactor * bowSpan / (Math.sqrt(nx * nx + ny * ny) || 1);
+        star.bowX = nx * bow;
+        star.bowY = ny * bow;
       }
     }
 
@@ -440,7 +465,8 @@
     }
 
     measureViewport();
-    stars = buildStars(resolveStarCount(opts.density, width));
+    // The count is fixed at mount; a resize rescales the disc, not the count.
+    stars = buildStars(resolveStarCount(opts.density, width, height));
     if (doc && typeof doc.addEventListener === 'function') {
       doc.addEventListener('visibilitychange', handleVisibilityChange);
     }

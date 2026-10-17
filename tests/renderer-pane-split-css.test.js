@@ -137,8 +137,7 @@ test('two panes: each pane is a grid with kicker, thread and composer rows', () 
     'grid-column': '1',
     'grid-row': '3',
     'align-self': 'end',
-    // --composer-width follows the viewport; a half-width pane needs its own gutter.
-    'max-width': 'min(var(--composer-width), calc(100% - 2 * var(--space-6)))',
+    // No width rule of its own: --composer-width is the pane's measure (chat-panes.css .chat-pane).
     transform: 'none',
   });
 });

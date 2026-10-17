@@ -57,6 +57,8 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
   const reasonFor = (error) => String((error && error.message) || error);
   // One log line per call; never the key, never a status blob.
   const finish = (action, result) => {
+    // The status poll repeats all session; only its failures are worth a line.
+    if (action === 'get_status' && result.ok) return result;
     const details = {
       ok: result.ok,
       ...(result.reason ? { reason: result.reason } : {}),
@@ -287,18 +289,31 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
       scannedDirs.set(key, result);
       return result;
     };
-    const scanRoot = async (root) => {
+    // A library folder holding several quants lists each one (gate
+    // 2026-10-14 F7: only the first was ever offered), named by its file stem;
+    // a folder with one model keeps the folder name, so saved settings keep
+    // their key. Built-in roots launch by tag, which picks the first main, so
+    // they stay one entry per folder.
+    const modelsInFolder = (folder, files, perFile) => {
+      const mains = perFile
+        ? files.chat.filter((name) => !SHARD_PART.test(name) || /-00001-of-\d{5}\.gguf$/i.test(name)) : [];
+      if (mains.length <= 1) return [{ tag: folder, main: files.chat[0] }];
+      return mains.map((main) => ({ tag: main.replace(/(-00001-of-\d{5})?\.gguf$/i, ''), main }));
+    };
+    const scanRoot = async (root, { perFile = false } = {}) => {
       for (const tagEntry of readDir(root).filter((entry) => entry.isDirectory())) {
         const dir = path.join(root, tagEntry.name);
-        const key = managedModelKey(tagEntry.name);
         const files = await readScannedGgufs(dir);
         if (files.diffusion.length > 0 && files.chat.length === 0) continue;
-        const entry = describeGgufDir(tagEntry.name, dir, 'root', files.chat[0], files);
-        entries.push(entry);
-        const file = fileKey(dir, entry.mainGguf);
-        if (file && !rootEntryByFile.has(file)) rootEntryByFile.set(file, entry);
-        entryKeys.add(key);
-        seen.add(seenKey(dir, key));
+        for (const model of modelsInFolder(tagEntry.name, files, perFile)) {
+          const key = managedModelKey(model.tag);
+          const entry = describeGgufDir(model.tag, dir, 'root', model.main, files);
+          entries.push(entry);
+          const file = fileKey(dir, entry.mainGguf);
+          if (file && !rootEntryByFile.has(file)) rootEntryByFile.set(file, entry);
+          entryKeys.add(key);
+          seen.add(seenKey(dir, key));
+        }
       }
     };
     for (const root of builtInRoots) await scanRoot(root);
@@ -335,7 +350,7 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
     };
     for (const root of libraryRoots) {
       const tagDirs = readDir(root).filter((entry) => entry.isDirectory());
-      await scanRoot(root);
+      await scanRoot(root, { perFile: true });
       await indexLibraryDir(root);
       for (const tagEntry of tagDirs) await indexLibraryDir(path.join(root, tagEntry.name));
     }

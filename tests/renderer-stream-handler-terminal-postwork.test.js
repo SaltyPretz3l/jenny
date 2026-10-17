@@ -89,15 +89,15 @@ test('successful terminal metadata refresh schedules a guarded full repaint', as
   assert.ok(order.indexOf('refresh') < order.indexOf('render'), 'repaint happens after metadata refresh');
 });
 
-test('closing terminal postwork recomputes composer state after a mid-postwork render', async (t) => {
+test('closing terminal postwork recomputes composer state after a held postwork stage', async (t) => {
   const frames = createQueuedFrameController();
   const composerBusyStates = []; let composerStatusRenders = 0;
   const composerStateLogs = [];
   let harness; const turnClock = { startedAt: Date.now() - 100, endedAt: null };
-  let resolveMemoryCapture;
-  let markMemoryCaptureStarted;
-  const memoryCaptureStarted = new Promise((resolve) => { markMemoryCaptureStarted = resolve; });
-  const memoryCapturePending = new Promise((resolve) => { resolveMemoryCapture = resolve; });
+  let resolveObservability;
+  let markObservabilityStarted;
+  const observabilityStarted = new Promise((resolve) => { markObservabilityStarted = resolve; });
+  const observabilityPending = new Promise((resolve) => { resolveObservability = resolve; });
   // Dock surface (activeView 'ide' + open dock) so the close-time
   // ide_chat_dock.composer_state instrumentation branch executes too.
   const previousSurfaceLive = globalThis.rendererChatSurfaceLiveUtils;
@@ -108,9 +108,9 @@ test('closing terminal postwork recomputes composer state after a mid-postwork r
     stateOverrides: { ui: { activeView: 'ide', ideChatDockOpen: true }, features: { featureFlags: { ide_chat_dock: true } }, turnClockBySession: new Map([['session-1', turnClock]]) },
     callbackOverrides: {
       refreshSessionMetadata: async () => {},
-      maybeSuggestMemoryCapture() {
-        markMemoryCaptureStarted();
-        return memoryCapturePending;
+      refreshObservability() {
+        markObservabilityStarted();
+        return observabilityPending;
       },
       renderComposerState() {
         composerBusyStates.push(harness.multiStreamController.isSessionSendBusy('session-1'));
@@ -119,7 +119,7 @@ test('closing terminal postwork recomputes composer state after a mid-postwork r
     },
   });
   t.after(() => {
-    resolveMemoryCapture();
+    resolveObservability();
     globalThis.rendererChatSurfaceLiveUtils = previousSurfaceLive;
     harness.restore();
   });
@@ -128,16 +128,11 @@ test('closing terminal postwork recomputes composer state after a mid-postwork r
   const donePromise = harness.emit({
     type: 'complete', sessionId: 'session-1', streamId: 'stream-composer-latch', content: 'done',
   });
-  await memoryCaptureStarted;
-  assert.equal(harness.multiStreamController.isSessionSendBusy('session-1'), true);
-  const rendersBeforeMidPostworkDrain = composerBusyStates.length;
-  assert.ok(frames.pendingCount() > 0, 'the post-refresh composer render is queued');
-  await frames.drainNextFrame();
-  assert.ok(composerBusyStates.length > rendersBeforeMidPostworkDrain, 'the queued composer render drains');
-  assert.equal(composerBusyStates.at(-1), true, 'the queued render observes postwork send-busy');
+  await observabilityStarted;
+  assert.equal(harness.multiStreamController.isSessionSendBusy('session-1'), true, 'postwork holds send-busy');
   const rendersBeforeClose = composerBusyStates.length;
 
-  resolveMemoryCapture();
+  resolveObservability();
   await donePromise;
   await frames.drainNextFrame();
 
@@ -179,7 +174,7 @@ test('hung terminal hydration (getMessages never resolves): busy releases at a b
   assertTimeoutDiagnostic(logs);
 });
 
-for (const hungStage of ['refreshSessionMetadata', 'refreshSnapshots', 'refreshObservability', 'maybeSuggestMemoryCapture']) {
+for (const hungStage of ['refreshSessionMetadata', 'refreshSnapshots', 'refreshObservability']) {
   test(`hung ${hungStage}: busy releases at a bounded deadline`, async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const { harness, logs } = buildPostworkHarness(t, {

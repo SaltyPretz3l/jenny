@@ -195,7 +195,9 @@ def _open_memory_service(
         store_factory=MemoryStore,
     )
     staged.callback(_close_stack_resource, "memory_store", store.close)
-    return store, MemoryService(store)
+    return store, MemoryService(
+        store, hybrid_recall_enabled=config.memory_hybrid_recall_enabled
+    )
 
 
 def _resolve_workspace_root(config: RuntimeConfig) -> Path | None:
@@ -392,6 +394,8 @@ def _apply_generation_profile(
 _BRAIN_CONTAINER_REQUEST_BOUNDARY_ALLOWED_ATTRS: frozenset[str] = frozenset(
     {
         "_host_policy_enforced",
+        "_chat_workspace_session_messages",
+        "_chat_workspace_session_handoff",
         "_desktop_execution_policy_enforced",
         "_desktop_execution_policy_invalid",
         "_desktop_execution_policy_latched",
@@ -411,6 +415,11 @@ class BrainContainer:
         # progress. The hosted intent is latched before stack construction and
         # relaxed only after a desktop candidate publishes successfully.
         self._host_policy_enforced = False
+        # Negotiated at initialize: whether chat.send may carry context rows
+        # (attributed session messages). Closed until an initialize grants it.
+        self._chat_workspace_session_messages = False
+        # Same, for session_handoff context rows (a separate latch, own kind).
+        self._chat_workspace_session_handoff = False
         self._desktop_execution_policy_enforced = False
         self._desktop_execution_policy_invalid = False
         self._desktop_execution_policy_latched = False
@@ -610,12 +619,20 @@ class BrainContainer:
             request_timeout_seconds=effective_tools_execution_timeout_seconds(effective_config),
         )
         staged.callback(_close_stack_resource, "mcp_client", mcp_client.close)
+        # Servers whose reuse key is unchanged keep the published generation's
+        # live process. Unwinding runs this first, so a failed candidate hands
+        # those back before it closes what it owns.
+        from sidecar.ai.mcp.client_reuse import return_adopted
+
+        staged.callback(_close_stack_resource, "mcp_client", lambda: return_adopted(mcp_client))
+        previous_stack = self._stack
         mcp_servers = _default_mcp_servers(effective_config, workspace_root)
         mcp_client.configure(
             mcp_servers,
             sse_enabled=effective_config.mcp_sse_enabled,
             resources_enabled=effective_config.tools_mcp_resources_enabled,
             allow_private_addresses=effective_config.tools_web_allow_private_addresses,
+            reuse_from=previous_stack.mcp_client if previous_stack is not None else None,
         )
         effective_config = replace(
             effective_config,
@@ -750,6 +767,24 @@ class BrainContainer:
     @property
     def host_policy_enforced(self) -> bool:
         return self._host_policy_enforced
+
+    def latch_chat_workspace_session_messages(self, enabled: bool) -> None:
+        """Record the negotiated session-message capability (reset on re-initialize)."""
+
+        self._chat_workspace_session_messages = enabled is True
+
+    @property
+    def chat_workspace_session_messages(self) -> bool:
+        return self._chat_workspace_session_messages
+
+    def latch_chat_workspace_session_handoff(self, enabled: bool) -> None:
+        """Record the negotiated session_handoff context grant (reset on re-initialize)."""
+
+        self._chat_workspace_session_handoff = enabled is True
+
+    @property
+    def chat_workspace_session_handoff(self) -> bool:
+        return self._chat_workspace_session_handoff
 
     def _stack_generation_owner(self) -> StackGenerationOwner:
         return self._stack_generations

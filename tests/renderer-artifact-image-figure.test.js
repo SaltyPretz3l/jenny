@@ -114,7 +114,7 @@ test('a persisted image, stripped of session_id by the session store, loads thro
     await new Promise((resolve) => setTimeout(resolve, 15));
     assert.deepEqual(reads, [['session-1', 'img-1']]);
     assert.equal(doc.querySelector('img').getAttribute('data-inv-artifact-image-key'), 'session-1:img-1');
-    assert.equal(doc.querySelector('[data-inv-artifact-action="save-as"]').dataset.sessionId, 'session-1');
+    assert.equal(doc.querySelector('[data-image-action="save-as"]').dataset.sessionId, 'session-1');
     assert.equal(doc.querySelector('img').getAttribute('src'), 'data:image/png;base64,YQ==');
   });
 });
@@ -128,12 +128,15 @@ test('a rejected read shows unavailable, then retries after the back-off and rec
     doc.body.innerHTML = render();
     await new Promise((resolve) => setTimeout(resolve, 15));
     assert.equal(doc.querySelector('figure').dataset.invArtifactImageState, 'unavailable');
+    const frame = doc.querySelector('.inv-artifact-figure-frame');
+    assert.deepEqual([frame.getAttribute('aria-disabled'), frame.getAttribute('aria-label')], ['true', 'Image unavailable']);
     render(); await new Promise((resolve) => setTimeout(resolve, 15));
     assert.equal(reads, 1);
     fail = false; now += 15_001;
     render(); await new Promise((resolve) => setTimeout(resolve, 15));
     assert.equal(reads, 2);
     assert.equal(doc.querySelector('figure').hasAttribute('data-inv-artifact-image-state'), false);
+    assert.deepEqual([frame.hasAttribute('aria-disabled'), frame.getAttribute('aria-label')], [false, 'View Generated image']);
     assert.equal(doc.querySelector('img').getAttribute('src'), 'data:image/png;base64,YQ==');
   });
 });
@@ -236,4 +239,46 @@ test('a hydrated image result whose journaled event carries no artifacts takes t
   const resultRow = turns.flatMap((turn) => projectTurnRows(turn.events, {})).find((row) => row.kind === 'tool_result');
   assert.equal(resultRow.payload.generated_artifacts.length, 1);
   assert.equal(resultRow.payload.generated_artifacts[0].artifact_kind, 'image');
+});
+
+// A Python chart is a stored tool-result attachment, not an artifact: the
+// projected row must keep its ref (asset path) or the detail body draws nothing.
+test('a projected python_execute result keeps its stored chart ref, from the event or its message', () => {
+  const { projectTurnTree } = require('../renderer/chat/renderer-turn-tree-projector');
+  const { projectTurnRows } = require('../renderer/chat/renderer-turn-row-projector');
+  const storedRef = { id: 'image_1', source_id: 'att_1', kind: 'chart', mime_type: 'image/png',
+    byte_length: 10, width: 64, height: 48, asset_path: String.raw`C:\profile\attachments\images\chart.png` };
+  const wireRef = { id: 'att_1', kind: 'chart', mime_type: 'image/png', byte_length: 10, width: 64, height: 48 };
+  const messages = [
+    { id: 'u1', role: 'user', content: 'plot', turn_id: 'turn-1' },
+    { id: 'use-1', role: 'assistant', kind: 'tool_use', turn_id: 'turn-1', content: 'python_execute',
+      tool_call: { call_id: 'py-call', tool_name: 'python_execute', input: { code: 'plot()' }, status: 'completed' } },
+    { id: 'result-1', role: 'tool', kind: 'tool_result', turn_id: 'turn-1', content: 'python_execute',
+      tool_result: { call_id: 'py-call', tool_name: 'python_execute', output_text: '{}', trusted_attachment_refs: [storedRef] } },
+  ];
+  const event = (seq, kind, extra) => ({ event_id: `e${seq}`, event_seq: seq, turn_id: 'turn-1', kind, status: 'completed',
+    source_message_ids: [extra.primary_message_id], tool_call_id: extra.tool_call_id || '', ...extra });
+  const resultRowFor = (eventRefs) => {
+    const turnEvents = [
+      event(0, 'user_prompt', { primary_message_id: 'u1', payload: { content: 'plot' } }),
+      event(1, 'tool_use', { primary_message_id: 'use-1', tool_call_id: 'py-call',
+        payload: { tool_name: 'python_execute', tool_input: { code: 'plot()' }, canonical_event_type: 'tool_call_requested' } }),
+      event(2, 'tool_result', { primary_message_id: 'result-1', tool_call_id: 'py-call',
+        payload: { tool_name: 'python_execute', success: true, tool_output_summary: '{}',
+          trusted_attachment_refs: eventRefs, canonical_event_type: 'tool_execution_completed' } }),
+    ];
+    const turns = projectTurnTree({ messages, turn_event_log_version: 4, turn_events: turnEvents }).turns;
+    return turns.flatMap((turn) => projectTurnRows(turn.events, {})).find((row) => row.kind === 'tool_result');
+  };
+
+  for (const eventRefs of [[storedRef], [wireRef]]) {
+    const images = toolCallUtils.getTrustedToolResultImages(resultRowFor(eventRefs).payload);
+    assert.equal(images.length, 1);
+    assert.equal(images[0].id, 'image_1');
+    assert.match(images[0].src, /^file:\/\/\/C:\/profile\/attachments\/images\/chart\.png$/);
+  }
+  // A session with no turn-event journal projects the row from the message alone.
+  const legacyRow = projectTurnTree({ messages }).turns
+    .flatMap((turn) => projectTurnRows(turn.events, {})).find((row) => row.kind === 'tool_result');
+  assert.equal(toolCallUtils.getTrustedToolResultImages(legacyRow.payload)[0]?.id, 'image_1');
 });

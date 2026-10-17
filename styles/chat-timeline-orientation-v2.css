@@ -7,7 +7,9 @@
 /* The former workbench row's transcript utilities now share the timeline's
    first grid cell. They float in the upper-right gutter without reserving
    height, so chat and artifact surfaces keep the same top edge. */
-#chatThreadStage {
+/* Every pane's stage is a size container (the second pane's stage has no id):
+   the reading measure resolves its cqi against the pane's own width. */
+.chat-thread-stage {
   container-type: inline-size;
   container-name: chatstage;
 }
@@ -196,15 +198,6 @@
   background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
   color: var(--text-muted);
   white-space: nowrap;
-}
-
-/* 880px = 760px reading measure + 2 × (28px utility button + 32px margins):
-   below it the gutter no longer holds the button column, so the transcript
-   reserves it. */
-@container chatstage (max-width: 880px) {
-  .chat-thread-column {
-    padding-inline-end: 44px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

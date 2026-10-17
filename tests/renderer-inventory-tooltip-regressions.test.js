@@ -5,6 +5,112 @@ const { JSDOM } = require('jsdom');
 const Tooltip = require('../renderer/inventory/tooltip');
 const { waitForUiState } = require('./helpers/wait-for-ui-state');
 
+test('refresh migrates a changed title and updates and repositions the visible tooltip', (t) => {
+  const dom = new JSDOM('<button id="anchor" data-tooltip="Old">Go</button>');
+  const { document } = dom.window;
+  const anchor = document.getElementById('anchor');
+  t.after(() => {
+    Tooltip.hide({ force: true });
+    dom.window.close();
+  });
+  let top = 100;
+  anchor.getBoundingClientRect = () => ({ top, bottom: top + 20, left: 100, width: 20, height: 20 });
+  Tooltip.show(anchor, 'Old');
+  const tooltip = document.querySelector('[role="tooltip"]');
+  assert.equal(tooltip.classList.contains('inv-tooltip--below'), false);
+
+  anchor.setAttribute('title', 'New');
+  top = 0;
+  Tooltip.refresh(anchor);
+
+  assert.equal(anchor.hasAttribute('title'), false);
+  assert.equal(anchor.getAttribute('data-tooltip'), 'New');
+  assert.equal(tooltip.textContent, 'New');
+  assert.equal(tooltip.getAttribute('aria-hidden'), 'false');
+  assert.equal(tooltip.classList.contains('inv-tooltip--below'), true);
+});
+
+test('a label changed while the focus show timer runs is what the tooltip shows', async (t) => {
+  // Gate F23: a keyboard view pick hides the menu, focus returns to the toggle
+  // (focusin arms the 400 ms show with the old title), then the re-render
+  // changes the title before the timer fires.
+  const dom = new JSDOM('<button id="anchor" title="Transcript view: Answers">View</button>');
+  const { document } = dom.window;
+  const anchor = document.getElementById('anchor');
+  t.after(() => {
+    Tooltip.hide({ force: true });
+    dom.window.close();
+  });
+  Tooltip.initTooltipHandlers(document);
+  const matches = anchor.matches.bind(anchor);
+  anchor.matches = (selector) => (selector === ':focus-visible' ? true : matches(selector));
+  anchor.focus();
+  anchor.setAttribute('title', 'Transcript view: Thinking');
+  Tooltip.refresh(anchor);
+  assert.equal(tooltipVisible(document), false, 'the show is still pending');
+  await waitForUiState(dom.window, () => tooltipVisible(document), { timeoutMs: 2000 });
+  assert.equal(document.getElementById('inv-tooltip-singleton').textContent, 'Transcript view: Thinking');
+  anchor.removeAttribute('title');
+  anchor.removeAttribute('data-tooltip');
+  anchor.blur();
+  anchor.focus();
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.equal(tooltipVisible(document), false, 'a label removed before the timer fires shows nothing');
+});
+
+test('refresh of another anchor only migrates its title and never opens a tooltip', (t) => {
+  const dom = new JSDOM('<button id="current">Current</button><button id="other" title="New" data-tooltip="Old">Other</button>');
+  const { document } = dom.window;
+  const current = document.getElementById('current');
+  const other = document.getElementById('other');
+  t.after(() => {
+    Tooltip.hide({ force: true });
+    dom.window.close();
+  });
+  Tooltip.show(current, 'Current');
+  const tooltip = document.querySelector('[role="tooltip"]');
+
+  Tooltip.refresh(other);
+
+  assert.equal(other.hasAttribute('title'), false);
+  assert.equal(other.getAttribute('data-tooltip'), 'New');
+  assert.equal(other.hasAttribute('aria-describedby'), false);
+  assert.equal(tooltip.textContent, 'Current');
+  assert.equal(tooltip.getAttribute('aria-hidden'), 'false');
+  Tooltip.hide();
+  Tooltip.refresh(other);
+  assert.equal(tooltip.getAttribute('aria-hidden'), 'true');
+  assert.equal(tooltip.classList.contains('inv-tooltip--visible'), false);
+});
+
+for (const pinned of [false, true]) {
+  test(`refresh hides a ${pinned ? 'pinned' : 'visible'} tooltip when its title is cleared`, (t) => {
+    const dom = new JSDOM('<button id="anchor" title="Old" aria-pressed="false">Go</button>');
+    const { document } = dom.window;
+    const anchor = document.getElementById('anchor');
+    t.after(() => {
+      Tooltip.unpin();
+      Tooltip.hide({ force: true });
+      dom.window.close();
+    });
+    if (pinned) Tooltip.pin(anchor);
+    else Tooltip.show(anchor, 'Old');
+    const tooltip = document.querySelector('[role="tooltip"]');
+
+    anchor.setAttribute('title', '');
+    Tooltip.refresh(anchor);
+
+    assert.equal(anchor.hasAttribute('title'), false);
+    assert.equal(anchor.hasAttribute('data-tooltip'), false);
+    assert.equal(tooltip.getAttribute('aria-hidden'), 'true');
+    assert.equal(tooltip.classList.contains('inv-tooltip--visible'), false);
+    assert.equal(anchor.hasAttribute('aria-describedby'), false);
+    assert.equal(Tooltip.isPinned(), false);
+    assert.equal(anchor.getAttribute('aria-pressed'), 'false');
+    assert.equal(anchor.classList.contains('inv-tooltip-pinned'), false);
+  });
+}
+
 test('tooltip show and hide preserve existing aria-describedby ids', () => {
   const dom = new JSDOM(
     '<span id="help">Help</span><span id="details">Details</span>'

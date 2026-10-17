@@ -17,6 +17,7 @@ const {
   runTerminalFlow,
 } = require('../scripts/uninstall');
 const { UNINSTALL_EXIT_CODES } = require('../services/data-lifecycle/uninstall-contract');
+const { removeTreeSync } = require('../services/fs-remove-no-follow');
 
 function makeTempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-uninstall-script-'));
@@ -49,6 +50,70 @@ describe('clone uninstall helpers', () => {
       assert.equal(fs.existsSync(path.join(root, 'source')), true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // `npm link` and workspace packages sit in node_modules as junctions to the user's own source folders.
+  // Node's rm answers a transient Windows EPERM on a junction with stat() and empties the target.
+  function plantLinkedPackage(parent) {
+    const outside = path.join(parent, 'outside');
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'keep'), 'linked source');
+    const clone = path.join(parent, 'clone');
+    fs.mkdirSync(path.join(clone, 'node_modules', 'real-pkg'), { recursive: true });
+    fs.writeFileSync(path.join(clone, 'node_modules', 'real-pkg', 'index.js'), '');
+    const link = path.join(clone, 'node_modules', 'linked-pkg');
+    fs.symlinkSync(outside, link, 'junction');
+    return { outside, clone, link };
+  }
+
+  function flakyLinkUnlink(failed) {
+    const realUnlinkSync = fs.unlinkSync;
+    return (target) => {
+      if (fs.lstatSync(target).isSymbolicLink() && !failed.has(target)) {
+        failed.add(target);
+        throw Object.assign(new Error('transient lock'), { code: 'EPERM' });
+      }
+      return realUnlinkSync.call(fs, target);
+    };
+  }
+
+  it('removes node_modules without entering a linked-package junction, even when unlinking it fails transiently', (t) => {
+    const parent = makeTempRoot();
+    try {
+      const { outside, clone, link } = plantLinkedPackage(parent);
+      t.mock.method(fs, 'rmSync', () => { throw new Error('Node rm follows junctions after EPERM'); });
+      const failed = new Set();
+      const removed = removeGeneratedDependencies(clone, { fsImpl: { ...fs, unlinkSync: flakyLinkUnlink(failed) } });
+      t.mock.restoreAll();
+      assert.deepEqual(removed, ['node_modules']);
+      assert.deepEqual([...failed], [link]);
+      assert.equal(fs.existsSync(path.join(clone, 'node_modules')), false);
+      assert.deepEqual(fs.readdirSync(outside), ['keep']);
+    } finally {
+      removeTreeSync(parent);
+    }
+  });
+
+  it('deletes a verified clone without entering a linked-package junction, even when unlinking it fails transiently', (t) => {
+    const parent = makeTempRoot();
+    const cwd = process.cwd();
+    try {
+      const { outside, clone, link } = plantLinkedPackage(parent);
+      const root = fs.realpathSync.native(clone);
+      t.mock.method(fs, 'rmSync', () => { throw new Error('Node rm follows junctions after EPERM'); });
+      const failed = new Set();
+      t.mock.method(fs, 'unlinkSync', flakyLinkUnlink(failed));
+      const result = deleteVerifiedClone(root, 'clone', { ok: true, clean: true, root, directoryName: 'clone' });
+      t.mock.restoreAll();
+      assert.deepEqual(result, { ok: true, removed: root });
+      assert.deepEqual([...failed].map((p) => p.toLowerCase()), [path.join(root, 'node_modules', 'linked-pkg').toLowerCase()]);
+      assert.equal(fs.existsSync(link), false);
+      assert.equal(fs.existsSync(clone), false);
+      assert.deepEqual(fs.readdirSync(outside), ['keep']);
+    } finally {
+      process.chdir(cwd);
+      removeTreeSync(parent);
     }
   });
 

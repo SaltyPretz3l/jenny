@@ -47,6 +47,7 @@ from sidecar.ai.config_parsing import (
     _parse_mcp_servers,
     codex_cli_unavailable_reason,  # noqa: F401  (re-exported for backward-compat imports)
     normalize_chatgpt_model_catalog,
+    parse_conversation_index_config,
     parse_semantic_catalog_config,
 )
 from sidecar.ai.execution_policy import (
@@ -75,7 +76,12 @@ _DEFAULT_MAX_OUTPUT_TOKENS = 16384
 _RETIRED_TOP_LEVEL_KEYS: frozenset[str] = frozenset({"tools_subagent_batch_enabled"})
 # Secret raw keys folded into a nested RuntimeConfig field rather than their own.
 _NESTED_SECRET_KEYS: frozenset[str] = frozenset({"semantic_catalog_api_key"})
-_KNOWN_TOP_LEVEL_KEYS: frozenset[str] = _RETIRED_TOP_LEVEL_KEYS | _NESTED_SECRET_KEYS | frozenset(
+# Keys Electron sends that another sidecar module reads from the raw payload
+# (startup applies the owned-process transfer in owned_process_tracking.py).
+_CONSUMED_ELSEWHERE_KEYS: frozenset[str] = frozenset({"owned_process_handoff"})
+_KNOWN_TOP_LEVEL_KEYS: frozenset[str] = (
+    _RETIRED_TOP_LEVEL_KEYS | _NESTED_SECRET_KEYS | _CONSUMED_ELSEWHERE_KEYS
+) | frozenset(
     f.name for f in fields(RuntimeConfig) if not f.name.startswith("resolved_app_profile_")
 )
 
@@ -473,6 +479,9 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         raw_skills_auto_index if raw_skills_auto_index in {"auto", "on", "off"} else "auto"
     )
     memory_db_path = _as_nullable_string(raw_config.get("memory_db_path"))
+    memory_hybrid_recall_enabled = _as_bool(
+        raw_config.get("memory_hybrid_recall_enabled"), default=False
+    ) or read_environment_value("JENNY_ENABLE_MEMORY_HYBRID_RECALL") == "1"
     background_runtime_root = _as_nullable_string(raw_config.get("background_runtime_root"))
     operation_ledger_root = _as_nullable_string(raw_config.get("operation_ledger_root"))
     tools_enabled = _as_bool(raw_config.get("tools_enabled"), default=True)
@@ -538,6 +547,10 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         raw_config.get("tools_project_notes_enabled"),
         default=False,
     )
+    tools_memory_enabled = _as_bool(raw_config.get("tools_memory_enabled"), default=True)
+    tools_conversations_enabled = _as_bool(
+        raw_config.get("tools_conversations_enabled"), default=True,
+    )
     tools_rich_files_enabled = _as_bool(
         raw_config.get("tools_rich_files_enabled"),
         default=True,
@@ -550,6 +563,7 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
     semantic_catalog = parse_semantic_catalog_config(
         raw_config.get("semantic_catalog"), api_key=raw_config.get("semantic_catalog_api_key")
     )
+    conversation_index = parse_conversation_index_config(raw_config.get("conversation_index"))
     tool_policy_snapshot = _normalize_tool_policy_snapshot(raw_config.get("tool_policy_snapshot"))
     tools_shell_enabled = _as_bool(raw_config.get("tools_shell_enabled"), default=False)
     tools_confirm_side_effects = _as_bool(
@@ -756,6 +770,8 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         codex_cli_auth_reason=codex_cli_auth_reason,
         chatgpt_access_token=chatgpt_access_token,
         openai_compatible_api_key=openai_compatible_api_key,
+        managed_prefill_progress=raw_config.get("managed_prefill_progress") is True,
+        json_schema_response_format=raw_config.get("json_schema_response_format") is True,
         chatgpt_account_id=chatgpt_account_id,
         chatgpt_model_catalog=chatgpt_model_catalog,
         chatgpt_base_url=chatgpt_base_url,
@@ -829,10 +845,13 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         tools_home_enabled=tools_home_enabled,
         tools_task_board_enabled=tools_task_board_enabled,
         tools_project_notes_enabled=tools_project_notes_enabled,
+        tools_memory_enabled=tools_memory_enabled,
+        tools_conversations_enabled=tools_conversations_enabled,
         tools_rich_files_enabled=tools_rich_files_enabled,
         tools_knowledge_enabled=tools_knowledge_enabled,
         knowledge_roots=knowledge_roots,
         semantic_catalog=semantic_catalog,
+        conversation_index=conversation_index,
         tool_policy_snapshot=tool_policy_snapshot,
         tools_shell_enabled=tools_shell_enabled,
         tools_confirm_side_effects=tools_confirm_side_effects,
@@ -868,6 +887,7 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         electron_state_root=electron_state_root,
         electron_shell_config_path=electron_shell_config_path,
         electron_sessions_path=electron_sessions_path,
+        owned_process_ledger_path=_as_nullable_string(raw_config.get("owned_process_ledger_path")),
         electron_tool_permissions_path=electron_tool_permissions_path,
         skills_bundled_root=skills_bundled_root,
         skills_user_root=skills_user_root,
@@ -882,6 +902,7 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         mcp_servers=mcp_servers,
         mcp_sse_enabled=mcp_sse_enabled,
         memory_db_path=memory_db_path,
+        memory_hybrid_recall_enabled=memory_hybrid_recall_enabled,
         background_runtime_root=background_runtime_root,
         operation_ledger_root=operation_ledger_root,
         diagnostics_log_level=diagnostics_log_level,

@@ -41,9 +41,6 @@ function createManagedChatServiceStub(store, userDataPath) {
     async recallApprovedMemories() {
       return { memories: [] };
     },
-    async recallRecentApprovedMemories() {
-      return { memories: [] };
-    },
     async setSessionPreferences(sessionId, preferences) {
       store.setSessionPreferences(sessionId, preferences);
     },

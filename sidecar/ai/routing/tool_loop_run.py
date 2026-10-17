@@ -149,12 +149,8 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         self.request_id = request_id
         self.session_id = session_id
         self._jenny_change_set_id = str(initial_change_set_id or "").strip()
-        mutation_lifecycle = __import__(
-            "sidecar.ai.routing.mutation_change_set_lifecycle",
-            fromlist=["bind_run_context"],
-        )
-        mutation_lifecycle.bind_run_context(self)
         self.latest_user_content = latest_user_content
+        _tl_hub.heuristic_fires.emit_continuation_relevance(self)
         self.reasoning_effort = reasoning_effort
         self.prompt_cache_enabled = prompt_cache_enabled
         self.cache_source_key = cache_source_key
@@ -214,6 +210,8 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         self.degraded_transport_notified = False
         self.tool_budget_exhausted_notified = False
         self.compaction_stalled = False
+        # The provider's prompt count for the last request (tool_loop_compaction).
+        self.request_measurement = None
         self.compaction_last_ditch_used = False
         self.current_info_context_injected = False
         self.failure_context_outcome_count = 0
@@ -248,6 +246,13 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         self.quota_registry = initialize_runtime_quota(runtime, kernel._config,
             enabled=_tl_hub.is_resource_discipline_enabled(self.feature_flags),
             request_context=request_context)
+
+        # Publish attribution only after construction can no longer fail.
+        mutation_lifecycle = __import__(
+            "sidecar.ai.routing.mutation_change_set_lifecycle",
+            fromlist=["bind_run_context"],
+        )
+        mutation_lifecycle.bind_run_context(self)
 
     # -- Bound helpers (were closures 863-908) ----------------------------
 
@@ -321,6 +326,40 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         )
         return loop_result
 
+    def _finish_empty_generation(self, result: Any) -> Any | None:
+        import sidecar.ai.routing.tool_loop as _tl_hub
+
+        finish_reason = str(getattr(result, "finish_reason", "") or "").strip().lower()
+        if (
+            not result.content
+            and not result.tool_calls
+            and not self.outcomes
+            # A truncated/aborted stream must reach the finalize fence
+            # instead of settling as a canned success.
+            and finish_reason not in ("incomplete", "error", "thinking_budget", "length")
+        ):
+            if str(getattr(result, "thinking_text", "") or "").strip():
+                # Stopped inside its reasoning: answer from it, not canned text.
+                return _tl_hub.thinking_checkpoint.reasoning_only_stop_wind_down(
+                    self, result
+                )
+            return self._finish(
+                _tl_hub.ToolLoopResult(
+                    thinking_text=self.thinking_text,
+                    thinking_kind=_tl_hub.CHAT_THINKING_KIND_STATUS,
+                    persist_thinking=False,
+                    response_text="I could not produce a valid response for that request.",
+                    approval_request=None,
+                    approval_plan=None,
+                    outcomes=self.outcomes,
+                    usage_totals=self.usage_totals,
+                    streamed_event_types=self.streamed_event_types,
+                    completion_source="deterministic_tool_fallback",
+                ),
+                reason="empty_generation",
+            )
+        return None
+
     def _build_loop_state(
         self,
         iteration: int,
@@ -346,6 +385,7 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
             completed_generations=self.completed_generations,
             phase=phase,
             tool_call_history=self.tool_call_history,
+            current_tool_signatures=getattr(self, "current_tool_signatures", None),
             error_output_history=self.error_output_history,
             cycle_hint_attempted=self.cycle_hint_attempted,
         )
@@ -450,6 +490,9 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                     already_emitted=self.wind_down_injected,
                 ):
                     append_wind_down_system_message(self.working_messages)
+                    _tl_hub.heuristic_fires.emit_heuristic_fire(
+                        runtime, "wind_down_row",
+                    )
                     self.wind_down_injected = True
                     _tl_hub.log_event(
                         logger,
@@ -537,6 +580,9 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                     if context_message:
                         self.current_info_context_injected = True
                         self.working_messages.append({"role": "system", "content": context_message})
+                        _tl_hub.heuristic_fires.emit_heuristic_fire(
+                            runtime, "current_info_context_row",
+                        )
 
                 sub_agent_final_iteration = is_sub_agent_final_iteration(
                     iteration=_iteration,
@@ -617,12 +663,14 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                 self.loop_cap.record_generation(generation_clock() - generation_started)
                 self.pending_retry_response_format = None
                 self.streamed_event_types.update(streamed_generation_types)
+                self.usage_totals = _tl_hub._merge_generation_usage(self.usage_totals, result.usage)
+                _tl_hub.tool_loop_compaction.note_request_measurement(self, result.usage)
+                runtime.report_generation_usage(self.usage_totals, result.usage)
                 try:
                     runtime.raise_if_cancelled()
                 except _tl_hub.TerminalChatStateError:
                     self._settle_unfinished_tool_results("cancelled_after_generation")
                     raise
-                self.usage_totals = _tl_hub._merge_generation_usage(self.usage_totals, result.usage)
                 self.completed_generations += 1
 
                 if sub_agent_final_iteration and result.tool_calls:
@@ -725,6 +773,8 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                 if accepted_plan_reply:
                     return self._finish_accepted_plan_reply(result, _iteration)
 
+                if not sub_agent_final_iteration:
+                    result = _tl_hub.tool_loop_text_tool_calls.recover_text_tool_calls(self, result)
                 if not result.tool_calls:
                     report_disposition = self._sub_agent_report_disposition(
                         result,
@@ -741,34 +791,10 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                 finish_reason = str(
                     getattr(result, "finish_reason", "") or ""
                 ).strip().lower()
-                if (
-                    not result.content
-                    and not result.tool_calls
-                    and not self.outcomes
-                    # A truncated/aborted stream must reach the finalize fence
-                    # instead of settling as a canned success.
-                    and finish_reason not in ("incomplete", "error", "thinking_budget", "length")
-                ):
-                    if str(getattr(result, "thinking_text", "") or "").strip():
-                        # Stopped inside its reasoning: answer from it, not canned text.
-                        return _tl_hub.thinking_checkpoint.reasoning_only_stop_wind_down(
-                            self, result
-                        )
-                    return self._finish(
-                        _tl_hub.ToolLoopResult(
-                            thinking_text=self.thinking_text,
-                            thinking_kind=_tl_hub.CHAT_THINKING_KIND_STATUS,
-                            persist_thinking=False,
-                            response_text="I could not produce a valid response for that request.",
-                            approval_request=None,
-                            approval_plan=None,
-                            outcomes=self.outcomes,
-                            usage_totals=self.usage_totals,
-                            streamed_event_types=self.streamed_event_types,
-                            completion_source="deterministic_tool_fallback",
-                        ),
-                        reason="empty_generation",
-                    )
+                if not result.inband_tool_call_parse_failed:
+                    outcome = self._finish_empty_generation(result)
+                    if outcome is not None:
+                        return outcome
 
                 # A batch parsed from a stream that ended early or in error is not
                 # a verdict to act on; the finalize fence turns it into a retry.

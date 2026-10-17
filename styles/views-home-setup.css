@@ -531,3 +531,20 @@
   font-size: var(--font-size-xs);
   line-height: 1.4;
 }
+
+/* External daemon facts and commands inside the existing setup step. */
+.setup-hw-daemon-facts { margin: 1rem 0; }
+.setup-hw-daemon-facts > div { display: grid; grid-template-columns: minmax(5rem, 1fr) minmax(0, 3fr); gap: .75rem; margin-block: .4rem; }
+.setup-hw-daemon-facts dd { margin: 0; overflow-wrap: anywhere; }
+.setup-hw-daemon-command { display: flex; align-items: center; gap: .75rem; margin-block: .75rem; }
+.setup-hw-daemon-command code { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.setup-hw-daemon-command .btn { flex-shrink: 0; }
+.setup-hw-daemon-port { font-weight: 600; }
+@media (max-width: 719px) {
+  .setup-hw-daemon-facts > div { grid-template-columns: 1fr; gap: .15rem; }
+  .setup-hw-daemon-command { align-items: flex-start; flex-wrap: wrap; }
+}
+
+.setup-hw-daemon-body { gap: var(--space-4); }
+.setup-hw-daemon-body > p, .setup-hw-daemon-body > h3, .setup-hw-daemon-body > dl { margin: 0; }
+.setup-hw-daemon-body > hr { width: 100%; border: 0; border-top: 1px solid var(--border-subtle); margin: var(--space-2) 0; }

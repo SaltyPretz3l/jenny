@@ -616,7 +616,7 @@ test('manager: the delete confirm names the memory move in both variants and tak
   for (const id of ['project_budget', 'project_ascend']) {
     pickFromMenu(h, id, 'delete');
     const confirm = rowOf(h, id).querySelector('.projects-confirm');
-    assert.match(confirm.textContent, /Its memories and knowledge folders move to General\./, id);
+    assert.match(confirm.textContent, /Its memories are archived with it; its knowledge folders move to General\./, id);
     assert.match(confirm.textContent, id === 'project_ascend' ? /It is your current project.* 0 chats move to General\./ : /1 chat moves to General/);
     assert.equal(h.document.activeElement, confirm.querySelector('[data-action="projects-delete-confirm"]'), 'the confirm button has focus');
     confirm.querySelector('[data-action="projects-delete-cancel"]').click();
@@ -720,16 +720,16 @@ test('N5/N7: the delete confirm agrees in number and names the memory count; a f
   pickFromMenu(h, 'project_budget', 'delete');
   const confirmText = () => rowOf(h, 'project_budget').querySelector('.projects-confirm').textContent;
   assert.match(confirmText(), /2 chats move to General\./);
-  assert.match(confirmText(), /Its memories and knowledge folders move to General\./, 'generic until the count lands');
+  assert.match(confirmText(), /Its memories are archived with it; its knowledge folders move to General\./, 'generic until the count lands');
   await settle();
-  assert.match(confirmText(), /2 memories and the project's knowledge folders move to General\./);
+  assert.match(confirmText(), /2 memories are archived with it; its knowledge folders move to General\./);
   assert.equal(h.document.activeElement?.dataset.action, 'projects-delete-confirm', 'the count repaint keeps focus on the confirm');
   rowOf(h, 'project_budget').querySelector('[data-action="projects-delete-cancel"]').click();
   pickFromMenu(h, 'project_grants', 'delete');
   await settle();
   const grants = rowOf(h, 'project_grants').querySelector('.projects-confirm').textContent;
   assert.match(grants, /1 chat moves to General\./);
-  assert.match(grants, /0 memories and the project's knowledge folders move to General\./);
+  assert.match(grants, /0 memories are archived with it; its knowledge folders move to General\./);
   pickFromMenu(h, 'project_budget', 'new-chat');
   await settle();
   assert.deepEqual(views, [], 'no chat was created: the view stays on Settings');
@@ -757,4 +757,26 @@ test('N7: a New chat here that lands after the user left Settings › Projects d
   resolveCreate('sess_new_2');
   await settle();
   assert.deepEqual(views, ['chat'], 'still on the page when it lands: the new chat opens');
+});
+
+test('delete explains only pending memory moves and preserves the success tone', async () => {
+  for (const memoryOutcome of ['pending', undefined, 'completed']) {
+    let projects = [project('project_general', 'General'), project('project_pending', 'Pending')];
+    const h = createHarness({ api: {
+      list: async () => ({ ok: true, projects }),
+      delete: async () => {
+        projects = projects.slice(0, 1);
+        return { ok: true, moved_sessions: 1, memory_outcome: memoryOutcome };
+      },
+    } });
+    try {
+      h.controller.bind(); await settle();
+      h.click('[data-project-id="project_pending"] [data-action="projects-delete"]');
+      h.click('[data-action="projects-delete-confirm"]'); await settle();
+      const status = h.document.getElementById('runtimeActionStatus');
+      assert.equal(status.textContent, 'Deleted "Pending". 1 chat moved to General.'
+        + (memoryOutcome === 'pending' ? ' Its memories will be archived when the engine is back.' : ''));
+      assert.equal(status.dataset.tone, 'success');
+    } finally { h.controller.dispose(); h.window.close(); }
+  }
 });

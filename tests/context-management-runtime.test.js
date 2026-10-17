@@ -42,6 +42,7 @@ test('managed sidecar runtime persists session context preferences across restar
     include_git_context: true,
     include_codebase_context: true,
     include_active_file_context: true,
+    memory_opt_out: false,
   });
 
   await service.stop();
@@ -57,5 +58,6 @@ test('managed sidecar runtime persists session context preferences across restar
     include_git_context: true,
     include_codebase_context: true,
     include_active_file_context: true,
+    memory_opt_out: false,
   });
 });

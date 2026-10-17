@@ -24,6 +24,13 @@ from sidecar.ai.tools.builtins.shell import (
     run_command_tool,
 )
 from sidecar.ai.tools.builtins.shell_security import CommandVerdict, classify_command
+from sidecar.ai.tools.builtins.temp_script_interpreter import (
+    SCRIPT_INTERPRETERS,
+    add_probe_cleanup,
+    interpreter_version_metadata,
+    resolve_script_interpreter,
+    script_command,
+)
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.runtime.diagnostics import log_event
@@ -31,13 +38,6 @@ from sidecar.runtime.diagnostics import log_event
 logger = logging.getLogger(__name__)
 MAX_TEMP_SCRIPT_CHARS = 100_000
 SCRIPT_SNIFF_LINE_LIMIT = 20
-_LANGUAGE_EXTENSIONS = {
-    "python": ".py",
-    "powershell": ".ps1",
-    "cmd": ".cmd",
-    "sh": ".sh",
-    "javascript": ".js",
-}
 _RAW_HEREDOC_PATTERN = re.compile(
     r"(?m)^[ \t]*(?:\S.*?[ \t])?<<-?[ \t]*['\"]?[A-Za-z_][A-Za-z0-9_]*['\"]?[ \t]*$"
 )
@@ -61,30 +61,25 @@ def run_temp_script_tool(
     arguments: dict[str, object], workspace: WorkspaceGuard
 ) -> ToolHandlerResult:
     script, cwd, language = _validated_inputs(arguments)
+    language = language or ("cmd" if os.name == "nt" else "sh")
     temp_root = _create_temp_root()
-    extension = (
-        _LANGUAGE_EXTENSIONS[language]
-        if language is not None
-        else (".cmd" if os.name == "nt" else ".sh")
-    )
+    extension = SCRIPT_INTERPRETERS[language][1]
+    interpreter: str | None = None
     script_path = temp_root / f"script{extension}"
     result: ToolHandlerResult | None = None
     cleanup_error_type: str | None = None
     execution_entered = False
     try:
-        script_path.write_text(script, encoding="utf-8", newline="")
+        encoding = "utf-8-sig" if language == "powershell" else "utf-8"
+        script_path.write_text(script, encoding=encoding, newline="")
         if os.name != "nt":
             script_path.chmod(0o700)
-        command = _script_command(script_path, language=language)
+        interpreter = resolve_script_interpreter(language)
+        command = script_command(script_path, language=language, interpreter=interpreter)
         delegated = _delegated_arguments(arguments, command=command, cwd=cwd)
         execution_entered = True
-        result = _redact_temp_details(
-            _run_with_redacted_live_output(
-                delegated,
-                workspace=workspace,
-                temp_root=temp_root,
-            ),
-            temp_root=temp_root, language=language,
+        result = _run_with_redacted_live_output(
+            delegated, workspace=workspace, temp_root=temp_root,
         )
     except ToolExecutionFailure as error:
         if execution_entered:
@@ -133,7 +128,9 @@ def run_temp_script_tool(
                 },
             },
         )
-    return result
+    return _redact_temp_details(
+        result, temp_root=temp_root, language=language, interpreter=interpreter,
+    )
 
 
 def _create_temp_root() -> Path:
@@ -224,8 +221,8 @@ def _obvious_script_family(script: str) -> str | None:
 def _validated_language(value: object) -> str | None:
     if value is None or value == "":
         return None
-    if not isinstance(value, str) or value not in _LANGUAGE_EXTENSIONS:
-        valid = "|".join(_LANGUAGE_EXTENSIONS)
+    if not isinstance(value, str) or value not in SCRIPT_INTERPRETERS:
+        valid = "|".join(SCRIPT_INTERPRETERS)
         raise ToolExecutionFailure(
             code=CMP_TOOL_COERCED_ARGS_REJECTED,
             message=f"tool argument 'language' must be one of {valid}",
@@ -251,37 +248,6 @@ def _validated_language(value: object) -> str | None:
         )
     return value
 
-
-def _script_command(script_path: Path, *, language: str | None) -> str:
-    quoted_script = f'"{script_path}"'
-    if language is None:
-        return f"call {quoted_script}" if os.name == "nt" else f"/bin/sh {quoted_script}"
-    if language == "cmd":
-        return f"call {quoted_script}"
-    if language == "sh":
-        return f"/bin/sh {quoted_script}"
-
-    interpreter_names = {
-        "python": ("python", "python3"),
-        "powershell": ("powershell", "pwsh"),
-        "javascript": ("node",),
-    }[language]
-    interpreter = next(
-        (resolved for name in interpreter_names if (resolved := shutil.which(name))),
-        None,
-    )
-    if interpreter is None:
-        missing = "/".join(interpreter_names)
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_IO_FAILED,
-            message=f"script interpreter is unavailable: {missing}",
-            retryable=False,
-            error_details={"failure_class": "unavailable"},
-        )
-    prefix = f'"{interpreter}"'
-    if language == "powershell":
-        prefix = f"{prefix} -NoProfile -ExecutionPolicy Bypass -File"
-    return f"{prefix} {quoted_script}"
 
 
 def _delegated_arguments(
@@ -354,14 +320,24 @@ def _redact_temp_path(value: str, temp_root: Path) -> str:
 
 
 def _redact_temp_details(
-    result: ToolHandlerResult, *, temp_root: Path, language: str | None = None
+    result: ToolHandlerResult, *, temp_root: Path, language: str, interpreter: str | None
 ) -> ToolHandlerResult:
+    details = {
+        "language": language,
+        "interpreter": interpreter,
+        **interpreter_version_metadata(
+            interpreter, language, execution_completed="exit_code" in result.metadata,
+        ),
+    }
+    metadata = {**result.metadata, "temporary_script": True, **details}
+    add_probe_cleanup(metadata, details)
     redacted_output = _redact_temp_path(result.output, temp_root)
     try:
         payload = json.loads(redacted_output)
     except (TypeError, json.JSONDecodeError):
         payload = {"output": redacted_output}
     if isinstance(payload, dict):
+        payload.update(details)
         payload["command"] = "[temporary script]"
         payload.pop("cwd", None)
         if language == "python" and "ModuleNotFoundError:" in str(payload.get("stderr", "")):
@@ -378,5 +354,5 @@ def _redact_temp_details(
     return replace(
         result,
         output=output,
-        metadata={**result.metadata, "temporary_script": True},
+        metadata=metadata,
     )

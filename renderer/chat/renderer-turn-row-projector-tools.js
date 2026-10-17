@@ -233,6 +233,11 @@
         if (policyConsequence) payload.policy_consequence = policyConsequence;
         if (reason) payload.reason = reason;
         if (toolUsePayload.one_off_only === true) payload.one_off_only = true;
+        // The exact message presentation (with its full body) rides the tool_use projection.
+        const fullMessageApproval = toolUsePayload.session_message_approval;
+        if (fullMessageApproval && typeof fullMessageApproval === 'object' && !Array.isArray(fullMessageApproval)) {
+          payload.session_message_approval = fullMessageApproval;
+        }
       }
       for (const event of events) {
         if (event.kind !== 'approval_requested') {
@@ -253,6 +258,12 @@
         if (policyConsequence) payload.policy_consequence = policyConsequence;
         if (reason) payload.reason = reason;
         if (event.payload && event.payload.one_off_only === true) payload.one_off_only = true;
+        // The canonical request carries no body; never let it replace the full presentation.
+        const sessionMessageApproval = event.payload && event.payload.session_message_approval;
+        if (!payload.session_message_approval && sessionMessageApproval && typeof sessionMessageApproval === 'object'
+          && !Array.isArray(sessionMessageApproval)) {
+          payload.session_message_approval = sessionMessageApproval;
+        }
       }
       row.tool_call_id = payload.tool_call_id;
       row.payload = payload;
@@ -277,6 +288,14 @@
         : [];
       if (generatedArtifacts.length) {
         payload.generated_artifacts = generatedArtifacts;
+      }
+      // Stored tool-result images (a Python chart): the detail body draws them
+      // from these refs, so a projected row must keep them.
+      const trustedAttachmentRefs = Array.isArray(event?.payload && event.payload.trusted_attachment_refs)
+        ? event.payload.trusted_attachment_refs.filter((ref) => ref && typeof ref === 'object' && ref.id).map(clonePlainObject)
+        : [];
+      if (trustedAttachmentRefs.length) {
+        payload.trusted_attachment_refs = trustedAttachmentRefs;
       }
       if (event?.payload && event.payload.metadata && typeof event.payload.metadata === 'object' && !Array.isArray(event.payload.metadata)) {
         payload.metadata = clonePlainObject(event.payload.metadata);

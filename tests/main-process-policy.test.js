@@ -48,7 +48,7 @@ test('feature state broadcast follows the config sections the feature payload re
     'tools_image_read_enabled_updated',
     'tools_worktree_enabled_updated',
     'web_search_settings_updated',
-    'memory_capture_suggestions_updated',
+    'memory_settings_updated',
     'workspace_root_updated',
     'workspace_root_cleared',
     'workspace_root_status_updated',
@@ -58,6 +58,7 @@ test('feature state broadcast follows the config sections the feature payload re
     assert.equal(shouldBroadcastFeatureState(reason), true, reason);
   }
   assert.equal(shouldBroadcastFeatureState('feature_override_text_spellcheck_updated'), true);
+  assert.equal(FEATURE_STATE_CHANGE_REASONS.has('memory_capture_suggestions_updated'), false);
   for (const reason of [
     'time_format_updated',
     'window_ui_settings_updated',

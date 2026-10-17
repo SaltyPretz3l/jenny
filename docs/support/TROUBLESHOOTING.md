@@ -12,10 +12,15 @@ at [docs/operations/error-codes.md](../operations/error-codes.md) is the
 source of truth for `CMP-*` codes; this page translates them to user-facing
 language.
 
-Two places to look before filing anything:
+Start here before filing anything:
 
 - **The titlebar health indicator.** It reports whether the backend, engine,
   and model are ready, and its tooltip names the failing part.
+- **Diagnostics > Overview.** Runtime and Performance stay above the separately
+  scrolling Needs attention list on wide windows. Drag the divider to change the
+  space available to each area, or focus it and use Up/Down or Home/End. The split
+  lasts until the app restarts. Narrow or short windows stack these sections and
+  scroll as one page; each issue's **Show in Activity** opens its underlying records.
 - **`<userData>/diagnostics/`** (Windows: `%APPDATA%\jenny\diagnostics\`).
   Any turn that ends abnormally writes a dated JSON dump there. Process logs
   are next to it under `logs/`.
@@ -755,21 +760,21 @@ working messages and never re-queries memory.
    The fallback is correct but slower. Run
    `python scripts/observe/benchmark_memory_recall.py` on the release
    reference host and record FTS5 and fallback separately.
-3. If `recall_partial` is true, the incomplete result was omitted from
-   prompt injection. Investigate host I/O pressure rather than treating the
-   empty overlay as a relevance result.
+3. If `recall_partial` is true, recall ran out of its time budget and the
+   best matches scored before the deadline were injected and flagged; a
+   lower-ranked or missing memory may be a timing effect, not a relevance
+   result. The prompt recall shares one 0.25 s deadline across its store
+   reads and skips the response-style lookup once it has passed. Investigate
+   host I/O pressure.
 4. Use explicit `memory.recall` with the same bounded query to reproduce
    lexical ordering. An exact match older than the newest 500 rows must
    still be found at the 10,000-row bound.
-5. Check whether a recent response-style memory legitimately won
-   precedence. Re-run with `include_response_style: false` to isolate
-   lexical recall.
 
 ### Delete and suppression behavior
 
 Deleting an approved memory atomically removes matching pending copies,
-writes a digest-only suppression tombstone, and prevents extraction and
-rule suggestions from re-learning it. An explicit later `memory.save`
+writes a digest-only suppression tombstone, and prevents extraction from
+re-learning it. An explicit later `memory.save`
 removes the tombstone and counts as re-approval. There is no Electron
 recall cache to invalidate; restarting Jenny does not change this.
 

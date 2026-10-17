@@ -12,9 +12,7 @@ import pytest
 import sidecar.ai.memory.store as memory_store_module
 import sidecar.ai.memory.store_approved as memory_store_approved_module
 from sidecar.ai.error_codes import CMP_MEMORY_CAPACITY_EXCEEDED
-from sidecar.ai.memory.contracts import (
-    build_content_digest,
-)
+from sidecar.ai.memory.contracts import build_text_digest
 from sidecar.ai.memory.store import MemoryStore
 from sidecar.ai.memory.store_shared import (
     MAX_ALL_MEMORIES_LIMIT,
@@ -22,6 +20,7 @@ from sidecar.ai.memory.store_shared import (
 )
 from sidecar.exceptions import MemoryStoreError
 from tests._concurrency import join_all_or_fail
+from tests.sidecar.ai.memory.memory_v9_helpers import forget_row, save_row, update_row
 
 
 class _CommitFailOnceConnection:
@@ -47,23 +46,11 @@ class _CommitFailOnceConnection:
 def _insert_retention_rows(store: MemoryStore, *, old_at: str, fresh_at: str) -> None:
     store._connection.executemany(
         """
-        INSERT INTO memory_extraction_runs (
-            session_id, request_id, status, attempt_count, started_at,
-            completed_at, failure_code, created_at, updated_at
-        ) VALUES (?, ?, 'completed', 1, ?, ?, '', ?, ?)
-        """,
-        (
-            ("session-old", "run-old", old_at, old_at, old_at, old_at),
-            ("session-fresh", "run-fresh", fresh_at, fresh_at, fresh_at, fresh_at),
-        ),
-    )
-    store._connection.executemany(
-        """
         INSERT INTO pending_memory_candidates (
             session_id, source_request_id, title, lesson_text, lesson_kind,
-            confidence, source_excerpt, content_fingerprint, family_key,
+            confidence, source_excerpt, content_fingerprint,
             category, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             (
@@ -74,8 +61,7 @@ def _insert_retention_rows(store: MemoryStore, *, old_at: str, fresh_at: str) ->
                 "preference",
                 0.5,
                 "",
-                build_content_digest("preference", "old"),
-                "",
+                build_text_digest("old"),
                 "",
                 old_at,
                 old_at,
@@ -88,8 +74,7 @@ def _insert_retention_rows(store: MemoryStore, *, old_at: str, fresh_at: str) ->
                 "preference",
                 0.5,
                 "",
-                build_content_digest("preference", "fresh"),
-                "",
+                build_text_digest("fresh"),
                 "",
                 fresh_at,
                 fresh_at,
@@ -100,7 +85,7 @@ def _insert_retention_rows(store: MemoryStore, *, old_at: str, fresh_at: str) ->
         """
         INSERT INTO memories (
             session_id, title, lesson_text, lesson_kind, confidence,
-            source_excerpt, content_fingerprint, family_key, provenance,
+            source_excerpt, content_fingerprint, origin, provenance,
             created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
@@ -112,8 +97,8 @@ def _insert_retention_rows(store: MemoryStore, *, old_at: str, fresh_at: str) ->
                 "preference",
                 0.5,
                 "",
-                build_content_digest("preference", "approved old"),
-                "",
+                build_text_digest("approved old"),
+                "legacy",
                 "unknown_legacy",
                 old_at,
                 old_at,
@@ -125,8 +110,8 @@ def _insert_retention_rows(store: MemoryStore, *, old_at: str, fresh_at: str) ->
                 "preference",
                 0.5,
                 "",
-                build_content_digest("preference", "approved fresh"),
-                "",
+                build_text_digest("approved fresh"),
+                "legacy",
                 "unknown_legacy",
                 fresh_at,
                 fresh_at,
@@ -165,9 +150,9 @@ def test_write_transaction_rolls_back_commit_failure_and_allows_next_write(
             """
             INSERT INTO pending_memory_candidates (
                 session_id, source_request_id, title, lesson_text, lesson_kind,
-                confidence, source_excerpt, content_fingerprint, family_key,
+                confidence, source_excerpt, content_fingerprint,
                 category, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)
             """,
             (
                 "session-1",
@@ -177,7 +162,7 @@ def test_write_transaction_rolls_back_commit_failure_and_allows_next_write(
                 "preference",
                 0.8,
                 "tea",
-                build_content_digest("preference", "The user likes tea."),
+                build_text_digest("The user likes tea."),
                 timestamp,
                 timestamp,
             ),
@@ -186,8 +171,9 @@ def test_write_transaction_rolls_back_commit_failure_and_allows_next_write(
         proxy = _CommitFailOnceConnection(store._connection)
         store._connection = proxy  # type: ignore[assignment]
 
-        with pytest.raises(MemoryStoreError, match="failed to save memory"):
-            store.save_memory(
+        with pytest.raises(MemoryStoreError, match="failed to write memory"):
+            save_row(
+                store,
                 session_id="session-1",
                 title="Tea",
                 lesson_text="The user likes tea.",
@@ -200,7 +186,8 @@ def test_write_transaction_rolls_back_commit_failure_and_allows_next_write(
         assert proxy.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 0
         assert proxy.execute("SELECT COUNT(*) FROM pending_memory_candidates").fetchone()[0] == 1
 
-        memory, created = store.save_memory(
+        memory, created = save_row(
+            store,
             session_id="session-1",
             title="Tea",
             lesson_text="The user likes tea.",
@@ -233,13 +220,14 @@ def test_maintenance_removes_only_old_derived_rows_and_keeps_approved(
         )
 
         assert report["removed"] == {
-            "memory_extraction_runs": 1,
             "pending_memory_candidates": 1,
+            "memory_operations": 0,
+            "archived_memories": 0,
+            "memory_session_markers": 0,
         }
-        for table in report["removed"]:
-            assert store._connection.execute(
-                f"SELECT COUNT(*) FROM {table}"
-            ).fetchone()[0] == 1
+        assert store._connection.execute(
+            "SELECT COUNT(*) FROM pending_memory_candidates"
+        ).fetchone()[0] == 1
         assert store._connection.execute(
             "SELECT COUNT(*) FROM memories"
         ).fetchone()[0] == 2
@@ -250,16 +238,19 @@ def test_maintenance_count_cap_evicts_oldest_rows_first(tmp_path: Path) -> None:
     try:
         store._connection.executemany(
             """
-            INSERT INTO memory_extraction_runs (
-                session_id, request_id, status, attempt_count, started_at,
-                completed_at, failure_code, created_at, updated_at
-            ) VALUES ('session', ?, 'completed', 1, ?, ?, '', ?, ?)
+            INSERT INTO pending_memory_candidates (
+                session_id, source_request_id, title, lesson_text, lesson_kind,
+                confidence, content_fingerprint, created_at, updated_at
+            ) VALUES ('session', ?, ?, ?, 'preference', 0.5, ?, ?, ?)
             """,
-            (
-                ("oldest", *("2026-01-01T00:00:00+00:00",) * 4),
-                ("middle", *("2026-01-02T00:00:00+00:00",) * 4),
-                ("newest", *("2026-01-03T00:00:00+00:00",) * 4),
-            ),
+            [
+                (name, name, name, build_text_digest(name), *(stamp,) * 2)
+                for name, stamp in (
+                    ("oldest", "2026-01-01T00:00:00+00:00"),
+                    ("middle", "2026-01-02T00:00:00+00:00"),
+                    ("newest", "2026-01-03T00:00:00+00:00"),
+                )
+            ],
         )
         store._connection.commit()
 
@@ -270,9 +261,9 @@ def test_maintenance_count_cap_evicts_oldest_rows_first(tmp_path: Path) -> None:
             max_db_bytes=1 << 40,
         )
 
-        assert report["removed"]["memory_extraction_runs"] == 1
+        assert report["removed"]["pending_memory_candidates"] == 1
         rows = store._connection.execute(
-            "SELECT request_id FROM memory_extraction_runs ORDER BY created_at ASC"
+            "SELECT source_request_id FROM pending_memory_candidates ORDER BY created_at ASC"
         ).fetchall()
         assert rows == [("middle",), ("newest",)]
     finally:
@@ -287,12 +278,12 @@ def test_interrupted_maintenance_rolls_back_and_next_sweep_succeeds(
         old_at = (datetime.now(timezone.utc) - timedelta(days=181)).isoformat()
         store._connection.execute(
             """
-            INSERT INTO memory_extraction_runs (
-                session_id, request_id, status, attempt_count, started_at,
-                completed_at, failure_code, created_at, updated_at
-            ) VALUES ('session', ?, 'completed', 1, ?, ?, '', ?, ?)
+            INSERT INTO pending_memory_candidates (
+                session_id, source_request_id, title, lesson_text, lesson_kind,
+                confidence, content_fingerprint, created_at, updated_at
+            ) VALUES ('session', ?, ?, ?, 'preference', 0.5, ?, ?, ?)
             """,
-            ("old", old_at, old_at, old_at, old_at),
+            ("old", "old", "old", build_text_digest("old"), old_at, old_at),
         )
         store._connection.commit()
         proxy = _CommitFailOnceConnection(store._connection)
@@ -306,7 +297,7 @@ def test_interrupted_maintenance_rolls_back_and_next_sweep_succeeds(
                 max_db_bytes=1 << 40,
             )
         assert proxy.rollback_count == 1
-        assert proxy.execute("SELECT COUNT(*) FROM memory_extraction_runs").fetchone()[0] == 1
+        assert proxy.execute("SELECT COUNT(*) FROM pending_memory_candidates").fetchone()[0] == 1
 
         report = _run_maintenance_now(
             store,
@@ -314,8 +305,8 @@ def test_interrupted_maintenance_rolls_back_and_next_sweep_succeeds(
             max_rows_per_table=10_000,
             max_db_bytes=1 << 40,
         )
-        assert report["removed"]["memory_extraction_runs"] == 1
-        assert proxy.execute("SELECT COUNT(*) FROM memory_extraction_runs").fetchone()[0] == 0
+        assert report["removed"]["pending_memory_candidates"] == 1
+        assert proxy.execute("SELECT COUNT(*) FROM pending_memory_candidates").fetchone()[0] == 0
     finally:
         store.close()
 
@@ -336,10 +327,7 @@ def test_byte_ceiling_evicts_ephemeral_tables_before_approved_memories(
                         f"SELECT COUNT(*) FROM {table}"
                     ).fetchone()[0]
                 )
-                for table in (
-                    "memory_extraction_runs",
-                    "pending_memory_candidates",
-                )
+                for table in ("pending_memory_candidates",)
             )
             return 2 if ephemeral_rows else 0
 
@@ -351,7 +339,6 @@ def test_byte_ceiling_evicts_ephemeral_tables_before_approved_memories(
             max_db_bytes=1,
         )
 
-        assert report["removed"]["memory_extraction_runs"] == 2
         assert report["removed"]["pending_memory_candidates"] == 2
         assert "memories" not in report["removed"]
         assert store._connection.execute(
@@ -379,7 +366,8 @@ def test_maintenance_runs_at_startup_mutation_count_and_elapsed_operation(
         assert calls[0]["apply_age_retention"] is False
 
         store._successful_mutations = 99
-        store.save_memory(
+        save_row(
+            store,
             session_id="session",
             title="Tea",
             lesson_text="Tea",
@@ -392,7 +380,8 @@ def test_maintenance_runs_at_startup_mutation_count_and_elapsed_operation(
         store._last_maintenance_monotonic -= MEMORY_MAINTENANCE_SECONDS + 1
         store.get_all_memories()
         assert len(calls) == 2
-        store.save_memory(
+        save_row(
+            store,
             session_id="session",
             title="Coffee",
             lesson_text="Coffee",
@@ -420,8 +409,8 @@ def test_recall_scores_at_most_bounded_sql_candidates(
                 "preference",
                 0.8,
                 "tea",
-                build_content_digest("preference", f"tea-{index}"),
-                "",
+                build_text_digest(f"tea-{index}"),
+                "legacy",
                 "unknown_legacy",
                 now,
                 now,
@@ -432,7 +421,7 @@ def test_recall_scores_at_most_bounded_sql_candidates(
             """
             INSERT INTO memories (
                 session_id, title, lesson_text, lesson_kind, confidence,
-                source_excerpt, content_fingerprint, family_key, provenance,
+                source_excerpt, content_fingerprint, origin, provenance,
                 created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -458,17 +447,17 @@ def test_recall_scores_at_most_bounded_sql_candidates(
             assert store._last_recall_partial is True
         assert len(
             store._candidate_rows_for_recall(
-                normalized_query="green tea",
                 query_tokens={"green", "tea"},
             )
         ) == MAX_ALL_MEMORIES_LIMIT
 
         plan = store._connection.execute(
             "EXPLAIN QUERY PLAN SELECT id FROM memories "
-            "WHERE project_id = ? ORDER BY updated_at DESC, id DESC LIMIT ?",
+            "WHERE project_id = ? AND status = 'active' "
+            "ORDER BY updated_at DESC, id DESC LIMIT ?",
             ("project_general", MAX_ALL_MEMORIES_LIMIT),
         ).fetchall()
-        assert any("idx_memories_project_updated" in str(row) for row in plan)
+        assert any("idx_memories_project_status_updated" in str(row) for row in plan)
     finally:
         store.close()
 
@@ -479,7 +468,8 @@ def test_capacity_pressure_rejects_growth_but_keeps_existing_approved(
 ) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        first, _ = store.save_memory(
+        first, _ = save_row(
+            store,
             session_id="session",
             title="Tea",
             lesson_text="The user prefers tea.",
@@ -490,7 +480,8 @@ def test_capacity_pressure_rejects_growth_but_keeps_existing_approved(
         monkeypatch.setattr(store, "_database_physical_bytes", lambda: 1 << 40)
 
         with pytest.raises(MemoryStoreError) as exc_info:
-            store.save_memory(
+            save_row(
+                store,
                 session_id="session",
                 title="Coffee",
                 lesson_text="The user prefers coffee.",
@@ -501,14 +492,15 @@ def test_capacity_pressure_rejects_growth_but_keeps_existing_approved(
         assert exc_info.value.code == CMP_MEMORY_CAPACITY_EXCEEDED
         assert exc_info.value.retryable is True
         with pytest.raises(MemoryStoreError) as update_error:
-            store.update_memory(
-                memory_id=first.id,
+            update_row(
+                store,
+                first.id,
                 title="A much longer tea preference",
                 lesson_text="The user strongly prefers tea every afternoon.",
             )
         assert update_error.value.code == CMP_MEMORY_CAPACITY_EXCEEDED
         assert [memory.id for memory in store.get_all_memories()] == [first.id]
-        assert store.delete_memory(first.id) is True
+        assert forget_row(store, first.id).status == "saved"
     finally:
         store.close()
 
@@ -533,7 +525,8 @@ def test_capacity_pressure_runs_derived_cleanup_before_rejecting_growth(
     try:
         monkeypatch.setattr(store, "_database_physical_bytes", _physical_bytes)
         monkeypatch.setattr(store, "_perform_maintenance", _cleanup)
-        saved, created = store.save_memory(
+        saved, created = save_row(
+            store,
             session_id="session",
             title="Tea",
             lesson_text="The user prefers tea.",
@@ -552,7 +545,8 @@ def test_capacity_pressure_runs_derived_cleanup_before_rejecting_growth(
 def test_forget_suppression_is_cleared_by_explicit_save(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        memory, _ = store.save_memory(
+        memory, _ = save_row(
+            store,
             session_id="session",
             title="Tea",
             lesson_text="The user prefers tea.",
@@ -560,10 +554,11 @@ def test_forget_suppression_is_cleared_by_explicit_save(tmp_path: Path) -> None:
             confidence=0.9,
             source_excerpt="tea",
         )
-        assert store.delete_memory(memory.id) is True
+        assert forget_row(store, memory.id).status == "saved"
         assert store.is_memory_suppressed(memory.content_fingerprint) is True
 
-        restored, created = store.save_memory(
+        restored, created = save_row(
+            store,
             session_id="session",
             title="Tea",
             lesson_text="The user prefers tea.",
@@ -580,7 +575,8 @@ def test_forget_suppression_is_cleared_by_explicit_save(tmp_path: Path) -> None:
 def test_malformed_row_is_quarantined_without_hiding_valid_rows(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        valid, _ = store.save_memory(
+        valid, _ = save_row(
+            store,
             session_id="session",
             title="Tea",
             lesson_text="The user prefers tea.",
@@ -593,13 +589,13 @@ def test_malformed_row_is_quarantined_without_hiding_valid_rows(tmp_path: Path) 
             """
             INSERT INTO memories (
                 session_id, title, lesson_text, lesson_kind, confidence,
-                source_excerpt, content_fingerprint, family_key, provenance,
+                source_excerpt, content_fingerprint, origin, provenance,
                 created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "session", "broken", "broken", "preference", "not-a-number", "",
-                f"sha256:{'f' * 64}", "", "unknown_legacy",
+                f"sha256:{'f' * 64}", "legacy", "unknown_legacy",
                 "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00",
             ),
         )
@@ -619,7 +615,8 @@ def test_malformed_row_is_quarantined_without_hiding_valid_rows(tmp_path: Path) 
 def test_recall_quarantines_malformed_candidate_and_returns_valid_match(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        valid, _ = store.save_memory(
+        valid, _ = save_row(
+            store,
             session_id="session",
             title="Tea",
             lesson_text="The user prefers tea.",
@@ -632,13 +629,13 @@ def test_recall_quarantines_malformed_candidate_and_returns_valid_match(tmp_path
             """
             INSERT INTO memories (
                 session_id, title, lesson_text, lesson_kind, confidence,
-                source_excerpt, content_fingerprint, family_key, provenance,
+                source_excerpt, content_fingerprint, origin, provenance,
                 created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "session", "Corrupt tea", "Tea preference", "preference", "nan-text",
-                "tea", f"sha256:{'e' * 64}", "", "unknown_legacy",
+                "tea", f"sha256:{'e' * 64}", "legacy", "unknown_legacy",
                 "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00",
             ),
         )
@@ -682,7 +679,8 @@ def test_concurrent_connections_upsert_one_approved_row(tmp_path: Path) -> None:
     def _save(store: MemoryStore) -> None:
         try:
             barrier.wait(timeout=5)
-            store.save_memory(
+            save_row(
+                store,
                 session_id="session",
                 title="Tea",
                 lesson_text="The user prefers tea.",
@@ -729,8 +727,8 @@ def test_fts_recalls_only_relevant_memory_when_it_is_older_than_500_rows(
                     "preference",
                     0.9,
                     "",
-                    build_content_digest("preference", lesson),
-                    "",
+                    build_text_digest(lesson),
+                    "legacy",
                     "unknown_legacy",
                     timestamp,
                     timestamp,
@@ -740,7 +738,7 @@ def test_fts_recalls_only_relevant_memory_when_it_is_older_than_500_rows(
             """
             INSERT INTO memories (
                 session_id, title, lesson_text, lesson_kind, confidence,
-                source_excerpt, content_fingerprint, family_key, provenance,
+                source_excerpt, content_fingerprint, origin, provenance,
                 created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -751,5 +749,133 @@ def test_fts_recalls_only_relevant_memory_when_it_is_older_than_500_rows(
         recalled = store.recall_memories("heliotrope zebra", limit=1)
         assert len(recalled) == 1
         assert recalled[0].lesson_text == "The deployment codename is heliotrope zebra."
+    finally:
+        store.close()
+
+
+def _seed_tea_rows(store: MemoryStore, count: int) -> None:
+    now = datetime.now(timezone.utc)
+    rows = [
+        (
+            f"session-{index}",
+            f"Tea {index}",
+            "The user prefers green tea.",
+            "preference",
+            0.5 + index / 100,
+            "tea",
+            build_text_digest(f"deadline-tea-{index}"),
+            "legacy",
+            "unknown_legacy",
+            (now - timedelta(minutes=index)).isoformat(),
+            (now - timedelta(minutes=index)).isoformat(),
+        )
+        for index in range(count)
+    ]
+    store._connection.executemany(
+        """
+        INSERT INTO memories (
+            session_id, title, lesson_text, lesson_kind, confidence,
+            source_excerpt, content_fingerprint, origin, provenance,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    store._connection.commit()
+
+
+class _StepClock:
+    """Returns 0.0 for the first ``fresh_calls`` reads, then a time past any deadline."""
+
+    def __init__(self, fresh_calls: int) -> None:
+        self.fresh_calls = fresh_calls
+        self.reads = 0
+
+    def __call__(self) -> float:
+        self.reads += 1
+        return 0.0 if self.reads <= self.fresh_calls else 1_000.0
+
+
+def _record_scores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[float, str, int]]:
+    scored: list[tuple[float, str, int]] = []
+    original = MemoryStore._score_memory_row
+
+    def _score(self: MemoryStore, row: Any, **kwargs: Any) -> float | None:
+        score = original(self, row, **kwargs)
+        if score is not None and score > 0.0:
+            scored.append((score, str(row[11]), int(row[0])))
+        return score
+
+    monkeypatch.setattr(MemoryStore, "_score_memory_row", _score)
+    return scored
+
+
+def test_recall_deadline_expiry_returns_best_matches_scored_so_far(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = MemoryStore(tmp_path / "memory.db")
+    try:
+        _seed_tea_rows(store, 40)
+        store._recall_index_available = False
+        scored = _record_scores(monkeypatch)
+        # One read computes the deadline, then one read per scoring iteration:
+        # ten rows are scored before the clock jumps past the deadline.
+        clock = _StepClock(fresh_calls=1 + 10)
+
+        recalled = store.recall_memories("green tea", limit=5, clock=clock)
+
+        assert store._last_recall_partial is True
+        assert len(scored) == 10
+        assert 0 < len(recalled) < 40
+        expected = [memory_id for _, _, memory_id in sorted(scored, reverse=True)[:5]]
+        assert [memory.id for memory in recalled] == expected
+        assert store.status_snapshot()["recall_partial"] is True
+    finally:
+        store.close()
+
+
+def test_recall_deadline_expiring_after_scoring_keeps_complete_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = MemoryStore(tmp_path / "memory.db")
+    try:
+        _seed_tea_rows(store, 5)
+        store._recall_index_available = False
+        scored = _record_scores(monkeypatch)
+        # The clock stays fresh for the deadline read and all five loop reads,
+        # then expires for anything that reads it during or after the sort.
+        clock = _StepClock(fresh_calls=1 + 5)
+
+        recalled = store.recall_memories("green tea", limit=5, clock=clock)
+
+        assert store._last_recall_partial is False
+        assert len(scored) == 5
+        expected = [memory_id for _, _, memory_id in sorted(scored, reverse=True)]
+        assert [memory.id for memory in recalled] == expected
+    finally:
+        store.close()
+
+
+def test_recall_honors_caller_supplied_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = MemoryStore(tmp_path / "memory.db")
+    try:
+        _seed_tea_rows(store, 5)
+        store._recall_index_available = False
+        scored = _record_scores(monkeypatch)
+
+        recalled = store.recall_memories(
+            "green tea", limit=5, deadline=0.5, clock=lambda: 1.0
+        )
+
+        assert recalled == []
+        assert scored == []
+        assert store._last_recall_partial is True
     finally:
         store.close()

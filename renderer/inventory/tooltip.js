@@ -136,6 +136,21 @@
     }
   }
 
+  function refresh(anchorEl) {
+    if (!anchorEl) return;
+    _migrateTitle(anchorEl);
+    var text = anchorEl.getAttribute('data-tooltip');
+    var el = _tooltipEl;
+    if (_currentAnchor !== anchorEl || !el || !el.classList.contains('inv-tooltip--visible')) return;
+    if (text) {
+      el.textContent = text;
+      _position(anchorEl, el);
+    } else {
+      hide({ force: anchorEl === _pinnedAnchor });
+      if (anchorEl === _pinnedAnchor) unpin();
+    }
+  }
+
   function isPinned() {
     return Boolean(_pinnedAnchor);
   }
@@ -205,11 +220,15 @@
     try { return el.ownerDocument.activeElement === el && !el.matches(':focus-visible'); } catch (_e) { return false; }
   }
 
-  function _scheduleShow(target, text) {
+  function _scheduleShow(target) {
     hide();
     _showTimer = setTimeout(function () {
       _showTimer = 0;
-      if (!_suppressed(target)) show(target, text);
+      /* A keyboard pick re-renders its anchor (new title) while the timer
+       * runs, so the label is read when the tip shows, not when it was armed. */
+      _migrateTitle(target);
+      var text = target.getAttribute('data-tooltip');
+      if (text && !_suppressed(target)) show(target, text);
     }, SHOW_DELAY_MS);
   }
 
@@ -243,7 +262,7 @@
       }
       if (_pinnedAnchor) return;
       if (_suppressed(target)) { hide(); return; }
-      _scheduleShow(target, text);
+      _scheduleShow(target);
     }, true);
 
     rootEl.addEventListener('mouseleave', function (e) {
@@ -273,7 +292,7 @@
       }
       if (_pinnedAnchor) return;
       if (_suppressed(target)) { hide(); return; }
-      _scheduleShow(target, text);
+      _scheduleShow(target);
     }, true);
 
     rootEl.addEventListener('focusout', function (e) {
@@ -306,6 +325,7 @@
     initTooltipHandlers: initTooltipHandlers,
     show: show,
     hide: hide,
+    refresh: refresh,
     pin: pin,
     unpin: unpin,
     isPinned: isPinned,

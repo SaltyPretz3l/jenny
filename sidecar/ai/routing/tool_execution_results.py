@@ -23,6 +23,9 @@ if TYPE_CHECKING:
     from sidecar.runtime.tool_execution_support import ToolExecutionOutcome
 
 _TRUNCATED_TEXT_SUFFIX = "\n...[truncated]"
+# Room kept for the omitted-field summary when a nested value becomes a text prefix.
+_JSON_TEXT_RESERVE_CHARS = 512
+_MIN_JSON_TEXT_PREFIX_CHARS = 512
 _JSON_PRIORITY_KEYS = (
     "success",
     "ok",
@@ -50,6 +53,7 @@ def bounded_tool_output(
     *,
     tool_name: str,
     max_chars: int = MAX_RESPONSE_CHARS,
+    keep_edges: bool = False,
 ) -> tuple[str, bool]:
     """Sanitize output and compact oversized JSON without breaking its syntax."""
     sanitized = sanitize_tool_output_no_truncate(output, tool_name=tool_name)
@@ -58,30 +62,53 @@ def bounded_tool_output(
     try:
         parsed = json.loads(str(output or ""))
     except (TypeError, ValueError, RecursionError):
-        return sanitize_tool_output(
+        return _bounded_plain_output(
             output,
             max_chars=max_chars,
             tool_name=tool_name,
+            keep_edges=keep_edges,
         ), True
     if not isinstance(parsed, dict):
-        return sanitize_tool_output(
+        return _bounded_plain_output(
             output,
             max_chars=max_chars,
             tool_name=tool_name,
+            keep_edges=keep_edges,
         ), True
     try:
         compacted = _bounded_json_object(
             parsed,
             tool_name=tool_name,
             max_chars=max_chars,
+            keep_edges=keep_edges,
         )
     except RecursionError:
-        compacted = sanitize_tool_output(
+        compacted = _bounded_plain_output(
             output,
             max_chars=max_chars,
             tool_name=tool_name,
+            keep_edges=keep_edges,
         )
     return compacted, True
+
+
+def _edge_text(text: str, *, max_chars: int) -> str:
+    marker = "\n...[middle truncated by router]\n"
+    if len(text) <= max_chars:
+        return text
+    budget = max(0, max_chars - len(marker))
+    head = int(budget * 0.7)
+    tail = budget - head
+    return text[:head] + marker[:max_chars] + (text[-tail:] if tail else "")
+
+
+def _bounded_plain_output(
+    output: object, *, tool_name: str, max_chars: int, keep_edges: bool,
+) -> str:
+    if keep_edges:
+        text = sanitize_tool_output_no_truncate(output, tool_name=tool_name)
+        return _edge_text(text, max_chars=max_chars)
+    return sanitize_tool_output(output, max_chars=max_chars, tool_name=tool_name)
 
 
 def _bounded_json_object(
@@ -89,6 +116,7 @@ def _bounded_json_object(
     *,
     tool_name: str,
     max_chars: int,
+    keep_edges: bool = False,
 ) -> str:
     payload: dict[str, object] = {
         "truncated": True,
@@ -102,12 +130,26 @@ def _bounded_json_object(
     for key in ordered_keys:
         item = _sanitize_json_value(value[key], tool_name=tool_name)
         if isinstance(item, str) and len(item) > string_limit:
-            item = f"{item[: string_limit - len(_TRUNCATED_TEXT_SUFFIX)]}{_TRUNCATED_TEXT_SUFFIX}"
+            item = (
+                _edge_text(item, max_chars=string_limit) if keep_edges else
+                f"{item[: string_limit - len(_TRUNCATED_TEXT_SUFFIX)]}{_TRUNCATED_TEXT_SUFFIX}"
+            )
         candidate = {**payload, key: item}
         if len(_dump_json(candidate)) <= max_chars:
             payload[key] = item
-        else:
+            continue
+        # An MCP tool returns its whole answer under one key ("result"); dropping
+        # an oversized object would hand the model an empty stub, so keep a
+        # bounded prefix of its JSON text instead.
+        prefix = (
+            _json_text_prefix(payload, key, item, max_chars=max_chars, keep_edges=keep_edges)
+            if isinstance(item, (dict, list))
+            else None
+        )
+        if prefix is None:
             omitted.append(key)
+        else:
+            payload[key] = prefix
 
     if omitted:
         count_candidate = {**payload, "omitted_field_count": len(omitted)}
@@ -128,6 +170,32 @@ def _bounded_json_object(
     return _dump_json(
         {"truncated": True, "truncation_reason": "router_output_chars"}
     )
+
+
+def _json_text_prefix(
+    payload: dict[str, object],
+    key: str,
+    item: object,
+    *,
+    max_chars: int,
+    keep_edges: bool = False,
+) -> str | None:
+    text = _dump_json(item)
+    limit = max_chars - _JSON_TEXT_RESERVE_CHARS
+    budget = limit - len(_dump_json({**payload, key: ""}))
+    for _ in range(8):
+        if budget < _MIN_JSON_TEXT_PREFIX_CHARS:
+            return None
+        prefix = (
+            _edge_text(text, max_chars=budget) if keep_edges else
+            f"{text[: budget - len(_TRUNCATED_TEXT_SUFFIX)]}{_TRUNCATED_TEXT_SUFFIX}"
+        )
+        # Quotes and backslashes grow when the prefix is itself JSON-encoded.
+        overflow = len(_dump_json({**payload, key: prefix})) - limit
+        if overflow <= 0:
+            return prefix
+        budget -= overflow
+    return None
 
 
 def _sanitize_json_value(value: object, *, tool_name: str) -> object:

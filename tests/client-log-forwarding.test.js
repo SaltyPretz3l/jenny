@@ -11,16 +11,43 @@ const {
 
 const { getBridgeChannel } = require('../services/ipc-contract');
 
+test('renderer ingress sends raw pinned entries and redaction defaults to the canonical service once', () => {
+  const calls = [];
+  const entry = { ts: '2026-10-14T13:30:00.000Z', level: 'INFO', layer: 'sidecar', source: 'electron', message: '/workspace/file.txt' };
+  const handler = createClientLogBatchHandler({
+    getDiagnosticLogService: () => ({ append: (...args) => calls.push(args), recordDrop() {} }),
+    getRedactionPrefixes: () => ['/workspace'], env: {},
+  });
+  handler(null, { entries: [entry] });
+  assert.deepEqual(calls, [[{ ...entry, layer: 'renderer', source: 'renderer' }, {
+    broadcast: false, defaults: { layer: 'renderer', redaction_prefixes: ['/workspace'] },
+  }]]);
+  assert.equal(entry.layer, 'sidecar', 'the caller payload stays unchanged');
+});
+
+test('renderer canonical service stores the previous output shape', () => {
+  const { DiagnosticLogService } = require('../services/diagnostic-log-service');
+  const { normalizeLogEntry } = require('../services/log-entry-normalizer');
+  const entry = { ts: '2026-10-14T13:30:00.000Z', level: 'WARN', event: 'renderer.error', details: { message: '/workspace/file.txt', session_id: 'session-1' } };
+  const defaults = { layer: 'renderer', redaction_prefixes: ['/workspace'] };
+  const previousService = new DiagnosticLogService({ runId: 'fixed-run' });
+  const service = new DiagnosticLogService({ runId: 'fixed-run' });
+  const previous = previousService.append(normalizeLogEntry(entry, defaults), { broadcast: false });
+  createClientLogBatchHandler({ getDiagnosticLogService: () => service, getRedactionPrefixes: () => ['/workspace'], env: {} })(null, { entries: [entry] });
+  assert.equal(JSON.stringify(service.list()[0]), JSON.stringify(previous));
+});
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeWriter() {
+function makeService() {
   return {
     written: [],
-    write(entry) {
+    append(entry) {
       this.written.push(entry);
     },
+    recordDrop() {},
   };
 }
 
@@ -40,9 +67,9 @@ test('redaction prefix provider resolves mutable shell config at read time', () 
 });
 
 test('DEBUG entries are dropped when debug forwarding is OFF (default env)', () => {
-  const writer = makeWriter();
+  const writer = makeService();
   const handler = createClientLogBatchHandler({
-    getProcessLogWriter: () => writer,
+    getDiagnosticLogService: () => writer,
     getRedactionPrefixes: () => [],
     env: {},
     log: () => {},
@@ -62,9 +89,9 @@ test('DEBUG entries are dropped when debug forwarding is OFF (default env)', () 
 });
 
 test('DEBUG entries are forwarded when JENNY_ENABLE_AGENT_TEST_HOOKS=1', () => {
-  const writer = makeWriter();
+  const writer = makeService();
   const handler = createClientLogBatchHandler({
-    getProcessLogWriter: () => writer,
+    getDiagnosticLogService: () => writer,
     getRedactionPrefixes: () => [],
     env: { JENNY_ENABLE_AGENT_TEST_HOOKS: '1' },
     log: () => {},
@@ -85,9 +112,9 @@ test('DEBUG entries are forwarded when JENNY_ENABLE_AGENT_TEST_HOOKS=1', () => {
 
 test('dropped_count > 0 triggers a single WARN log; warnedAboutDrops latches so second call is silent', () => {
   const logCalls = [];
-  const writer = makeWriter();
+  const writer = makeService();
   const handler = createClientLogBatchHandler({
-    getProcessLogWriter: () => writer,
+    getDiagnosticLogService: () => writer,
     getRedactionPrefixes: () => [],
     env: {},
     log: (...args) => logCalls.push(args),
@@ -107,10 +134,10 @@ test('dropped_count > 0 triggers a single WARN log; warnedAboutDrops latches so 
   assert.equal(logCalls.length, 1, 'log NOT called again (warnedAboutDrops latch active)');
 });
 
-test('null writer: handler returns without throwing and nothing is written', () => {
+test('empty canonical batch does not append or warn', () => {
   const logCalls = [];
   const handler = createClientLogBatchHandler({
-    getProcessLogWriter: () => null,
+    getDiagnosticLogService: () => makeService(),
     getRedactionPrefixes: () => [],
     env: {},
     log: (...args) => logCalls.push(args),
@@ -118,17 +145,17 @@ test('null writer: handler returns without throwing and nothing is written', () 
 
   // Must not throw.
   assert.doesNotThrow(() => {
-    handler(null, { entries: [{ level: 'INFO', message: 'test' }] });
+    handler(null, { entries: [] });
   });
 
-  // No log calls either (the early-return path exits before logging).
-  assert.equal(logCalls.length, 0, 'no log calls when writer is null');
+  // Empty batches do not warn.
+  assert.equal(logCalls.length, 0, 'no log calls for an empty batch');
 });
 
 test('malformed-entry isolation: null/array entries skipped, valid entry survives', () => {
-  const writer = makeWriter();
+  const writer = makeService();
   const handler = createClientLogBatchHandler({
-    getProcessLogWriter: () => writer,
+    getDiagnosticLogService: () => writer,
     getRedactionPrefixes: () => [],
     env: {},
     log: () => {},
@@ -147,9 +174,9 @@ test('malformed-entry isolation: null/array entries skipped, valid entry survive
 });
 
 test('MAX_BATCH_ENTRIES cap: 250 entries are trimmed to 200', () => {
-  const writer = makeWriter();
+  const writer = makeService();
   const handler = createClientLogBatchHandler({
-    getProcessLogWriter: () => writer,
+    getDiagnosticLogService: () => writer,
     getRedactionPrefixes: () => [],
     env: {},
     log: () => {},
@@ -165,10 +192,10 @@ test('MAX_BATCH_ENTRIES cap: 250 entries are trimmed to 200', () => {
   assert.equal(writer.written.length, 200, 'batch is capped at MAX_BATCH_ENTRIES (200)');
 });
 
-test('production writer receives one ordered writeBatch call per IPC batch', () => {
+test('canonical service receives ordered appends for valid entries', () => {
   const batches = [];
   const handler = createClientLogBatchHandler({
-    getProcessLogWriter: () => ({ writeBatch: (entries) => batches.push(entries) }),
+    getDiagnosticLogService: () => ({ append: (entry) => batches.push(entry), recordDrop() {} }),
     getRedactionPrefixes: () => [],
     env: {},
   });
@@ -181,14 +208,14 @@ test('production writer receives one ordered writeBatch call per IPC batch', () 
     ],
   });
 
-  assert.equal(batches.length, 1);
-  assert.deepEqual(batches[0].map((entry) => entry.message), ['first', 'second']);
+  assert.equal(batches.length, 2);
+  assert.deepEqual(batches.map((entry) => entry.message), ['first', 'second']);
 });
 
-test('throwing batch writer never escapes renderer IPC', () => {
+test('throwing canonical service never escapes renderer IPC', () => {
   let attempts = 0;
   const handler = createClientLogBatchHandler({
-    getProcessLogWriter: () => ({ writeBatch() { attempts += 1; throw new Error('sink failed'); } }),
+    getDiagnosticLogService: () => ({ append() { attempts += 1; throw new Error('sink failed'); }, recordDrop() {} }),
     env: {},
   });
   assert.doesNotThrow(() => handler(null, { entries: [{ level: 'INFO', message: 'safe' }] }));
@@ -204,7 +231,7 @@ test('registerClientLogIpcHandler registers canonical and compatibility channels
   };
 
   registerClientLogIpcHandler(fakeIpcMain, {
-    getProcessLogWriter: () => null,
+    getDiagnosticLogService: () => makeService(),
     getRedactionPrefixes: () => [],
     env: {},
     log: () => {},
@@ -242,47 +269,41 @@ test('registerClientLogIpcHandler does not throw when passed an object without .
 
 for (const denial of [false, 'truthy', 'throw']) {
   test(`renderer log authorization ignores ${denial} before touching sinks or drop state`, () => {
-    for (const canonical of [true, false]) {
-      const handlers = new Map();
-      const calls = [];
-      const authorizations = [];
-      let decision = denial;
-      registerClientLogIpcHandler({ on: (channel, handler) => handlers.set(channel, handler) }, {
-        authorize: (event, metadata) => {
-          authorizations.push({ event, ...metadata });
-          if (decision === 'throw') throw new Error('denied');
-          return decision;
-        },
-        getDiagnosticLogService: () => {
-          calls.push('service');
-          return canonical ? {
-            append: () => calls.push('append'), recordDrop: () => calls.push('drop'),
-          } : null;
-        },
-        getProcessLogWriter: () => {
-          calls.push('writer');
-          return { writeBatch: () => calls.push('write') };
-        },
-        getRedactionPrefixes: () => { calls.push('redaction'); return []; },
-        env: {},
-        log: () => calls.push('warn'),
-      });
-      const event = {};
-      const batch = { entries: [{ level: 'INFO', message: 'hi' }, null], dropped_count: 3 };
-      const methods = ['diagnostics.logs.appendRendererBatch', 'logs.clientAppend'];
-      for (const methodPath of methods) {
-        assert.equal(handlers.get(getBridgeChannel(methodPath, 'send'))(event, batch), undefined);
-      }
-      assert.deepEqual(calls, []);
-      assert.deepEqual(authorizations, methods.map((methodPath) => ({
-        event, methodPath, channel: getBridgeChannel(methodPath, 'send'),
-      })));
-      decision = true;
-      for (const methodPath of methods) handlers.get(getBridgeChannel(methodPath, 'send'))(event, batch);
-      assert.equal(calls.filter((call) => call === (canonical ? 'append' : 'write')).length, 2);
-      assert.equal(calls.filter((call) => call === 'drop').length, canonical ? 4 : 0);
-      assert.equal(calls.filter((call) => call === 'warn').length, 1, 'denial must not latch the drop warning');
+    const handlers = new Map();
+    const calls = [];
+    const authorizations = [];
+    let decision = denial;
+    registerClientLogIpcHandler({ on: (channel, handler) => handlers.set(channel, handler) }, {
+      authorize: (event, metadata) => {
+        authorizations.push({ event, ...metadata });
+        if (decision === 'throw') throw new Error('denied');
+        return decision;
+      },
+      getDiagnosticLogService: () => {
+        calls.push('service');
+        return {
+          append: () => calls.push('append'), recordDrop: () => calls.push('drop'),
+        };
+      },
+      getRedactionPrefixes: () => { calls.push('redaction'); return []; },
+      env: {},
+      log: () => calls.push('warn'),
+    });
+    const event = {};
+    const batch = { entries: [{ level: 'INFO', message: 'hi' }, null], dropped_count: 3 };
+    const methods = ['diagnostics.logs.appendRendererBatch', 'logs.clientAppend'];
+    for (const methodPath of methods) {
+      assert.equal(handlers.get(getBridgeChannel(methodPath, 'send'))(event, batch), undefined);
     }
+    assert.deepEqual(calls, []);
+    assert.deepEqual(authorizations, methods.map((methodPath) => ({
+      event, methodPath, channel: getBridgeChannel(methodPath, 'send'),
+    })));
+    decision = true;
+    for (const methodPath of methods) handlers.get(getBridgeChannel(methodPath, 'send'))(event, batch);
+    assert.equal(calls.filter((call) => call === 'append').length, 2);
+    assert.equal(calls.filter((call) => call === 'drop').length, 4);
+    assert.equal(calls.filter((call) => call === 'warn').length, 1, 'denial must not latch the drop warning');
   });
 }
 
@@ -301,7 +322,7 @@ test('registerClientLogIpcHandler ignores ipcMain whose .on is not a function (g
 
   assert.doesNotThrow(() => {
     registerClientLogIpcHandler(malformedIpcMain, {
-      getProcessLogWriter: () => null,
+      getDiagnosticLogService: () => makeService(),
       getRedactionPrefixes: () => [],
       env: {},
       log: () => {},
@@ -319,7 +340,7 @@ test('registerClientLogIpcHandler ignores ipcMain whose .on is not a function (g
     },
   };
   registerClientLogIpcHandler(goodIpcMain, {
-    getProcessLogWriter: () => null,
+    getDiagnosticLogService: () => makeService(),
     getRedactionPrefixes: () => [],
     env: {},
     log: () => {},

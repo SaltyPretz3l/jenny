@@ -48,7 +48,7 @@ async function reconcileMutationPreparations(service, runtime, { now = () => per
             mutationJournalProof: { verify: args => runtime.mutationJournalProof.verify({ ...args, allowPreparing: true }) } } });
         result.inspected++;
         const response = await service.sidecarClient.request('workspace.confirm_runtime_checkpoint', {
-          accept_version: '2026-08-17', schema_version: 1, checkpoint,
+          accept_version: '2026-10-15', schema_version: 1, checkpoint,
           workspace_root: work.authority.root_path, device_id: String(work.authority.device_id),
           inode: String(work.authority.inode),
         }, { timeoutMs: Math.min(3000, remaining) });
@@ -59,7 +59,7 @@ async function reconcileMutationPreparations(service, runtime, { now = () => per
       if (runtime.checkpointStore.findCommittedForWork(work).status !== 'none') { result.blocked++; continue; }
       result.inspected++;
       const response = await service.sidecarClient.request('workspace.reconcile_runtime_preparations', {
-        accept_version: '2026-08-17', schema_version: 1, work_id: work.work_id,
+        accept_version: '2026-10-15', schema_version: 1, work_id: work.work_id,
         session_id: work.session_id, turn_id: work.turn_id, source_attempt: work.attempt,
         workspace_root: work.authority.root_path, device_id: String(work.authority.device_id),
         inode: String(work.authority.inode),

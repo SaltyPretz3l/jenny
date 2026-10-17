@@ -21,6 +21,12 @@ from sidecar.ai.engines.ollama_model_info import (
 from sidecar.ai.host_policy import host_policy_is_enforced
 from sidecar.ai.memory.unavailable import memory_store_status_payload
 from sidecar.ai.tools.builtins.workspace_cleanup import cleanup_workspace_artifacts
+from sidecar.runtime.chat_workspace_capabilities import (
+    CHAT_WORKSPACE_VERSION,
+    latch_session_handoff,
+    latch_session_messages,
+    negotiate_and_latch,
+)
 from sidecar.runtime.chatgpt_model_catalog import chatgpt_model_entries
 from sidecar.runtime.local_engine.load_failure import load_failure_listener
 from sidecar.runtime.local_engine.snapshot import (
@@ -46,7 +52,7 @@ from sidecar.runtime.provider_capability_profile import (
 from sidecar.runtime.schema_versions import get_all_schema_versions
 from sidecar.runtime.worker_secrets import BROKERED_SECRET_KEYS, SECRET_CONFIG_KEYS
 
-SERVER_VERSION = "1.4.0"
+SERVER_VERSION = "1.5.0"
 
 _ARCHIVED_CLOUD_ENGINE_TYPES = frozenset({"anthropic", "openai", "gemini"})
 _INSPECTABLE_ENGINE_TYPES = frozenset({"ollama", "openai-compatible"})
@@ -98,6 +104,9 @@ def _tools_status_payload(router: Any) -> dict[str, dict[str, Any]]:
                     "source_kind": str(value.get("source_kind") or "").strip() or None,
                     "tool_family": str(value.get("tool_family") or "").strip() or None,
                     "server_name": str(value.get("server_name") or "").strip() or None,
+                    # Fail closed: Electron's execution authority treats an external
+                    # tool as side-effecting unless the sidecar says otherwise.
+                    "side_effecting": value.get("side_effecting") is not False,
                 }
                 continue
             payload[name] = {
@@ -107,6 +116,7 @@ def _tools_status_payload(router: Any) -> dict[str, dict[str, Any]]:
                 "source_kind": None,
                 "tool_family": None,
                 "server_name": None,
+                "side_effecting": True,
             }
         if payload:
             return payload
@@ -187,6 +197,10 @@ def initialize_response(  # noqa: PLR0913 - initialize transport callbacks are e
 ) -> dict[str, Any]:
     raw_config = _runtime_initialize_config(params)
     secrets = initialize_secrets(params)
+    latch_session_messages(brain_container, False)  # a failed re-initialize keeps it closed
+    latch_session_handoff(brain_container, False)
+    from sidecar.runtime.owned_process_tracking import configure_managed
+    configure_managed(raw_config)
 
     configure_kwargs: dict[str, Any] = {"secrets": secrets}
     if progress_callback is not None:
@@ -228,6 +242,11 @@ def initialize_response(  # noqa: PLR0913 - initialize transport callbacks are e
         active_model_capabilities=active_model_capabilities,
     )
 
+    # Hosted answers the empty form (key present): "denied" differs from an old sidecar.
+    chat_workspace_capabilities = negotiate_and_latch(
+        brain_container, params, hosted=host_policy_is_enforced(runtime_config)
+    )
+
     result: dict[str, Any] = {
         "jsonrpc": "2.0",
         "id": message_id,
@@ -238,6 +257,10 @@ def initialize_response(  # noqa: PLR0913 - initialize transport callbacks are e
             "runtime_inference_budget_version": 1,
             "runtime_tool_resource_admission_version": 1,
             "runtime_continuation_version": 1,
+            "command_proposal_version": 1,
+            "inference_performance_version": 1,
+            "chat_workspace_version": CHAT_WORKSPACE_VERSION,
+            "chat_workspace_capabilities": chat_workspace_capabilities,
             "server_version": SERVER_VERSION,
             "engines_available": available_engine_types(initialize_provider_capabilities),
             "provider_capabilities": provider_capabilities_payload(
@@ -297,6 +320,9 @@ def initialize_response(  # noqa: PLR0913 - initialize transport callbacks are e
         result["result"]["host_execution_worker_enabled"] = bool(
             getattr(runtime_config, "host_execution_worker_enabled", False)
         )
+        # command.execute_proposal is desktop-only (not in HOST_ALLOWED_RPC_METHODS).
+        result["result"].pop("command_proposal_version", None)
+        result["result"].pop("inference_performance_version", None)
     return result
 
 

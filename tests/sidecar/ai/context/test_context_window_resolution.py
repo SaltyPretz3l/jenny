@@ -136,6 +136,8 @@ def test_apply_budget_check_budgets_against_the_configured_window() -> None:
         "budgeting off the 131072 native window means auto-compaction cannot "
         "fire before the 32768 num_ctx the request is actually served with"
     )
+    # The tool loop judges a provider's own prompt count against the unpadded window.
+    assert tracker.raw_context_window == CONFIGURED
 
 
 # ── read site 2: the renderer's context-meter denominator ────────────────────

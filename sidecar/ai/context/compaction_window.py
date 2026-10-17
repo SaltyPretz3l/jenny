@@ -1,5 +1,6 @@
 """Shared compaction primitives and (later) the mid-turn summarisation window."""
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -239,6 +240,7 @@ def _strip_matching_tool_call_arguments(
     *,
     call_index: dict[str, list[tuple[int, int]]],
     stop_index: int | None = None,
+    keep_keys: frozenset[str] = frozenset(),
 ) -> set[int]:
     if not tool_call_id:
         return set()
@@ -261,12 +263,45 @@ def _strip_matching_tool_call_arguments(
         )
         if call_id != tool_call_id:
             continue
-        call["arguments"] = {"compacted": True}
         function = call.get("function")
+        stub = _argument_stub(call, function, keep_keys)
+        call["arguments"] = stub
         if isinstance(function, dict):
-            function["arguments"] = {"compacted": True}
+            function["arguments"] = dict(stub)
         changed_indices.add(message_index)
     return changed_indices
+
+
+def _argument_stub(
+    call: dict[str, Any], function: Any, keep_keys: frozenset[str]
+) -> dict[str, Any]:
+    """``{"compacted": True}`` plus the kept path keys of the original call.
+
+    A kept list (``move_file``'s ``moves``) keeps only its items' kept string keys.
+    """
+    stub: dict[str, Any] = {"compacted": True}
+    if not keep_keys:
+        return stub
+    raw = function.get("arguments") if isinstance(function, dict) else call.get("arguments")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            raw = None
+    if not isinstance(raw, dict):
+        return stub
+    for key in sorted(keep_keys):
+        value = raw.get(key)
+        if isinstance(value, str):
+            stub[key] = value
+        elif isinstance(value, list):
+            items = [
+                {k: v for k, v in item.items() if k in keep_keys and isinstance(v, str)}
+                for item in value if isinstance(item, dict)
+            ]
+            if any(items):
+                stub[key] = [item for item in items if item]
+    return stub
 
 
 def _index_tool_calls(

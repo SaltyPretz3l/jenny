@@ -7,6 +7,7 @@
 
 const crypto = require('crypto');
 const relations = require('./suggested-changes-relations');
+const { normalizeApplyAttempt, pinDriftedSiblings } = require('./suggested-changes-receipt');
 
 const SUGGESTED_CHANGES_SCHEMA_VERSION = 1;
 const MAX_ENTRIES = 200;
@@ -174,6 +175,7 @@ function normalizeEntry(value) {
     created_at: createdAt,
     updated_at: normalizeIso(value.updated_at, createdAt),
     applied,
+    apply_attempt: normalizeApplyAttempt(value.apply_attempt),
   };
 }
 
@@ -309,6 +311,7 @@ function recordSuggestion(state, { metadata, toolCallId = '', turnId = '', now =
       tool_call_id: boundedId(toolCallId) || target.tool_call_id,
       updated_at: now,
       applied: null,
+      apply_attempt: null,
     };
     const next = withRelations(base, revised, metadata.depends_on, sameTurn);
     // A rejected change that comes back revised no longer holds its dependents.
@@ -480,6 +483,7 @@ function applyReceipt(state, { result, revisions = null, now = new Date().toISOS
   let next = state;
   let seq = state.seq;
   const changed = [];
+  const sentIds = new Set(result.items.map((item) => boundedId(item?.suggestion_id)));
   for (const item of result.items) {
     const entry = findEntry(next, boundedId(item?.suggestion_id));
     if (!entry) continue;
@@ -511,7 +515,10 @@ function applyReceipt(state, { result, revisions = null, now = new Date().toISOS
           diff: normalizeDiff(item.diff),
         },
       };
-      if (afterHash) next = { ...next, file_heads: { ...next.file_heads, [entry.path]: { hash: afterHash, seq } } };
+      if (afterHash) {
+        next = { ...next, file_heads: { ...next.file_heads, [entry.path]: { hash: afterHash, seq } } };
+        next = pinDriftedSiblings(next, entry, beforeHashes, seq, sentIds, changed);
+      }
     } else if (item.outcome === 'moved') {
       seq += 1;
       updated = {

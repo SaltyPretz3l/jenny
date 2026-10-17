@@ -60,6 +60,21 @@ test('Electron startup exits are classified separately from assertion failures',
   assert.equal(safeRunner.hasTestEvents('TAP version 13\n# Subtest: real assertion'), true);
 });
 
+test('TAP startup diagnostics retry only when no real test or assertion ran', () => {
+  const file = path.join(ROOT, 'tests', 'electron-startup.test.js');
+  const output = [
+    'TAP version 13', '# Crashpad not connected: startup',
+    `# Subtest: ${file}`, `not ok 1 - ${file}`, '  exitCode: 4294967295',
+  ].join('\n');
+  const result = { code: 1, output, timedOut: false, collateralKilled: false };
+  assert.equal(safeRunner.isInfrastructureFailure(file, result), true);
+  for (const evidence of ['# Subtest: real test\nnot ok 1 - real test', 'AssertionError [ERR_ASSERTION]']) {
+    assert.equal(safeRunner.isInfrastructureFailure(file, {
+      ...result, output: `${output}\n${evidence}`,
+    }), false);
+  }
+});
+
 // Node 24's default reporter is spec even when piped. Glyphs are built from
 // code points so this file stays ASCII.
 const SPEC_FAIL = String.fromCodePoint(0x2716);
@@ -500,12 +515,13 @@ test('the heavy jsdom suites and the resource suites drain as two chains side by
   assert.match(stdout, /summary: 3 passed, 0 failed/);
 });
 
-test('explicit *.load.test.js args force the strict order even with overlap enabled', (t) => {
+test('load and contention-sensitive Chromium files run after the pool even with overlap enabled', (t) => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-lane-load-'));
   t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
   const marker = path.join(tempRoot, 'parallel-done.txt');
   const slowPath = path.join(tempRoot, 'slow.test.js');
   const loadPath = path.join(tempRoot, 'perf.load.test.js');
+  const layoutPath = path.join(tempRoot, 'renderer-composer-narrow-layout.test.js');
   fs.writeFileSync(
     slowPath,
     "const fs = require('fs');\nconst test = require('node:test');\n" +
@@ -522,10 +538,14 @@ test('explicit *.load.test.js args force the strict order even with overlap enab
       '});\n'
   );
 
+  fs.copyFileSync(loadPath, layoutPath);
+  assert.equal(safeRunner.isSequentialTestPath(layoutPath), true);
+  assert.deepEqual(safeRunner.splitLoadTail([layoutPath]), { sequentialArgs: [], loadArgs: [layoutPath] });
+
   const { status, stdout, stderr } = runRunner(
-    [slowPath, loadPath, '--timeout-ms=60000'],
+    [slowPath, loadPath, layoutPath, '--timeout-ms=60000'],
     { timeoutMs: 90_000, env: { JENNY_TEST_LANE_OVERLAP: '1' } }
   );
   assert.equal(status, 0, `expected load-isolated green run; stderr=${stderr}\nstdout=${stdout}`);
-  assert.match(stdout, /summary: 2 passed, 0 failed/);
+  assert.match(stdout, /summary: 3 passed, 0 failed/);
 });

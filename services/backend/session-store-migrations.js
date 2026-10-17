@@ -27,6 +27,7 @@ const {
 } = require('./context-preferences');
 const { normalizeFailureRetryReasoningSnapshots } = require('./session-failure-retry-reasoning');
 const { normalizeSuggestedChanges } = require('./suggested-changes-records');
+const { normalizeCoordinationFields } = require('./session-coordination-records');
 const {
   createOfficialImagePluginSession,
   enforcePluginOperationMetadataBudget,
@@ -55,7 +56,10 @@ const STALE_PENDING_APPROVAL_TERMINAL_STATE = 'cancelled';
 // v22 adds bounded failure-retry reasoning snapshots. v23 moves chat files to a
 // base plus append-only journal; the session record itself is unchanged.
 // v24 adds the bounded Electron-owned `suggested_changes` record (Propose mode).
-const STORE_SCHEMA_VERSION = 24;
+// v25 adds the six chat-workspace coordination fields (spawned_from,
+// coordination_revision, coordination_receipts, chat_proposals, session_mail,
+// workspace_view) with inert defaults; only workspace_view is written so far.
+const STORE_SCHEMA_VERSION = 25;
 // The highest schema version that lived in the legacy monolithic sessions.json
 // file. Anything <= this number triggers a monolithic -> split migration on
 // first read.
@@ -570,6 +574,7 @@ const SESSION_MIGRATION_STEPS = [
   [22, repairSessionForV22],
   [23, (session) => session],
   [24, repairSessionForV24],
+  [25, repairSessionForV25],
 ];
 
 // v16 introduces `compaction_snapshot` (JCA-003 manual-compaction ownership).
@@ -744,6 +749,12 @@ function repairSessionForV24(session = {}) {
   return { ...source, suggested_changes: normalizeSuggestedChanges(source.suggested_changes) };
 }
 
+function repairSessionForV25(session = {}) {
+  const source = session && typeof session === 'object' && !Array.isArray(session)
+    ? session : {};
+  return { ...source, ...normalizeCoordinationFields(source) };
+}
+
 function migrateStorePayload(payload, { normalizeMessage } = {}) {
   const source = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
   const observedVersion = Number(source.schema_version);
@@ -824,6 +835,7 @@ module.exports = {
   repairSessionForV21,
   repairSessionForV22,
   repairSessionForV24,
+  repairSessionForV25,
   migrateLegacyImageOperationMessage,
   repairStalePendingApprovalToolUse,
   summarizeMessage,

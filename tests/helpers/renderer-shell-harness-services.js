@@ -173,9 +173,6 @@ function createShellStubServices(context) {
       async list() {
         return Array.isArray(state.logEntries) ? state.logEntries.slice() : [];
       },
-      onAppend(listener) {
-        return addListener('logs', listener);
-      },
     },
     personality: createPersonalityStub(options.personality, state),
     artifacts: {
@@ -238,12 +235,6 @@ function createShellStubServices(context) {
     memory: {
       contextFiles: createMemoryNotesStub(options.memory, state),
       async status() { return typeof options.memory?.status === 'function' ? options.memory.status({ state }) : { available: true, schema_version: 7, recall_index: 'fts5', counts: { approved: 0, pending: 0, quarantined: 0 }, storage: { state: 'ready', physical_bytes: 0, capacity_bytes: 50 * 1024 * 1024 }, repair_required: false, degraded_reasons: [] }; },
-      async suggestForSession(sessionId) {
-        if (typeof options.memory?.suggestForSession === 'function') {
-          return options.memory.suggestForSession(sessionId, { state });
-        }
-        return { suggestions: [] };
-      },
       async save(sessionId, candidate) {
         if (typeof options.memory?.save === 'function') {
           return options.memory.save(sessionId, candidate, { state });
@@ -285,14 +276,6 @@ function createShellStubServices(context) {
           return options.memory.deletePending(sessionId, contentFingerprint, { state });
         }
         return { deleted: Boolean(sessionId && contentFingerprint) };
-      },
-      async dismiss(sessionIdOrFingerprint, fingerprint) {
-        if (typeof options.memory?.dismiss === 'function') {
-          return fingerprint === undefined
-            ? options.memory.dismiss(sessionIdOrFingerprint, { state })
-            : options.memory.dismiss(sessionIdOrFingerprint, fingerprint, { state });
-        }
-        return { dismissed: Boolean(fingerprint ?? sessionIdOrFingerprint) };
       },
     },
     harness: {

@@ -63,15 +63,39 @@
     while (failedImages.size > MAX_FAILED_IMAGE_ENTRIES) failedImages.delete(failedImages.keys().next().value);
   }
 
+  const cssString = (value) => (typeof globalThis.CSS?.escape === 'function'
+    ? globalThis.CSS.escape(value) : String(value).replace(/["\\]/g, '\\$&'));
+
+  /* A failed frame stays focusable but announces itself unavailable; a later
+   * successful retry restores the "View …" label it had. */
+  function setFrameUnavailable(frame, unavailable) {
+    if (!frame) return;
+    const disabled = frame.getAttribute('aria-disabled') === 'true';
+    if (unavailable && !disabled) {
+      frame.setAttribute('data-inv-artifact-view-aria', frame.getAttribute('aria-label') || '');
+      const label = jt('chat.artifactFigure.unavailable', 'Image unavailable');
+      frame.setAttribute('aria-disabled', 'true');
+      frame.setAttribute('aria-label', label);
+      frame.setAttribute('title', label);
+    } else if (!unavailable && disabled) {
+      const viewAria = frame.getAttribute('data-inv-artifact-view-aria') || '';
+      frame.removeAttribute('aria-disabled');
+      frame.removeAttribute('data-inv-artifact-view-aria');
+      frame.setAttribute('aria-label', viewAria);
+      frame.setAttribute('title', viewAria);
+    }
+  }
+
   function applyArtifactImage(imageKey, src) {
     const doc = globalThis.document;
     if (!doc) return;
-    for (const img of doc.querySelectorAll('img[data-inv-artifact-image-key]')) {
-      if (img.getAttribute('data-inv-artifact-image-key') !== imageKey) continue;
+    for (const img of doc.querySelectorAll(`img[data-inv-artifact-image-key="${cssString(imageKey)}"]`)) {
       if (src && img.getAttribute('src') !== src) img.setAttribute('src', src);
       const figureNode = img.closest('.inv-artifact-figure');
-      if (failedImages.has(imageKey)) figureNode?.setAttribute('data-inv-artifact-image-state', 'unavailable');
+      const failed = failedImages.has(imageKey);
+      if (failed) figureNode?.setAttribute('data-inv-artifact-image-state', 'unavailable');
       else figureNode?.removeAttribute('data-inv-artifact-image-state');
+      setFrameUnavailable(img.closest('.inv-artifact-figure-frame'), failed);
     }
   }
 
@@ -124,6 +148,15 @@
     failedImages.clear();
   }
 
+  /* A deleted artifact: drop its cached image and keep it unavailable for this session. */
+  function evictArtifactImage(sessionId, artifactId) {
+    const imageKey = `${String(sessionId || '')}:${String(artifactId || '')}`;
+    imageCache.delete(imageKey);
+    pendingImages.delete(imageKey);
+    rememberFailedImage(imageKey, FAILED_IMAGE_TTL_MS);
+    applyArtifactImage(imageKey);
+  }
+
   function resetArtifactImageLoaderForTests() {
     releaseInlineImages();
   }
@@ -156,10 +189,7 @@
     return null;
   })();
 
-  const fallbackEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
-  var escapeHtml = stringUtils && typeof stringUtils.escapeHtml === 'function'
-    ? stringUtils.escapeHtml
-    : fallbackEscapeHtml;
+  var escapeHtml = stringUtils.escapeHtml;
 
   /* Navigable-source policy stays here because only inline cards create
    * <img> tags; presentation only decides whether a thumbnail exists. */
@@ -217,10 +247,6 @@
     return 'inv-artifact-card--generic';
   }
 
-  function artifactCardTargetAttr() {
-    return '';
-  }
-
   function iconGlyphForAction(name) {
     if (name === 'open') return ICONS.open;
     if (name === 'reveal') return ICONS.reveal;
@@ -276,17 +302,23 @@
     const negative = prompt && typeof options.negativePrompt === 'string' ? options.negativePrompt.trim() : '';
     let promptTitle = prompt ? `${jt('chat.artifactFigure.promptLabel', 'Prompt')}: ${prompt}` : '';
     if (negative) promptTitle += `\n${jt('chat.artifactFigure.negativePromptLabel', 'Negative prompt')}: ${negative}`;
-    if (!src && pres.sessionId && pres.id) requestArtifactImage(imageKey, pres.sessionId, pres.id);
+    // A deleted/missing artifact, or one without a session to read it from, is unavailable up front.
+    const status = String(artifact.status || '').trim().toLowerCase();
+    if (!pres.sessionId || (status && status !== 'available' && status !== 'completed')) {
+      rememberFailedImage(imageKey, FAILED_IMAGE_TTL_MS);
+      if (globalThis.document) setTimeout(() => applyArtifactImage(imageKey), 0);
+    } else if (!src && pres.id) requestArtifactImage(imageKey, pres.sessionId, pres.id);
     return figure.renderFigure({ callId, artifactId: pres.id, sessionId: pres.sessionId, imageKey,
       title: pres.title, width, height, src, meta, state: failedImages.has(imageKey) ? 'unavailable' : '',
       prompt: prompt.replace(/\s+/g, ' '), promptTitle,
       labels: {
-        open: jt('chat.artifactFigure.open', 'Open'),
-        openAria: jt('chat.artifactFigure.openAria', 'Open {title} beside chat', { title: pres.title }),
-        saveAs: jt('chat.artifactFigure.saveAs', 'Save as…'),
-        copy: jt('chat.artifactFigure.copy', 'Copy'),
-        reveal: jt('chat.artifactFigure.reveal', 'Show in folder'),
+        viewAria: jt('chat.artifactFigure.viewAria', 'View {title}', { title: pres.title }),
         unavailable: jt('chat.artifactFigure.unavailable', 'Image unavailable'),
+        copy: jt('chat.artifactFigure.copyImage', 'Copy image'),
+        saveAs: jt('chat.artifactFigure.saveAs', 'Save as…'),
+        reveal: jt('chat.artifactFigure.reveal', 'Show in folder'),
+        panel: jt('chat.artifactFigure.openBeside', 'Open beside chat'),
+        actions: jt('chat.artifactFigure.actions', 'Image actions'),
       },
     });
   }
@@ -294,7 +326,7 @@
   function renderFileCard(callId, pres) {
     var safeCallId = escapeHtml(callId);
     var meta = escapeHtml(pres.kicker);
-    return '<div class="inv-artifact-card ' + cardClassForKind('file') + '" data-artifact-call-id="' + safeCallId + '"' + artifactCardTargetAttr(pres) + '>'
+    return '<div class="inv-artifact-card ' + cardClassForKind('file') + '" data-artifact-call-id="' + safeCallId + '">'
       + '<div class="inv-artifact-icon">' + ICONS.file + '</div>'
       + '<div class="inv-artifact-info">'
       + '<span class="inv-artifact-title">' + escapeHtml(pres.title) + '</span>'
@@ -307,7 +339,7 @@
   function renderGenericCard(callId, pres) {
     var safeCallId = escapeHtml(callId);
     var meta = escapeHtml(pres.kicker);
-    return '<div class="inv-artifact-card ' + cardClassForKind('generic') + '" data-artifact-call-id="' + safeCallId + '"' + artifactCardTargetAttr(pres) + '>'
+    return '<div class="inv-artifact-card ' + cardClassForKind('generic') + '" data-artifact-call-id="' + safeCallId + '">'
       + '<div class="inv-artifact-icon">' + ICONS.generic + '</div>'
       + '<div class="inv-artifact-info">'
       + '<span class="inv-artifact-title">' + escapeHtml(pres.title) + '</span>'
@@ -344,6 +376,7 @@
     renderArtifactCards: renderArtifactCards,
     renderImagePendingFigure: renderImagePendingFigure,
     releaseInlineImages: releaseInlineImages,
+    evictArtifactImage: evictArtifactImage,
     resetArtifactImageLoaderForTests: resetArtifactImageLoaderForTests,
   };
 });

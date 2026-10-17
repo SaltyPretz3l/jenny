@@ -16,7 +16,7 @@ function dependencyFixture(h, child, { announceWait = false, omitSpawnAnnounceme
   if (inference.snapshot().reserved) {
     // Model the initial generation that produced the synthetic spawn/wait calls.
     // Its admission consumes the reserved lane; settlement must precede pause.
-    const binding = { api_version: '2026-08-17', schema_version: 1, kind: 'inference',
+    const binding = { api_version: '2026-10-15', schema_version: 1, kind: 'inference',
       operation_id: 'dependency_fixture_generation', request_id: work.attempt.stream_id,
       session_id: work.session_id, authority_revision: work.attempt.authority_revision };
     assert.equal(inference.handle({ ...binding, phase: 'admit', engine_type: request.runtimeRoute.engine_type,
@@ -85,7 +85,7 @@ function dependencyFixture(h, child, { announceWait = false, omitSpawnAnnounceme
     gateway: request.runtimeOperationGateway,
     historySelector: { schema_version: 1, history_scope: 'session', compaction_ref: null,
       canonical_cutoff: { boundary_message_count: 0, boundary_message_id: null, sha256: hash([]) } } });
-  const params = { api_version: '2026-08-17', schema_version: 1, kind: 'continuation', phase: 'dependency_checkpoint',
+  const params = { api_version: '2026-10-15', schema_version: 1, kind: 'continuation', phase: 'dependency_checkpoint',
     request_id: work.attempt.stream_id, session_id: work.session_id, authority_revision: work.attempt.authority_revision,
     operation_id: waitId, continuation_context: context, completed_spawn_refs: refs,
     tool_calls: calls, tool_batch_bytes: bytes({ calls }), tool_batch_sha256: hash({ calls }),

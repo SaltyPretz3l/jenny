@@ -145,6 +145,14 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   'tools_task_board_enabled',
   // gates the default-on per-project note tool (project_notes)
   'tools_project_notes_enabled',
+  // gates agentic memory v2 (the sidecar `memory` tool); kill switch only
+  'memory_v2_enabled',
+  // row 60 harness fixes (sidecar-only, default-on kill switches)
+  'shell_noninteractive_env', 'shell_head_tail_output', 'loop_result_aware_signature',
+  'edit_match_fallbacks', 'compaction_reject_truncated_summary', 'compaction_micro_first',
+  'compaction_recall_tool', 'compaction_touched_files',
+  // gates hybrid (vector + lexical) memory recall; default off until qualified
+  'memory_hybrid_recall',
   // gates the default-on OS toast notifier; Settings owns the user switch
   'desktop_notifications',
   'agent_test_hooks',
@@ -162,6 +170,7 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   'workspace_active_file_context',
   'workspace_ghost_edit',
   'workspace_test_runner',
+  'activity_monitor',
   'web_search_providers',
   // Provider-aware prompt caching and bounded deferred tool search are runtime
   // policy, not routine user preferences. Both remain default-on with an
@@ -181,6 +190,7 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   // knowledge folders (row 41). Internal, DEFAULT-ON (inert until the user picks
   // an embedding model); JENNY_ENABLE_SEMANTIC_CATALOG=0 is the kill switch.
   'semantic_catalog',
+  'prefill_progress',
   // thread_root_markup_memo gates settled-root markdown->HTML memoization
   // (finding #3). Internal, DEFAULT-ON with env-only rollback
   // (JENNY_ENABLE_THREAD_ROOT_MARKUP_MEMO=0).
@@ -225,6 +235,8 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   // since 2026-09-01; JENNY_ENABLE_LLAMA_SERVER_ACCELERATION=0 rolls back
   // byte-identical (no probe, no args, no DOM).
   'llama_server_acceleration',
+  // gates the default-on managed NInfer runtime for the RTX 5090 (row 54)
+  'ninfer',
 ]);
 
 function normalizeBooleanOverride(value) {
@@ -424,6 +436,25 @@ function buildFeatureFlagDefaults(env = process.env) {
     // JENNY_ENABLE_TOOLS_PROJECT_NOTES_ENABLED=0 to remove the tool from both
     // the Electron registry and the managed-sidecar catalog.
     tools_project_notes_enabled: fe('TOOLS_PROJECT_NOTES_ENABLED', true),
+    // memory_v2_enabled gates agentic memory v2: the sidecar-owned `memory`
+    // tool (managed-sidecar `tools_memory_enabled` derives from it), later
+    // reflection and episodic recall. DEFAULT-ON; set JENNY_ENABLE_MEMORY_V2=0
+    // to remove the tool from the managed-sidecar catalog. The user's memory
+    // toggles (pause, ask before saving) are separate and ride each request.
+    memory_v2_enabled: fe('MEMORY_V2', true),
+    // Row 60 harness fixes, DEFAULT-ON and A/B-measured; JENNY_ENABLE_<KEY>=0 restores the old behaviour.
+    shell_noninteractive_env: fe('SHELL_NONINTERACTIVE_ENV', true),
+    shell_head_tail_output: fe('SHELL_HEAD_TAIL_OUTPUT', true),
+    loop_result_aware_signature: fe('LOOP_RESULT_AWARE_SIGNATURE', true),
+    edit_match_fallbacks: fe('EDIT_MATCH_FALLBACKS', true),
+    compaction_reject_truncated_summary: fe('COMPACTION_REJECT_TRUNCATED_SUMMARY', true),
+    compaction_micro_first: fe('COMPACTION_MICRO_FIRST', true),
+    compaction_recall_tool: fe('COMPACTION_RECALL_TOOL', true),
+    compaction_touched_files: fe('COMPACTION_TOUCHED_FILES', true),
+    // memory_hybrid_recall (row 58 W4) adds the vector leg to memory recall and
+    // lets the conversation index pump embed memories. DEFAULT-OFF until the
+    // owner's real-model qualification; JENNY_ENABLE_MEMORY_HYBRID_RECALL=1 on.
+    memory_hybrid_recall: fe('MEMORY_HYBRID_RECALL', false),
     // error_intake_routing gates the EH intake controller (W8+) + the W11
     // error-center recorder. Default-on since the EH-W12 soak; Settings
     // Advanced / JENNY_ENABLE_ERROR_INTAKE_ROUTING=0 roll back (the raw toast
@@ -472,6 +503,8 @@ function buildFeatureFlagDefaults(env = process.env) {
     // that the authoring UI + live panel have landed it ships DEFAULT-ON (internal
     // flag); set JENNY_ENABLE_WORKSPACE_TEST_RUNNER=0 to roll it back for this user.
     workspace_test_runner: fe('WORKSPACE_TEST_RUNNER', true),
+    // Shared Test Runner monitor; model awareness remains a separate, deferred gate.
+    activity_monitor: fe('ACTIVITY_MONITOR', false),
     // web_search_providers gates ONLY the Settings UI surface for the
     // multi-provider web-search picker (SearXNG/Brave/Tavily/Serper/Google
     // PSE); the sidecar honors whatever provider config it is given and DDG
@@ -501,6 +534,7 @@ function buildFeatureFlagDefaults(env = process.env) {
     // embedding GGUF in Settings. JENNY_ENABLE_SEMANTIC_CATALOG=0 stops the
     // scheduler and the embedder and withdraws the sidecar catalog config.
     semantic_catalog: fe('SEMANTIC_CATALOG', true),
+    prefill_progress: fe('PREFILL_PROGRESS', true),
     // ollama_tray_remediation gates the owner-triggered Ollama tray-conflict
     // remediation surface (ollamaTray.* IPC: quit the tray app, disable its
     // Startup shortcut, restart the engine). Explicit-click actions only —
@@ -512,6 +546,11 @@ function buildFeatureFlagDefaults(env = process.env) {
     text_spellcheck: fe('TEXT_SPELLCHECK', true),
     session_runtime: fe('SESSION_RUNTIME', true),
     llama_server_acceleration: fe('LLAMA_SERVER_ACCELERATION', true),
+    // ninfer gates the managed NInfer runtime for an eligible RTX 5090 (row 54).
+    // DEFAULT-ON; JENNY_ENABLE_NINFER=0 is the kill switch. With the flag off
+    // there is no nvidia-smi probe for NInfer, no NInfer IPC data and no NInfer
+    // DOM. Internal: not user-overridable (absent from FEATURE_OVERRIDE_KEYS).
+    ninfer: fe('NINFER', true),
     // verification_gate gates the turn-finalization verification gate (sidecar
     // routing/verification_gate.py). It also requires tools_verify_enabled,
     // since the gate reaches the Test Runner through the `verify` tool. The gate

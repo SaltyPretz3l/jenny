@@ -44,6 +44,15 @@ test('an ariaLabel names the menu; without one the menu has no aria-label', (t) 
   assert.equal(doc.querySelector('.inv-context-menu').hasAttribute('aria-label'), false);
 });
 
+test('a toggle row is a menuitemcheckbox with aria-checked and the checked class', (t) => {
+  const { doc, trigger } = setup(t);
+  contextMenu.show({ anchorEl: trigger, rootEl: trigger, items: [{ label: 'Report', toggle: true, checked: true, action() {} }] });
+  const button = doc.querySelector('.inv-context-menu-item');
+  assert.equal(button.getAttribute('role'), 'menuitemcheckbox');
+  assert.equal(button.getAttribute('aria-checked'), 'true');
+  assert.equal(button.classList.contains('inv-context-menu-item--checked'), true);
+});
+
 test('radio rows carry menuitemradio, aria-checked and the checked class; plain rows stay menuitems', (t) => {
   const { doc, open } = setup(t);
   open();

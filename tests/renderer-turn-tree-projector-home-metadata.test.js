@@ -155,3 +155,30 @@ test('cloneSubagentReportMetadata keeps non-home and user question behavior unch
     answers: answers.slice(0, 8),
   });
 });
+
+test('cloneSubagentReportMetadata keeps exactly the memory chip fields after a cold reopen', () => {
+  const chip = {
+    result_kind: 'memory',
+    action: 'remember',
+    status: 'saved',
+    memory_id: 12,
+    revision: 2,
+    operation_id: 'tool:s1:call-1',
+    scope: 'project',
+    kind: 'fact',
+    duplicate: false,
+    undoable: true,
+    reason: 'duplicate_merged',
+    text_preview: 'The deploy runs on Fridays',
+    origin: 'reflection',
+  };
+  assert.deepEqual(cloneSubagentReportMetadata({
+    ...chip,
+    effects: 'committed',
+    lesson_text: 'SECRET full memory text',
+    memory: { id: 12, lesson_text: 'SECRET full memory text' },
+    undoable_until: { nested: true },
+  }), chip);
+  assert.deepEqual(cloneSubagentReportMetadata({ result_kind: 'memory', action: 'recall', status: 'ok', memory_id: 1.5 }),
+    { result_kind: 'memory', action: 'recall', status: 'ok' });
+});

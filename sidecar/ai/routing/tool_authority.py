@@ -6,6 +6,18 @@ from typing import Any
 
 from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED
 from sidecar.ai.tools.contracts import ToolExecutionFailure
+from sidecar.ai.tools.handoff_preparation import HANDOFF_TOOL_NAME, is_handoff_preparation
+
+
+def is_electron_handoff_completion(
+    runtime: Any, call: Any, descriptor: Any, electron_server_name: str,
+) -> bool:
+    """Only a trusted preparation completes through Electron's attempt authority."""
+    return (
+        call.tool_id == HANDOFF_TOOL_NAME
+        and getattr(descriptor, "server_name", "") == electron_server_name
+        and is_handoff_preparation(getattr(runtime, "request_context", None))
+    )
 
 
 def admit_scoped_tool_call(  # noqa: PLR0913
@@ -42,4 +54,4 @@ def admit_scoped_tool_call(  # noqa: PLR0913
         tool_arguments["_jenny_operation_id"] = operation_id
 
 
-__all__ = ["admit_scoped_tool_call"]
+__all__ = ["admit_scoped_tool_call", "is_electron_handoff_completion"]

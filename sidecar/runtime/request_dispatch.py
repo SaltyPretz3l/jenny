@@ -23,9 +23,11 @@ from sidecar.ai.tools.catalog import build_tool_catalog  # noqa: F401
 from sidecar.protocol import (
     API_VERSION,
     CHAT_SEND_METHOD,
+    CONTEXT_PREVIEW_METHOD,
     HARDWARE_PROFILE_METHOD,
     HARDWARE_VRAM_USAGE_METHOD,
     INITIALIZE_METHOD,
+    MEMORY_REFLECT_METHOD,
     MODELS_LIST_METHOD,
     MODELS_OLLAMA_BLOB_METHOD,
     MODELS_RESIDENT_METHOD,
@@ -537,6 +539,11 @@ def process_message(
                 notifications=[],
             )
 
+        if method == CONTEXT_PREVIEW_METHOD:
+            from sidecar.runtime.request_dispatch_context import process_context_preview
+
+            return process_context_preview(message_id, params, initialized, brain_container)
+
         background_outcome = process_background_method(
             method, message_id, params, initialized, brain_container, logger
         )
@@ -559,6 +566,19 @@ def process_message(
             )
             if catalog_outcome is not None:
                 return catalog_outcome
+
+        if method.startswith("conversations."):
+            # Loaded on first use like the catalog: the conversation index is
+            # off the sidecar startup path.
+            from sidecar.runtime.request_dispatch_conversations import (
+                process_conversations_method,
+            )
+
+            conversations_outcome = process_conversations_method(
+                method, message_id, params, initialized, brain_container, logger
+            )
+            if conversations_outcome is not None:
+                return conversations_outcome
 
         mcp_outcome = process_mcp_method(
             method, message_id, params, initialized, brain_container, logger
@@ -595,6 +615,18 @@ def process_message(
         )
         if suggestions_outcome is not None:
             return suggestions_outcome
+
+        if method == MEMORY_REFLECT_METHOD:
+            # Lazy: memory reflection is request-time only, so the module and its
+            # prompt/check helpers stay off the sidecar startup path.
+            from sidecar.runtime.request_dispatch_memory_reflection import (
+                process_memory_reflect_method,
+            )
+
+            reflect_outcome = process_memory_reflect_method(*inference_args,
+                write_message=write_message, response_reader_factory=response_reader_factory)
+            if reflect_outcome is not None:
+                return reflect_outcome
 
         commit_outcome = process_commit_method(*inference_args, write_message=write_message,
             response_reader_factory=response_reader_factory)
@@ -670,9 +702,11 @@ def process_message(
                 )
 
         if method == HARDWARE_VRAM_USAGE_METHOD:
+            # Polled every 15 s while the app is open: at INFO it was about
+            # half of all Activity records. Failures still log below.
             log_event(
                 logger,
-                logging.INFO,
+                logging.DEBUG,
                 component="runtime.request_dispatch",
                 event="sidecar.runtime.hardware_vram_usage",
                 message="Processing hardware.vram_usage request",

@@ -14,10 +14,12 @@ function classifyLoadFailure(message, { timedOut = false, unreachable = false } 
   return 'other';
 }
 
+const MANAGED_KINDS = new Set(['ninfer', 'llama-server']);
+
 function buildLoadFailure(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
-  const { cause, message, context, engine, model, at } = value;
+  const { cause, message, context, engine, model, at, managed } = value;
   if (!CAUSES.has(cause) || typeof message !== 'string'
     || typeof engine !== 'string' || typeof model !== 'string') return null;
   return {
@@ -27,6 +29,9 @@ function buildLoadFailure(value) {
     at: typeof at === 'string' && Number.isFinite(Date.parse(at)) ? at : new Date().toISOString(),
     engine: engine.trim(),
     model: model.trim(),
+    // The managed server an openai-compatible failure belonged to (row 54):
+    // present only when one was involved, so older records keep their shape.
+    ...(MANAGED_KINDS.has(managed) ? { managed } : {}),
   };
 }
 

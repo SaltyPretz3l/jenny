@@ -1,10 +1,11 @@
 'use strict';
 
-// Durable record of project deletions whose memory move the sidecar has not
+// Durable record of project deletions whose memory archive the sidecar has not
 // confirmed (review finding DPR-008). A record is written before the project
-// entry is removed and cleared once the move is answered, so a lost reply (or
-// a crash) leaves something to finish from: ProjectDeleteOperation.reconcile
-// re-issues the idempotent move after the sidecar is initialized again.
+// entry is removed and cleared once the archive is answered, so a lost reply
+// (or a crash) leaves something to finish from: ProjectDeleteOperation.reconcile
+// re-issues the idempotent archive after the sidecar is initialized again.
+// `target_project_id` (always General) is kept for schema compatibility.
 //
 // Fail closed: a file that cannot be read, or that a newer build wrote, makes
 // the journal read-only and a delete that needs a record is then refused. A
@@ -102,7 +103,7 @@ class ProjectDeleteJournal {
       damage = validated.reason;
     }
     // Records in a damaged file are lost: their memories stay under ids no
-    // chat belongs to (recalled by nothing) instead of being moved.
+    // chat belongs to (recalled by nothing) instead of being archived.
     const movable = damage === 'corrupt_store' || damage === 'invalid_schema';
     const preserved = movable && preserveCorruptFile(this.filePath, { logger: this._logger }).preserved === true;
     if (!preserved) this._readOnlyReason = damage;

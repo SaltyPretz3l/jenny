@@ -13,6 +13,7 @@ function executionOptionsFor(request, cancellation) {
     readOnly: request.runtimeChildReadOnly === true,
     toolPreferences: request.toolPreferences,
     approvalMode: request.approvalMode,
+    handoffPreparation: request.sessionHandoffPreparation,
   };
 }
 

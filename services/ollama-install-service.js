@@ -36,7 +36,10 @@ const { killProcessTree } = require('./backend/process-utils');
 const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
 const { SETUP_ERROR_CODES } = require('./backend/error-codes');
 const { extractTarZst } = require('./ollama-linux-archive');
+const { releaseInstallLatch, releaseOwnedEngine, restoreOwnedEngine } = require('./ollama-install-release');
 const { downloadPinnedFile } = require('./pinned-download');
+const { removeTreeSync } = require('./fs-remove-no-follow'); // never Node's rm: it follows junctions
+const { probeOllamaPort, withDeadline } = require('./backend/ollama-daemon-port');
 const { ollamaInstallDirs, ollamaUserInstallRoot } = require('./ollama-runtime-paths');
 const { createRequestId, normalizeRequestId } = require('./setup-service-helpers');
 
@@ -93,6 +96,8 @@ class OllamaInstallService extends EventEmitter {
     cryptoImpl = crypto,
     tmpDirProvider = () => os.tmpdir(),
     detectImpl = null,
+    probePortImpl = probeOllamaPort,
+    releaseOwnedImpl = null,
     restartImpl = null,
     delayImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     platform = process.platform,
@@ -119,6 +124,8 @@ class OllamaInstallService extends EventEmitter {
     this.cryptoImpl = cryptoImpl || crypto;
     this.tmpDirProvider = typeof tmpDirProvider === 'function' ? tmpDirProvider : () => os.tmpdir();
     this.detectImpl = typeof detectImpl === 'function' ? detectImpl : null;
+    this.probePortImpl = probePortImpl;
+    this.releaseOwnedImpl = typeof releaseOwnedImpl === 'function' ? releaseOwnedImpl : null;
     this.restartImpl = typeof restartImpl === 'function' ? restartImpl : null;
     this.delayImpl = typeof delayImpl === 'function' ? delayImpl : (ms) => new Promise((r) => setTimeout(r, ms));
     this.platform = normalizeString(platform) || process.platform;
@@ -221,6 +228,18 @@ class OllamaInstallService extends EventEmitter {
     this.emit('install-progress', this._public(entry));
   }
 
+  async _restartEngine(entry) {
+    entry.restartAttempted = true;
+    try {
+      const restart = await this.restartImpl();
+      if (restart?.ok === false) throw new Error(restart.reason || 'restart_failed');
+    } catch (error) {
+      this._log('WARN', 'ollama_install.restart_failed', {
+        requestId: entry.requestId, reason: boundedError(error?.message || error),
+      });
+    }
+  }
+
   _finish(entry, patch = {}) {
     if (entry.finished) {
       return this._public(entry);
@@ -233,8 +252,9 @@ class OllamaInstallService extends EventEmitter {
     if (patch.manualFallbackUrl) {
       entry.manualFallbackUrl = patch.manualFallbackUrl;
     }
-    this._active.delete(entry.requestId);
-    if (this._activeOperation === entry) this._activeOperation = null;
+    // Jenny's own engine was stopped to free the port; never leave it down after a failed install.
+    if (entry.ownedReleased && !entry.restartAttempted && this.restartImpl) void restoreOwnedEngine(this, entry);
+    releaseInstallLatch(this, entry);
     this._emit(entry, entry.status, { terminal: true });
     this._log(entry.status === 'completed' ? 'INFO' : 'WARN', 'ollama_install.finished', {
       requestId: entry.requestId,
@@ -250,16 +270,16 @@ class OllamaInstallService extends EventEmitter {
 
   _safeCleanup(entry) {
     try {
-      if (entry?.stagingDir && typeof this.fsImpl.rmSync === 'function') {
-        this.fsImpl.rmSync(entry.stagingDir, { recursive: true, force: true });
+      if (entry?.stagingDir && typeof this.fsImpl.lstatSync === 'function') {
+        removeTreeSync(entry.stagingDir, { fsImpl: this.fsImpl });
         entry.stagingDir = null;
       }
     } catch (error) {
       this._logCleanupFailure(entry, 'staging', error);
     }
     try {
-      if (entry?.tempDir && typeof this.fsImpl.rmSync === 'function') {
-        this.fsImpl.rmSync(entry.tempDir, { recursive: true, force: true });
+      if (entry?.tempDir && typeof this.fsImpl.lstatSync === 'function') {
+        removeTreeSync(entry.tempDir, { fsImpl: this.fsImpl });
       } else if (entry?.destPath && typeof this.fsImpl.unlinkSync === 'function') {
         this.fsImpl.unlinkSync(entry.destPath);
       }
@@ -535,7 +555,7 @@ class OllamaInstallService extends EventEmitter {
       }
       for (const name of abandoned) {
         try {
-          this.fsImpl.rmSync(path.join(parent, name), { recursive: true, force: true });
+          removeTreeSync(path.join(parent, name), { fsImpl: this.fsImpl });
         } catch (error) {
           this._logCleanupFailure(null, 'abandoned_install', error);
         }
@@ -612,7 +632,7 @@ class OllamaInstallService extends EventEmitter {
     entry.stagingDir = null;
     entry.published = true;
     try {
-      if (this.fsImpl.existsSync(previous)) this.fsImpl.rmSync(previous, { recursive: true, force: true });
+      if (this.fsImpl.existsSync(previous)) removeTreeSync(previous, { fsImpl: this.fsImpl });
     } catch (error) {
       this._logCleanupFailure(entry, 'previous_install', error);
     }
@@ -721,6 +741,28 @@ class OllamaInstallService extends EventEmitter {
     if (entry.cancelled) {
       entry.terminationConfirmed = true;
       return this._finish(entry, { status: 'cancelled', code: 'cancelled', summary: 'Install cancelled.' });
+    }
+
+    if (this.platform === 'linux') {
+      // Outside the probe deadline: the manager's own bounded stop must settle first.
+      if (this.releaseOwnedImpl) await releaseOwnedEngine(this, entry);
+      if (entry.finished) return this._public(entry);
+      const port = await withDeadline(
+        () => this.probePortImpl({ platform: this.platform }), 3000, { state: 'unknown' },
+      );
+      if (port?.state !== 'free') {
+        return this._finish(entry, {
+          status: 'failed',
+          code: port?.state === 'occupied' ? 'port_held_external' : 'port_state_unknown',
+          summary: port?.state === 'occupied'
+            ? 'Port 11434 is in use. Stop the program using it, then install.'
+            : 'Jenny could not verify that port 11434 is free. Re-check before installing.',
+        });
+      }
+      if (entry.cancelled) {
+        entry.terminationConfirmed = true;
+        return this._finish(entry, { status: 'cancelled', code: 'cancelled', summary: 'Install cancelled.' });
+      }
     }
 
     let tempTarget;
@@ -879,20 +921,7 @@ class OllamaInstallService extends EventEmitter {
     if ((upgradeRequired || plan.format === 'tar.zst') && this.restartImpl) {
       if (plan.format === 'tar.zst') entry.lastEmitAt = 0;
       this._emit(entry, 'restarting');
-      try {
-        const restart = await this.restartImpl();
-        if (restart?.ok === false) {
-          this._log('WARN', 'ollama_install.restart_failed', {
-            requestId: entry.requestId,
-            reason: boundedError(restart.reason || 'restart_failed'),
-          });
-        }
-      } catch (error) {
-        this._log('WARN', 'ollama_install.restart_failed', {
-          requestId: entry.requestId,
-          reason: boundedError(error?.message || error),
-        });
-      }
+      await this._restartEngine(entry);
     }
 
     // PATH propagation lags the installer; re-probe a few times before reporting.

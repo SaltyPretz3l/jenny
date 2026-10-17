@@ -5,6 +5,8 @@ const DEFAULT_CONTEXT_PREFERENCES = Object.freeze({
   include_git_context: true,
   include_codebase_context: true,
   include_active_file_context: true,
+  // Memory v2: "Don't remember this chat" (capture off for this session only).
+  memory_opt_out: false,
 });
 
 function normalizeBoolean(value, fallback) {
@@ -45,6 +47,9 @@ function inspectContextPreferences(value) {
   const rawIncludeActiveFileContextValue = Object.prototype.hasOwnProperty.call(source, 'include_active_file_context')
     ? source.include_active_file_context
     : source.includeActiveFileContext;
+  const rawMemoryOptOutValue = Object.prototype.hasOwnProperty.call(source, 'memory_opt_out')
+    ? source.memory_opt_out
+    : source.memoryOptOut;
   const warnings = [];
   const rawHistoryScope = typeof rawHistoryScopeValue !== 'undefined'
     ? String(rawHistoryScopeValue || '').trim()
@@ -72,6 +77,7 @@ function inspectContextPreferences(value) {
       rawIncludeActiveFileContextValue,
       DEFAULT_CONTEXT_PREFERENCES.include_active_file_context
     ),
+    memory_opt_out: normalizeBoolean(rawMemoryOptOutValue, DEFAULT_CONTEXT_PREFERENCES.memory_opt_out),
   };
 
   if (rawHistoryScope && normalized.history_scope === 'fresh' && rawHistoryScope.toLowerCase() !== 'fresh') {
@@ -111,6 +117,9 @@ function inspectContextPreferences(value) {
     && rawIncludeActiveFileContextValue !== false
   ) {
     warnings.push('context_preferences.include_active_file_context');
+  }
+  if (typeof rawMemoryOptOutValue !== 'undefined' && typeof rawMemoryOptOutValue !== 'boolean') {
+    warnings.push('context_preferences.memory_opt_out');
   }
   return {
     normalized,

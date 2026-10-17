@@ -189,7 +189,16 @@ test('secure store status does not expose raw safeStorage errors', () => {
   assert.equal(status.detail.includes('testuser'), false);
 });
 
-test('secure store clears unreadable encrypted values instead of throwing', () => {
+function captureThrown(callback) {
+  try {
+    callback();
+  } catch (error) {
+    return error;
+  }
+  return null;
+}
+
+test('secure store keeps an encrypted value it cannot decrypt and reports storage unavailable', () => {
   const { filePath, store } = createSecureStoreFixture({
     seed: {
       jwt_secret: {
@@ -199,15 +208,47 @@ test('secure store clears unreadable encrypted values instead of throwing', () =
     },
     safeStorage: createSafeStorageStub({
       decryptString() {
-        throw new Error('decrypt failed');
+        throw new Error('decrypt failed for C:\\Users\\testuser\\sensitive');
       },
     }),
   });
+  const before = fs.readFileSync(filePath, 'utf8');
 
-  assert.equal(store.get('jwt_secret'), '');
+  const error = captureThrown(() => store.get('jwt_secret'));
+  assert.equal(error?.code, 'storage_unavailable');
+  assert.equal(error.message.includes('testuser'), false);
+  assert.equal(fs.readFileSync(filePath, 'utf8'), before);
+});
 
-  const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  assert.equal(payload.jwt_secret, undefined);
+test('a transient decryption failure neither deletes nor rewrites the ciphertext', () => {
+  let failNext = true;
+  const { filePath, store } = createSecureStoreFixture({
+    prefix: 'jenny-secure-store-transient-decrypt-',
+    safeStorage: createSafeStorageStub({
+      decryptString(value) {
+        if (failNext) {
+          failNext = false;
+          throw new Error('keychain temporarily unavailable');
+        }
+        return Buffer.from(value).toString('utf8');
+      },
+    }),
+  });
+  store.setSentryDsn('https://synthetic@example.invalid/1');
+  const before = fs.readFileSync(filePath, 'utf8');
+  let writes = 0;
+  for (const method of ['write', 'writeImmediate']) {
+    const original = store.store[method].bind(store.store);
+    store.store[method] = (...args) => { writes += 1; return original(...args); };
+  }
+
+  const error = captureThrown(() => store.getSentryDsn());
+  assert.equal(error?.code, 'storage_unavailable');
+  assert.equal(error.message.includes('synthetic'), false);
+  assert.equal(error.message.includes('keychain'), false);
+  assert.equal(store.getSentryDsn(), 'https://synthetic@example.invalid/1');
+  assert.equal(writes, 0);
+  assert.equal(fs.readFileSync(filePath, 'utf8'), before);
 });
 
 test('secure store rejects plaintext records and removes them from disk', () => {

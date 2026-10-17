@@ -24,6 +24,17 @@ const {
   canonicalEvent,
 } = require('./helpers/managed-runtime-notification-harness');
 
+test('heuristic.fire is silently consumed without renderer output or warnings', () => {
+  const ctx = makeCtx();
+  handleNotification(ctx, {
+    method: 'heuristic.fire', params: { name: 'promise_nudge' },
+  }, { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) });
+  assert.equal(callsOf(ctx, 'emitChatStream').length, 0);
+  assert.equal(callsOf(ctx, 'emitThinkingStatus').length, 0);
+  assert.equal(callsOf(ctx, 'serviceLog').length, 0);
+  assert.equal(callsOf(ctx, 'appendText').length, 0);
+});
+
 test('chat.token accrues visible text and emits a response delta', () => {
   const ctx = makeCtx();
   handleNotification(ctx, { method: 'chat.token', params: { delta: 'Hello ' } }, {

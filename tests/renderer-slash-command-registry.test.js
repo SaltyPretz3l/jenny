@@ -24,6 +24,23 @@ function buildHarness(overrides = {}) {
   return { calls, registry, state };
 }
 
+test('registration snapshots a trimmed bounded tag and omits absent tags', () => {
+  const { registry } = buildHarness();
+  const options = { tag: '  rea  ' };
+  registry.register('/tagged', 'Prompt', () => {}, options);
+  options.tag = 'changed';
+  registry.register('/long', 'Prompt', () => {}, { tag: 'x'.repeat(40) });
+  registry.register('/blank', 'Prompt', () => {}, { tag: '   ' });
+  registry.register('/none', 'Prompt', () => {});
+  registry.register('/invalid', 'Prompt', () => {}, { tag: 123 });
+  const rows = registry.listCommands();
+  assert.equal(rows.find(row => row.name === '/tagged').tag, 'rea');
+  assert.equal(rows.find(row => row.name === '/long').tag, 'x'.repeat(32));
+  for (const name of ['/blank', '/none', '/invalid']) {
+    assert.equal(Object.hasOwn(rows.find(row => row.name === name), 'tag'), false);
+  }
+});
+
 test('catalog subscriptions report successful changes only and unsubscribe cleanly', () => {
   const { registry } = buildHarness();
   let changes = 0;
@@ -191,9 +208,15 @@ test('/help works without a session and lists only active built-ins', async () =
   });
   assert.equal((await registry.execute('/help').completion).ok, true);
   assert.match(calls.toasts[0][0], /Available now: \/help, \/note/);
-  assert.match(calls.toasts[0][0], /Start a conversation for: \/context, \/compact/);
+  assert.match(calls.toasts[0][0], /Start a conversation for: \/context, \/compact, \/linked, \/remember, \/forget, \/memory\./);
   assert.doesNotMatch(calls.toasts[0][0], /research/i);
-  assert.equal(registry.listCommands().length, 4);
+  assert.equal(registry.listCommands().length, 8);
+  const byName = Object.fromEntries(registry.listCommands().map((entry) => [entry.name, entry]));
+  assert.equal(byName['/remember'].action, 'insert');
+  assert.equal(byName['/linked'].action, 'insert');
+  assert.equal(byName['/forget'].action, 'insert');
+  assert.equal(byName['/memory'].action, 'run');
+  assert.equal(byName['/memory'].description, 'List what Jenny remembers here');
 });
 
 test('/help groups attachable skills before ordinary commands', async () => {

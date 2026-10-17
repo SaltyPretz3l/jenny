@@ -3,18 +3,21 @@
   root.rendererDiagnosticsEventBindings = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-  // Tab order; Runs joined on 2026-10-03 (moved from Settings).
-  var TABS = ['overview', 'activity', 'runs'];
-
   function createLogsEventBindings(options) {
     var state = options.state;
     var viewStateUtils = globalThis.rendererDiagnosticsViewState
       || (typeof require === 'function' ? require('./renderer-diagnostics-view-state') : null);
+    var TABS = viewStateUtils.TABS;
+    var activityView = globalThis.rendererDiagnosticsActivity
+      || (typeof require === 'function' ? require('./renderer-diagnostics-activity') : null);
+    var issueUtils = globalThis.diagnosticsIssueUtils
+      || (typeof require === 'function' ? require('../shared/diagnostics-issue-utils') : null);
     var asyncFenceUtils = globalThis.rendererAsyncFence
       || (typeof require === 'function' ? require('../shared/async-fence') : null);
     var disposalFence = asyncFenceUtils.createDisposalFence();
     var cleanups = [];
     var focusFrame = null;
+    var overviewBound = false;
     var narrowActivityQuery = typeof window.matchMedia === 'function'
       ? window.matchMedia('(max-width: 620px)')
       : null;
@@ -56,16 +59,32 @@
       });
     }
 
-    function findRow(id) {
-      return Array.from(options.dom.logList?.querySelectorAll?.('[data-entry-id]') || []).find(function (row) {
-        return row.dataset.entryId === id;
-      }) || null;
+    // Follow's pressed state and its look are one fact.
+    function setFollow(button, on) {
+      if (!button) return;
+      button.setAttribute('aria-pressed', String(on));
+      button.classList.toggle('active', on);
+    }
+
+    // A busy control stays focusable: aria-disabled, never the disabled property.
+    function beginBusy(button) {
+      if (button.getAttribute('aria-disabled') === 'true') return false;
+      button.setAttribute('aria-disabled', 'true');
+      return true;
+    }
+
+    // The scope is the issue group, found among the entries Activity shows (the selected launch).
+    function scopeForKey(key) {
+      var shown = globalThis.rendererDiagnosticsRenderUtils;
+      var entries = typeof shown?.selectedEntries === 'function' ? shown.selectedEntries(state) : state.logs;
+      var group = issueUtils.groupIssues(Array.isArray(entries) ? entries : []).find(function (candidate) { return candidate.key === key; });
+      return activityView.issueScopeFor(group || null, key);
     }
 
     function focusRow(id) {
       if (!id) return false;
       options.callbacks.ensureLogRowMounted?.(id);
-      var row = findRow(id);
+      var row = activityView.findRow(options.dom.logList, id);
       if (!row) return false;
       Array.from(options.dom.logList.querySelectorAll('[data-entry-id][tabindex="0"]')).forEach(function (candidate) {
         if (candidate !== row) candidate.tabIndex = -1;
@@ -96,7 +115,50 @@
       return narrowActivityQuery?.matches === true;
     }
 
+    function bindOverviewLayout() {
+      var overview = document.getElementById('diagnosticsOverview');
+      var body = document.getElementById('diagnosticsOverviewBody');
+      var host = document.getElementById('diagnosticsOverviewDivider');
+      if (overviewBound || !overview || !body || !host) return;
+      overviewBound = true;
+      var dividerUtils = globalThis.inventory?.resizableDivider || globalThis.inventoryResizableDivider
+        || (typeof require === 'function' ? require('../inventory/resizable-divider') : null);
+      var status = overview.querySelector('.diagnostics-status');
+      var attention = document.getElementById('diagnosticsAttention');
+      var jt = globalThis.jennyI18n?.t || function (_key, fallback) { return fallback; };
+      function apply(value) {
+        view().overviewMetricsPercent = value;
+        body.style.setProperty('--diagnostics-metrics-share', String(value / 100));
+      }
+      apply(view().overviewMetricsPercent);
+      var divider = dividerUtils.createResizableDivider({
+        host: host, controls: 'diagnosticsMetrics',
+        min: viewStateUtils.OVERVIEW_METRICS.min, max: viewStateUtils.OVERVIEW_METRICS.max,
+        label: jt('diagnostics.overview.resizeMetrics', 'Resize Runtime and Performance'),
+        getValue: function () { return view().overviewMetricsPercent; }, setValue: apply,
+        measureSize: function () { return body.clientHeight - host.offsetHeight; },
+        isEnabled: function () { return !host.hidden && !overview.hidden && overview.dataset.stacked !== 'true'; },
+      });
+      function updateLayout() {
+        if (disposalFence.isDisposed()) return;
+        var stacked = window.innerWidth < 1100 || overview.clientHeight - status.offsetHeight < 480;
+        overview.dataset.stacked = String(stacked);
+        host.hidden = stacked || attention.hidden;
+        if (host.hidden || overview.hidden) divider.cancel();
+      }
+      var observer = typeof window.ResizeObserver === 'function' ? new window.ResizeObserver(updateLayout) : null;
+      observer?.observe(overview);
+      observer?.observe(status);
+      var mutations = new window.MutationObserver(updateLayout);
+      mutations.observe(attention, { attributes: true, attributeFilter: ['hidden'] });
+      mutations.observe(overview, { attributes: true, attributeFilter: ['hidden'] });
+      listen(window, 'resize', updateLayout);
+      updateLayout();
+      cleanups.push(function () { observer?.disconnect(); mutations.disconnect(); divider.dispose(); });
+    }
+
     function bind(listenerOptions) {
+      bindOverviewLayout();
       var tabs = document.getElementById('diagnosticsTabs');
       listen(tabs, 'click', function (event) {
         var button = event.target.closest('[data-tab]');
@@ -129,13 +191,20 @@
 
       var root = document.getElementById('logsView');
       listen(root, 'click', function (event) {
+        if (event.target.closest('[data-action="diagnostics-open-local-engine"]')) {
+          options.callbacks.openLocalEngine?.();
+          return;
+        }
+        if (event.target.closest('[data-action="diagnostics-open-models"]')) {
+          options.callbacks.openModels?.();
+          return;
+        }
         var retry = event.target.closest('[data-action="diagnostics-retry-load"]');
         if (retry) {
-          if (retry.disabled) return;
-          retry.disabled = true;
+          if (!beginBusy(retry)) return;
           Promise.resolve().then(function () { return options.callbacks.retryModelLoad?.(retry.dataset.retryModel, retry.dataset.retryEngine || ''); })
             .catch(function () {})
-            .finally(disposalFence.guard(function () { retry.disabled = false; }));
+            .finally(disposalFence.guard(function () { retry.removeAttribute('aria-disabled'); }));
           return;
         }
         var close = event.target.closest('[data-action="close-log-detail"]');
@@ -154,14 +223,10 @@
 
         var inspect = event.target.closest('[data-action="inspect-diagnostic-issue"]');
         if (inspect) {
-          var decoded;
-          try { decoded = decodeURIComponent(inspect.dataset.issue || ''); } catch (_error) { return; }
-          var parts = decoded.split('\u0000');
-          viewStateUtils.focusDiagnosticsTarget(state, { tab: 'activity', issueScope: {
-            component: parts[0] || '',
-            event: parts[1] || '',
-            error_code: parts[2] || '',
-          } });
+          var key;
+          try { key = decodeURIComponent(inspect.dataset.issue || ''); } catch (_error) { return; }
+          if (!key) return;
+          viewStateUtils.focusDiagnosticsTarget(state, { tab: 'activity', issueScope: scopeForKey(key) });
           renderLogs();
           afterRender(focusActivityStart);
           return;
@@ -196,19 +261,18 @@
         }
 
         var reset = event.target.closest('#phasePercentilesResetButton');
-        if (!reset) return;
-        reset.disabled = true;
+        if (!reset || !beginBusy(reset)) return;
         Promise.resolve(options.callbacks.resetPhasePercentiles?.({ render: false }))
           .then(disposalFence.guard(function () {
             return options.callbacks.refreshPhasePercentiles?.({ render: false });
           }))
           .then(disposalFence.guard(renderLogs))
           .catch(disposalFence.guard(function () { renderLogs(); return null; }))
-          .finally(disposalFence.guard(function () { reset.disabled = false; }));
+          .finally(disposalFence.guard(function () { reset.removeAttribute('aria-disabled'); }));
       }, listenerOptions);
 
       listen(root, 'keydown', function (event) {
-        if (event.key !== 'Escape' || !view().selectedEntryId) return;
+        if (event.key !== 'Escape' || view().activeTab !== 'activity' || !view().selectedEntryId) return;
         event.preventDefault();
         closeDetail();
       }, listenerOptions);
@@ -224,7 +288,7 @@
         var distance = list.scrollHeight - list.clientHeight - list.scrollTop;
         if (distance > 48 && view().autoScroll) {
           view().autoScroll = false;
-          document.getElementById('logAutoScrollToggle')?.setAttribute('aria-pressed', 'false');
+          setFollow(document.getElementById('logAutoScrollToggle'), false);
         }
       }, { passive: true });
 
@@ -286,15 +350,15 @@
         /* Repaint even without a target: the view may already have been on
          * Logs, in which case the tab flip alone paints nothing. */
         renderLogs();
-        if (entryId) afterRender(function () { focusRow(entryId); });
+        // No resolved record still moves focus into Activity, not to the page body.
+        afterRender(entryId ? function () { if (!focusRow(entryId)) focusActivityStart(); } : focusActivityStart);
       }, listenerOptions);
 
       var follow = document.getElementById('logAutoScrollToggle');
       listen(follow, 'click', function () {
         view().autoScroll = !view().autoScroll;
         view().selectedEntryId = '';
-        follow.setAttribute('aria-pressed', String(view().autoScroll));
-        follow.classList.toggle('active', view().autoScroll);
+        setFollow(follow, view().autoScroll);
         renderLogs();
         if (view().autoScroll) {
           afterRender(function () { options.callbacks.scrollLogsToBottom?.(options.dom.logList); });

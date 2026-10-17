@@ -22,12 +22,26 @@ function descriptor(overrides = {}) {
   };
 }
 
+test('session_message defaults to auto so its own exact-content consent is the only prompt', () => {
+  const entry = toolManifest.tools.find(tool => tool.name === 'session_message');
+  for (const action of ['list_targets', 'read', 'send']) {
+    const result = evaluatePolicy({ descriptor: entry, args: { action }, snapshot: {}, mode: 'chat' });
+    assert.equal(result.decision, 'auto', action);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Legacy compatibility — evaluator returns the same decision a flat per-tool
 // policy map would, so existing user configurations keep working unchanged.
 // ---------------------------------------------------------------------------
 
 describe('evaluatePolicy / legacy parity', () => {
+  test('recall_tool_output defaults to auto', () => {
+    const entry = toolManifest.tools.find(tool => tool.name === 'recall_tool_output');
+    assert.equal(DEFAULT_TOOL_DEFAULTS.recall_tool_output, 'auto');
+    assert.equal(evaluatePolicy({ descriptor: entry, snapshot: normalizePolicySnapshot({}) })
+      .decision, 'auto');
+  });
   test('respects default auto for read-only tools when no policy stored', () => {
     const snapshot = normalizePolicySnapshot({});
     const result = evaluatePolicy({ descriptor: descriptor(), snapshot });
@@ -228,7 +242,13 @@ describe('evaluatePolicy / legacy parity', () => {
       ['project_notes', { action: 'read' }, 'auto', 'read-only action defaults to auto'],
       ['project_notes', { action: 'append' }, 'auto', 'built-in default for project_notes'],
       ['project_notes', { action: 'replace' }, 'auto', 'built-in default for project_notes'],
+      ['memory', { action: 'recall', query: 'tabs' }, 'auto', 'read-only action defaults to auto'],
+      ['memory', { action: 'remember', text: 'x' }, 'auto', 'built-in default for memory'],
+      ['memory', { action: 'forget', id: 1 }, 'auto', 'built-in default for memory'],
       ['read_file', {}, 'auto', 'built-in default for read_file'],
+      ['conversations_recent', {}, 'auto', 'built-in default for conversations_recent'],
+      ['conversation_open', { session_id: 'earlier' }, 'auto', 'built-in default for conversation_open'],
+      ['conversations_search', { query: 'tabs' }, 'auto', 'built-in default for conversations_search'],
     ];
 
     for (const [name, args, decision, reason] of cases) {

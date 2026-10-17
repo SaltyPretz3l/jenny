@@ -6,7 +6,8 @@ markdown headings and every non-line section boundary end a paragraph; small
 paragraphs merge up to ``max_chars``; an oversize paragraph is split at a
 sentence boundary (else hard at ``max_chars``). Each chunk after the first
 starts with the tail of the previous one, and its locator spans the first..last
-unit it covers (``L3-40``, ``p2-3``, ``para4-9``).
+unit its text covers, the overlap tail's units included (``L3-40``, ``p2-3``,
+``para4-9``).
 """
 
 from __future__ import annotations
@@ -40,17 +41,47 @@ class _Unit:
     number: int
 
 
+# ``(offset, unit)``: the unit whose text starts at ``offset`` of a block or chunk.
+_Mark = tuple[int, _Unit]
+
+
 @dataclass(frozen=True)
 class _Block:
-    """A paragraph (or a piece of one) plus the units its locator spans."""
+    """A paragraph (or a piece of one) plus where each unit it spans starts."""
 
     text: str
-    units: tuple[_Unit, ...]
+    marks: tuple[_Mark, ...]
     heading: bool = False
 
 
 def _block_of(units: Sequence[_Unit], *, heading: bool = False) -> _Block:
-    return _Block("\n".join(unit.text for unit in units), tuple(units), heading)
+    marks: list[_Mark] = []
+    offset = 0
+    for unit in units:
+        marks.append((offset, unit))
+        offset += len(unit.text) + 1
+    return _Block("\n".join(unit.text for unit in units), tuple(marks), heading)
+
+
+def _mark_offset(mark: _Mark) -> int:
+    return mark[0]
+
+
+def _marks_within(marks: Sequence[_Mark], start: int, end: int) -> list[_Mark]:
+    """The marks of the units overlapping ``[start, end)``, re-based to ``start``.
+
+    ``marks`` ascend by offset: a binary search finds the unit holding ``start``
+    and only the overlapping marks are visited (not every mark per piece).
+    """
+    index = max(bisect_right(marks, start, key=_mark_offset) - 1, 0)
+    picked: list[_Mark] = []
+    while index < len(marks):
+        offset, unit = marks[index]
+        if offset >= end:
+            break
+        picked.append((max(offset - start, 0), unit))
+        index += 1
+    return picked
 
 
 def _parse_locator(locator: str) -> tuple[str, int, int]:
@@ -108,21 +139,17 @@ def _split_point(text: str, max_chars: int) -> int:
 def _split_oversize(block: _Block, max_chars: int) -> list[_Block]:
     """Split one paragraph into pieces of at most ``max_chars``, keeping unit spans."""
     text = block.text
-    starts: list[int] = []
-    position = 0
-    for unit in block.units:
-        starts.append(position)
-        position += len(unit.text) + 1
     pieces: list[_Block] = []
     offset = 0
     while offset < len(text):
         window = text[offset : offset + max_chars + 1]
         cut = len(window) if len(text) - offset <= max_chars else _split_point(window, max_chars)
-        piece = text[offset : offset + cut].strip()
+        raw = text[offset : offset + cut]
+        piece = raw.strip()
         if piece:
-            first = bisect_right(starts, offset) - 1
-            last = bisect_right(starts, offset + cut - 1) - 1
-            pieces.append(_Block(piece, block.units[first : last + 1], block.heading))
+            start = offset + len(raw) - len(raw.lstrip())
+            marks = _marks_within(block.marks, start, start + len(piece))
+            pieces.append(_Block(piece, tuple(marks), block.heading))
         offset += cut
     return pieces
 
@@ -143,8 +170,9 @@ class _Assembler:
         self.overlap_chars = overlap_chars
         self.chunks: list[Chunk] = []
         self._texts: list[str] = []
-        self._units: list[_Unit] = []
+        self._marks: list[_Mark] = []  # offsets into the "\n\n"-joined texts
         self._size = 0
+        self._last_marks: list[_Mark] = []  # the previous chunk's, for its overlap tail
 
     def add(self, block: _Block) -> None:
         text = block.text
@@ -152,20 +180,31 @@ class _Assembler:
             self.flush()
         if self._size and self._size + len(text) + 2 > self.max_chars:
             self.flush()
+        base = self._size + (2 if self._size else 0)
         self._texts.append(text)
-        self._units.extend(block.units)
-        self._size += len(text) + (2 if self._size else 0)
+        self._marks.extend((base + offset, unit) for offset, unit in block.marks)
+        self._size = base + len(text)
 
     def flush(self) -> None:
         if not self._texts:
             return
-        body = "\n\n".join(self._texts).strip()
+        joined = "\n\n".join(self._texts)
+        body = joined.strip()
         if body:
+            lead = len(joined) - len(joined.lstrip())
+            marks = [(max(offset - lead, 0), unit) for offset, unit in self._marks]
             previous = self.chunks[-1].text if self.chunks else ""
             tail = _overlap_tail(previous, self.overlap_chars)
+            if tail:
+                # The tail's own units come first, so the locator covers the overlap.
+                start = previous.rfind(tail)
+                marks = _marks_within(self._last_marks, start, start + len(tail)) + [
+                    (offset + len(tail) + 1, unit) for offset, unit in marks]
             text = f"{tail}\n{body}" if tail else body
-            self.chunks.append(Chunk(len(self.chunks), _format_locator(self._units), text))
-        self._texts, self._units, self._size = [], [], 0
+            units = [unit for _offset, unit in marks]
+            self.chunks.append(Chunk(len(self.chunks), _format_locator(units), text))
+            self._last_marks = marks
+        self._texts, self._marks, self._size = [], [], 0
 
 
 def chunk_sections(
@@ -175,14 +214,27 @@ def chunk_sections(
     overlap_chars: int = 200,
 ) -> list[Chunk]:
     """Chunk extracted sections; at most ``MAX_CHUNKS_PER_DOCUMENT`` chunks."""
+    return chunk_document(sections, max_chars=max_chars, overlap_chars=overlap_chars)[0]
+
+
+def chunk_document(
+    sections: Sequence[tuple[str, str]],
+    *,
+    max_chars: int = 1500,
+    overlap_chars: int = 200,
+) -> tuple[list[Chunk], bool]:
+    """``chunk_sections`` plus whether ``MAX_CHUNKS_PER_DOCUMENT`` cut off text."""
     if max_chars < 1 or overlap_chars < 0:
         raise ValueError("max_chars must be positive and overlap_chars non-negative")
     assembler = _Assembler(max_chars, min(overlap_chars, max_chars // 2))
+    truncated = False
     for block in _blocks(sections):
+        if len(assembler.chunks) >= MAX_CHUNKS_PER_DOCUMENT:
+            truncated = True
+            break
         pieces = [block] if len(block.text) <= max_chars else _split_oversize(block, max_chars)
         for piece in pieces:
             assembler.add(piece)
-        if len(assembler.chunks) >= MAX_CHUNKS_PER_DOCUMENT:
-            break
     assembler.flush()
-    return assembler.chunks[:MAX_CHUNKS_PER_DOCUMENT]
+    truncated = truncated or len(assembler.chunks) > MAX_CHUNKS_PER_DOCUMENT
+    return assembler.chunks[:MAX_CHUNKS_PER_DOCUMENT], truncated

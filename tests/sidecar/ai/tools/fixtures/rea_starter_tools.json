@@ -1,0 +1,3152 @@
+{
+ "source": "rea-agents 6.4.0 tools/list, full schema profile, captured 2026-10-12",
+ "starter_tools": [
+  {
+   "name": "binary_session",
+   "description": "Report the complete current target, provider, capability availability, client-feature, analysis, and server-identity status without starting analysis.",
+   "inputSchema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+     "expected_package_version": {
+      "$ref": "#/$defs/__schema0",
+      "description": "Expected package version used to reject stale or mismatched input."
+     },
+     "expected_catalog_digest": {
+      "$ref": "#/$defs/__schema1",
+      "description": "Expected catalog digest used to reject stale or mismatched input."
+     },
+     "expected_server_path": {
+      "$ref": "#/$defs/__schema2",
+      "description": "Absolute local filesystem path expected for the running server; relative paths are rejected."
+     }
+    },
+    "additionalProperties": false,
+    "$defs": {
+     "__schema0": {
+      "type": "string",
+      "minLength": 1
+     },
+     "__schema1": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+     },
+     "__schema2": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\x00]*$",
+      "description": "Absolute local filesystem path expected for the running server; relative paths are rejected."
+     }
+    },
+    "examples": [
+     {}
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "analyze_javascript_application",
+   "description": "Reconstruct one local ASAR or extracted JavaScript application as an inline application graph without executing it. Returns recovered graph nodes, edges, semantic relations, integrity contradictions, limitations, and coverage. Select detail summary to retain the complete analysis Evidence in this session and receive only its summary view, then inspect selected modules or pages with inspect_analysis_view. Integrity mismatches fail by default; record-and-continue retains observed bytes as untrusted and marks graph coverage partial.",
+   "inputSchema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+     "input_path": {
+      "$ref": "#/$defs/__schema0",
+      "description": "Local filesystem path for input."
+     },
+     "format": {
+      "$ref": "#/$defs/__schema1",
+      "description": "Declared input artifact format."
+     },
+     "integrity_policy": {
+      "$ref": "#/$defs/__schema2"
+     },
+     "max_heap_mb": {
+      "$ref": "#/$defs/__schema3",
+      "description": "Maximum V8 old-space heap in MiB for the isolated JavaScript source analyzer; defaults to 1024. This does not change the CLI/MCP process heap."
+     },
+     "analysis_timeout_ms": {
+      "$ref": "#/$defs/__schema5",
+      "description": "Maximum startup, analysis and transfer time per JavaScript source, in milliseconds; defaults to 300000. On timeout, return collected partial Evidence and stop the analysis."
+     },
+     "detail": {
+      "$ref": "#/$defs/__schema7",
+      "description": "complete returns the complete analysis Evidence inline. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; inspect pages, items or facets through normalized_result.parent_evidence_id."
+     }
+    },
+    "required": [
+     "input_path"
+    ],
+    "additionalProperties": false,
+    "$defs": {
+     "__schema0": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\x00]*$"
+     },
+     "__schema1": {
+      "default": "auto",
+      "type": "string",
+      "enum": [
+       "auto",
+       "asar",
+       "directory"
+      ]
+     },
+     "__schema2": {
+      "default": "fail",
+      "type": "string",
+      "enum": [
+       "fail",
+       "record-and-continue"
+      ]
+     },
+     "__schema3": {
+      "description": "Maximum V8 old-space heap in MiB for the isolated JavaScript source analyzer; defaults to 1024. This does not change the CLI/MCP process heap.",
+      "$ref": "#/$defs/__schema4"
+     },
+     "__schema4": {
+      "type": "integer",
+      "minimum": 128,
+      "maximum": 16384
+     },
+     "__schema5": {
+      "description": "Maximum startup, analysis and transfer time per JavaScript source, in milliseconds; defaults to 300000. On timeout, return collected partial Evidence and stop the analysis.",
+      "$ref": "#/$defs/__schema6"
+     },
+     "__schema6": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+     },
+     "__schema7": {
+      "default": "complete",
+      "description": "complete returns the complete analysis Evidence inline. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; inspect pages, items or facets through normalized_result.parent_evidence_id.",
+      "$ref": "#/$defs/__schema8"
+     },
+     "__schema8": {
+      "type": "string",
+      "enum": [
+       "complete",
+       "summary"
+      ]
+     }
+    },
+    "examples": [
+     {
+      "input_path": "/Applications/Example.app/Contents/Resources/app.asar",
+      "format": "auto",
+      "integrity_policy": "fail"
+     },
+     {
+      "input_path": "/Applications/Example.app/Contents/Resources/app.asar",
+      "detail": "summary"
+     }
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inspect_analysis_view",
+   "description": "Inspect selected views of completed binary-layout, JavaScript application or native analyze_function Evidence without repeating analysis. Use an exact same-session retained evidence_id or portable inline Evidence. Select a summary, layout mitigations/linkage facet, one section/symbol/module, or a stable page. Module pages include assets, bundled and source modules; use node_id for ambiguous or unavailable paths. Native views select procedure, pseudocode, assembly, basic blocks, comments, callers/callees, references, unresolved calls, referenced strings/names, native API and high-pcode. Use nonnegative offset and a positive caller-selected limit (defaults 0 and 64); pseudocode uses UTF-16 code units, other native pages use rows. Returns artifact identity, parent Evidence ID, a distinct view digest, coverage, limitations and unknowns. Actual serialized size determines MCP transport admission; choose a smaller page or export the complete retained Evidence if needed.",
+   "inputSchema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+     "source": {
+      "$ref": "#/$defs/__schema0"
+     },
+     "view": {
+      "$ref": "#/$defs/__schema18"
+     }
+    },
+    "required": [
+     "source",
+     "view"
+    ],
+    "additionalProperties": false,
+    "$defs": {
+     "__schema0": {
+      "oneOf": [
+       {
+        "type": "object",
+        "properties": {
+         "kind": {
+          "type": "string",
+          "const": "retained-evidence"
+         },
+         "evidence_id": {
+          "type": "string",
+          "pattern": "^ev_[a-f0-9]{64}$",
+          "description": "Stable identifier of the recorded Evidence observation."
+         }
+        },
+        "required": [
+         "kind",
+         "evidence_id"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "kind": {
+          "type": "string",
+          "const": "inline"
+         },
+         "evidence": {
+          "type": "object",
+          "properties": {
+           "evidence_id": {
+            "$ref": "#/$defs/__schema1",
+            "description": "Stable identifier of the recorded Evidence observation."
+           },
+           "subject": {
+            "$ref": "#/$defs/__schema2"
+           },
+           "provider": {
+            "$ref": "#/$defs/__schema4"
+           },
+           "analysis_profile": {
+            "$ref": "#/$defs/__schema5"
+           },
+           "predicate_type": {
+            "$ref": "#/$defs/__schema8"
+           },
+           "operation": {
+            "$ref": "#/$defs/__schema9"
+           },
+           "parameters": {
+            "$ref": "#/$defs/__schema7"
+           },
+           "raw_result": {
+            "$ref": "#/$defs/__schema10"
+           },
+           "normalized_result": {
+            "$ref": "#/$defs/__schema11"
+           },
+           "confidence": {
+            "$ref": "#/$defs/__schema12"
+           },
+           "authority": {
+            "$ref": "#/$defs/__schema13"
+           },
+           "environment": {
+            "$ref": "#/$defs/__schema14"
+           },
+           "limitations": {
+            "$ref": "#/$defs/__schema15"
+           },
+           "locations": {
+            "$ref": "#/$defs/__schema16"
+           },
+           "evidence_links": {
+            "$ref": "#/$defs/__schema17"
+           }
+          },
+          "required": [
+           "evidence_id",
+           "subject",
+           "provider",
+           "analysis_profile",
+           "predicate_type",
+           "operation",
+           "parameters",
+           "raw_result",
+           "normalized_result",
+           "confidence",
+           "authority",
+           "environment",
+           "limitations",
+           "locations",
+           "evidence_links"
+          ],
+          "additionalProperties": false,
+          "description": "Evidence record produced by this operation."
+         }
+        },
+        "required": [
+         "kind",
+         "evidence"
+        ],
+        "additionalProperties": false
+       }
+      ]
+     },
+     "__schema1": {
+      "type": "string",
+      "pattern": "^ev_[a-f0-9]{64}$"
+     },
+     "__schema2": {
+      "anyOf": [
+       {
+        "type": "object",
+        "properties": {
+         "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact name used by this operation."
+         },
+         "digest": {
+          "type": "object",
+          "properties": {
+           "sha256": {
+            "$ref": "#/$defs/__schema3"
+           }
+          },
+          "required": [
+           "sha256"
+          ]
+         },
+         "format": {
+          "type": "string",
+          "enum": [
+           "hopper",
+           "analysis-database",
+           "mach-o",
+           "elf",
+           "pe",
+           "dos-mz",
+           "dos-com",
+           "zip",
+           "ipa",
+           "apk",
+           "msix",
+           "appx",
+           "asar",
+           "dmg",
+           "pkg",
+           "plist",
+           "javascript",
+           "source-map",
+           "directory",
+           "file",
+           "unknown",
+           "mach-o-universal",
+           "javascript-bundle",
+           "entitlements"
+          ],
+          "description": "Declared input artifact format."
+         },
+         "architecture": {
+          "anyOf": [
+           {
+            "type": "string",
+            "enum": [
+             "x86",
+             "x86_64",
+             "arm",
+             "arm64",
+             "mips"
+            ]
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "local_path": {
+          "type": "string",
+          "description": "Local filesystem path for local."
+         }
+        },
+        "required": [
+         "name",
+         "digest",
+         "format",
+         "architecture",
+         "local_path"
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "__schema3": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+     },
+     "__schema4": {
+      "type": "object",
+      "properties": {
+       "id": {
+        "type": "string",
+        "minLength": 1
+       },
+       "name": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Exact name used by this operation."
+       },
+       "version": {
+        "anyOf": [
+         {
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       }
+      },
+      "required": [
+       "id",
+       "name",
+       "version"
+      ]
+     },
+     "__schema5": {
+      "anyOf": [
+       {
+        "type": "object",
+        "properties": {
+         "provider": {
+          "$ref": "#/$defs/__schema6"
+         },
+         "parameters": {
+          "$ref": "#/$defs/__schema7"
+         },
+         "digest": {
+          "$ref": "#/$defs/__schema3"
+         }
+        },
+        "required": [
+         "provider",
+         "parameters",
+         "digest"
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "__schema6": {
+      "type": "object",
+      "properties": {
+       "id": {
+        "type": "string",
+        "minLength": 1
+       },
+       "name": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Exact name used by this operation."
+       },
+       "version": {
+        "type": "string",
+        "minLength": 1
+       }
+      },
+      "required": [
+       "id",
+       "name",
+       "version"
+      ]
+     },
+     "__schema7": {
+      "type": "object",
+      "additionalProperties": {}
+     },
+     "__schema8": {
+      "type": "string",
+      "minLength": 1
+     },
+     "__schema9": {
+      "type": "string",
+      "minLength": 1
+     },
+     "__schema10": {
+      "anyOf": [
+       {
+        "$ref": "#/$defs/__schema11"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "__schema11": {},
+     "__schema12": {
+      "type": "string",
+      "enum": [
+       "observed",
+       "derived",
+       "inferred"
+      ]
+     },
+     "__schema13": {
+      "type": "string",
+      "enum": [
+       "shipped-artifact",
+       "controlled-replay",
+       "historical-reference",
+       "external-service",
+       "analyst-inference"
+      ]
+     },
+     "__schema14": {
+      "anyOf": [
+       {
+        "type": "object",
+        "properties": {
+         "id": {
+          "type": "string",
+          "minLength": 1
+         },
+         "platform": {
+          "type": "string",
+          "minLength": 1
+         },
+         "architecture": {
+          "type": "string",
+          "minLength": 1
+         },
+         "isolation": {
+          "type": "string",
+          "enum": [
+           "none",
+           "process",
+           "container",
+           "virtual-machine"
+          ]
+         }
+        },
+        "required": [
+         "id",
+         "platform",
+         "architecture",
+         "isolation"
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "__schema15": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "__schema16": {
+      "type": "array",
+      "items": {
+       "oneOf": [
+        {
+         "type": "object",
+         "properties": {
+          "kind": {
+           "type": "string",
+           "const": "address"
+          },
+          "address": {
+           "type": "string",
+           "minLength": 1
+          }
+         },
+         "required": [
+          "kind",
+          "address"
+         ]
+        },
+        {
+         "type": "object",
+         "properties": {
+          "kind": {
+           "type": "string",
+           "const": "address-range"
+          },
+          "start": {
+           "type": "string",
+           "minLength": 1
+          },
+          "end": {
+           "type": "string",
+           "minLength": 1
+          }
+         },
+         "required": [
+          "kind",
+          "start",
+          "end"
+         ]
+        },
+        {
+         "type": "object",
+         "properties": {
+          "kind": {
+           "type": "string",
+           "const": "artifact-path"
+          },
+          "path": {
+           "type": "string",
+           "minLength": 1,
+           "description": "Local filesystem path used by this operation."
+          }
+         },
+         "required": [
+          "kind",
+          "path"
+         ]
+        },
+        {
+         "type": "object",
+         "properties": {
+          "kind": {
+           "type": "string",
+           "const": "file-offset"
+          },
+          "offset": {
+           "type": "integer",
+           "minimum": 0,
+           "maximum": 9007199254740991
+          }
+         },
+         "required": [
+          "kind",
+          "offset"
+         ]
+        },
+        {
+         "type": "object",
+         "properties": {
+          "kind": {
+           "type": "string",
+           "const": "file-offset-range"
+          },
+          "start": {
+           "type": "integer",
+           "minimum": 0,
+           "maximum": 9007199254740991
+          },
+          "end": {
+           "type": "integer",
+           "minimum": 0,
+           "maximum": 9007199254740991
+          }
+         },
+         "required": [
+          "kind",
+          "start",
+          "end"
+         ]
+        }
+       ]
+      }
+     },
+     "__schema17": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "pattern": "^ev_[a-f0-9]{64}$"
+      }
+     },
+     "__schema18": {
+      "oneOf": [
+       {
+        "type": "object",
+        "properties": {
+         "kind": {
+          "type": "string",
+          "const": "summary"
+         }
+        },
+        "required": [
+         "kind"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "kind": {
+          "type": "string",
+          "const": "facet"
+         },
+         "facet": {
+          "type": "string",
+          "enum": [
+           "mitigations",
+           "linkage"
+          ]
+         }
+        },
+        "required": [
+         "kind",
+         "facet"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "kind": {
+          "$ref": "#/$defs/__schema19"
+         },
+         "collection": {
+          "$ref": "#/$defs/__schema20"
+         },
+         "selector": {
+          "$ref": "#/$defs/__schema21"
+         }
+        },
+        "required": [
+         "kind",
+         "collection",
+         "selector"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "kind": {
+          "type": "string",
+          "const": "page"
+         },
+         "collection": {
+          "type": "string",
+          "enum": [
+           "sections",
+           "symbols",
+           "modules"
+          ]
+         },
+         "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         },
+         "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+         }
+        },
+        "required": [
+         "kind",
+         "collection",
+         "offset",
+         "limit"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "kind": {
+          "type": "string",
+          "const": "native"
+         },
+         "facet": {
+          "type": "string",
+          "enum": [
+           "procedure",
+           "pseudocode",
+           "assembly",
+           "basic_blocks",
+           "comments",
+           "callers",
+           "callees",
+           "incoming_references",
+           "outgoing_references",
+           "unresolved_calls",
+           "referenced_strings",
+           "referenced_names",
+           "native_api",
+           "value_flow_summary",
+           "value_flow_operations",
+           "value_flow_def_use",
+           "value_flow_effects",
+           "value_flow_parameters",
+           "value_flow_parameter_uses"
+          ]
+         },
+         "offset": {
+          "default": 0,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         },
+         "limit": {
+          "default": 64,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+         }
+        },
+        "required": [
+         "kind",
+         "facet"
+        ],
+        "additionalProperties": false
+       }
+      ]
+     },
+     "__schema19": {
+      "type": "string",
+      "const": "item"
+     },
+     "__schema20": {
+      "type": "string",
+      "enum": [
+       "sections",
+       "symbols",
+       "modules"
+      ]
+     },
+     "__schema21": {
+      "anyOf": [
+       {
+        "type": "object",
+        "properties": {
+         "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         }
+        },
+        "required": [
+         "index"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "name": {
+          "type": "string",
+          "description": "Exact name used by this operation."
+         }
+        },
+        "required": [
+         "name"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "path": {
+          "type": "string",
+          "description": "Exact observed module path or original source-map reference from a module page; an empty reference is valid."
+         }
+        },
+        "required": [
+         "path"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "node_id": {
+          "type": "string",
+          "pattern": "^jag_node_[a-f0-9]{64}$"
+         }
+        },
+        "required": [
+         "node_id"
+        ],
+        "additionalProperties": false
+       }
+      ]
+     }
+    },
+    "examples": [
+     {
+      "source": {
+       "kind": "retained-evidence",
+       "evidence_id": "ev_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "view": {
+       "kind": "summary"
+      }
+     },
+     {
+      "source": {
+       "kind": "retained-evidence",
+       "evidence_id": "ev_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "view": {
+       "kind": "item",
+       "collection": "sections",
+       "selector": {
+        "name": ".text"
+       }
+      }
+     },
+     {
+      "source": {
+       "kind": "retained-evidence",
+       "evidence_id": "ev_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "view": {
+       "kind": "native",
+       "facet": "value_flow_operations",
+       "offset": 0,
+       "limit": 32
+      }
+     },
+     {
+      "source": {
+       "kind": "retained-evidence",
+       "evidence_id": "ev_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "view": {
+       "kind": "page",
+       "collection": "modules",
+       "offset": 0,
+       "limit": 32
+      }
+     }
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "get_evidence_bundle",
+   "description": "Return every retained Evidence record and residual unknown as a complete canonical bundle by default. detail=summary discovers retained records without copying or transferring their payloads; optionally filter by exact Evidence ID, operation, target SHA-256, analysis-profile digest or canonical native procedure address. Metadata distinguishes complete record retention from native value-flow truncation or unavailable/unknown coverage. Use a discovered evidence_id with inspect_analysis_view without restarting a provider. Filters apply only to summary delivery.",
+   "inputSchema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+     "detail": {
+      "$ref": "#/$defs/__schema0"
+     },
+     "filters": {
+      "$ref": "#/$defs/__schema1"
+     }
+    },
+    "additionalProperties": false,
+    "$defs": {
+     "__schema0": {
+      "default": "complete",
+      "type": "string",
+      "enum": [
+       "complete",
+       "summary"
+      ]
+     },
+     "__schema1": {
+      "type": "object",
+      "properties": {
+       "evidence_id": {
+        "type": "string",
+        "pattern": "^ev_[a-f0-9]{64}$",
+        "description": "Stable identifier of the recorded Evidence observation."
+       },
+       "operation": {
+        "type": "string",
+        "minLength": 1
+       },
+       "target_sha256": {
+        "$ref": "#/$defs/__schema2",
+        "description": "Exact SHA-256 digest of target."
+       },
+       "analysis_profile_digest": {
+        "$ref": "#/$defs/__schema2"
+       },
+       "procedure_address": {
+        "type": "string",
+        "minLength": 1
+       }
+      },
+      "additionalProperties": false
+     },
+     "__schema2": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+     }
+    },
+    "examples": [
+     {
+      "detail": "summary",
+      "filters": {
+       "operation": "analyze_function",
+       "procedure_address": "0x1000"
+      }
+     }
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inspect_managed_artifact",
+   "description": "Open and classify an explicit managed PE/CLI path, or inspect the active managed target, then inventory exact assembly/module identity, target framework evidence, references, resources, and custom attributes without loading or executing target code. Returns complete inline inventories when metadata is admitted and explicit partial or malformed coverage otherwise.",
+   "inputSchema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+     "path": {
+      "$ref": "#/$defs/__schema0",
+      "description": "Explicit absolute managed PE/CLI path; omit to reuse the previously selected managed target"
+     }
+    },
+    "additionalProperties": false,
+    "$defs": {
+     "__schema0": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\x00]*$",
+      "description": "Explicit absolute managed PE/CLI path; omit to reuse the previously selected managed target"
+     }
+    },
+    "examples": [
+     {
+      "path": "/tmp/Example.dll"
+     }
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inspect_binary_layout",
+   "description": "Inspect an explicit local binary without launching it as a host process. Returns file-backed section/segment ranges, linked addresses, original symbol/REL/RELA table identities, complete encoded RELR tables and upstream-derived offsets with unknown per-word locations/addends, raw name bytes, dependency/interpreter names and static mitigation inferences inline with artifact SHA-256 Evidence. Initial profile: ELF64 x86-64 little-endian EXEC/DYN/REL on Linux x64 via caller-supplied Python with unchanged pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2. Runtime addresses/library paths, overall relocation inventory completeness and complete derived GOT/PLT coverage remain unknown. Zero executable entry values mean absence; relocatable entries are not applicable. Upstream can emulate PLT instructions with Unicorn for derived static maps. Uses bounded complete output and owned temporary files/processes; malformed, unsupported or oversized objects return no partial success. Select detail summary to retain the complete layout Evidence in this session and receive only its summary view, then inspect sections, symbols, mitigations or linkage with inspect_analysis_view.",
+   "inputSchema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+     "path": {
+      "$ref": "#/$defs/__schema0",
+      "description": "Absolute filesystem path to the selected binary"
+     },
+     "detail": {
+      "$ref": "#/$defs/__schema1",
+      "description": "complete returns the complete analysis Evidence inline. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; inspect pages, items or facets through normalized_result.parent_evidence_id."
+     }
+    },
+    "required": [
+     "path"
+    ],
+    "additionalProperties": false,
+    "$defs": {
+     "__schema0": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Absolute filesystem path to the selected binary"
+     },
+     "__schema1": {
+      "default": "complete",
+      "description": "complete returns the complete analysis Evidence inline. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; inspect pages, items or facets through normalized_result.parent_evidence_id.",
+      "$ref": "#/$defs/__schema2"
+     },
+     "__schema2": {
+      "type": "string",
+      "enum": [
+       "complete",
+       "summary"
+      ]
+     }
+    },
+    "examples": [
+     {
+      "path": "/artifacts/application.elf"
+     },
+     {
+      "path": "/artifacts/application.elf",
+      "detail": "summary"
+     }
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_pe_resources",
+   "description": "Inspect one explicit local PE32/PE32+ image's complete bounded type/name/language resource tree without executing it or opening a disassembler. Returns numeric IDs versus original UTF-16 names, directory/data-entry file locations, payload RVA/file ranges, complete SHA-256 hashes and static RT_GROUP_ICON image-resource candidates. Language fallback, image decoding and actual shell/window loading remain unobserved. Reads a stable regular file; malformed or ambiguous mappings, non-identical overlapping ranges and exhausted budgets return no partial success. Portable on supported Node hosts; no Windows SDK or engine installation required.",
+   "inputSchema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+     "path": {
+      "$ref": "#/$defs/__schema0",
+      "description": "Absolute filesystem path to a PE image"
+     },
+     "max_file_bytes": {
+      "$ref": "#/$defs/__schema1",
+      "description": "Maximum stable artifact bytes to read (default 64 MiB)"
+     },
+     "max_entries": {
+      "$ref": "#/$defs/__schema3",
+      "description": "Maximum resource directory entries to examine; exceeding the budget fails without partial success"
+     }
+    },
+    "required": [
+     "path"
+    ],
+    "additionalProperties": false,
+    "$defs": {
+     "__schema0": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Absolute filesystem path to a PE image"
+     },
+     "__schema1": {
+      "default": 67108864,
+      "description": "Maximum stable artifact bytes to read (default 64 MiB)",
+      "$ref": "#/$defs/__schema2"
+     },
+     "__schema2": {
+      "type": "integer",
+      "minimum": 64,
+      "maximum": 536870912
+     },
+     "__schema3": {
+      "default": 4096,
+      "description": "Maximum resource directory entries to examine; exceeding the budget fails without partial success",
+      "$ref": "#/$defs/__schema4"
+     },
+     "__schema4": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65536
+     }
+    },
+    "examples": [
+     {
+      "path": "/artifacts/application.exe"
+     }
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "open_binary",
+   "description": "Open a local executable, application bundle, archive, JavaScript, source map, plist, or analysis database after validation. format=dos-com explicitly interprets 1..65280 headerless bytes as a DOS COM analysis image; omission preserves header-based detection. provider_id selects one deep provider or deterministic auto selection; the binding remains stable until close or an explicit switch, with no failure fallback. Reopening the same target and profile retains its active database and metadata edits. An optional analysis snapshot is imported atomically and must match the binary identity, concrete provider, and canonical analysis profile exactly; importing into a session with metadata mutations requires closing and reopening it first.",
+   "inputSchema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+     "path": {
+      "$ref": "#/$defs/__schema0",
+      "description": "Absolute local filesystem path for the analysis target; relative paths are rejected."
+     },
+     "format": {
+      "$ref": "#/$defs/__schema2",
+      "description": "Explicit headerless DOS COM interpretation; omission preserves header-based detection"
+     },
+     "provider_id": {
+      "$ref": "#/$defs/__schema4",
+      "description": "Exact deep-analysis provider ID, or automatic selection when omitted."
+     },
+     "snapshot_path": {
+      "$ref": "#/$defs/__schema5",
+      "description": "Absolute local filesystem path for the analysis snapshot; relative paths are rejected."
+     }
+    },
+    "required": [
+     "path"
+    ],
+    "additionalProperties": false,
+    "$defs": {
+     "__schema0": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\x00]*$",
+      "description": "Absolute local filesystem path for the analysis target; relative paths are rejected.",
+      "$ref": "#/$defs/__schema1"
+     },
+     "__schema1": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\x00]*$"
+     },
+     "__schema2": {
+      "description": "Explicit headerless DOS COM interpretation; omission preserves header-based detection",
+      "$ref": "#/$defs/__schema3"
+     },
+     "__schema3": {
+      "type": "string",
+      "const": "dos-com"
+     },
+     "__schema4": {
+      "anyOf": [
+       {
+        "type": "string",
+        "const": "auto"
+       },
+       {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9\\x2d]*$"
+       }
+      ]
+     },
+     "__schema5": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\x00]*$",
+      "description": "Absolute local filesystem path for the analysis snapshot; relative paths are rejected.",
+      "$ref": "#/$defs/__schema1"
+     }
+    },
+    "examples": [
+     {
+      "path": "/tmp/fixture"
+     }
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_artifact",
+   "description": "Inspect an active archive or application package in one call. Returns the complete content-addressed artifact graph once, as the nested inventory Evidence, with root and integrity observations, integrity contradictions, hypotheses, unexplored branches, limitations, and next probes inline. Read-only DMG mounting is used automatically on supported macOS hosts. Integrity mismatches fail by default; record-and-continue keeps mismatches explicitly untrusted. It does not extract files; use extract_artifact to materialize its regular contents.",
+   "inputSchema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+     "integrity_policy": {
+      "$ref": "#/$defs/__schema0"
+     }
+    },
+    "additionalProperties": false,
+    "$defs": {
+     "__schema0": {
+      "default": "fail",
+      "type": "string",
+      "enum": [
+       "fail",
+       "record-and-continue"
+      ]
+     }
+    },
+    "examples": [
+     {}
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_web_network_capture",
+   "description": "Inspect retained local HAR 1.2 or native mitmproxy capture records without contacting recorded URLs. Returns original ordinals, pointers/byte ranges, preserved producer fields, precise numeric representations and exact exposed binary bytes inline. Excludes known transport credentials and explicitly marked values. Decodes every record before optional ordinal selection; malformed or oversized captures return no partial success. Duplicate HAR members are invalid; prototype-named members such as __proto__ are preserved as ordinary own JSON members without prototype mutation. Uses pinned upstream parsers, owned temporary files and bounded offline processes. Native mitmproxy requires caller-supplied mitmdump 12.2.3 on Linux. Browser transaction IDs, runtime attribution and original bytes of HAR Unicode text remain unknown.",
+   "inputSchema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+     "capture_path": {
+      "$ref": "#/$defs/__schema0",
+      "description": "Absolute local HAR or mitmproxy capture path."
+     },
+     "format": {
+      "$ref": "#/$defs/__schema1",
+      "description": "Declared input artifact format."
+     },
+     "record_ordinals": {
+      "$ref": "#/$defs/__schema2",
+      "description": "Zero-based producer record ordinals, in caller-selected order. Omit to inspect every record."
+     },
+     "sensitive_values": {
+      "$ref": "#/$defs/__schema5",
+      "description": "Literal text excluded from capture payloads, byte/numeric projections, producer coordinates, artifact paths/digests and diagnostic text. Declaration strings are never persisted in Evidence parameters. Canonical contract keys, enums and provider identities remain intact."
+     }
+    },
+    "required": [
+     "capture_path",
+     "format"
+    ],
+    "additionalProperties": false,
+    "$defs": {
+     "__schema0": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Absolute local HAR or mitmproxy capture path."
+     },
+     "__schema1": {
+      "type": "string",
+      "enum": [
+       "har",
+       "mitmproxy"
+      ]
+     },
+     "__schema2": {
+      "description": "Zero-based producer record ordinals, in caller-selected order. Omit to inspect every record.",
+      "$ref": "#/$defs/__schema3"
+     },
+     "__schema3": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/__schema4"
+      }
+     },
+     "__schema4": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+     },
+     "__schema5": {
+      "default": [],
+      "description": "Literal text excluded from capture payloads, byte/numeric projections, producer coordinates, artifact paths/digests and diagnostic text. Declaration strings are never persisted in Evidence parameters. Canonical contract keys, enums and provider identities remain intact.",
+      "$ref": "#/$defs/__schema6"
+     },
+     "__schema6": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "minLength": 1
+      }
+     }
+    },
+    "examples": [
+     {
+      "capture_path": "/captures/session.har",
+      "format": "har",
+      "record_ordinals": [
+       0,
+       2
+      ]
+     }
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "analyze_function",
+   "description": "Build a dossier for one native function identified by symbol or provider-returned address. Returns identity with complete inclusive analyzed body ranges or explicit unknown, provider-specific pseudocode and assembly, comments, calls, references, referenced strings/names, local CFG blocks, and available native API boundary observations. Ghidra terminal-call assumptions that may cut the analyzed body are reported in limitations with available callee identities.",
+   "inputSchema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+     "procedure": {
+      "$ref": "#/$defs/__schema0",
+      "description": "A procedure name or address"
+     }
+    },
+    "required": [
+     "procedure"
+    ],
+    "additionalProperties": false,
+    "$defs": {
+     "__schema0": {
+      "type": "string",
+      "description": "A procedure name or address"
+     }
+    },
+    "examples": [
+     {
+      "procedure": "main"
+     }
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "binary_overview",
+   "description": "Return native-binary metadata, every segment with its length, and exhaustive procedure/string counts. Use search_procedures, list_procedures, or analyze_function directly when you already know which procedure to inspect.",
+   "inputSchema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {},
+    "additionalProperties": false,
+    "examples": [
+     {}
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  }
+ ],
+ "other_tools": [
+  {
+   "name": "annotate_native_function",
+   "description": "Atomically update one function name and/or entry comments, read them back, and return a refreshed complete function dossier. Ghidra changes its ephemeral session analysis database only; original executable bytes remain unchanged. Empty comment text clears that comment. Edits remain available to subsequent MCP calls until close; CLI returns the updated dossier before discarding its session. Invalid edits roll back the entire operation. Windows P0 and providers without this capability are unsupported.",
+   "schema_chars": 918,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_native_load_image",
+   "description": "Verify the provider's loaded DOS MZ or explicitly selected COM image against its immutable target snapshot: complete original/modified source-byte digests, header/module file mappings and memory digests, relocations and external entry. Returns measured observations and independent checks with mismatch coordinates. COM verification includes its imposed entry register context and does not claim PSP/runtime coverage. Overlay and uninitialized coverage remain explicit; other formats return unsupported. Does not execute or modify the target.",
+   "schema_chars": 135,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inspect_native_data_type",
+   "description": "Inspect one recovered type by exact database category path or defined typed data address. Returns observed size, alignment, packing, fields, bitfields, enum values, and child type identities; source-level authority and flexible-tail semantics remain unknown unless substantiated.",
+   "schema_chars": 456,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inspect_native_instruction",
+   "description": "Inspect one exact instruction address: decoded bytes, mnemonic, ordered operand tokens, flow and typed references. Memory addressing decomposition is unavailable when the provider supplies only tokens. Data, interior instruction addresses and undecodable bytes are distinct outcomes.",
+   "schema_chars": 399,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "resolve_native_call_targets",
+   "description": "Resolve one explicit static call site using typed provider call references. Preserves ambiguous targets as candidates and unresolved computed calls as unknown; does not execute code or traverse a call graph.",
+   "schema_chars": 399,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "address_name",
+   "description": "Resolve the primary analyzed name at a code or data address. Headless providers require an explicit address; GUI providers may default to their current cursor. Null means the provider has no primary name at that address.",
+   "schema_chars": 694,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "comment",
+   "description": "Read the regular analysis comment at an address, defaulting to the current cursor. This is read-only and returns null when no comment exists; use set_comment to persist a finding.",
+   "schema_chars": 694,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "current_address",
+   "description": "Return Hopper's current cursor address for the selected document. Use only for interactive navigation state; prefer explicit addresses in reproducible investigations.",
+   "schema_chars": 443,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "current_procedure",
+   "description": "Return the analyzed procedure containing Hopper's current cursor. This uses GUI cursor state and is not a procedure-name lookup.",
+   "schema_chars": 443,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "current_document",
+   "description": "Return the document currently selected by REA's Hopper bridge.",
+   "schema_chars": 135,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "goto_address",
+   "description": "Move Hopper's GUI cursor to a mapped address and return the observed cursor address. Interior coordinates snap to the containing analyzed object's start. Unmapped destinations fail without moving the cursor. This changes navigation state but not analysis data; use explicit-address tools for headless workflows.",
+   "schema_chars": 735,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inline_comment",
+   "description": "Read the inline instruction comment at an address, defaulting to the current cursor. Returns null when absent; use set_inline_comment to write one.",
+   "schema_chars": 694,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "list_bookmarks",
+   "description": "List every bookmark in the selected Hopper document as address and name pairs; unnamed bookmarks retain a null name. Use bookmarks as analyst-authored navigation aids; this does not discover code references.",
+   "schema_chars": 443,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "list_documents",
+   "description": "List provider program or document identities. Hopper may expose several documents; a Ghidra headless session contains exactly its one imported Program.",
+   "schema_chars": 135,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "list_names",
+   "description": "List every analyzed memory and external symbol as address/value pairs. Provider metadata distinguishes Ghidra primary, dynamic, external, type, and source facts when available.",
+   "schema_chars": 694,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "list_procedures",
+   "description": "List every analyzed procedure as address/value pairs after provider analysis. Ghidra metadata distinguishes thunks and external functions; use returned addresses in later function operations.",
+   "schema_chars": 443,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "list_segments",
+   "description": "List segments or memory blocks using exclusive end addresses. Ghidra reports block permissions, address space, image base, initialization, and overlay facts; Hopper marks unavailable permissions explicitly.",
+   "schema_chars": 443,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "list_strings",
+   "description": "List every provider-defined string object, or filter to one address, as address/value pairs with encoding, terminator status, and byte length when available. Hopper reads complete typed objects and retains its original display text as provider_value; long literals may span adjacent unterminated objects.",
+   "schema_chars": 694,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "next_address",
+   "description": "Return the next analyzed object address after an explicit address or current cursor. This is a navigation primitive, not instruction-flow or CFG analysis.",
+   "schema_chars": 694,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "prev_address",
+   "description": "Return the previous analyzed object start before an explicit address or current cursor. This is a navigation primitive and may fail at document boundaries; data objects and instructions remain distinct from control flow.",
+   "schema_chars": 694,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "procedure_address",
+   "description": "Resolve an unambiguous procedure symbol name or provider-normalized address to its canonical entry address. External address spaces remain explicit.",
+   "schema_chars": 649,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "procedure_assembly",
+   "description": "Return assembly for one analyzed procedure identified by symbol or hexadecimal address. Use when pseudocode loses calling-convention or instruction-level detail; output is currently returned as one unpaginated string. Ghidra terminal-call assumptions that may cut the analyzed body are reported in Evidence limitations.",
+   "schema_chars": 649,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "procedure_callees",
+   "description": "Return the provider's resolved direct callees for one procedure identified by symbol or address. Unresolved indirect calls may be absent; use analyze_function and typed references to preserve available edge uncertainty.",
+   "schema_chars": 649,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "procedure_callers",
+   "description": "Return the provider's resolved direct callers for one procedure identified by symbol or address. Results reflect completed static analysis and may omit unresolved indirect references.",
+   "schema_chars": 649,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "procedure_info",
+   "description": "Return provider metadata for one procedure identified by symbol or address: entrypoint, signature, locals, size, block count, and complete inclusive body ranges when observed. Extents reflect the provider's analyzed body; Ghidra terminal-call assumptions that may cut it are reported in Evidence limitations. Hopper locals preserve observed names and signed stack displacements; source types remain unknown. Body byte count and enclosing span remain distinct; unavailable extent is explicit.",
+   "schema_chars": 649,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "read_function_instructions",
+   "description": "Return every raw instruction for one analyzed procedure. Instruction text and body extent are provider-specific. Ghidra terminal-call assumptions that may cut the analyzed body are reported in limitations.",
+   "schema_chars": 529,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "read_bytes",
+   "description": "Read analyzed bytes from one provider-normalized virtual address. The hexadecimal payload reports the exact returned length; incomplete reads remain explicit and unsupported provider APIs return typed capability unavailability.",
+   "schema_chars": 869,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "address_to_file_offset",
+   "description": "Map one provider-normalized virtual address to its original nonnegative file offset. Hopper verifies the original bytes against the selected executable digest and translates FAT image-relative offsets using the loaded header. Results preserve the provider coordinate, image base, and source path. Unmapped addresses fail explicitly; changed or unavailable sources return typed errors retaining native mapping facts as partial evidence.",
+   "schema_chars": 735,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "procedure_references",
+   "description": "Return every raw incoming or outgoing reference edge for one procedure. Endpoint procedures are resolved only from provider containment. Ghidra preserves detailed reference flags. Hopper preserves native CallReference classifications and exact endpoints while leaving unavailable detailed flags explicit.",
+   "schema_chars": 868,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "procedure_pseudo_code",
+   "description": "Decompile one analyzed procedure by symbol name or provider-normalized address. Returns provider-specific pseudocode, never original source or cross-provider text equivalence, and may return null; request procedure_assembly when instruction precision matters. Ghidra no-return assumptions may cut the analyzed body; Evidence limitations report observed terminal calls and available callee identities.",
+   "schema_chars": 649,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "resolve_containing_procedure",
+   "description": "Resolve an arbitrary address, including an interior instruction or exact external entry, to its provider-analyzed containing procedure. A negative result distinguishes outside segments from not in a procedure and is never guessed from nearby symbols.",
+   "schema_chars": 735,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "search_procedures",
+   "description": "Search every analyzed procedure name using literal matching by default or regex when requested. Results are deterministic and complete. Hopper regex mode uses ECMAScript Unicode syntax in a cancellable worker; a matching deadline leaves its API usable.",
+   "schema_chars": 1004,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "search_strings",
+   "description": "Search every provider-defined string object using literal matching by default or regex when requested. Results are deterministic and complete over those defined objects, not every text sequence in artifact bytes. Ghidra may omit packed or undefined literals, including Rust strings; an empty result does not prove text is absent. If an address is known, read_bytes and xrefs inspect its bytes and references. Hopper retains typed byte decoding, native display, and explicit decoding unknowns. Adjacent long-literal fragments match independently. Hopper regex mode uses ECMAScript Unicode syntax in a cancellable worker; a matching deadline leaves its API usable.",
+   "schema_chars": 1020,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "set_address_name",
+   "description": "Assign an analyst name to one mapped hexadecimal address and report whether the native edit succeeded and exact readback matched. Hopper rejects symbol names exceeding 1024 UTF-16 code units before mutation, and rejects names owned by another address; use set_addresses_names to explicitly move or swap labels among selected addresses. This mutates analysis metadata.",
+   "schema_chars": 874,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "set_addresses_names",
+   "description": "Assign analyst names to multiple mapped addresses in one call and return per-address edit/readback success booleans. Hopper validates mapped destinations, native string representations, its 1024 UTF-16 code-unit symbol-name limit, and unique destinations/names before applying edits. Existing labels may move or swap only among explicitly selected addresses; unselected label owners remain unchanged. This mutates analysis metadata; verify failures individually.",
+   "schema_chars": 632,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "set_bookmark",
+   "description": "Create or replace a bookmark at a mapped hexadecimal address and report success. This mutates navigation metadata; bookmarks are analyst-authored navigation aids, not binary evidence.",
+   "schema_chars": 852,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "set_comment",
+   "description": "Write a regular analysis comment at a hexadecimal address and return whether readback matched. An empty comment clears it. This mutates the Hopper document; use comments to record evidence IDs or reasoning.",
+   "schema_chars": 901,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "set_inline_comment",
+   "description": "Write an inline instruction comment at a hexadecimal address and return whether readback matched. An empty comment clears it; Hopper may flatten newlines, producing false on exact readback. This mutates analysis metadata.",
+   "schema_chars": 892,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "unset_bookmark",
+   "description": "Remove the bookmark at a mapped hexadecimal address and return whether it is absent. Hopper also permits removing an existing legacy bookmark outside mapped memory. This mutates navigation metadata and does not alter binary bytes.",
+   "schema_chars": 735,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "xrefs",
+   "description": "Return analyzed references to a code or data address. Hopper may default to its current cursor; headless providers such as Ghidra require an explicit address. Use to connect strings, globals, selectors, and functions; bare addresses are untyped and indirect references may be incomplete.",
+   "schema_chars": 694,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "trace_native_values",
+   "description": "Trace a bounded static dependency graph from one explicit native procedure. Includes high-p-code def-use, constants, operators, memory and branch operations, resolved call edges, and derived argument/parameter and return/output bindings. Missing bindings, alias semantics, persistent state and RNG roles remain unknown. Budgets bound depth, decompilations, graph size and payloads; nodes are paginated.",
+   "schema_chars": 1498,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inspect_native_dispatch_metadata",
+   "description": "Inspect the bound provider's name inventory for Objective-C class/method symbols and Swift mangled symbols, returning at most max_records decoded names. Includes target SHA-256 when available, provider identity/version, analysis-profile digest, facet coverage, and per-record Evidence. This is symbol-level evidence, not runtime metadata: ivar layouts, protocol conformances, witness/class tables, and relative pointers are explicitly marked unsupported unless a provider supplies those decoders. The provider controls how its name inventory is acquired.",
+   "schema_chars": 341,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "get_objc_classes",
+   "description": "Discover and deduplicate Objective-C class labels, optionally filtering by literal substring.",
+   "schema_chars": 322,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "get_objc_protocols",
+   "description": "Discover and deduplicate Objective-C and Swift protocol labels.",
+   "schema_chars": 135,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "batch_decompile",
+   "description": "Decompile each explicit procedure symbol or address concurrently. Preserves each input selector in address and reports the observed canonical entry and entry label in procedure; identity or label failures remain explicit without discarding usable pseudocode. Returns ordered per-item success or error results and aggregate counts.",
+   "schema_chars": 399,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "get_call_graph",
+   "description": "Resolve one symbol or address to its canonical procedure entry, then traverse the bound provider's caller or callee relationships until the reachable graph is exhausted. Every node uses a canonical address and has an ok/error status; failures use safe typed projections. Unresolved indirect calls may be missing and results are not a whole-program CFG.",
+   "schema_chars": 630,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "analyze_swift_types",
+   "description": "Categorize analyzed Swift procedure names using their manglings or same-address Swift symbol aliases. Decodes legacy and literal modern nominal contexts into classes, structs, enums, protocols, and extensions. Preserves provider names and supporting mangled_names; unresolved categories appear in other and in unclassified, which remains inline even under category filters. Returns deduplicated procedure-name counts, not unique source types, plus identification limitations. Optionally select one category and/or apply a case-sensitive literal filter to provider names or supporting manglings; for example, use {category: \"structs\", pattern: \"Pair\"}.",
+   "schema_chars": 959,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "find_xrefs_to_name",
+   "description": "Resolve an exact name against the bound provider's name inventory and return a resolved or unresolved result. Unresolved names use the stable name_not_found reason; this xref workflow returns address-only projections.",
+   "schema_chars": 296,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inspect_native_api",
+   "description": "Analyze a native API boundary in one function identified by symbol or provider-returned address. Returns confidence, evidence, jump-table dispatch/data/case mappings, separately evidenced default targets, unsupported branches, and residual unknowns. Null case values mean unresolved cases, never a known default.",
+   "schema_chars": 346,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "trace_feature",
+   "description": "Trace the complete literal query, preserving spaces, through every matching string and procedure, their xrefs, and truthful containing-procedure resolution. Returns observations, operation count, and residual unknowns without inferring reference kinds.",
+   "schema_chars": 520,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "trace_call_path",
+   "description": "Resolve start and optional goal symbols or addresses to canonical procedure entries, then trace direct callers or callees until the graph is exhausted or the goal is reached. Results use canonical addresses; Evidence preserves supplied selectors. Returns visited nodes, direct-call edges, a shortest traversal path, provider failures, and residual unknowns; unresolved indirect calls remain unknown.",
+   "schema_chars": 792,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "trace_native_ui_action",
+   "description": "Trace one unique compiled UI action, object ID, native symbol or exact function address through authored connections, encoded or symbolized Objective-C handlers, and bounded static call references. Typed direct and resolved indirect calls, ambiguous candidates, inferred untyped provider callees, and targetless sites remain distinct. Runtime reachability is unknown; use trace_native_values for recovered value dependencies.",
+   "schema_chars": 1062,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "observe_native_ui",
+   "description": "Observe an already-running native app by PID and window ID, bound to the active Mach-O target. Captures a bounded accessibility tree and selected-window screenshot; OS permission denial fails without broad capture or target launch.",
+   "schema_chars": 958,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "capture_native_ui_scenario",
+   "description": "Run selected-element press, increment/decrement scroll, AXValue text entry and bounded wait steps in one exact native app window. Returns ordered before/after captures and action/capture failures. Actions can change app data, network activity and persistent state; application state is left as-is and restoration is not attempted.",
+   "schema_chars": 2638,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "observe_native_calls",
+   "description": "Launch the active Mach-O as an owned process under LLDB and record each entry into caller-selected functions or Objective-C methods: thread, module, symbol, load and file address, raw argument registers, selector, receiver class and optional caller frames. Every hit auto-continues. No expression is evaluated and no other process is attached. The process is killed when max_events or duration_ms is reached; exit status, captured stdout/stderr, unresolved breakpoints and limitations are returned inline. The process runs with the current user's permissions and may change files, show UI or use the network. A hardened-runtime target needs the get-task-allow entitlement.",
+   "schema_chars": 3721,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_macho",
+   "description": "Inspect Mach-O slices, load commands, imports, exports, dependencies, build metadata, segments, sections, permissions, and exact command provenance without launching Hopper.",
+   "schema_chars": 135,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_signature",
+   "description": "Inspect the active artifact's code-signing identity, hashes, authorities, requirements, entitlements, hardened-runtime state, and exact command provenance.",
+   "schema_chars": 135,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_plist",
+   "description": "Parse Info.plist from the active artifact by default, or pass any local plist path. Returns normalized JSON rather than plutil text.",
+   "schema_chars": 364,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "list_architectures",
+   "description": "List thin or universal Mach-O slices with offsets, sizes, alignment, explicit coverage, and native-tool provenance.",
+   "schema_chars": 135,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "demangle_swift",
+   "description": "Demangle an ordered list of single-line Swift symbols without requiring Hopper. Each input returns demangled, unchanged, or invalid status.",
+   "schema_chars": 468,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "extract_artifact",
+   "description": "Extract all regular files from the active archive or application package into a fresh temporary directory chosen by REA. The result includes its location. Rejects traversal and symlink escapes, never overwrites, and verifies cleanup. Integrity mismatches fail by default; record-and-continue extracts the observed bytes and returns each mismatch as an explicitly untrusted integrity contradiction.",
+   "schema_chars": 277,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "decode_interface_builder",
+   "description": "Decode compiled storyboard and nib archives inside the active Apple app bundle, including keyed property lists and NIBArchive object tables, into a bounded object, hierarchy, and connection graph. This is static archive parsing; unrecognized archive classes and unresolved code handlers remain explicit unknowns.",
+   "schema_chars": 690,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inspect_keyed_archive",
+   "description": "Inspect one Foundation NSKeyedArchiver plist in the active app bundle as original object-table nodes, class descriptors, named roots, and UID edges. Preserves shared and cyclic references without instantiating classes. The path is relative to the bundle; root selection and object pagination preserve original identities.",
+   "schema_chars": 637,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inspect_asset_catalog",
+   "description": "Inspect compiled Assets.car metadata in an active Apple app bundle. Returns stable paginated catalog and rendition records with raw assetutil metadata and catalog digests; rendition bytes are not extracted.",
+   "schema_chars": 398,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "trace_dylib_resolution",
+   "description": "Trace how dyld would resolve each Mach-O dylib load for the active Mach-O, or for every executable in the active .app bundle (the main app, XPC services, extensions, login items, helpers). Expands @executable_path, @loader_path, and @rpath through each process's LC_RPATH stack in dependents-first load order, and reports every candidate path with its outcome, the resolved image and digest, weak, re-export, and upward flags, and derived findings such as unresolved required loads or absent earlier @rpath candidates. Pure header parsing: nothing is executed, and absolute or system paths outside the analyzed root stay undetermined. Select roots or one architecture to narrow large bundles.",
+   "schema_chars": 701,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inspect_managed_members",
+   "description": "Inspect PE/CLI metadata members, signatures, raw CIL hashes, decoded-instruction-tuple hashes, separately reported exception regions, call edges, and field-access anchors without loading or executing target code. Metadata tokens are reported as build-local coordinates bound to the artifact SHA-256 and MVID; the tuple hash does not resolve them or fully commit control flow.",
+   "schema_chars": 464,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inspect_managed_native_boundaries",
+   "description": "Inspect PE/CLI ModuleRef, ImplMap/PInvoke declarations, CLI native-header indicators, and non-IL method implementation flags without loading or executing target code. Results are managed declarations and degraded native-boundary observations, not verified native exports or addresses.",
+   "schema_chars": 464,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "compare_managed_members",
+   "description": "Compare two authenticated inspect_managed_members Evidence records using unique-only tiers: exact CIL/signature, exact declared type, name, and raw signature (decoded or not), and decoded structural method shape. Names alone are never a matching basis; a member whose signature was not decoded, or whose same-named counterpart's was not, stays unknown rather than added or removed. Metadata tokens remain build-local coordinates bound to each artifact SHA-256 and MVID, and the tuple digest does not itself remap them.",
+   "schema_chars": 5074,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "verify_managed_native_boundaries",
+   "description": "Verify managed P/Invoke/native-boundary declarations against authenticated native export or function Evidence without executing managed code or translating managed metadata tokens into native addresses. The workflow preserves declaration-only, verified, inferred, contradicted, and unresolved states.",
+   "schema_chars": 5170,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "import_managed_reconstruction",
+   "description": "Import decompiler-produced managed reconstruction against authenticated inspect_managed_members Evidence. The workflow locks each method to artifact SHA-256, MVID, metadata token, signature hash, and the limited decoded-IL tuple hash, records the decompiler identity and options, and marks C# or pseudocode as analyst inference rather than canonical byte observation.",
+   "schema_chars": 6968,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "project_managed_application_graph",
+   "description": "Project authenticated managed artifact, member, and native-boundary Evidence into the provider-neutral application graph without executing managed code, loading assemblies, or translating managed metadata tokens to native addresses. The graph preserves managed static observations as managed-specific nodes linked to source Evidence.",
+   "schema_chars": 6280,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inspect_android_package",
+   "description": "Inspect a local APK's package, SDK and permission declarations, decoded manifest and class/resource counts. Does not execute the APK or verify signatures. Requires a caller-supplied JADX MCP JAR and JDK; uses one worker in an isolated temporary workspace.",
+   "schema_chars": 415,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "search_android_classes",
+   "description": "Search complete decompiler class names in an explicit local APK by case-sensitive substring. Empty query inventories all classes. Retains artifact and engine identity; no APK execution.",
+   "schema_chars": 663,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_android_class",
+   "description": "Inspect one exact Android class's parsed methods, fields and inner classes, including synthetic members. Returns display signatures and explicit unknown DEX descriptors without generating source. Overload indices remain consistent within the artifact and engine session.",
+   "schema_chars": 648,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_android_method",
+   "description": "Decompile one Android method with smali fallback. Requires explicit overload_index when multiple methods share a name. Reports representation, fallback markers and source truncation; never treats display signatures as exact DEX identities.",
+   "schema_chars": 1091,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "trace_android_references",
+   "description": "Trace incoming static references to an exact Android class or unique method. Overloaded method reference queries are explicitly unsupported by the current engine. Source lines and DEX offsets remain unknown; no runtime calls are inferred.",
+   "schema_chars": 952,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_jeb_client",
+   "description": "Inspect the running JEB client serving MCP: engine version, GUI or headless mode, and startup time. Does not open a target. Requires a caller-started JEB client reachable at REA_JEB_MCP_URL (default http://127.0.0.1:8425/mcp); REA never installs or launches JEB.",
+   "schema_chars": 135,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "open_jeb_project",
+   "description": "Open or create a JEB project from an artifact file or existing .jdb2 database on the engine host. Returns the project's input-file digests and top-level units. The engine analyzes the target itself; REA does not read the file or execute it. Fails when a project is already open.",
+   "schema_chars": 495,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "list_jeb_units",
+   "description": "List project units by stable unit path and type, with optional wildcard filter, parent restriction, and pagination. The engine caps pages at 100 units; a full page reports partial coverage because more units may exist. Read-only.",
+   "schema_chars": 1278,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "decompile_jeb_item",
+   "description": "Decompile one type or method to engine pseudo-code using its decompiler (Dalvik, Java, or native). item_address comes from the engine's code item listing; unit_path defaults to the engine's first code unit and stays unknown when omitted. Read-only with respect to the target file.",
+   "schema_chars": 989,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_evm_interface",
+   "description": "Inspect an explicit local flat EVM bytecode carrier and infer dispatch selectors, argument strings and mutability without executing the target or accessing a chain/RPC endpoint. Choose raw or hex encoding explicitly. Returns original carrier and decoded-byte SHA-256, full bytecode and interface candidates inline as inferred Evidence; bytecode kind, hardfork, deployed authenticity and discovery completeness remain unknown. Initial real-verified Linux x64 profile uses unchanged bundled EVMole 0.9.3/WASM in a bounded owned worker; EOF-style EF00 containers are unsupported. No signature lookup, wallet action or transaction broadcast.",
+   "schema_chars": 718,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_recorded_crash",
+   "description": "Inspect a supplied Linux ELF64 amd64 little-endian core without launching its target or attaching to any live PID. Returns all recorded segments, raw note owners/descriptors and source ranges, every Linux CORE PRSTATUS thread/register and SIGINFO fields inline with SHA-256 Evidence. Historical PID is recorded metadata; current process/file identity, note coverage and signal-thread associations stay unknown. Optionally add derived core-only GDB/pwndbg mapping candidates through explicit BYO configuration; zero map flags mean unknown permissions. Uses the same stable snapshot for both stages, bounded complete output and owned cleanup. Initial Linux x64 profile: unchanged pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2; optional unchanged pwndbg 2026.09.15. No implicit executable/library pairing, GDB command language, host configuration changes or dependency installation.",
+   "schema_chars": 791,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_firmware_regions",
+   "description": "Inspect signature candidates in a local firmware file with Binwalk 3.1.x (verified with 3.1.0). Returns offsets, reported lengths, descriptions and raw confidence values. Length validation and runtime addresses remain unknown. No extraction or target execution. Linux, caller-supplied tool and util-linux prlimit required; 128 MiB input limit, one worker and 120-second deadline.",
+   "schema_chars": 476,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "extract_firmware",
+   "description": "Extract caller-selected firmware bytes with Unblob 26.6.x (verified with 26.6.4) into an absent output directory. Returns verified child paths/digests, task derivations, unknown chunks and extraction diagnostics inline. Preserves the default sandbox; publishes regular files only. Linux, caller-supplied tool, format-specific extractors and util-linux prlimit required. No mounts or extracted-code execution. Select a returned native file with open_binary for Ghidra analysis; decompressed offsets are not original-file addresses.",
+   "schema_chars": 2424,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "trace_web_module_imports",
+   "description": "Trace one exported website script's outgoing native ES imports/re-exports, using exact URL and optional selected import-map context. Reads a local export_web_scripts manifest and verifies the selected source's SHA-256/size; returns source positions, native resolved URLs or exact errors, every matching captured candidate and explicit unknown execution. Query/fragment identities are preserved. Computed imports and bundler IDs remain unknown. Select importer_url for unknown inline/document-base context. Caller-supplied Chromium executes only a trusted REA resolver stub in an owned context with page requests locally fulfilled/blocked; no captured application execution or asset refetch. Requires absolute REA_BROWSER_EXECUTABLE for literal imports. 32 MiB manifest, 16 MiB source, 4 MiB map and 20-second native deadline; cleanup may extend the deadline.",
+   "schema_chars": 1462,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "trace_web_source_location",
+   "description": "Trace one generated position in an exported website script through an explicitly paired local source map. Verifies manifest, selected script and map SHA-256/byte identities; returns every equal-position mapping, reported source/root, resolved source URL, embedded sourcesContent and original position inline. One-based lines and zero-based UTF-16 columns; greatest generated position <= requested across lines. Duplicate sources and generated-only mappings remain distinct. Caller-selected pairing does not establish deployment authenticity or execution. Regular maps and inline indexed sections only; external section URLs are unsupported. No network access or application execution; uses the pinned upstream codec in an owned Node process with private temporary files, independent 192 MiB old-generation heap and 20-second deadline. 4 MiB map, 32 MiB reply; complete evidence or actionable resource failure. Cleanup may extend the deadline.",
+   "schema_chars": 1489,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "observe_web_execution",
+   "description": "Instrument one selected CDP page for a finite, externally driven precise coverage window. Resets execution counters and prevents optimized execution until stopped. Returns complete nested UTF-16 ranges/counts, independently hashed script text and request initiator associations by session script ID. Does not navigate, click, evaluate selected code or close the externally owned page. Navigation ends document-scoped collection; workers and UI causality remain outside this claim. Emits an actual armed progress notification before external actions.",
+   "schema_chars": 867,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_web_event_listeners",
+   "description": "Inspect listeners registered directly on the first main-document CSS match in one selected CDP page. Returns event flags, native callback locations, source ownership and exact script text/digests inline. Does not dispatch events, evaluate JavaScript or invoke handlers. Delegated ancestor/framework listeners and execution history remain unknown. Releases REA's object group and transport, preserving the external page.",
+   "schema_chars": 834,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "recover_javascript_sources",
+   "description": "Recover readable modules from one local UTF-8 JavaScript script/bundle into an absent directory, using caller-supplied Wakaru ^1.13.0 (verified with 1.14.0) on Linux x64. Returns original/derived digests, extraction byte ranges, emitted source maps, warnings and analysis_input inline. Structural splitting may fall back to one module; original names and runtime equivalence remain unknown. No application code execution. Requires util-linux prlimit; one worker, 1 GiB address-space ceiling, 120-second deadline, 64 MiB input, 128 MiB output, 10000 entries and 8 MiB per diagnostic/report stream.",
+   "schema_chars": 1511,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_adb_client",
+   "description": "Inspect the caller-selected adb client: resolved binary, version, and install path. Never contacts devices and never starts the adb server. REA never installs platform tools; select a binary with REA_ADB_PATH (absolute) or adb on PATH.",
+   "schema_chars": 135,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "list_adb_devices",
+   "description": "List attached devices exactly as `adb devices -l` reports them: serial, state, transport, model metadata, and an inferred emulator/physical kind with its evidence basis. Emulators and USB or network devices appear alike; REA neither starts nor manages them. May start the local adb server on first use.",
+   "schema_chars": 135,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_adb_device",
+   "description": "Inspect one device's build identity through a fixed `getprop` whitelist: Android and SDK versions, security patch, fingerprint, product identity, CPU ABIs, and debuggable flag, plus the observed emulator indicator ro.kernel.qemu. Read-only with respect to the device.",
+   "schema_chars": 450,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "list_adb_packages",
+   "description": "List installed packages on one device with each base APK's device path, optionally scoped to third-party or system packages. Paths are device filesystem paths, not host-local. Read-only.",
+   "schema_chars": 810,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "pull_adb_package",
+   "description": "Pull one installed package's complete APK set (base plus every split, as `pm path` reports) from the device into a caller-selected output directory, creating a package-named subdirectory that must not already exist. Every pulled file is digested with SHA-256; partial pulls keep successful artifacts and per-file failure reasons. The device keeps the originals.",
+   "schema_chars": 1161,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "read_adb_logcat",
+   "description": "Read a bounded dump of the device log (`logcat -d -t`) for one buffer, optionally restricted to a process id. No streaming, no clearing; the newest lines are kept when the count cap trims. Read-only.",
+   "schema_chars": 1304,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_adb_package",
+   "description": "Inspect one installed package through `dumpsys package`: version name/code, install and update times, installer, user id, flags, and the requested-permission count. A fixed projection of version-dependent output; unknown sections are ignored rather than guessed. Read-only.",
+   "schema_chars": 740,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "pull_adb_file",
+   "description": "Pull one absolute device path (a database, shared-preferences XML, or any readable file) into a caller-selected output directory, digesting it with SHA-256. The local copy must not already exist. Read-only with respect to the device.",
+   "schema_chars": 1095,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "push_adb_file",
+   "description": "Push one local file to an absolute device path. The only device-mutating ADB tool: existing device files are refused unless overwrite is explicitly requested, and the transfer is verified by comparing the local digest with the device's own sha256sum when the device provides one.",
+   "schema_chars": 1276,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "capture_adb_screen",
+   "description": "Capture one frame of the device screen as a PNG (`screencap -p` through exec-out, no device-side file) into a caller-selected output directory, digesting it and reporting its dimensions. No recording or interaction.",
+   "schema_chars": 788,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "list_adb_processes",
+   "description": "List running processes exactly as `ps -A` reports them: user, pid, ppid, rss, state, and name. Useful for pairing with instrumentation lanes. Read-only.",
+   "schema_chars": 450,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "list_adb_directory",
+   "description": "List one absolute device directory (`ls -la`): names, kinds, permissions, owner, group, sizes, dates, and symlink targets. Recognizes the standard errors for absent paths and denied reads. Read-only.",
+   "schema_chars": 749,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "list_adb_features",
+   "description": "List the device's declared hardware and software features (`pm list features`) for device fingerprinting. Read-only.",
+   "schema_chars": 450,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "list_adb_services",
+   "description": "List the device's binder services with their interfaces (`service list`). Read-only.",
+   "schema_chars": 450,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_adb_display",
+   "description": "Report the display's physical and any overridden size (`wm size`) and density (`wm density`) as the device declares them. Read-only; setting values is not exposed.",
+   "schema_chars": 450,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_adb_window",
+   "description": "Report the window manager's current focus declarations (`dumpsys window windows`: mCurrentFocus and mFocusedApp) \u2014 what is on screen at read time without any interaction. Read-only.",
+   "schema_chars": 450,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "read_adb_setting",
+   "description": "Read one settings value (`settings get`) from the system, secure, or global namespace. Absent keys report the device's own null observation. Read-only; writing settings is not exposed.",
+   "schema_chars": 903,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "collect_adb_bugreport",
+   "description": "Collect one device-generated bugreport archive (`adb bugreport`) into a caller-selected output directory, digesting the zip. The archive contains the device's own dumpstate, dumpsys, and logcat report; collection can take minutes. Read-only with respect to configuration.",
+   "schema_chars": 822,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "resolve_adb_packages",
+   "description": "Find installed packages by case-insensitive substring of the package name (e.g. `whatsapp` \u2192 `com.whatsapp`), returning each match's base APK device path. The first step of an easy get: resolve, then pull_adb_package the exact name. Read-only.",
+   "schema_chars": 772,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "install_adb_package",
+   "description": "Install one local APK on the device (`adb install [-r]`), recording the APK's host digest and byte size. A device-mutating tool: `replace` re-installs over an existing package while keeping its data; the device's own Success/Failure verdict is preserved with its reason.",
+   "schema_chars": 1060,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "uninstall_adb_package",
+   "description": "Uninstall one package from the device (`adb uninstall`), removing its data for user 0. A device-mutating tool; absent packages report the device's own refusal reason.",
+   "schema_chars": 744,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "start_adb_app",
+   "description": "Start one installed app by launching its declared launcher activity: the component is resolved through `cmd package resolve-activity --brief`, then started with `am start -n`. A device-mutating tool for dynamic-analysis workflows; pair with `read_adb_logcat` (pid filter) and `list_adb_processes` to observe the started app, and `stop_adb_app` to end the run.",
+   "schema_chars": 788,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "start_adb_activity",
+   "description": "Start an intent with `am start`: one action, optional data URI, optional explicit component, and up to 16 typed extras (string, boolean, int, long, float). A device-mutating tool; the activity manager's Starting/Error verdict is preserved verbatim.",
+   "schema_chars": 2169,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "stop_adb_app",
+   "description": "Force-stop every process of one package (`am force-stop`), ending a dynamic-analysis run. A device-mutating tool; it succeeds whether or not the package had running processes.",
+   "schema_chars": 766,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_apktool_client",
+   "description": "Inspect the caller-selected apktool launcher: resolved command, selection source, and version. Decodes nothing. REA never installs Apktool or Java; select a launcher with REA_APKTOOL_COMMAND (absolute) or apktool on PATH.",
+   "schema_chars": 135,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "decode_android_resources",
+   "description": "Decode one local APK's resources with `apktool d --no-src` in a provider-owned workspace that is removed after projection: the readable AndroidManifest.xml, apktool.yml version and SDK facts, the app's string resources (default or one locale, bounded to 2000 entries), available string locales, and the decoded file count. The target APK is digest with SHA-256 before decoding; smali is skipped because Java-source recovery belongs to the JADX family.",
+   "schema_chars": 1154,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "export_web_scripts",
+   "description": "Export JavaScript bytes already retained in one local inspect_web_page or capture_browser_scenario JSON capture (normalized result or complete Evidence). Writes scripts and a digest-verified manifest into an absent absolute output_directory. Returns all source URLs, script or transaction/event references, unavailable states, and an analysis_input for analyze_javascript_application when any bytes were exported. Include script sources in inspect_web_page or select capture.network.response_body in scenarios. No refetch or execution. Safe unambiguous URL layouts preserve relative module paths; versions, query variants, inline scripts, and path collisions are isolated with explicit resolution limitations.",
+   "schema_chars": 970,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "list_browser_targets",
+   "description": "List page targets exposed by the selected loopback Chrome DevTools Protocol endpoint. Optionally filter by exact origin. URLs preserve query values and fragments; only URL userinfo credentials are removed.",
+   "schema_chars": 482,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_web_page",
+   "description": "Passively inspect one selected page target through CDP without evaluating JavaScript, navigating, clicking, closing, or mutating the page. If no origin filter is supplied, capture is scoped to the target's current origin. Returns DOM structure, accessibility, scripts, resources, attach-window network and console metadata, workers, and redacted storage inventory as Evidence.",
+   "schema_chars": 4777,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "analyze_web_bundle",
+   "description": "Capture JavaScript source from one selected CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from the selected target origin or explicitly requested origins. JavaScript is parsed but never executed.",
+   "schema_chars": 2283,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "observe_web_session",
+   "description": "Arm a CDP observation window of the requested duration while the user operates the page. By default it follows the selected target's current origin; an explicit origin list controls which origins may be retained. Records navigation, redirect, lifecycle, and failure events.",
+   "schema_chars": 873,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "discover_webmcp_tools",
+   "description": "Passively inventory every page-registered WebMCP tool and its complete structural input-schema summary using the experimental CDP WebMCP domain. Metadata is page-declared-untrusted; REA never registers or invokes discovered tools.",
+   "schema_chars": 869,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "compare_web_captures",
+   "description": "Compare passive web captures by providing before and after, each with the complete inspect_web_page normalized_result in inspection and an optional complete discover_webmcp_tools normalized_result in webmcp; or compare recorded scenarios by passing complete capture_browser_scenario normalized_result objects in before_scenario and after_scenario with an optional normalization policy. Use exactly one input group. Network comparison includes observed HTTP requests and WebSocket frame streams; same-URL connections are compared as an unordered collection of ordered streams, retaining connection counts without claiming stable identity between individual connections. Scenario comparison aligns exact step IDs, records deterministic literal normalization, and returns every artifact-level difference plus alignment failures inline. Missing or truncated evidence never proves equality.",
+   "schema_chars": 57175,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "capture_web_screenshot",
+   "description": "Capture the current visible viewport of one configured page as an inline, content-addressed PNG artifact. The operation never scrolls, navigates, or evaluates page JavaScript.",
+   "schema_chars": 718,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "compare_web_screenshots",
+   "description": "Compare two self-verifying PNG screenshot artifacts with local pixel metrics. Returns exact changed-pixel ratios and channel deltas without OCR or external services.",
+   "schema_chars": 1457,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "capture_browser_scenario",
+   "description": "Run a controlled browser scenario when passive observation cannot exercise the application. Launch the selected executable or connect to a loopback CDP target, provide a start URL and actions, and select storage or artifacts when needed. Environment, empty storage, and a URL-only final capture are defaults. capture.network selects request_body, response_body, and header_values independently; selected content is returned inline with transaction and event references, byte digests, and explicit unavailable states. Credentials and declared secrets are redacted. Agents can run their own local fixture servers to control application responses. Actions run until completion or cancellation unless timeout_ms is set. Results are returned inline.",
+   "schema_chars": 13494,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "list_electron_targets",
+   "description": "List every Electron file:// page target from a selected loopback CDP endpoint. Local file paths are canonicalized after symlink resolution. Selecting an endpoint exposes every eligible target and its local path metadata.",
+   "schema_chars": 366,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "inspect_electron_page",
+   "description": "Passively inspect one Electron file page by supplying its loopback CDP endpoint and target ID. The provider rechecks that the target currently exists at that endpoint and is a local file page. Returns frames, DOM structure, resource paths, and scripts without evaluating renderer JavaScript or invoking Electron APIs. The selected endpoint exposes every local file page and its metadata to this tool.",
+   "schema_chars": 2214,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "reconcile_javascript_runtime",
+   "description": "Reconcile verified static JavaScript application graphs with existing passive web/Electron CDP, passive V8 Inspector, or provider-owned active Electron Evidence. Active Electron captures contribute an explicitly partial target-only runtime record; they never invent renderer scripts, frames, workers, or execution claims. Exact captured-source digests take priority over caller-declared file/URL mappings; target, frame, script, and worker ambiguity remains explicit, and source-map authority stays separate.",
+   "schema_chars": 5970,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "capture_electron_scenario",
+   "description": "Use this for a provider-owned Electron run when passive CDP or Inspector observation cannot exercise application behavior. REA owns startup and teardown, accepts caller-defined click/wait actions plus window-targeted renderer reload/crash and synthetic open-url/second-instance delivery, and returns correlated window/WebContents/process/preload/session/navigation/shell/IPC evidence without retaining payload values. Actions wait for completion or request cancellation; a missing click target can keep the request pending. Results identify observed and unavailable event families, coverage status, action targets, and truncation. Cleanup failures retain collected observations with explicit cleanup uncertainty. External shell, navigation, permission, download, popup, updater, and OS-integration effects are blocked and recorded. Use passive Electron tools for observation-only work.",
+   "schema_chars": 3152,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "list_javascript_runtime_targets",
+   "description": "List every eligible Node/Electron V8 Inspector target from an explicit literal-loopback endpoint. Node discovery file locations that cannot be verified are preserved as unresolved reported URLs; they do not prove filesystem identity. Listing does not attach to targets.",
+   "schema_chars": 316,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "observe_javascript_runtime",
+   "description": "Attach passively to one Node/Electron V8 Inspector target by supplying its loopback Inspector endpoint and target ID. The provider rechecks target presence and attachability; a Node discovery file location may remain unresolved. Loaded script locations are validated independently from Debugger.scriptParsed. Captures script and Runtime execution-context metadata. REA never evaluates, pauses, resumes, reads source, or instruments the target; require/import edges, EventEmitter activity, and Electron IPC remain explicit unknowns. Reconcile the result with static Application Graph Evidence using reconcile_javascript_runtime. The selected endpoint exposes every target it serves to this tool.",
+   "schema_chars": 838,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "trace_application_feature",
+   "description": "Trace a typed literal seed through every reachable part of an authenticated JavaScript Application Graph supplied as inline Evidence or exact same-session retained references. Original static, native, passive-runtime, inferred, and unknown authorities remain distinct; native addon handoffs never open a provider or execute the application.",
+   "schema_chars": 6714,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "trace_javascript_semantics",
+   "description": "Trace static JavaScript data-flow, direct call/return, and closure relations from inline application Evidence or an exact same-session retained reference. Dynamic or unsupported semantics remain explicit unknowns; static reachability never claims runtime execution.",
+   "schema_chars": 9078,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "compare_application_versions",
+   "description": "Compare two authenticated JavaScript Application Graph versions supplied as inline Evidence or exact same-session retained references. Uses unique-only exact digest, module source digest, source-map identity, structural fingerprint, and non-module semantic-key tiers. Reports added, removed, changed, ambiguous, and unknown entities plus the complete matching changed_from graph without fuzzy or module-ordinal pairing.",
+   "schema_chars": 5918,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "compare_source_to_bundle",
+   "description": "Compare a cryptographically committed HistoricalSourceGraph with authenticated JavaScript Application Graph Evidence supplied inline or by exact same-session retained reference. Uses explicit exact-digest, source-map path, current-path, suffix, and basename signals with stable weights. Classifies unchanged, modified, removed, split, merged, duplicated, and unknown; incomplete coverage and ambiguous weak signals never become absence or forced matches.",
+   "schema_chars": 13354,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "compare_javascript_export_shapes",
+   "description": "Compare static return shapes for one exact module/export selector on each authenticated JavaScript Application Graph supplied as inline Evidence or exact same-session retained references. Variants pair only by reciprocal unique literal discriminants. Each retained variant lists observed return-property names even when values stay unknown. Presence (present, absent, or unknown-coverage) is separate from value resolution: a name present on only one paired shape is added or removed when parent-property coverage is complete on both sides, including when the static value is unresolved. Dynamic values, incomplete parent coverage, and unpaired variants remain unknown. Reports JSON Pointer changes without executing JavaScript; runtime behavior requires a separate agent-run probe.",
+   "schema_chars": 6178,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "build_reconstruction_obligation_ledger",
+   "description": "Generate the complete deterministic ReconstructionObligationLedger from an authenticated Evidence bundle, reviewed obligations, and an explicit reconstruction manifest. Static candidates remain candidates; duplicate ownership, missing original or reconstruction cases, missing parser/type, weak verifier authority, unenumerated claims, contradictions, dependencies, and residual unknowns fail closed. The inline result carries the full-ledger closure digest and typed per-obligation diagnostics.",
+   "schema_chars": 16647,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "evaluate_reconstruction_coverage",
+   "description": "Evaluate inline evidence-backed reconstruction coverage against one named boundary. Missing ownership or inventory is partial; stale, weak, truncated, skipped, or unresolved proof is unknown; contradictions, failed proof, missing owners, and authority routing fail closed.",
+   "schema_chars": 19679,
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "project_android_application_graph",
+   "description": "Project authenticated APK inventory_artifact Evidence into an execution-free Android application inventory. Reports exact component paths and hashes, runtime-family hints, and path-based bridge hypotheses without decoding DEX, executing the APK, or claiming observed runtime calls.",
+   "schema_chars": 4979,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "project_apple_application_graph",
+   "description": "Project authenticated IPA, macOS .app directory, ZIP, or DMG inventory Evidence into an execution-free Apple application inventory. Reports application roots, nested bundles with path-convention roles (app extensions, XPC services, login items, privileged helpers, system extensions, frameworks), launchd plists, exact component paths and hashes, runtime-family hints, and path-based bridge hypotheses without parsing plist/CMS semantics or claiming observed runtime calls.",
+   "schema_chars": 4979,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "close_binary",
+   "description": "Drain earlier provider requests, optionally write a provider-neutral analysis snapshot atomically to the caller-supplied path, then close the active target and every provider resource started for it. Later provider requests wait until this lifecycle operation finishes. Existing files require explicit overwrite; a failed save leaves the session open so cached analysis is not lost. Metadata edits prevent immutable snapshot saves until the session is recreated; export_evidence_bundle preserves mutable observations before closing without a snapshot.",
+   "schema_chars": 633,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "export_evidence_bundle",
+   "description": "Atomically write the session's deterministic Evidence bundle to the requested local path. Existing files require overwrite: true; records and manifests use canonical byte-stable ordering.",
+   "schema_chars": 686,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "import_evidence_bundle",
+   "description": "Read the JSON bundle at the supplied local path, validate every Evidence ID and canonical manifest, then atomically merge it. Imported content is data only and is never executed.",
+   "schema_chars": 517,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "capture_process_scenario",
+   "description": "Run one caller-selected command under a PTY and return process capture Evidence with residual unknowns. The renderer admits at most 1,000,000 combined terminal cells, computed as columns \u00d7 (rows + scrollback); every resize uses the selected scrollback and must fit the same budget. Supply a smaller terminal shape when that product is too large; dimensions are never clamped. A command name resolves through the inherited PATH; the working directory defaults to the caller's current directory; host environment variables are inherited with scenario overrides. Environment keys cannot contain '=' or NUL, and REA_PROCESS_RUN_ID is reserved for process ownership. Filesystem snapshots are opt-in through filesystem_observation_paths. A positive finalization_ms makes a timeout or idle deadline send SIGTERM to the captured root through its start identity, keep observing, and send SIGKILL once after the interval; exit.finalization records each attempt with its delivery result and the observed exit, and cancellation still ends the run at once. The target runs with the current user's permissions; this is not a security sandbox.",
+   "schema_chars": 6351,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   }
+  },
+  {
+   "name": "compare_process_captures",
+   "description": "Compare two compatible process capture observations across terminal, interaction, lifecycle, process, filesystem, command-shim, HTTP, and WebSocket evidence. Optional trace_spec validates exact events against an explicit partial order or finite trace language; concurrency is never inferred from timestamps or broad sorting. Missing, journal-free, or truncated observations are never treated as equivalent.",
+   "schema_chars": 8730,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "compare_artifacts",
+   "description": "Compare complete artifact inventories by logical occurrence path, content identity, metadata, and graph relations. Pass the inventory Evidence nested in each inspect_artifact result as left and right. Every delta cites both inputs, and gaps yield truncated or unknown, never equivalence. Returns every change inline.",
+   "schema_chars": 5074,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "compare_functions",
+   "description": "Compare two explicit sets of analyze_function Evidence across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets.",
+   "schema_chars": 5074,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "compare_bundles",
+   "description": "Compare two canonical Evidence bundles by exact record membership, explicit one-to-one observation pairs, and complete residual-unknown revision histories. Missing bundle members describe omission only, never behavioral equivalence; output is digest-anchored and returns every change inline.",
+   "schema_chars": 1054,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "find_changed_behavior",
+   "description": "Aggregate validated process and artifact comparison Evidence. Runtime observations remain distinct from static behavior candidates; missing or incomplete comparisons produce unresolved findings, never causal claims. Returns every finding inline.",
+   "schema_chars": 5033,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "build_call_path",
+   "description": "Build every shortest direct-callee path inline from complete analyze_function Evidence records using exact canonical addresses. Missing dossiers and provider mixing remain unknown; every node and edge cites source Evidence.",
+   "schema_chars": 5436,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "correlate_static_and_runtime",
+   "description": "Evaluate every explicit caller-declared hypothesis between exact static comparison findings and runtime comparison dimensions. Similar names or paths are never auto-matched, consistent cochange never proves causality, and unknown or truncated inputs remain unresolved. Returns all correlations and their complete Evidence closure inline.",
+   "schema_chars": 7003,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "verify_reconstruction",
+   "description": "Verify a finite typed behavioral and structural specification against a canonical Evidence bundle. Pass means every declared claim has complete comparable authority\u2014not global source equivalence; changed claims fail and missing, limited, or unresolved evidence stays unknown.",
+   "schema_chars": 2402,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "list_unknowns",
+   "description": "List every current residual-unknown head in deterministic ID order, with optional exact status, severity, and domain filters. Results are complete and inline. This is read-only; unresolved, contradicted, and non-truth dispositions remain distinct.",
+   "schema_chars": 532,
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "record_unknown",
+   "description": "Create one deterministic residual unknown and immutable mutation evidence. Validates all evidence and relationship references, and rejects duplicate stable identity.",
+   "schema_chars": 2903,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "update_unknown",
+   "description": "Append one immutable full-state revision and mutation evidence. Requires exact expected_revision; stale concurrent writers fail instead of overwriting newer analysis.",
+   "schema_chars": 3951,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "verify_unknown_resolution",
+   "description": "Revalidate the current residual-unknown head against live bundled evidence, exact authority/confidence/environment requirements, and revision integrity. Withdrawn and out-of-scope dispositions are not truth claims.",
+   "schema_chars": 407,
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "get_navigation_context",
+   "description": "Return the selected document, current address, and containing/current procedure in one provider-neutral result. The result reflects sequential provider observations, not an atomic cursor snapshot; a cursor outside any procedure returns procedure: null.",
+   "schema_chars": 289,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "inspect_address_context",
+   "description": "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome; use xrefs, assembly, or pseudocode for those deeper views.",
+   "schema_chars": 413,
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  }
+ ]
+}

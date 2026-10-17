@@ -259,15 +259,35 @@ test('preload exposes MCP discovery bridge on jennyShell', async () => {
   assert.equal(typeof captured.api.api.mcpDiscovery.updateServer, 'function');
   assert.equal(typeof captured.api.api.mcpDiscovery.removeServer, 'function');
   assert.equal(typeof captured.api.api.mcpDiscovery.testServer, 'function');
+  assert.equal(typeof captured.api.api.mcpDiscovery.checkReadiness, 'function');
+  assert.equal(typeof captured.api.api.mcpDiscovery.getPrompt, 'function');
+  assert.equal(typeof captured.api.api.mcpDiscovery.getReaInstallPlan, 'function');
+  assert.equal(typeof captured.api.api.mcpDiscovery.installRea, 'function');
+  assert.equal(typeof captured.api.api.mcpDiscovery.uninstallRea, 'function');
+  assert.equal(typeof captured.api.api.mcpDiscovery.onReaInstallProgress, 'function');
   assert.equal(typeof captured.api.api.mcpDiscovery.approveServer, 'function');
   assert.equal(typeof captured.api.api.mcpDiscovery.setServerEnabled, 'function');
 
   await captured.api.api.mcpDiscovery.refresh();
   await captured.api.api.mcpDiscovery.testServer({ name: 'local' });
+  await captured.api.api.mcpDiscovery.checkReadiness({ name: 'rea' });
+  await captured.api.api.mcpDiscovery.getPrompt({ name: 'docs', prompt: 'review', arguments: { target: 'x' } });
+  await captured.api.api.mcpDiscovery.getReaInstallPlan();
+  await captured.api.api.mcpDiscovery.installRea({ confirmed: true });
+  await captured.api.api.mcpDiscovery.uninstallRea({ confirmed: true });
   assert.deepEqual(captured.invokeCalls, [
     { channel: 'mcp-discovery:refresh', args: [] },
     { channel: 'mcp-discovery:test-server', args: [{ name: 'local' }] },
+    { channel: 'mcp-discovery:check-readiness', args: [{ name: 'rea' }] },
+    { channel: 'mcp-discovery:get-prompt', args: [{ name: 'docs', prompt: 'review', arguments: { target: 'x' } }] },
+    { channel: 'mcp-discovery:rea-install-plan', args: [] },
+    { channel: 'mcp-discovery:install-rea', args: [{ confirmed: true }] },
+    { channel: 'mcp-discovery:uninstall-rea', args: [{ confirmed: true }] },
   ]);
+  const unsubscribe = captured.api.api.mcpDiscovery.onReaInstallProgress(() => {});
+  assert.equal(captured.subscriptions.at(-1).channel, 'mcp-discovery:rea-install-progress');
+  unsubscribe();
+  assert.equal(captured.subscriptions.at(-1).removed, true);
 });
 
 test('preload sends only webUtils-resolved drop paths on the preload-internal channel', async () => {
@@ -290,4 +310,124 @@ test('preload sends only webUtils-resolved drop paths on the preload-internal ch
     channel: 'attachments:prepare-dropped-paths',
     args: [['D:\\outside\\granted.txt'], { session_id: 's1' }],
   }]);
+});
+
+test('preload exposes the chat workspace bridge with only its closed methods and a disposable subscription', async () => {
+  const captured = captureJennyShellPreload();
+  const chatWorkspace = captured.api.api.chatWorkspace;
+  assert.deepEqual(Object.keys(chatWorkspace).sort(), [
+    'getChangeDiff',
+    'getSummary',
+    'listChanges',
+    'onChanged',
+    'setView',
+  ]);
+  await chatWorkspace.getSummary({ schema_version: 1, session_id: 'sess_a' });
+  await chatWorkspace.setView({ schema_version: 1, session_id: 'sess_a', expected_revision: 0, patch: { rail_visible: true } });
+  await chatWorkspace.listChanges({ schema_version: 1, session_id: 'sess_a' });
+  await chatWorkspace.getChangeDiff({ schema_version: 1, session_id: 'sess_a', path: 'a.txt' });
+  assert.deepEqual(captured.invokeCalls.map((call) => call.channel), [
+    'chat-workspace:get-summary',
+    'chat-workspace:set-view',
+    'chat-workspace:list-changes',
+    'chat-workspace:get-change-diff',
+  ]);
+  const unsubscribe = chatWorkspace.onChanged(() => {});
+  assert.equal(captured.subscriptions.at(-1).channel, 'chat-workspace:changed');
+  unsubscribe();
+  assert.equal(captured.subscriptions.at(-1).removed, true);
+});
+
+test('preload exposes the performance bridge with only its closed methods and a disposable subscription', async () => {
+  const captured = captureJennyShellPreload();
+  const performance = captured.api.api.performance;
+  assert.deepEqual(Object.keys(performance).sort(), ['dismissWarning', 'getSnapshot', 'onChanged', 'updateSettings']);
+  await performance.getSnapshot({ schema_version: 1, session_id: 'sess_a' });
+  await performance.updateSettings({ schema_version: 1, gpu_warnings_enabled: false });
+  await performance.dismissWarning({ schema_version: 1, session_id: 'sess_a', warning_id: '123e4567-e89b-42d3-a456-426614174000' });
+  assert.deepEqual(captured.invokeCalls.map((call) => call.channel), [
+    'performance:get-snapshot',
+    'performance:update-settings',
+    'performance:dismiss-warning',
+  ]);
+  const unsubscribe = performance.onChanged(() => {});
+  assert.equal(captured.subscriptions.at(-1).channel, 'performance:changed');
+  unsubscribe();
+  assert.equal(captured.subscriptions.at(-1).removed, true);
+});
+
+test('preload exposes the chat messages bridge with only its closed methods and a disposable subscription', async () => {
+  const captured = captureJennyShellPreload();
+  const chatMessages = captured.api.api.chatMessages;
+  assert.deepEqual(Object.keys(chatMessages).sort(), [
+    'cancel',
+    'confirmRestored',
+    'createGrant',
+    'discard',
+    'list',
+    'listRecipients',
+    'markRead',
+    'onChanged',
+    'prepare',
+    'retry',
+    'revokeGrant',
+    'send',
+    'setContextDisposition',
+    'setReporting',
+  ]);
+  const request = { schema_version: 1, session_id: 'sess_a' };
+  await chatMessages.listRecipients({ ...request, source_session_id: 'sess_a' });
+  await chatMessages.list({ ...request, direction: 'inbox' });
+  await chatMessages.send({ schema_version: 1, operation_id: '11111111-1111-4111-8111-111111111111' });
+  assert.deepEqual(captured.invokeCalls.map((call) => call.channel), [
+    'chat-messages:list-recipients',
+    'chat-messages:list',
+    'chat-messages:send',
+  ]);
+  const unsubscribe = chatMessages.onChanged(() => {});
+  assert.equal(captured.subscriptions.at(-1).channel, 'chat-messages:changed');
+  unsubscribe();
+  assert.equal(captured.subscriptions.at(-1).removed, true);
+});
+
+test('preload exposes the session proposals bridge with only its closed methods and a disposable subscription', async () => {
+  const captured = captureJennyShellPreload();
+  const sessionProposals = captured.api.api.sessionProposals;
+  assert.deepEqual(Object.keys(sessionProposals).sort(), [
+    'authorizeLaunch',
+    'cancel',
+    'confirmRestored',
+    'decide',
+    'get',
+    'getCapabilities',
+    'list',
+    'onChanged',
+    'retry',
+    'setOptions',
+    'startAll',
+  ]);
+  const request = { schema_version: 1, session_id: 'sess_a' };
+  await sessionProposals.get({ ...request, proposal_id: `proposal_${'a'.repeat(64)}` });
+  await sessionProposals.list(request);
+  await sessionProposals.retry({ ...request, proposal_id: `proposal_${'a'.repeat(64)}`, expected_revision: 1, decision_id: '11111111-1111-4111-8111-111111111111' });
+  assert.deepEqual(captured.invokeCalls.map((call) => call.channel), [
+    'session-proposals:get',
+    'session-proposals:list',
+    'session-proposals:retry',
+  ]);
+  const unsubscribe = sessionProposals.onChanged(() => {});
+  assert.equal(captured.subscriptions.at(-1).channel, 'session-proposals:changed');
+  unsubscribe();
+  assert.equal(captured.subscriptions.at(-1).removed, true);
+});
+
+test('preload exposes the Settings memory page bridge on jennyShell', async () => {
+  const captured = captureJennyShellPreload();
+  await captured.api.api.memory.restore({ projectId: 'project_general', memoryId: 3 });
+  assert.deepEqual(captured.invokeCalls.at(-1), { channel: 'memory:restore', args: [{ projectId: 'project_general', memoryId: 3 }] });
+  await captured.api.api.memory.acceptPending('session-1', 'sha256:abc', 'project_garden');
+  assert.deepEqual(captured.invokeCalls.at(-1), { channel: 'memory:accept-pending', args: ['session-1', 'sha256:abc', 'project_garden'] });
+  for (const name of ['listArchived', 'erase', 'clearForgotten', 'listOperations', 'setAlwaysOn', 'exportMarkdown', 'openContextFile']) {
+    assert.equal(typeof captured.api.api.memory[name], 'function', name);
+  }
 });

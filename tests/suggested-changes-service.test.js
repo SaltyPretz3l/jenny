@@ -263,9 +263,16 @@ test('Discard also rejects a suggestion waiting on its revision', () => {
 });
 
 test('an apply whose receipt cannot be saved says so', async () => {
-  const { service, store } = makeService({ applyRequest: async (request) => appliedReply(request) });
+  let store = null;
+  const made = makeService({
+    applyRequest: async (request) => {
+      store._updateSessionRecord = () => null; // the receipt save after the sidecar wrote fails
+      return appliedReply(request);
+    },
+  });
+  store = made.store;
+  const { service } = made;
   const entry = capture(service);
-  store._updateSessionRecord = () => null;
   const result = await service.accept({ sessionId: 'sess_1', id: entry.id, revision: 1 });
   assert.equal(result.ok, true);
   assert.equal(result.receipt_saved, false);

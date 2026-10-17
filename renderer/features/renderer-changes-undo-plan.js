@@ -204,7 +204,8 @@
       if (seen.has(path)) continue;
       rows.push(journalRow(baseRow(path, filesByPath.get(path) || null), governed, null, context));
     }
-    return { rows, journalSetIds: journal.map((item) => item.changeSetId).reverse() };
+    const moves = journal.flatMap((item) => list(((item.preflight || {}).resume || {}).completed_moves)).map((move) => [move.to_relative_path, move.from_relative_path]);
+    return { rows, moves, journalSetIds: journal.map((item) => item.changeSetId).reverse() };
   }
 
   function isChosen(row, choices) {
@@ -298,7 +299,7 @@
     const undonePaths = new Set();
     // Journal first, then checkpoints: the order this undo ran them in.
     const swap = { journal: [], checkpoint: [], journalFirst: true };
-    const movedFrom = new Map(list(plan.rows).filter((row) => row.how === 'move' && row.from).map((row) => [row.path, row.from]));
+    const movedFrom = new Map([...list(plan.moves), ...list(plan.rows).filter((row) => row.how === 'move' && row.from).map((row) => [row.path, row.from])]);
     for (const result of list(outcome.journal)) {
       if (!isPlainObject(result) || (result.ok !== true && result.status !== 'needs_review')) continue;
       const changed = receiptPaths(result);

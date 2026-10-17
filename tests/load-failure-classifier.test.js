@@ -24,3 +24,13 @@ test('failure payload bounds and redacts its message and normalizes unknown shap
   assert.equal(buildLoadFailure({ unknown: true }), null);
   assert.equal(buildLoadFailure(null), null);
 });
+
+test('the managed server stamp is kept only for a known kind and omitted otherwise (row 54)', () => {
+  const base = { cause: 'engine_unreachable', message: 'connection refused', engine: 'openai-compatible', model: 'qwen3.8-27b-nvfp4' };
+  assert.equal(buildLoadFailure({ ...base, managed: 'ninfer' }).managed, 'ninfer');
+  assert.equal(buildLoadFailure({ ...base, managed: 'llama-server' }).managed, 'llama-server');
+  for (const managed of ['vllm', '', 7, null, { kind: 'ninfer' }]) {
+    assert.equal(Object.hasOwn(buildLoadFailure({ ...base, managed }), 'managed'), false, String(managed));
+  }
+  assert.equal(Object.hasOwn(buildLoadFailure(base), 'managed'), false);
+});

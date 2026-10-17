@@ -1,0 +1,66 @@
+{
+  "healthy": true,
+  "adapter": "production-stdio",
+  "server": {
+    "name": "rea",
+    "version": "6.4.0",
+    "protocol_version": "2025-11-25"
+  },
+  "inventory": {
+    "tools": {
+      "expected": 170,
+      "observed": 170,
+      "missing": [],
+      "unexpected": [],
+      "duplicates": []
+    },
+    "prompts": {
+      "expected": 6,
+      "observed": 6,
+      "missing": [],
+      "unexpected": [],
+      "duplicates": []
+    }
+  },
+  "identity": {
+    "expected_package_version": "6.4.0",
+    "observed_package_version": "6.4.0",
+    "expected_catalog_digest": "85d80276ecacf937bf3e803b7a31748ae1a8286f556fa5cf734eef768cc7d72a",
+    "observed_catalog_digest": "85d80276ecacf937bf3e803b7a31748ae1a8286f556fa5cf734eef768cc7d72a"
+  },
+  "request_flow": {
+    "tool": "binary_session",
+    "ok": true
+  },
+  "checks": [
+    {
+      "name": "initialize",
+      "ok": true,
+      "detail": "rea@6.4.0; protocol=2025-11-25"
+    },
+    {
+      "name": "inventory:tools",
+      "ok": true,
+      "detail": "expected=170 observed=170 missing=none unexpected=none duplicates=none"
+    },
+    {
+      "name": "inventory:prompts",
+      "ok": true,
+      "detail": "expected=6 observed=6 missing=none unexpected=none duplicates=none"
+    },
+    {
+      "name": "server-identity",
+      "ok": true,
+      "detail": "package=6.4.0; catalog=85d80276ecacf937bf3e803b7a31748ae1a8286f556fa5cf734eef768cc7d72a"
+    },
+    {
+      "name": "request-flow",
+      "ok": true,
+      "detail": "binary_session target-free request"
+    }
+  ],
+  "diagnostics": {
+    "stderr": "",
+    "stderr_bytes": 0
+  }
+}

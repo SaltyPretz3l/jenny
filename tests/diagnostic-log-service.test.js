@@ -1,6 +1,9 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { DiagnosticLogService, MAX_ENTRY_BYTES } = require('../services/diagnostic-log-service');
 
 test('canonical append removes secrets from correlation ids and still redacts messages', () => {
@@ -81,8 +84,8 @@ test('selects the newest different prior run and labels pre-contract history leg
 
   const trailingLegacy = new DiagnosticLogService({ runId: 'current', filePath: 'test.log', historyReader: async () => ({ entries: [{ run_id: 'prior', event: 'exact' }, { event: 'legacy-newer' }], malformed_count: 0, truncated: false, errors: [] }) });
   const trailingSnapshot = await trailingLegacy.getSnapshot();
-  assert.equal(trailingSnapshot.prior_run.run_id, 'legacy-prior');
-  assert.deepEqual(trailingSnapshot.entries.map((entry) => entry.event), ['legacy-newer']);
+  assert.equal(trailingSnapshot.prior_run.run_id, 'prior');
+  assert.deepEqual(trailingSnapshot.entries.map((entry) => entry.event), ['exact']);
 });
 
 test('oversized entries are bounded and drops are disclosed as partial evidence', async () => {
@@ -150,7 +153,7 @@ test('prior-run retention evicts old informational rows before severe evidence',
 test('two-run snapshots enforce the 750 current plus 250 prior entry budget', async () => {
   const prior = Array.from({ length: 300 }, (_, index) => ({ run_id: 'prior', sequence: index + 1, level: 'INFO', event: `prior.${index}` }));
   const service = new DiagnosticLogService({ runId: 'current', filePath: 'test.log', historyReader: async () => ({ entries: prior, malformed_count: 0, truncated: false, errors: [] }) });
-  for (let index = 0; index < 800; index += 1) service.append({ layer: 'electron', level: 'INFO', event: `current.${index}` }, { persist: false, broadcast: false });
+  for (let index = 0; index < 800; index += 1) service.append({ layer: 'electron', level: 'INFO', event: `current.${index}` }, { broadcast: false });
   const snapshot = await service.getSnapshot();
   assert.equal(snapshot.entries.filter((entry) => entry.run_id === 'current').length, 750);
   assert.equal(snapshot.entries.filter((entry) => entry.run_id === 'prior').length, 250);
@@ -163,7 +166,7 @@ test('snapshot byte-pressure is disclosed with per-source drop metadata', async 
   const message = 'x'.repeat(12000);
   const prior = Array.from({ length: 250 }, (_, index) => ({ run_id: 'prior', sequence: index + 1, layer: 'sidecar', level: 'INFO', event: `prior.${index}`, message }));
   const service = new DiagnosticLogService({ runId: 'current', filePath: 'test.log', historyReader: async () => ({ entries: prior, malformed_count: 0, truncated: false, errors: [] }) });
-  for (let index = 0; index < 250; index += 1) service.append({ layer: 'electron', level: 'INFO', event: `current.${index}`, message }, { persist: false, broadcast: false });
+  for (let index = 0; index < 250; index += 1) service.append({ layer: 'electron', level: 'INFO', event: `current.${index}`, message }, { broadcast: false });
   const snapshot = await service.getSnapshot();
   assert.ok(Buffer.byteLength(JSON.stringify(snapshot), 'utf8') <= 4 * 1024 * 1024);
   assert.ok(snapshot.integrity.partial_reasons.includes('snapshot_truncated'));
@@ -198,4 +201,77 @@ test('a prior run keeps the integrity its own loss records reported', async () =
   assert.equal(integrity.sink_failures.sidecar.file, 2);
   assert.equal(integrity.dropped_by_source.sidecar, 4);
   assert.equal(integrity.partial_reasons.includes('prior_retention_truncated'), false);
+});
+
+test('oversized errors preserve scalar issue fields and clip strings', () => {
+  const service = new DiagnosticLogService({ runId: 'current' });
+  const fields = {
+    error_code: 'CMP-X-0001', errorCode: 'CMP-X-0002', code: 7,
+    remediation: 'do'.repeat(400), channel: 'runtime', durationMs: 123,
+    duration_ms: 456, status: false, stream_id: 'stream-one', streamId: 'stream-two',
+  };
+  const entry = service.append({ level: 'ERROR', data: { ...fields, blob: 'x'.repeat(20000) } });
+  assert.deepEqual(entry.data, {
+    ...fields, remediation: fields.remediation.slice(0, 512),
+    _truncated: true, _original_size: entry.data._original_size,
+    keys: [...Object.keys(fields), 'blob'],
+  });
+  assert.ok(entry.data._original_size > MAX_ENTRY_BYTES);
+  assert.ok(Buffer.byteLength(JSON.stringify(entry), 'utf8') <= MAX_ENTRY_BYTES);
+  const nested = service.append({ data: { error_code: { nested: 'ignored' }, blob: 'x'.repeat(20000) } });
+  assert.equal(Object.hasOwn(nested.data, 'error_code'), false);
+});
+
+test('compact truncation keeps issue fields and keys within the byte cap', () => {
+  const service = new DiagnosticLogService({ runId: 'current' });
+  const fields = ['error_code', 'errorCode', 'code', 'remediation', 'channel', 'durationMs', 'duration_ms', 'status', 'stream_id', 'streamId'];
+  const data = Object.fromEntries(fields.map((key) => [key, '\u0001'.repeat(512)]));
+  for (let index = 0; index < 24; index += 1) data[`${index}-${'k'.repeat(48)}`] = 'x'.repeat(1000);
+  const entry = service.append({ level: 'ERROR', data });
+  assert.ok(Buffer.byteLength(JSON.stringify(entry), 'utf8') <= MAX_ENTRY_BYTES);
+  assert.equal(entry.data._truncated, true);
+  assert.equal(entry.data.keys.length, 24);
+  for (const key of fields) {
+    assert.equal(typeof entry.data[key], 'string');
+    assert.ok(entry.data[key].length > 0 && entry.data[key].length <= 512);
+  }
+});
+
+test('snapshot byte pressure evicts warnings before errors and tallies each run', async () => {
+  const message = 'x'.repeat(12000);
+  const prior = Array.from({ length: 250 }, (_, index) => ({
+    run_id: 'prior', layer: 'sidecar', level: 'ERROR', event: `error.${index}`, message,
+  }));
+  const service = new DiagnosticLogService({ runId: 'current', filePath: 'test.log', historyReader: async () => ({ entries: prior }) });
+  for (let index = 0; index < 250; index += 1) service.append({ level: 'WARN', message });
+  const snapshot = await service.getSnapshot();
+  assert.equal(snapshot.entries.filter((entry) => entry.level === 'ERROR').length, 250);
+  assert.equal(snapshot.integrity.dropped_by_source.sidecar || 0, 0);
+  assert.ok(snapshot.active_run.integrity.dropped_by_source.electron > 0);
+  assert.equal(snapshot.prior_run.integrity.complete, true);
+});
+
+test('a long current launch does not hide prior history on disk', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-diagnostic-history-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const filePath = path.join(root, 'shell.log');
+  const prior = Array.from({ length: 50 }, (_, index) => ({ run_id: 'prior', event: `prior.${index}` }));
+  const current = Array.from({ length: 2500 }, () => ({ run_id: 'current', message: 'x'.repeat(2000) }));
+  fs.writeFileSync(filePath, [...prior, ...current].map((entry) => JSON.stringify(entry) + '\n').join(''));
+  const snapshot = await new DiagnosticLogService({ runId: 'current', filePath }).getSnapshot();
+  assert.equal(snapshot.prior_run?.run_id, 'prior');
+  assert.deepEqual(snapshot.entries.map((entry) => entry.event), prior.map((entry) => entry.event));
+  assert.equal(snapshot.integrity.partial_reasons.includes('history_truncated'), false);
+});
+
+test('snapshot lists current entries once and standalone metadata still lists', async () => {
+  const service = new DiagnosticLogService({ runId: 'current' });
+  service.append({ event: 'current.event' });
+  let calls = 0;
+  const list = service.list.bind(service);
+  service.list = () => { calls += 1; return list(); };
+  const snapshot = await service.getSnapshot();
+  assert.equal(calls, 1);
+  assert.deepEqual(service.getCurrentDiagnosticsMetadata().sources, snapshot.sources);
+  assert.equal(calls, 2);
 });

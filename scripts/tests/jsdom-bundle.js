@@ -26,6 +26,9 @@ function bundleKey(root) {
   const hash = crypto.createHash('sha1');
   hash.update(read('package-lock.json'));
   hash.update(fs.readFileSync(__filename));
+  // The bundle bakes in absolute paths (css-tree's data require), so a bundle built
+  // from another root (a worktree sharing node_modules by junction) must not be reused.
+  hash.update(path.resolve(root));
   const version = (name) => JSON.parse(read(path.join('node_modules', name, 'package.json'))).version;
   const nodeMajor = process.versions.node.split('.')[0];
   return `jsdom-${version('jsdom')}-esbuild-${version('esbuild')}-node${nodeMajor}-${hash.digest('hex').slice(0, 12)}`;

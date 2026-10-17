@@ -177,10 +177,12 @@ test('multi-byte UTF-8 split mid-character is reassembled by byte length', () =>
   assert.deepEqual(sequences(notifications), ['utf8']);
 });
 
-test('malformed JSON emits parse-error and the following frame is delivered', () => {
+test('malformed JSON emits parse-error and fails the transport before the following frame', () => {
   const { client, proc, notifications } = createHarness();
   const parseErrors = [];
+  const errors = [];
   client.on('parse-error', (error) => parseErrors.push(error));
+  client.on('error', (error) => errors.push(error));
   feed(proc, Buffer.concat([
     buildBodyFrame('{"jsonrpc":'),
     buildFrame('after-malformed'),
@@ -188,7 +190,9 @@ test('malformed JSON emits parse-error and the following frame is delivered', ()
 
   assert.equal(parseErrors.length, 1);
   assert.ok(parseErrors[0] instanceof SyntaxError);
-  assert.deepEqual(sequences(notifications), ['after-malformed']);
+  assert.equal(errors[0].message, 'Sidecar transport received a malformed frame.');
+  assert.deepEqual(sequences(notifications), []);
+  assert.equal(client.connected, false);
 });
 
 const failureCases = [

@@ -32,6 +32,7 @@ from sidecar.ai.engines.codex_cli_transport import (
     _cli_tool_event_marker,
     _discard_output_schema,
     _jsonl_event_counts,
+    _malformed_structured_result,
     _output_schema,
     _output_schema_flag_rejected,
     _parse_jsonl_output,
@@ -58,7 +59,10 @@ from sidecar.runtime.local_engine.request_context import (
 from sidecar.runtime.local_engine.request_context import (
     request_id as active_request_id,
 )
-from sidecar.runtime.process_containment import log_containment_degraded
+from sidecar.runtime.process_containment import (
+    log_containment_degraded,
+    posix_process_group_exists,
+)
 from sidecar.runtime.process_job import WindowsJobObject
 from sidecar.runtime.worker_payload import build_background_env as build_child_env
 
@@ -69,10 +73,10 @@ _CODEX_REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high"
 _MAX_CODEX_OUTPUT_BYTES = 16 * 1024 * 1024
 _PIPE_READ_CHUNK_BYTES = 64 * 1024
 _PROCESS_POLL_INTERVAL_SECONDS = 0.05
-# Bound on the tripwire's own partial-line buffer. The JSONL events we inspect
-# are small; anything past this is not a line we will ever parse, and holding it
-# would reintroduce an unbounded accumulator next to the bounded capture.
-_MAX_TRIPWIRE_LINE_BYTES = 1024 * 1024
+# The tripwire holds a whole unterminated record up to the stdout capture
+# limit, so a large tool event still parses when its newline arrives. A longer
+# record has already exceeded that capture, and the session fails closed on it.
+_MAX_TRIPWIRE_LINE_BYTES = _MAX_CODEX_OUTPUT_BYTES // 2
 
 
 logger = logging.getLogger(__name__)
@@ -131,13 +135,15 @@ class _ToolEventTripwire:
     def feed(self, chunk: bytes) -> None:
         if self.tripped:
             return
+        start = len(self.pending)
         self.pending.extend(chunk)
         while True:
-            index = self.pending.find(b"\n")
+            index = self.pending.find(b"\n", start)
             if index < 0:
                 break
             line = bytes(self.pending[:index])
             del self.pending[: index + 1]
+            start = 0
             self._inspect(line)
             if self.tripped:
                 return
@@ -222,6 +228,7 @@ class CodexCliEngine(BaseEngine):
         system: str = "",
         messages: list[EngineMessage] | None = None,
         response_format: ResponseFormat | None = None,
+        cancel_handle: Any = None,
     ) -> str:
         return self._generate(
             prompt=prompt,
@@ -232,7 +239,7 @@ class CodexCliEngine(BaseEngine):
             system=system,
             messages=messages,
             response_format=response_format,
-            cancel_handle=None,
+            cancel_handle=cancel_handle,
         )
 
     def _generate(  # noqa: PLR0913 - mirrors generate with cancellation support.
@@ -324,6 +331,7 @@ class CodexCliEngine(BaseEngine):
             # schema) falls through to the text bridge below.
             structured = (
                 _structured_result(parts, _catalog_tool_names(tools), structured_out)
+                or _malformed_structured_result(parts, structured_out)
                 if schema_path is not None
                 else None
             )
@@ -907,8 +915,35 @@ def _terminate_codex_tree(
             os.killpg(int(process.pid), signal.SIGTERM)
         except OSError:
             pass
+    grace_deadline = time.monotonic() + _POSIX_GROUP_GRACE_SECONDS
     _finish_codex_termination(process)
-    return None
+    if wait:
+        _kill_surviving_codex_group(int(process.pid), grace_deadline)
+        return None
+    # The cancel callback runs under the dispatch lock: the grace wait for a
+    # surviving group member escalates off-thread (Astra w2b R3).
+    thread = threading.Thread(
+        target=_kill_surviving_codex_group,
+        args=(int(process.pid), grace_deadline),
+        daemon=True,
+        name="codex-cli-group-escalation",
+    )
+    thread.start()
+    return thread
+
+
+_POSIX_GROUP_GRACE_SECONDS = 0.5
+
+
+def _kill_surviving_codex_group(group_id: int, deadline: float) -> None:
+    # Independent of the root: a SIGTERM-resistant member outlives a root that
+    # exits cleanly, and the root's own wait never escalates for it.
+    while hasattr(os, "killpg") and posix_process_group_exists(group_id):
+        if time.monotonic() >= deadline:
+            with suppress(OSError):
+                os.killpg(group_id, getattr(signal, "SIGKILL", signal.SIGTERM))
+            return
+        time.sleep(_PROCESS_POLL_INTERVAL_SECONDS)
 
 
 def _terminate_codex_tree_windows(

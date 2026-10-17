@@ -218,7 +218,8 @@
         String(message.status || '') !== 'streaming' ||
         kind === 'question_batch' ||
         kind === 'interactive_round_recap' ||
-        kind === 'slash_command_output'
+        kind === 'slash_command_output' ||
+        kind === 'memory_note'
       ) {
         return null;
       }
@@ -305,22 +306,29 @@
         previousUnits: hasPreviousState ? runtime.previousUnits : [],
       });
       const unitCount = renderModel.units.length;
+      const imageReferences = resolveStreamRevealModule('rendererArtifactImageReferences', './renderer-artifact-image-references');
+      const messages = settings.state?.messagesBySession?.get?.(currentSessionId) || [];
+      const rewriteImageReferences = imageReferences.createRewriter(messages, message, currentSessionId, windowRef?.document);
       const wrappers = [];
       const streamUnits = unitCount
         ? renderModel.units.map((unit, index) => {
-            wrappers.push(`<div class="chat-stream-unit" data-stream-unit-index="${index}">${unit.html}</div>`);
-            return { html: unit.html };
+            const html = rewriteImageReferences(unit.html);
+            wrappers.push(`<div class="chat-stream-unit" data-stream-unit-index="${index}">${html}</div>`);
+            return { html };
           })
         : null;
-      const bubbleInnerHtml = streamUnits ? wrappers.join('') : renderModel.html;
+      const bubbleInnerHtml = streamUnits ? wrappers.join('') : rewriteImageReferences(renderModel.html);
 
       runtime.streamingMessageId = messageId;
       runtime.previousUnits = renderModel.units;
+      const firstReferenceChange = streamUnits?.findIndex((unit, i) => unit.html !== runtime.imageReferenceUnits?.[i]?.html) ?? -1;
+      runtime.imageReferenceUnits = streamUnits;
 
       return {
         bubbleInnerHtml,
         streamUnits,
-        streamChangedStart: renderModel.changedStartIndex,
+        // Artifact metadata can arrive without a Markdown fingerprint change.
+        streamChangedStart: firstReferenceChange >= 0 ? Math.min(firstReferenceChange, renderModel.changedStartIndex) : renderModel.changedStartIndex,
       };
     }
 

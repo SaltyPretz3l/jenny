@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { assertChatTurnAdmissible } = require('../services/backend/chat-turn-admission');
+const { assertChatTurnAdmissible, assertLinkedFirstTurnAdmissible } = require('../services/backend/chat-turn-admission');
 const { captureRuntimeRoute } = require('../services/session-runtime/lanes');
 
 function service({ gpuState = 'chat_resident', session = null } = {}) {
@@ -135,4 +135,18 @@ test('queued admission reads canonical summaries without hydrating transcripts',
     error => error.code === 'session_type_mismatch');
   assert.doesNotThrow(() => assertChatTurnAdmissible(captured, 'missing-session', local));
   assert.deepEqual(reads, ['chat-session', 'plugin-session', 'missing-session']);
+});
+
+test('a linked child waiting for its first turn refuses other turns; the first turn and other chats pass', () => {
+  const calls = [];
+  const svc = { chatProposals: { linkedFirstTurnBlock: (sessionId, key) => {
+    calls.push([sessionId, key]);
+    return sessionId === 'sess_child' && key !== 'pdk_first' ? 'linked_first_turn_pending' : null;
+  } } };
+  assert.throws(() => assertLinkedFirstTurnAdmissible(svc, ' sess_child '), (error) => error.code === 'linked_first_turn_pending'
+    && error.retryable === false && error.submissionOutcome === 'rejected');
+  assert.doesNotThrow(() => assertLinkedFirstTurnAdmissible(svc, 'sess_child', 'pdk_first'));
+  assert.doesNotThrow(() => assertLinkedFirstTurnAdmissible(svc, 'sess_other'));
+  assert.deepEqual(calls[0], ['sess_child', null], 'the id is trimmed and a missing key is null');
+  assert.doesNotThrow(() => assertLinkedFirstTurnAdmissible({}, 'sess_child'), 'no proposal service, no fence');
 });

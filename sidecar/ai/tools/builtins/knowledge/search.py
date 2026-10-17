@@ -15,7 +15,7 @@ import re
 import time
 from collections.abc import Callable
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from sidecar.ai.error_codes import CMP_TOOL_INVALID_PATH
@@ -47,6 +47,7 @@ from sidecar.ai.tools.builtins.knowledge.roots import (
 )
 from sidecar.ai.tools.builtins.knowledge.semantic_fusion import (
     SemanticOutcome,
+    attach_identities,
     compile_search_pattern,
     fuse_entries,
     passages_payload,
@@ -56,6 +57,9 @@ from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 
 # Corpus-wide traversal cap, independent of the per-call runtime budget.
 MAX_TOTAL_FILES_VISITED = 5000
+# Lexical-only sources hashed per call so the model can pin them; the rest of the
+# (at most 20) sources stay unpinned and the payload says identity_truncated.
+MAX_LEXICAL_SOURCE_HASHES = 16
 _MATCH_LINE_PARTS = 3
 
 
@@ -69,6 +73,8 @@ class _RootSearchContext:
     worker: _RegexSearchWorker
     started_at: float
     files_visited: int = 0
+    # display path -> (root, file) for every file with a regex match.
+    lexical_files: dict[str, tuple[KnowledgeRoot, Path]] = field(default_factory=dict)
 
 
 def knowledge_search_tool(
@@ -121,15 +127,11 @@ def knowledge_search_tool(
     finally:
         search_context.worker.close()
 
-    semantic = (
-        semantic_passages(
-            query,
-            roots=roots,
-            start_paths=start_paths,
-            include=_glob_matcher(include_glob),
-        )
-        if query is not None
-        else None
+    semantic = semantic_passages(
+        query,
+        roots=roots,
+        start_paths=start_paths,
+        include=_glob_matcher(include_glob),
     )
     return _knowledge_search_result(
         context=search_context,
@@ -154,8 +156,12 @@ def _resolve_search_scope(
     if has_path and isinstance(root_argument, str) and root_argument.strip():
         raise ToolExecutionFailure(
             code=CMP_TOOL_INVALID_PATH,
-            message="pass either 'root' or 'path', not both",
+            message=("pass either 'root' or 'path', not both. For a file or subfolder, "
+                     "use path with the registered folder prefix; omit root"),
             retryable=False,
+            error_details={"effects": "none", "remediation": (
+                "Use path with its registered folder prefix and omit root. "
+                "No read occurred; retry once with corrected scope arguments.")},
         )
     if has_path:
         root, resolved, _display = resolve_knowledge_path(path_argument)
@@ -226,9 +232,9 @@ def _search_root(
                 return
             continue
         if result.total_match_count:
-            context.source_entries.append(
-                (display_path(root, candidate), _first_match_snippet(result.lines))
-            )
+            display = display_path(root, candidate)
+            context.source_entries.append((display, _first_match_snippet(result.lines)))
+            context.lexical_files.setdefault(display, (root, candidate))
         # Worker lines are root-relative; re-anchor them to the display label.
         context.state.consume(
             replace(
@@ -251,6 +257,17 @@ def _first_match_snippet(lines: list[str]) -> str:
     return ""
 
 
+def _search_note(semantic: SemanticOutcome | None, skipped_binary_files: int) -> str | None:
+    notes = [semantic.note] if semantic is not None and semantic.note else []
+    if skipped_binary_files:
+        notes.append(
+            "Regex matching skips binary files; no regex match does not establish that a PDF "
+            "has no text. PDF source_statuses describe indexed native text, not OCR availability. "
+            "Use knowledge_view on the specific file/page to inspect text and available OCR."
+        )
+    return " ".join(notes) or None
+
+
 def _knowledge_search_result(
     *,
     context: _RootSearchContext,
@@ -264,16 +281,24 @@ def _knowledge_search_result(
     sources = build_sources(
         fuse_entries(context.source_entries, passages) if passages else context.source_entries
     )
+    identity_truncated = attach_identities(
+        sources, passages, context.lexical_files, limit=MAX_LEXICAL_SOURCE_HASHES
+    )
     payload: dict[str, object] = {
         "pattern": pattern,
         "result": text_result.output,
         "sources": sources,
         "missing_source_metadata": len(sources) == 0,
     }
+    if identity_truncated:
+        payload["identity_truncated"] = True
+    if semantic is not None and semantic.source_statuses:
+        payload["source_statuses"] = semantic.source_statuses
     if passages:
         payload["passages"] = passages_payload(passages, sources)
-    if semantic is not None and semantic.note:
-        payload["note"] = semantic.note
+    note = _search_note(semantic, context.state.skipped_binary_files)
+    if note:
+        payload["note"] = note
     skipped = skipped_root_labels()
     if skipped:
         payload["skipped_roots"] = list(skipped)
@@ -288,6 +313,8 @@ def _knowledge_search_result(
     if semantic is not None:
         metadata["semantic_passages"] = len(passages)
         metadata["semantic_partial"] = semantic.partial
+        if semantic.reason:
+            metadata["semantic_reason"] = semantic.reason
     # Passages found by meaning make the call useful even when no line matched.
     found_by_meaning = bool(passages)
     return ToolHandlerResult(

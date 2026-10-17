@@ -291,21 +291,10 @@ function normalizeBoolean(value) {
   return value === true;
 }
 
-function resolveLifecycleState({
-  stopping = false,
-  reconnectPending = false,
-  phase = '',
-  transportConnected = false,
-} = {}) {
-  if (stopping) {
-    return 'stopping';
-  }
-  if (reconnectPending) {
-    return 'retrying';
-  }
-  if (phase) {
-    return phase;
-  }
+function resolveLifecycleState({ stopping = false, reconnectPending = false, phase = '', transportConnected = false } = {}) {
+  if (stopping) return 'stopping';
+  if (reconnectPending) return 'retrying';
+  if (phase) return phase;
   return transportConnected ? 'ready' : 'unknown';
 }
 
@@ -317,12 +306,7 @@ function buildRuntimeLifecycleFacet(service, backendStatus = {}, runtimeStatus =
     || sidecarStatus.transportConnected === true;
   const stopping = service?._stopping === true || phase === 'stopping';
   const reconnectPending = service?._autoReconnectPending === true;
-  const state = resolveLifecycleState({
-    stopping,
-    reconnectPending,
-    phase,
-    transportConnected,
-  });
+  const state = resolveLifecycleState({ stopping, reconnectPending, phase, transportConnected });
   const valueRedactor = redactor && typeof redactor.value === 'function'
     ? redactor.value
     : (value, fallback = null) => cloneJsonSafe(value, fallback);
@@ -379,6 +363,7 @@ function buildRuntimeFacet(service, backendStatus = {}, redactor = null, executi
   );
   const trusted = getTrustedExecutionBinding(executionAuthority);
   if (executionAuthority && !trusted) throw new Error('Session execution authority is unavailable.');
+  const llamaServer = buildLlamaServerFacet(service, redactor);
   return {
     available: true,
     engine: normalizeString(source.engine),
@@ -387,7 +372,8 @@ function buildRuntimeFacet(service, backendStatus = {}, redactor = null, executi
     reasoning_effort_support: normalizeString(source.reasoning_effort_support || 'unknown') || 'unknown',
     local_runtime: cloneJsonSafe(source.local_runtime, null),
     chromium_sandbox: cloneJsonSafe(service?.options?.chromiumSandbox, null),
-    llama_server: buildLlamaServerFacet(service, redactor),
+    llama_server: llamaServer,
+    managed_server: buildManagedServerFacet(service, redactor, llamaServer),
     tools_status: cloneJsonSafe(source.tools_status, {}),
     tools_status_scope: 'runtime',
     ...(trusted ? trusted.describeToolAvailability(cloneJsonSafe(source.tools_status, {})) : {}),
@@ -396,38 +382,67 @@ function buildRuntimeFacet(service, backendStatus = {}, redactor = null, executi
 }
 
 const RUNTIME_LABEL_PATTERN = /^[A-Za-z0-9 ._-]{0,32}$/;
+const MANAGED_SERVER_STATES = ['stopped', 'starting', 'ready', 'stopping', 'crashed'];
+const managedInteger = (value) => (Number.isInteger(Number(value)) && Number(value) >= 0 ? Number(value) : 0);
+const managedState = (value) => MANAGED_SERVER_STATES.find((state) => state === normalizeString(value).toLowerCase()) || 'unknown';
+// model_path / last_error can carry the user's home directory.
+const managedText = (redactor, value) => (redactor?.text ? redactor.text(value) : normalizeString(value));
+// A bounded build/version token ('bundled', 'env', 'build 10683', '0.9.1'); never a path.
+const managedRuntimeLabel = (value) => (typeof value === 'string' && RUNTIME_LABEL_PATTERN.test(value) ? value : '');
 
 function buildLlamaServerFacet(service, redactor) {
   const manager = service?.options?.getLlamaServerManager?.();
   if (!manager || typeof manager.getStatus !== 'function') return null;
   try {
     const status = manager.getStatus() || {};
-    const state = normalizeString(status.state).toLowerCase();
-    const integer = (value) => (Number.isInteger(Number(value)) && Number(value) >= 0 ? Number(value) : 0);
-    // model_path / last_error can carry the user's home directory.
-    const text = (value) => (redactor?.text ? redactor.text(value) : normalizeString(value));
     // Wire-shaped like local_runtime; an allowlist so the api key (or any
     // future field on the manager status) can never leak through diagnostics.
     return {
-      state: ['stopped', 'starting', 'ready', 'stopping', 'crashed'].includes(state) ? state : 'unknown',
-      pid: integer(status.pid),
-      port: integer(status.port),
+      state: managedState(status.state),
+      pid: managedInteger(status.pid),
+      port: managedInteger(status.port),
       alias: normalizeString(status.alias),
-      model_path: text(status.modelPath),
+      model_path: managedText(redactor, status.modelPath),
       profile_id: normalizeString(status.profileId),
       acceleration_mode: normalizeString(status.accelerationMode),
       acceleration_reason: normalizeString(status.accelerationReason),
       reused: normalizeBoolean(status.reused),
-      last_error: text(status.lastError),
-      // A bounded build token ('bundled', 'env', 'build 10683', 'custom'); never a path.
-      runtime_label: typeof status.runtimeLabel === 'string' && RUNTIME_LABEL_PATTERN.test(status.runtimeLabel)
-        ? status.runtimeLabel
-        : '',
-      changed_at: integer(status.changedAt),
+      last_error: managedText(redactor, status.lastError),
+      runtime_label: managedRuntimeLabel(status.runtimeLabel),
+      changed_at: managedInteger(status.changedAt),
     };
   } catch (_error) {
     return null;
   }
+}
+
+// One managed server is up at a time: NInfer wins unless it is cleanly stopped,
+// else llama-server. The same allowlist: never a key, a path or a raw object.
+function buildManagedServerFacet(service, redactor, llama) {
+  let status;
+  try { status = service?.options?.getNinferManager?.()?.getStatus?.() || null; } catch (_error) { status = null; }
+  const lastError = status ? managedText(redactor, status.lastError) : '';
+  const ninferState = status ? managedState(status.state) : '';
+  const live = (state) => ['starting', 'ready', 'stopping'].includes(state);
+  // The serving or launching manager wins; a retained NInfer failure shows only
+  // while nothing else serves, so a live llama-server is never hidden behind it.
+  const ninferWins = live(ninferState) || (!live(llama?.state) && !(ninferState === 'stopped' && !lastError));
+  if (!status || !ninferWins) {
+    return llama ? {
+      kind: 'llama-server', state: llama.state, alias: llama.alias, port: llama.port,
+      acceleration_mode: llama.acceleration_mode, last_error: llama.last_error, runtime_label: llama.runtime_label,
+      stopped_by: '', watchdog_watts: 0, changed_at: llama.changed_at,
+    } : null;
+  }
+  const watts = Number(status.watchdogWatts);
+  return {
+    kind: 'ninfer', state: managedState(status.state), alias: normalizeString(status.alias),
+    port: managedInteger(status.port), acceleration_mode: status.mtp === true ? 'mtp' : 'off',
+    last_error: lastError, runtime_label: managedRuntimeLabel(status.runtimeLabel),
+    stopped_by: normalizeString(status.stoppedBy) === 'watchdog' ? 'watchdog' : '',
+    watchdog_watts: Number.isFinite(watts) && watts > 0 ? Math.round(watts) : 0,
+    changed_at: managedInteger(status.changedAt),
+  };
 }
 
 function buildBackendUnavailableFacet(service, error, redactor) {
@@ -450,6 +465,7 @@ function buildRuntimeUnavailableFacet(error, redactor) {
     reasoning_effort_support: 'unknown',
     local_runtime: null,
     llama_server: null,
+    managed_server: null,
     tools_status: {},
     lifecycle: {
       available: false,
@@ -989,6 +1005,7 @@ async function getJennyStatus(service, options = {}) {
     };
   }
   payload.budgets = buildResourceBudgetFacet(payload);
+  payload.memory_reflection = require('./memory-reflection-status').buildMemoryReflectionFacet(service);
   return payload;
 }
 

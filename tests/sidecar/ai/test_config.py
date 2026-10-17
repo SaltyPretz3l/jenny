@@ -603,6 +603,16 @@ def test_parse_runtime_config_defaults_search_tool_fields() -> None:
     assert config.tools_max_edit_file_bytes == 2_097_152
 
 
+def test_parse_runtime_config_accepts_owned_process_handoff_silently(caplog) -> None:
+    """Electron sends the owned-process transfer on every launch; startup reads it
+    elsewhere, so it must not raise the unknown-key WARN that Diagnostics lists."""
+    with caplog.at_level(logging.WARNING, logger="sidecar.ai.config"):
+        parse_runtime_config({"owned_process_handoff": None})
+        parse_runtime_config({"owned_process_handoff": {"token": "t"}})
+
+    assert not [r for r in caplog.records if getattr(r, "event", "") == "ai.config.unknown_keys"]
+
+
 def test_parse_runtime_config_tolerates_retired_subagent_batch_key_silently(caplog) -> None:
     """The retired batch gate is no longer a field, and old payloads load quietly."""
     with caplog.at_level(logging.WARNING, logger="sidecar.ai.config"):

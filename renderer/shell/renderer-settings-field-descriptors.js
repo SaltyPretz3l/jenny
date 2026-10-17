@@ -310,6 +310,7 @@
     options: [{ value: 'session', label: jt('settings.context.fullSession', 'Full session') }, { value: 'recent', label: jt('settings.context.historyScope.lastSixTurns', 'Last 6 turns') }, { value: 'fresh', label: jt('settings.context.historyScope.newPromptOnly', 'New prompt only') }] });
   bool('contextIncludePersonalityToggle', 'context', 'runtimePreferences', 'contextPreferences.includePersonality', true);
   bool('contextIncludeMemoryToggle', 'context', 'runtimePreferences', 'contextPreferences.includeMemory', true);
+  bool('contextMemoryOptOutToggle', 'context', 'runtimePreferences', 'contextPreferences.memoryOptOut', false);
   bool('contextCompactionToggle', 'context', 'features', 'featureFlags.context_compaction', true);
   // Summary guidance saves through the compaction tuning transaction (services/model-tuning-service.js), not the feature settings.
   def({ id: 'compactionPromptField', sectionId: 'context', kind: 'text', default: '', adapterId: 'compactionTuning', key: 'customPrompt', validation: { maxLength: 20000 }, defaultLabel: jt('settings.field.defaultNone', 'None') });
@@ -333,6 +334,9 @@
   bool('appearanceStartupAnimationToggle', 'appearance', 'appearance', 'startupAnimation', true);
   bool('appearanceTitlebarLoadToggle', 'appearance', 'appearance', 'titlebarLoad', false);
   bool('appearanceArtifactAutoOpenToggle', 'appearance', 'appearance', 'artifactAutoOpen', false);
+  // Row 59 checkpoint 6: shell-config performanceTelemetry through window.jennyShell.performance (wire names).
+  bool('performanceShowCounterToggle', 'appearance', 'performance', 'show_counter', false);
+  bool('performanceGpuWarningsToggle', 'appearance', 'performance', 'gpu_warnings_enabled', true);
   bool('appearanceSpellcheckToggle', 'appearance', 'features', 'featureFlags.text_spellcheck', true);
   def({ id: 'appearanceAppZoomSelect', sectionId: 'appearance', kind: 'enum', default: 110, adapterId: 'windowUi', key: 'appZoomPercent', options: 'source:appZoomPresets' });
   def({ id: 'uiLanguageSelect', sectionId: 'appearance', kind: 'enum', default: 'en', adapterId: 'chatUi', key: 'uiLanguage', options: 'source:uiLanguages' });
@@ -367,9 +371,12 @@
   });
   bool('notificationsReplyPreviewToggle', 'notifications', 'windowUi.notifications', 'replyPreview', false);
 
-  // Offline, Memories
+  // Offline, Memories (memory v2 switches: shell config `memory`, saved through the features bridge)
   bool('offlineLocalOnlyToggle', 'offline', 'offline', 'localOnly', false);
-  bool('memoryCaptureSuggestions', 'memories', 'memory', 'captureSuggestions', true);
+  bool('memoryTakeNotes', 'memories', 'memory', 'takeNotes', true);
+  bool('memoryAskBeforeSaving', 'memories', 'memory', 'askBeforeSaving', false);
+  bool('memoryPauseSaving', 'memories', 'memory', 'pauseSaving', false);
+  bool('memoryUseInChats', 'memories', 'memory', 'useInChats', true);
 
   // The Limits & budgets page: its groups, rows and the engine or runtime limit each line edits.
   // renderer-settings-advanced-section.js draws it; the search stubs below take their copy from it.

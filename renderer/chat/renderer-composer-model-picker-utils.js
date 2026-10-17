@@ -59,6 +59,13 @@
     if (engineType === 'vllm') {
       return { key: 'vllm', label: 'vLLM', order: 20 };
     }
+    // A managed server's model is not a user-run endpoint: name the runtime.
+    if (engineType === 'openai-compatible' && source.managed === 'ninfer') {
+      return { key: 'ninfer', label: 'NInfer', order: 22 };
+    }
+    if (engineType === 'openai-compatible' && source.managed === 'llama-server') {
+      return { key: 'llama-server', label: 'llama-server', order: 23 };
+    }
     if (engineType === 'openai-compatible') {
       return { key: 'openai-compatible', label: jt('composer.modelPicker.openAiCompatibleGroup', 'OpenAI-compatible'), order: 25 };
     }
@@ -109,7 +116,7 @@
       tagHead: split.tagHead,
       org: split.org,
       engineHint: split.engineHint,
-      group: resolveModelGroup({ id: id, engineType: engineType }),
+      group: resolveModelGroup({ id: id, engineType: engineType, managed: source.managed }),
     };
   }
 

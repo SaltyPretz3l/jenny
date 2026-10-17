@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mergeSnapshotEntries, retainRunEntries } = require('../renderer/shell/renderer-diagnostics-view-state');
+const { mergeSnapshotEntries, retainRunEntries, TABS, ensureDiagnosticsViewState, createDiagnosticsWorkspaceRefresher } = require('../renderer/shell/renderer-diagnostics-view-state');
 
 test('run-aware retention preserves prior evidence while trimming current informational rows', () => {
   const prior = Array.from({ length: 250 }, (_, index) => ({ run_id: 'prior', sequence: index + 1, level: 'INFO', event: `prior.${index}` }));
@@ -13,6 +13,72 @@ test('run-aware retention preserves prior evidence while trimming current inform
   assert.equal(retained.filter((entry) => entry.run_id === 'prior').length, 250);
   assert.equal(retained.filter((entry) => entry.run_id === 'current').length, 750);
   assert.ok(retained.some((entry) => entry.event === 'current.failure'));
+});
+
+test('exported frozen tabs define valid view state', () => {
+  assert.deepEqual(TABS, ['overview', 'activity', 'runs']);
+  assert.equal(Object.isFrozen(TABS), true);
+  for (const activeTab of TABS) assert.equal(ensureDiagnosticsViewState({ ui: { logs: { activeTab } } }).activeTab, activeTab);
+  assert.equal(ensureDiagnosticsViewState({ ui: { logs: { activeTab: 'invalid' } } }).activeTab, TABS[0]);
+});
+
+test('Overview resize is bounded session state and a fresh session gets the default', () => {
+  const state = { ui: { logs: { overviewMetricsPercent: 65 } } };
+  assert.equal(ensureDiagnosticsViewState(state).overviewMetricsPercent, 65);
+  state.ui.logs.activeTab = 'activity';
+  assert.equal(ensureDiagnosticsViewState(state).overviewMetricsPercent, 65);
+  state.ui.logs.overviewMetricsPercent = 90;
+  assert.equal(ensureDiagnosticsViewState(state).overviewMetricsPercent, 75);
+  state.ui.logs.overviewMetricsPercent = 20;
+  assert.equal(ensureDiagnosticsViewState(state).overviewMetricsPercent, 40);
+  assert.equal(ensureDiagnosticsViewState({}).overviewMetricsPercent, 60);
+});
+
+function refreshFixture(failStatus = false) {
+  const prior = { run_id: 'prior', integrity: { complete: true, partial_reasons: [] } };
+  const state = { logs: [], diagnosticsSnapshot: null, diagnosticsRefreshedAt: 1 };
+  const snapshot = { entries: [], integrity: { complete: true }, active_run: { run_id: 'current', integrity: { complete: true } }, prior_run: prior };
+  const options = {
+    state, getShell: () => ({
+      diagnostics: { logs: { getSnapshot: async () => snapshot }, getJennyStatus: async () => {
+        if (failStatus) throw new Error('offline');
+        return {};
+      } },
+      scheduler: { getState: async () => ({}) }, harness: { inspect: async () => ({}) },
+    }), renderIfVisible() {}, onError() {},
+    refreshPhasePercentiles: async () => true, refreshObservability: async () => true,
+  };
+  return { state, prior, options };
+}
+
+test('live refresh failures mark current integrity while preserving prior-run evidence', async () => {
+  const { state, prior, options } = refreshFixture(true);
+  await assert.rejects(createDiagnosticsWorkspaceRefresher(options).refresh(), /status/);
+  assert.equal(state.diagnosticsSnapshot.integrity.complete, false);
+  assert.deepEqual(state.diagnosticsSnapshot.active_run.integrity.partial_reasons, ['refresh_status_failed']);
+  assert.equal(state.diagnosticsSnapshot.prior_run, prior);
+  assert.deepEqual(prior.integrity, { complete: true, partial_reasons: [] });
+});
+
+test('settled workspace refreshes record an update time on success and partial failure', async () => {
+  for (const failStatus of [false, true]) {
+    const { state, options } = refreshFixture(failStatus);
+    const before = Date.now();
+    const pending = createDiagnosticsWorkspaceRefresher(options).refresh();
+    if (failStatus) await assert.rejects(pending, /status/);
+    else await pending;
+    assert.ok(state.diagnosticsRefreshedAt >= before && state.diagnosticsRefreshedAt <= Date.now());
+  }
+});
+
+test('disposed workspace refreshes do not record an update time', async () => {
+  const { state, options } = refreshFixture();
+  let disposed = false;
+  options.isDisposed = () => disposed;
+  const pending = createDiagnosticsWorkspaceRefresher(options).refresh();
+  disposed = true;
+  assert.deepEqual(await pending, { complete: false });
+  assert.equal(state.diagnosticsRefreshedAt, 1);
 });
 
 test('snapshot merge preserves only uncommitted renderer origins and assigns them to the active run', () => {

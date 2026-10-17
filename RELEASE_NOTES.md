@@ -1,5 +1,72 @@
 # Release Notes
 
+## 1.5.0 - 2026-10-17
+
+Everything landed since 1.4.0, through private `main` on 2026-10-17: 236
+commits over nine days, including a two-day live-app gate sitting over the
+shipped surfaces. The headline is memory that carries across chats: Jenny
+remembers, corrects and forgets notes with a receipt and Undo for each change,
+takes notes on her own while the model is idle, and can look back over your
+earlier chats.
+
+### Changelog
+
+**Features**
+
+- Memory across chats: a `memory` tool remembers, updates, forgets, recalls and lists notes, and every write shows a chat chip with Undo. Project memories stay in their project, "Ask before Jenny saves" queues a proposal instead, and a memory marked always-on rides every prompt. `/remember`, `/forget` and `/memory` work from the Composer. Kill switch `JENNY_ENABLE_MEMORY_V2=0`.
+- Automatic notes: after the local model has been quiet for 30 seconds, Jenny reads back over a finished chat and saves notes, shown as "Jenny took a note" (or a folded "Jenny took N notes") with Undo per note; a new chat turn preempts the run. The "Jenny takes notes automatically" switch and the per-chat "Don't remember this chat" opt out.
+- Settings > Memory is rebuilt: one list per scope (General, then each project) with search, an always-on switch per row, Edit, Forget (with Undo) and Erase now, Forgotten and History folds with Restore and the last 50 changes, Export as Markdown, and Open USER.md / Open MEMORY.md.
+- Looking back: `conversations_recent`, `conversation_open` and `conversations_search` list, open and search the project's earlier chats, and a recap line from recent chats rides the prompt. An embedding-assisted hybrid recall is included but off by default (`JENNY_ENABLE_MEMORY_HYBRID_RECALL=1`).
+- Linked chats: Jenny can offer to split work into a new chat. "New session" has her write a handoff, starts a linked child from it, and the child reports each finished turn back to its parent. The sidebar nests children under their parent and `/linked` lists them.
+- Messages between chats: "Send to chat" delivers one exact text that the destination includes in its next turn. The model's `session_message` tool needs a one-off approval of the exact bytes or a seven-day grant you create with a purpose; both can be reviewed and revoked.
+- Inline Git and command proposals: Jenny proposes a Git action or an exact command as a card in the chat. Test first, Commit and Run execute exactly what was proposed through the ordinary approval path, native or Docker; Plan mode, read-only chats and offline lockdown refuse Run.
+- Chat workspace: the reading width follows its pane (Narrow or Standard); each pane gets a session rail with Environment, Context, Outputs, Changes and Background tasks plus live generation speed and GPU figures; the next-send context preview follows the current chat.
+- Sub-agents: Settings > Subagent routing sets each provider's default model and effort, preferred and allowed models and a maximum effort, and the monitor shows a child's live response and tool steps as they run.
+- Managed NInfer (Windows, RTX 5090): Settings > Models recommends NInfer on an eligible card and sets it up with one button (pinned runtime and Qwen3.8 27B NVFP4). A 150k window with an 8-bit KV cache is the default and 256k is offered; MTP drafting and Qwen3.8 vision are on with Tune toggles; an opt-in power and temperature watchdog stops the server at your thresholds. Kill switch `JENNY_ENABLE_NINFER=0`.
+- MCP prompts and rea: an approved connection's prompts become `/<server>-<prompt>` Composer commands that attach the fetched prompt as a chip. Settings > Extensions gains a Windows "Reverse engineering (rea)" preset with a consented, hash-pinned managed install and a "Check readiness" probe, read-only tags on tools that claim it, and an opt-in "Read-only tools run without asking" switch per connection.
+- Images: a rebuilt full-screen viewer with Previous/Next over the chat's images, generation details, Copy, Save as and Show in folder, and an edit mode for generated images. Generated, attached and Python-output images all open it.
+- Conversation transfer: Settings copies a chat between Jenny and Codex with its attachments and image context, within size limits.
+- Linux setup: the Ollama step recognizes an Ollama that is already running (your own process, a system or user service, a Snap or a Docker container), shows its version, and offers Upgrade this Ollama, Stop it for me or Use Jenny's own Ollama.
+- Managed llama-server shows a measured prefill progress ring (`JENNY_ENABLE_PREFILL_PROGRESS=0`), and the stream activity row names the plan or the next step instead of a generic throbber.
+- Diagnostics opens on one status line and a Needs attention list with a next step each, puts Runtime and Performance first, gets a message-first Activity log with an inspector, and counts every project's memories.
+- Activity panel (default off, `JENNY_ENABLE_ACTIVITY_MONITOR=1`): one Test Runner monitor shared by Chat and Workspace.
+- One-command install scripts ship in the repository: `install.ps1` for Windows x64 and `install.sh` for Linux x64 and Apple Silicon, pinning the latest stable tag and verifying its checksums. They stay marked pending in the README until verified from the public URLs.
+
+**Reworks**
+
+- The memory store is rebuilt at schema 10 with an operations ledger behind every write, undo and restore. The "Remember this?" toast, regex memory capture and response-style injection are retired; deleting a project archives its memories instead of moving them to General; the inline MEMORY.md editor gives way to Open MEMORY.md; a project chat's Notes slot shows the project notes.
+- Chat and catalog indexes are derived data: rebuilt rather than archived or restored.
+- Shell commands run in a non-interactive environment (no pager, editor or credential prompts), and truncated output keeps its head and tail.
+- Compaction stubs old tool output first and leaves a `recall_tool_output` handle, lists the files a turn wrote, and retries a summary that was cut off. `edit_file` accepts trailing-whitespace, typography and indentation differences when exactly one span matches, and the loop detector tells a repeated call from one whose result changed. Each can be turned off with `JENNY_ENABLE_<KEY>=0`.
+- MCP connections: rows carry an optional environment, memory and process limits and request and inspect timeouts (configuration schema 2); longer descriptions and deeper schemas are admitted; a server is reused across configuration reloads unless its own settings change.
+- Owned processes and background jobs are recorded in a profile ledger and handed off across a sidecar restart instead of being orphaned.
+- The semantic catalog moves to schema 3 (one automatic re-extraction): citations carry page or line locators, and truncation or an embedding failure shows as a coverage notice. The context panel's Artifacts list retires in favour of the session rail.
+
+**Fixes**
+
+- MCP server tools called from the desktop app were rejected as unavailable; they now run through the same policy, approval and read-only checks as built-in tools.
+- Tool calls: a call the model writes as text for a tool the turn did not offer is recovered; a text call followed by a made-up result is shown, not run; an empty malformed call reaches the repair retry; llama-server tool schemas drop top-level `anyOf`, so `write_file` no longer arrives with empty arguments.
+- Stops: a reply that hit the length limit says it was cut off and the budget used up, and after the tool cap a complete prose answer says it was written without further tool calls instead of reading as unfinished.
+- Models: a managed llama-server or NInfer id is never sent to Ollama; connected Codex CLI models appear in the Composer picker on any engine; a library folder with several GGUF quants lists each; an image sent to a model without vision is blocked before the load; a streaming-error toast clears when a later turn completes.
+- Python charts render live and after a reload, and figures closed after `savefig` are captured.
+- Propose mode and Changes: a settled proposal row offers Review suggestion, every Review button opens the side panel and its diff has line styles, and a failed Undo is resumable. On Windows a restore creates directories through a held parent handle, file trees are removed without following junctions, and a blocked pipe read is cancelled before a command's pipes close, so a foreign holder of its output no longer freezes Stop.
+- Timeline: the Answers view no longer slides run summaries at the end of a reply, a keyboard view switch refreshes the toggle's tooltip, and the boot-curtain starfield scales with the window.
+- A message sent while the desktop Docker command sandbox is still starting or changing shows a calm "Command sandbox is changing" notice and keeps the draft.
+- Open With works on Windows accounts with a restricted PowerShell execution policy; unsaved editor buffers are checked when the app quits; the Workspace DOCX editor no longer re-serializes the whole document on every keystroke.
+- A rotated ChatGPT credential stays authoritative when its save fails, and a secret that cannot be decrypted is kept rather than deleted.
+- Imports bound every message field and drop unknown keys; knowledge citations validate their locators and PDF retrieval keeps its coverage and source identity.
+- Linux: a packaged sidecar is stopped through its interpreter rather than its bootloader alone, and a cancelled Ollama install restores Jenny's engine exactly once.
+- An image-engine render that clean-up cannot prove ended offers a confirmed "Clear anyway" instead of holding the GPU.
+- Dependencies: DOMPurify 3.4.16, AnyIO 4.14.2 in the packaged Python runtime, KaTeX 0.18.10 (shared with Mermaid 12.2.0, which keeps Jenny's Dagre layout and classic diagram look).
+
+### Migration and qualification
+
+- Canonical sessions move from schema 24 to 25 (coordination, proposals and linked-chat records) and the memory store from schema 8 to 10 (operations ledger and recall vectors) when 1.5.0 first opens a profile. Export anything you care about before upgrading, and do not point an older build at a migrated profile as a rollback. The sidecar `API_VERSION` moves from `2026-08-17` to `2026-10-15`, so Electron and its sidecar must ship together. Shell configuration stays at schema 59 and the diagnostics schema at 1. The MCP connection file moves from schema 1 to 2 on its next change; the semantic catalog and conversation indexes are rebuilt caches.
+- Deleting a project now archives its memories; a forgotten memory from a deleted project can be restored into General or a live project from the Memory page. Existing memories keep their text and are mapped onto the new kinds.
+- The candidate passed the full local CI gate (45 policy checks, 2,453 Node test files, 13,943 Python tests, 274 backend contracts, lint, typing, 91.41% coverage) and the authorized 31-case GUI suite; the final clean candidate passed a clean Windows build, strict packaged smoke and updater-asset verification. Real-model passes on a local 9B model in the actual app covered the Memory page, recall and conversation search after a restart, automatic notes with Undo, preemption and crash recovery, linked-chat handoff, reports and restart recovery, message approval, deny and scoped grants, Git Test first and Commit, native and Docker command proposals with lockdown, stop and restart, startup-refusal recovery, and a plain 1.5.0 export restored into published 1.4.0.
+- Not yet covered: an installed 1.4.0 to 1.5.0 upgrade on a separate Windows account, native keyboard and IME input and a visual review, and the fluency of the Arabic and Polish interface text. Hybrid (embedding) memory recall stays off by default. NInfer's wider performance and GPU-contention behaviour and the rea live-model pass are not qualified.
+- Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental and were not retested on native hardware for 1.5.0.
+
 ## 1.4.0 - 2026-10-08
 
 Everything landed since 1.3.1, through private `main` on 2026-10-08: 226

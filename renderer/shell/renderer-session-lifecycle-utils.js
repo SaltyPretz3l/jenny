@@ -41,8 +41,6 @@
       : () => null;
     const clearComposerStatusNotice = deps.callbacks?.clearComposerStatusNotice || (() => {});
     const resetArtifactsState = deps.callbacks?.resetArtifactsState || (() => {});
-    const resetMemorySuggestionState = deps.callbacks?.resetMemorySuggestionState || (() => {});
-    const clearDismissedMemorySession = deps.callbacks?.clearDismissedMemorySession || (() => {});
     const pruneSessionArtifacts = deps.callbacks?.pruneSessionArtifacts || (() => {});
     const evictPretextArticlePredictions = deps.callbacks?.evictPretextArticlePredictions || (() => {});
     const maybeAutoTitleSession = deps.callbacks?.maybeAutoTitleSession || (() => {});
@@ -248,7 +246,6 @@
         await sessionCacheController.clearSessionStreamState(sessionId);
         removeSessionState(sessionId);
         state.sessionMessageAccessOrder?.delete(sessionId);
-        clearDismissedMemorySession(sessionId);
       }
       if (staleSessionIds.size > 0) {
         evictPretextArticlePredictions();
@@ -376,7 +373,6 @@
         resetAttachmentQueue();
         clearActiveFileContext();
         state.interactiveDraftsBySession.clear();
-        resetMemorySuggestionState();
         if (typeof resetArtifactsState === 'function') resetArtifactsState();
         renderAll();
         return;

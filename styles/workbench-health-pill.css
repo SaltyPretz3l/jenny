@@ -329,6 +329,45 @@
   white-space: nowrap;
 }
 
+/* Row 59 cp6: GPU-memory evidence. warning/danger tint the state line; unknown stays muted. */
+.workbench-health-popover-gpu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-3);
+}
+
+.workbench-health-popover-gpu-title {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body);
+  font-weight: 500;
+}
+
+.workbench-health-popover-gpu-state {
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+}
+
+.workbench-health-popover-gpu[data-gpu-tone="warning"] .workbench-health-popover-gpu-state {
+  color: var(--state-warning);
+}
+
+.workbench-health-popover-gpu[data-gpu-tone="danger"] .workbench-health-popover-gpu-state {
+  color: var(--state-danger);
+}
+
+.workbench-health-popover-gpu[data-gpu-tone="muted"] .workbench-health-popover-gpu-state {
+  color: var(--text-muted);
+}
+
+.workbench-health-popover-gpu-caveat {
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  line-height: 1.45;
+}
+
 .workbench-health-popover-actions {
   display: flex;
   flex-wrap: wrap;

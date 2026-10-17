@@ -16,7 +16,7 @@ from pathlib import Path
 
 from sidecar.ai.config_models import SemanticCatalogConfig
 from sidecar.ai.config_parsing import parse_semantic_catalog_config
-from sidecar.ai.semantic.catalog import SearchResult, SemanticCatalog
+from sidecar.ai.semantic.catalog import AdmitSource, SearchResult, SemanticCatalog
 from sidecar.ai.semantic.provider import EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
 from sidecar.ai.semantic.store import CatalogStore, CatalogStoreError
 
@@ -96,16 +96,18 @@ def _open(settings: SemanticCatalogConfig) -> SemanticCatalog:
     )
 
 
-def search_catalog(
-    query: str,
+def search_catalog(  # noqa: PLR0913 - the catalog search's keyword surface.
+    query: str | None,
     *,
     root_paths: Sequence[str],
     limit: int,
     timeout_seconds: float,
     accept: Callable[[str, str], bool] | None = None,
+    admit: AdmitSource | None = None,
 ) -> SearchResult | None:
     """Semantic hits for ``query`` within ``root_paths``; ``None`` when not configured.
 
+    A None query reads coverage metadata only, without an embedding request.
     Never raises: an unavailable index or embedder comes back as a
     ``SearchResult`` with a ``reason`` code and no hits.
     """
@@ -121,6 +123,5 @@ def search_catalog(
             except (CatalogStoreError, EmbeddingProviderError) as error:
                 return SearchResult(reason=error.code)
             _catalog = catalog
-    return catalog.search(
-        query, root_paths=root_paths, limit=limit, timeout_seconds=timeout_seconds, accept=accept
-    )
+    return catalog.search(query, root_paths=root_paths, limit=limit,
+                          timeout_seconds=timeout_seconds, accept=accept, admit=admit)

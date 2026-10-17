@@ -451,3 +451,12 @@ test('normalizeInteractiveResponse: answers array is normalized (filters invalid
   assert.ok(result !== null);
   assert.equal(result.answers.length, 1);
 });
+
+test('a chat whose only rows are received messages still takes its first prompt title (row 59 cp4)', () => {
+  const summary = { title: 'New Chat', message_count: 1 };
+  assert.equal(shouldApplyAutomaticSessionTitle(summary, 'Plan the release'), false, 'count-only summary stays as before');
+  const withRows = { ...summary, messages: [{ role: 'context', kind: 'session_message_receipt', content: 'x' }] };
+  assert.equal(shouldApplyAutomaticSessionTitle(withRows, 'Plan the release'), true);
+  const conversed = { ...summary, messages: [{ role: 'user', content: 'hi' }] };
+  assert.equal(shouldApplyAutomaticSessionTitle(conversed, 'Plan the release'), false);
+});

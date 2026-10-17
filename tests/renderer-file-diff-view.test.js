@@ -85,3 +85,46 @@ test('legacy artifact hunk renderer also advances after an empty context line', 
   const derived = parse(renderDiffHunks([{ ...hunks[0], path: 'src/example.ts' }], (value) => String(value)));
   assert.equal(derived.querySelector('.diff-content').dataset.languageId, 'typescript');
 });
+
+// Row 59 checkpoint 2 opt-ins (the working-tree Changes page): default markup is covered above and must not move.
+test('stacked layout strips the folder slash and tags the row; the default markup keeps it', () => {
+  const stacked = parse(buildFileDiffMarkup({ path: 'src/deep/example.js', diffId: 'd1', stacked: true, hunks, actionButton }));
+  assert.ok(stacked.querySelector('.file-diff').classList.contains('file-diff--stacked'));
+  assert.equal(stacked.querySelector('.file-diff-directory').textContent, 'src/deep');
+  assert.equal(stacked.querySelector('.file-diff-basename').textContent, 'example.js');
+  const plain = parse(buildFileDiffMarkup({ path: 'src/deep/example.js', diffId: 'd1', hunks, actionButton }));
+  assert.equal(plain.querySelector('.file-diff').classList.contains('file-diff--stacked'), false);
+  assert.equal(plain.querySelector('.file-diff-directory').textContent, 'src/deep/');
+  assert.equal(plain.querySelector('.file-diff-note'), null);
+});
+
+test('notes render escaped between the path and the counts', () => {
+  const doc = parse(buildFileDiffMarkup({ path: 'a.txt', diffId: 'd1', hunks, additions: 3, deletions: 0, notes: ['new', '<b>untracked</b>', ''], actionButton }));
+  const note = doc.querySelector('.file-diff-note');
+  assert.equal(note.textContent, 'new · <b>untracked</b>');
+  assert.equal(note.querySelector('b'), null);
+  assert.equal(note.nextElementSibling.className, 'file-diff-counts');
+});
+
+test('an expandable row with a supplied body is open before it has hunks and escapes nothing it was handed as trusted markup', () => {
+  const closed = parse(buildFileDiffMarkup({ path: 'a.txt', diffId: 'd1', expandable: true, actionButton }));
+  assert.equal(closed.querySelector('.file-diff-toggle').getAttribute('aria-expanded'), 'false');
+  assert.ok(closed.querySelector('[data-file-diff-pending]'), 'a lazy row is closed with a pending body');
+  const open = parse(buildFileDiffMarkup({ path: 'a.txt', diffId: 'd1', expandable: true, expanded: true, bodyHtml: '<div role="listitem" class="note">Loading</div>', actionButton }));
+  assert.equal(open.querySelector('.file-diff-toggle').getAttribute('aria-expanded'), 'true');
+  assert.equal(open.querySelector('.file-diff-body .note').textContent, 'Loading');
+  assert.ok(open.querySelector('[data-file-diff-materialized]'));
+  // Truncation still wins over the opt-in.
+  const truncated = parse(buildFileDiffMarkup({ path: 'a.txt', diffId: 'd1', expandable: true, truncated: true, actionButton }));
+  assert.equal(truncated.querySelector('.file-diff-chevron'), null);
+});
+
+test('an open button can carry its own dataset and label without a change id', () => {
+  const doc = parse(buildFileDiffMarkup({ path: 'a.txt', diffId: 'd1', hunks, openDataset: { 'changes-wt-open': 'a.txt' }, openLabel: 'Open a.txt in Workspace', actionButton }));
+  const open = doc.querySelector('.file-diff-open');
+  assert.equal(open.dataset.changesWtOpen, 'a.txt');
+  assert.equal(open.getAttribute('aria-label'), 'Open a.txt in Workspace');
+  assert.equal(open.hasAttribute('data-jenny-open-change-diff'), false);
+  const none = parse(buildFileDiffMarkup({ path: 'a.txt', diffId: 'd1', hunks, actionButton }));
+  assert.equal(none.querySelector('.file-diff-open'), null, 'no change id and no opt-in: still no button');
+});

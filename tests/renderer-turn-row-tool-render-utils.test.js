@@ -966,3 +966,38 @@ test('the approval gap card previews the full input object, never the capped inp
   const legacyDom = new JSDOM(`<main>${legacy}</main>`).window.document;
   assert.equal(legacyDom.querySelector('.tool-approval-command').textContent, 'npm test');
 });
+
+test('a paired propose_command result renders the proposal card, anything else keeps the tool row', async () => {
+  const { createTurnRowRenderUtils } = require('../renderer/chat/renderer-turn-row-render-utils');
+  const store = require('../renderer/chat/renderer-proposal-card-store');
+  const cardsModule = require('../renderer/chat/renderer-proposal-cards');
+  const proposalId = `proposal_${'d'.repeat(64)}`;
+  const gets = [];
+  const savedWindow = globalThis.window;
+  globalThis.window = { jennyShell: { sessionProposals: { get: async (request) => { gets.push(request); return null; }, onChanged: () => () => {} } } };
+  Object.assign(globalThis, { rendererProposalCardStore: store, rendererProposalCards: cardsModule });
+  try {
+    const renderer = createTurnRowRenderUtils({ MESSAGE_STATUS: { STREAMING: 'streaming' }, escapeHtml });
+    const call = { row_id: 'r1', turn_id: 't1', kind: 'tool_call', primary_message_id: 'tool_use_c1', tool_call_id: 'c1',
+      payload: { tool_call_id: 'c1', tool_name: 'propose_command', state: 'completed', input: { command: 'echo "<x>" && ls' } } };
+    const result = { row_id: 'r2', turn_id: 't1', kind: 'tool_result', primary_message_id: 'tool_result_c1', tool_call_id: 'c1',
+      payload: { tool_call_id: 'c1', tool_name: 'propose_command', state: 'completed', metadata: { result_kind: 'command_proposal', proposal_id: proposalId } } };
+    const html = renderer.buildTurnRowListMarkup([call, result], [], { sessionId: 'pane-s' });
+    assert.match(html, new RegExp(`data-proposal-id="${proposalId}"`));
+    assert.match(html, /data-proposal-session="pane-s"/);
+    assert.match(html, /echo &quot;&lt;x&gt;&quot; &amp;&amp; ls/);
+    assert.equal((html.match(/data-row-id=/g) || []).length, 1, 'one card for the call and its result');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(gets, [{ schema_version: 1, session_id: 'pane-s', proposal_id: proposalId }]);
+    assert.doesNotMatch(renderer.buildTurnRowListMarkup([call], [], { sessionId: 'pane-s' }), /data-proposal-id/, 'no result yet: the plain row');
+    const bare = { ...result, payload: { ...result.payload, metadata: { result_kind: 'something_else' } } };
+    assert.doesNotMatch(renderer.buildTurnRowListMarkup([call, bare], [], { sessionId: 'pane-s' }), /data-proposal-id/);
+  } finally {
+    globalThis.window = savedWindow;
+    delete globalThis.rendererProposalCardStore;
+    delete globalThis.rendererProposalCards;
+  }
+  for (const toolName of ['propose_git_action', 'propose_command']) {
+    assert.equal(toolCallUtils.isToolRunFoldable({ toolName, status: 'completed', approvalRequested: false, hasOwnContent: false }), false, toolName);
+  }
+});

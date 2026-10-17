@@ -1,100 +1,68 @@
 'use strict';
 
+// The Engine and memory facts (formerly the Performance resource rows): model memory, app memory and
+// system memory read from status.budgets.resources, formatted by the shared Diagnostics formatters.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { budgetDisplayRows, formatBytes } = require('../renderer/shell/renderer-diagnostics-performance-utils');
-const MB = 1024 * 1024;
-const GB = 1024 * MB;
+const { formatBytes } = require('../renderer/shell/renderer-diagnostics-format');
+const { createOverviewHarness, makeState, readyBackend, MB, GB } = require('./helpers/diagnostics-overview-harness');
 
-test('resource rows precede Usage, token, cost and tool rows in order', () => {
-  const rows = budgetDisplayRows({
-    available: true, inputs: { usage: true },
-    resources: {
-      app_memory_bytes: 412 * MB,
-      model_memory: { ram_bytes: 4.1 * GB, vram_bytes: 2 * GB, vram_total_bytes: 8 * GB,
-        models: [{ name: 'alpha', size_bytes: 4.1 * GB }, { name: 'beta', size_bytes: null }] },
-      workers: { active: 2, max: 4 },
-      retained_caches: { bytes: 184 * MB, items: [{ name: 'Prompt cache' }, { name: 'File index' }] },
-      system_memory: { percent: 91, pressure: 'high' },
-    },
-    usage: { session_total_tokens: 21, cumulative_total_tokens: 44, session_provider_cost_usd: 0.21, cumulative_provider_cost_usd: 0.44 },
-    items: [{ kind: 'tool_pressure', id: 'read_file', error_count: 2, slow_count: 3 },
-      { kind: 'tool_pressure', id: 'web_fetch', error_count: 0, slow_count: 1 },
-      { kind: 'resource_pressure', status: 'high' }, { kind: 'slow_operations', count: 5 }],
+function memoryFacts(t, resources, extra) {
+  const harness = createOverviewHarness(t);
+  harness.render(makeState({ diagnosticsStatus: { backend: readyBackend(), budgets: { available: true, inputs: { usage: false }, resources, ...extra } } }), []);
+  const read = (label) => harness.fact(label);
+  const text = (label) => read(label).textContent.replace(/\s+/g, ' ').trim();
+  return { harness, read, text };
+}
+
+test('model, app and system memory read from the resource measurements in order', (t) => {
+  const { harness, text } = memoryFacts(t, {
+    app_memory_bytes: 412 * MB,
+    model_memory: { ram_bytes: 4.1 * GB, vram_bytes: 2 * GB, vram_total_bytes: 8 * GB, models: [{ name: 'alpha', size_bytes: 4.1 * GB }, { name: 'beta', size_bytes: null }] },
+    workers: { active: 2, max: 4 },
+    retained_caches: { bytes: 184 * MB, items: [{ name: 'Prompt cache' }] },
+    system_memory: { percent: 91, pressure: 'high' },
   });
-  assert.deepEqual(rows.map((row) => row.label), ['App memory', 'Model memory', 'Workers', 'Retained caches',
-    'System memory pressure', 'Usage', 'Session tokens', 'Cumulative tokens', 'Session provider cost', 'Cumulative provider cost', 'read_file', 'web_fetch']);
-  assert.equal(rows[0].sub, "Jenny's own windows and helpers");
-  assert.equal(rows[0].value, '412 MB');
-  assert.equal(rows[1].sub, '2 models loaded');
-  assert.equal(rows[1].subTitle, 'alpha \u00b7 4.1 GB\nbeta \u00b7 Not measured on this build');
-  assert.equal(rows[1].value, '4.1 GB RAM \u00b7 2.0 GB VRAM');
-  assert.equal(rows[1].valueSmall, 'of 8.0 GB');
-  assert.equal(rows[2].value, '2');
-  assert.equal(rows[2].valueSmall, 'of 4');
-  assert.equal(rows[3].sub, 'Prompt cache \u00b7 File index');
-  assert.equal(rows[4].sub, '91% of system RAM in use');
-  assert.equal(rows[4].value, 'High');
-  assert.equal(rows[4].tone, 'warn');
-  assert.deepEqual(rows[5], { group: 'usage', label: 'Usage' });
-  assert.equal(rows[10].value, '2 errors \u00b7 3 slow');
-  assert.equal(rows[10].tone, 'error');
-  assert.equal(rows[11].tone, '');
+  const labels = Array.from(harness.group('Engine and memory').querySelectorAll('dt')).map((node) => node.textContent);
+  assert.deepEqual(labels, ['Engine', 'Model memory', 'App memory', 'System memory']);
+  assert.equal(text('App memory'), '412 MB');
+  assert.equal(text('Model memory'), '2.0 GB VRAM of 8.0 GB · 4.1 GB RAM');
+  assert.equal(text('System memory'), '91% in use high');
+  assert.doesNotMatch(harness.text('diagnosticsRuntimeInventory'), /Workers|Retained caches|Prompt cache/, 'only the facts the design keeps');
 });
 
-test('missing resource measurements retain unavailable rows', () => {
-  assert.deepEqual(budgetDisplayRows({ available: false }), []);
-  const rows = budgetDisplayRows({ available: true });
-  assert.equal(rows.length, 5, 'no Usage heading when nothing follows it');
-  for (const row of rows.slice(0, 5)) {
-    assert.equal(row.state, 'unavailable');
-    assert.equal(row.value, 'Not measured on this build');
+test('missing resource measurements read Not measured', (t) => {
+  const { read } = memoryFacts(t, undefined);
+  for (const label of ['Model memory', 'App memory', 'System memory']) {
+    assert.equal(read(label).textContent.trim(), 'Not measured', label);
+    assert.ok(read(label).querySelector('.diagnostics-muted'));
   }
 });
 
-test('real zeros are measured and null VRAM and totals are omitted', () => {
-  const rows = budgetDisplayRows({ available: true, resources: {
+test('real zeros are measured; null VRAM and totals are omitted', (t) => {
+  const { text } = memoryFacts(t, {
     app_memory_bytes: 0,
     model_memory: { ram_bytes: 0, vram_bytes: null, vram_total_bytes: null, models: [{ name: 'empty', size_bytes: 0 }] },
-    workers: { active: 0, max: 0 }, retained_caches: { bytes: 0, items: [] },
     system_memory: { percent: 0, pressure: 'normal' },
-  } });
-  assert.equal(rows[0].value, '0 MB');
-  assert.equal(rows[1].value, '0 MB RAM');
-  assert.equal(rows[1].sub, '1 model loaded');
-  assert.equal(rows[1].valueSmall, '');
-  assert.equal(rows[2].value, '0');
-  assert.equal(rows[2].valueSmall, 'of 0');
-  assert.equal(rows[3].value, '0 MB');
-  assert.equal(rows[4].value, 'Normal');
-  assert.equal(rows[4].tone, '');
-  for (const row of rows.slice(0, 5)) assert.equal(row.state, '');
+  });
+  assert.equal(text('App memory'), '0 MB');
+  assert.equal(text('Model memory'), '0 MB RAM');
+  assert.equal(text('System memory'), '0% in use normal');
 });
 
-test('cache sublabels are bounded and critical and unknown pressure keep their meaning', () => {
-  const rows = budgetDisplayRows({ available: true, resources: {
-    retained_caches: { bytes: 1, items: [{ name: 'a'.repeat(70) }] },
-    system_memory: { percent: 95, pressure: 'critical' },
-  } });
-  assert.equal(rows[3].sub, 'a'.repeat(59) + '…');
-  assert.equal(rows[3].sub.length, 60);
-  const short = budgetDisplayRows({ available: true, resources: {
-    retained_caches: { bytes: 1, items: [{ name: 'kv' }, { name: 'prefix' }] },
-  } })[3];
-  assert.equal(short.sub, 'kv · prefix');
-  const exact = budgetDisplayRows({ available: true, resources: {
-    retained_caches: { bytes: 1, items: [{ name: 'a'.repeat(60) }] },
-  } })[3];
-  assert.equal(exact.sub, 'a'.repeat(60));
-  const empty = budgetDisplayRows({ available: true, resources: {
-    retained_caches: { bytes: 1, items: [] },
-  } })[3];
-  assert.equal(empty.sub, '');
-  assert.equal(rows[4].value, 'Critical');
-  assert.equal(rows[4].tone, 'error');
-  const unknown = budgetDisplayRows({ available: true, resources: { system_memory: { percent: 62, pressure: null } } })[4];
-  assert.equal(unknown.sub, '62% of system RAM in use');
-  assert.equal(unknown.state, 'unavailable');
+test('critical and unknown pressure keep their meaning', (t) => {
+  const critical = memoryFacts(t, { system_memory: { percent: 95, pressure: 'critical' } });
+  assert.equal(critical.text('System memory'), '95% in use critical');
+  assert.ok(critical.read('System memory').querySelector('svg.inv-state-icon--error'));
+  const unknown = memoryFacts(t, { system_memory: { percent: 62, pressure: null } });
+  assert.equal(unknown.text('System memory'), '62% in use');
+  assert.equal(unknown.read('System memory').querySelector('svg'), null);
+});
+
+test('no loaded model reads "No model in memory", not "No model loaded of 32.0 GB"', (t) => {
+  const { harness, text } = memoryFacts(t, { model_memory: { ram_bytes: 0, vram_bytes: 0, vram_total_bytes: 32 * GB, models: [] } });
+  assert.equal(text('Model memory'), 'No model in memory');
+  assert.doesNotMatch(harness.text('diagnosticsRuntimeInventory'), /No model loaded|of 32\.0 GB/);
 });
 
 test('formatBytes preserves unknowns and the MB to GB boundary', () => {

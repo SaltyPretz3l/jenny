@@ -2,8 +2,6 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const { createJennyShellBridge, getBridgeChannel } = require('./services/ipc-contract');
 
-getBridgeChannel('diagnostics.reportRendererError', 'invoke');
-// reportRendererError is exposed via the preload bridge on diagnostics:renderer-error.
 const PREPARE_DROPPED_PATHS_CHANNEL = getBridgeChannel('attachments.prepareDroppedPaths', 'invoke');
 
 // Must run in preload: Electron 32+ removed File.path, and

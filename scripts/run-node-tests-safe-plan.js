@@ -42,7 +42,7 @@ function orderLongestFirst(files, { cwd = process.cwd(), history } = {}) {
 
 async function runManagedPlan(parsed, state, { runManagedFile, runCapturedChild, killActiveChildren }) {
   const { parallelArgs, sequentialArgs: allSequentialArgs } = selectRunGroups(parsed);
-  // Only the load files need the post-parallel quiet machine (see splitLoadTail).
+  // Reserve the post-parallel quiet machine for measured cases (see splitLoadTail).
   const { sequentialArgs, loadArgs } = splitLoadTail(allSequentialArgs);
 
   let aborted = false;

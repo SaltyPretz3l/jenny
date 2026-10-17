@@ -13,6 +13,10 @@ const MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024;
 const MAX_DROP_COUNT = 1_000_000_000;
 const SNAPSHOT_METADATA_RESERVE_BYTES = 64 * 1024;
 const SOURCE_NAMES = Object.freeze(['electron', 'renderer', 'sidecar']);
+const TRUNCATED_DATA_FIELDS = Object.freeze([
+  'error_code', 'errorCode', 'code', 'remediation', 'channel',
+  'durationMs', 'duration_ms', 'status', 'stream_id', 'streamId',
+]);
 
 function createRunId() {
   return typeof crypto.randomUUID === 'function'
@@ -46,6 +50,12 @@ function boundEntry(entry) {
   if (serializedBytes(entry) <= MAX_ENTRY_BYTES) return entry;
   const data = entry?.data && typeof entry.data === 'object' ? entry.data : {};
   const originalSize = serializedBytes(entry);
+  const retainedData = {};
+  for (const key of TRUNCATED_DATA_FIELDS) {
+    const value = data[key];
+    if (typeof value === 'string') retainedData[key] = value.slice(0, 512);
+    else if (typeof value === 'number' || typeof value === 'boolean') retainedData[key] = value;
+  }
   const bounded = {
     ts: boundedText(entry?.ts, 80), level: boundedText(entry?.level, 16),
     layer: boundedText(entry?.layer, 64), source: boundedText(entry?.source || entry?.layer, 64),
@@ -60,6 +70,7 @@ function boundEntry(entry) {
     origin_entry_id: entry?.origin_entry_id, sequence: Number(entry?.sequence) || 0,
     redaction_mode: 'redacted', schema_version: Number(entry?.schema_version) || 1,
     data: {
+      ...retainedData,
       _truncated: true,
       _original_size: originalSize,
       keys: Object.keys(data).slice(0, 24).map((key) => boundedText(key, 160)),
@@ -67,7 +78,7 @@ function boundEntry(entry) {
   };
   bounded.details = { ...bounded.data, message: bounded.message, status: bounded.status };
   if (serializedBytes(bounded) <= MAX_ENTRY_BYTES) return bounded;
-  return {
+  const compact = {
     ts: bounded.ts,
     level: bounded.level,
     layer: bounded.layer,
@@ -81,9 +92,16 @@ function boundEntry(entry) {
     sequence: bounded.sequence,
     redaction_mode: 'redacted',
     schema_version: bounded.schema_version,
-    data: { _truncated: true, _original_size: originalSize },
+    data: bounded.data,
     details: { _truncated: true, _original_size: originalSize },
   };
+  for (let limit = 256; serializedBytes(compact) > MAX_ENTRY_BYTES; limit = Math.floor(limit / 2)) {
+    for (const key of TRUNCATED_DATA_FIELDS) {
+      if (typeof compact.data[key] === 'string') compact.data[key] = compact.data[key].slice(0, limit);
+    }
+    compact.data.keys = compact.data.keys.map((key) => key.slice(0, limit));
+  }
+  return compact;
 }
 
 function normalizeDropCount(value) {
@@ -97,9 +115,21 @@ function entrySource(entry) {
   return SOURCE_NAMES.includes(source) ? source : 'electron';
 }
 
+function boundedReasons(reasons) {
+  return Array.from(new Set(reasons)).slice(0, 12);
+}
+
+function tallySources(entries, counts = {}) {
+  for (const entry of entries) {
+    const source = entrySource(entry);
+    counts[source] = Number(counts[source] || 0) + 1;
+  }
+  return counts;
+}
+
 function entryRemovalRank(entry) {
   const level = String(entry?.level || 'INFO').toUpperCase();
-  return level === 'DEBUG' ? 0 : level === 'INFO' ? 1 : 2;
+  return level === 'DEBUG' ? 0 : level === 'INFO' ? 1 : level === 'ERROR' ? 3 : 2;
 }
 
 function selectEntriesWithinBudget(entries, maxBytes) {
@@ -108,7 +138,7 @@ function selectEntriesWithinBudget(entries, maxBytes) {
   if (total <= maxBytes) return { entries: entries.slice(), removed: [] };
   const retained = entries.map(() => true);
   const removed = [];
-  for (let rank = 0; rank <= 2 && total > maxBytes; rank += 1) {
+  for (let rank = 0; rank <= 3 && total > maxBytes; rank += 1) {
     for (let index = 0; index < entries.length && total > maxBytes; index += 1) {
       if (!retained[index] || entryRemovalRank(entries[index]) !== rank) continue;
       retained[index] = false;
@@ -166,7 +196,7 @@ class DiagnosticLogService {
     this.sinkFailuresBySource = { sidecar: { file: 0, mirror: 0 } };
   }
 
-  append(rawEntry, { broadcast = true, persist = true, defaults = {} } = {}) {
+  append(rawEntry, { broadcast = true, defaults = {} } = {}) {
     if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) return null;
     let normalized;
     try {
@@ -204,7 +234,7 @@ class DiagnosticLogService {
         this.originIds.delete(oldest);
       }
     }
-    if (persist && this.writer && typeof this.writer.write === 'function') {
+    if (this.writer && typeof this.writer.write === 'function') {
       try { this.writer.write(persisted); } catch (_error) { /* diagnostics never break runtime */ }
     }
     if (broadcast) {
@@ -229,8 +259,7 @@ class DiagnosticLogService {
     );
   }
 
-  getCurrentDiagnosticsMetadata() {
-    const entries = this.list();
+  getCurrentDiagnosticsMetadata(entries = this.list()) {
     const storeStats = typeof this.store.getStats === 'function' ? this.store.getStats() : {};
     const droppedBySource = { ...this.droppedBySource };
     for (const [source, count] of Object.entries(storeStats.dropped_by_source || {})) {
@@ -268,11 +297,11 @@ class DiagnosticLogService {
 
   async _loadHistory() {
     if (!this.filePath || typeof this.historyReader !== 'function') return;
-    const result = await this.historyReader({ filePath: this.filePath });
+    const result = await this.historyReader({ filePath: this.filePath, excludeRunId: this.runId });
     this.historyIntegrity = result || this.historyIntegrity;
     const recovered = Array.isArray(result?.entries) ? result.entries : [];
     const candidates = recovered.filter((entry) => String(entry?.run_id || '') !== this.runId);
-    const priorRawRunId = candidates[candidates.length - 1]?.run_id;
+    const priorRawRunId = candidates.findLast((entry) => String(entry?.run_id || '').trim())?.run_id;
     const priorRunId = normalizeLogIdentifier(priorRawRunId);
     const selected = priorRawRunId
       ? candidates.filter((entry) => entry?.run_id === priorRawRunId)
@@ -319,7 +348,7 @@ class DiagnosticLogService {
     }
     await this.historyPromise;
     const currentEntries = this.list();
-    const metadata = this.getCurrentDiagnosticsMetadata();
+    const metadata = this.getCurrentDiagnosticsMetadata(currentEntries);
     const historyReasons = [];
     if (Number(this.historyIntegrity?.malformed_count || 0) > 0) historyReasons.push('history_malformed');
     if (this.historyIntegrity?.truncated === true) historyReasons.push('history_truncated');
@@ -329,20 +358,18 @@ class DiagnosticLogService {
     if (Object.values(this.priorDroppedBySource).some((count) => count > 0)) {
       historyReasons.push('prior_retention_truncated');
     }
-    const globalPartialReasons = Array.from(new Set([
+    const globalPartialReasons = boundedReasons([
       ...metadata.integrity.partial_reasons,
       ...historyReasons,
-    ]));
+    ]);
     const candidates = [...this.priorEntries, ...currentEntries];
     const entryBudget = Math.max(0, MAX_SNAPSHOT_BYTES - SNAPSHOT_METADATA_RESERVE_BYTES);
     const selection = selectEntriesWithinBudget(candidates, entryBudget);
-    let entries = selection.entries;
-    const snapshotDrops = {};
+    const entries = selection.entries;
+    const snapshotDrops = tallySources(selection.removed);
     const snapshotDropsByRun = {};
     for (const removed of selection.removed) {
-      const source = entrySource(removed);
       const runId = String(removed?.run_id || this.runId);
-      snapshotDrops[source] = Number(snapshotDrops[source] || 0) + 1;
       snapshotDropsByRun[runId] = Number(snapshotDropsByRun[runId] || 0) + 1;
     }
     if (Object.keys(snapshotDrops).length > 0) globalPartialReasons.push('snapshot_truncated');
@@ -356,16 +383,14 @@ class DiagnosticLogService {
     const currentRetained = entries.filter((entry) => String(entry?.run_id || '') === this.runId);
     const activeReasons = metadata.integrity.partial_reasons.slice();
     if (snapshotDropsByRun[this.runId] > 0) activeReasons.push('snapshot_truncated');
-    const activeDropped = { ...metadata.integrity.dropped_by_source };
-    for (const removed of selection.removed) {
-      if (String(removed?.run_id || '') !== this.runId) continue;
-      const source = entrySource(removed);
-      activeDropped[source] = Number(activeDropped[source] || 0) + 1;
-    }
+    const activeDropped = tallySources(
+      selection.removed.filter((entry) => String(entry?.run_id || '') === this.runId),
+      { ...metadata.integrity.dropped_by_source },
+    );
     const activeIntegrity = {
       ...metadata.integrity,
       complete: activeReasons.length === 0,
-      partial_reasons: Array.from(new Set(activeReasons)).slice(0, 12),
+      partial_reasons: boundedReasons(activeReasons),
       dropped_by_source: activeDropped,
     };
     const activeSources = sourceSummary(currentRetained, activeIntegrity);
@@ -387,14 +412,10 @@ class DiagnosticLogService {
         priorDropped.sidecar = Number(priorDropped.sidecar || 0) + this.priorLoss.dropped;
       }
       if (Object.values(this.priorLoss.sinkFailures).some((count) => count > 0)) priorReasons.push('sidecar_sink_failed');
-      for (const removed of selection.removed) {
-        if (String(removed?.run_id || '') !== priorRun.run_id) continue;
-        const source = entrySource(removed);
-        priorDropped[source] = Number(priorDropped[source] || 0) + 1;
-      }
+      tallySources(selection.removed.filter((entry) => String(entry?.run_id || '') === priorRun.run_id), priorDropped);
       const priorIntegrity = {
         complete: priorReasons.length === 0,
-        partial_reasons: Array.from(new Set(priorReasons)).slice(0, 12),
+        partial_reasons: boundedReasons(priorReasons),
         dropped_by_source: priorDropped,
         sink_failures: { sidecar: { ...this.priorLoss.sinkFailures } },
         capture_policy: metadata.integrity.capture_policy,
@@ -406,8 +427,8 @@ class DiagnosticLogService {
       }
       priorRun = { ...priorRun, sources: priorSources, integrity: priorIntegrity };
     }
-    const boundedPartialReasons = Array.from(new Set(globalPartialReasons)).slice(0, 12);
-    let snapshot = {
+    const boundedPartialReasons = boundedReasons(globalPartialReasons);
+    const snapshot = {
       schema_version: DIAGNOSTIC_SNAPSHOT_SCHEMA_VERSION,
       generated_at: this.now().toISOString(),
       active_run: activeRun,
@@ -422,19 +443,6 @@ class DiagnosticLogService {
         history_malformed_count: Number(this.historyIntegrity?.malformed_count || 0),
       },
     };
-    while (entries.length > 0 && serializedBytes(snapshot) > MAX_SNAPSHOT_BYTES) {
-      const removed = entries.shift();
-      const source = entrySource(removed);
-      snapshot.integrity.complete = false;
-      snapshot.integrity.partial_reasons = Array.from(new Set([
-        ...snapshot.integrity.partial_reasons,
-        'snapshot_truncated',
-      ])).slice(0, 12);
-      snapshot.integrity.dropped_by_source[source] = Number(
-        snapshot.integrity.dropped_by_source[source] || 0,
-      ) + 1;
-      snapshot.entries = entries;
-    }
     return snapshot;
   }
 }

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import copy
-import os
 import secrets
-import shutil
-import stat
 from datetime import UTC, datetime
+from os import path as os_path
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, cast
 
@@ -20,7 +18,20 @@ from sidecar.ai.tools.workspace_mutation_journal_contract import (
     workspace_identity,
 )
 from sidecar.ai.tools.workspace_mutation_journal_store import WorkspaceMutationJournalStore
+from sidecar.ai.tools.workspace_restore_io import (
+    RestorePathUnsafe,
+    bound_workspace,
+    copy_new,
+    make_parents,
+)
+from sidecar.ai.tools.workspace_restore_io import (
+    fsync_directory as _fsync_directory,  # noqa: F401 - staging imports it from here
+)
+from sidecar.ai.tools.workspace_restore_io import remove as _remove_exact
+from sidecar.ai.tools.workspace_restore_io import replace as _guarded_replace
+from sidecar.ai.tools.workspace_restore_io import rmdir as _guarded_rmdir
 from sidecar.ai.tools.workspace_restore_staging import (
+    _resume_preflight,
     _stage_move_sources,
     _validate_completed_step,  # noqa: F401 - compatibility import
     _validate_resume_state,
@@ -73,6 +84,7 @@ def list_change_sets(
 def preflight_undo(
     store: WorkspaceMutationJournalStore, workspace_root: str | Path, change_set_id: str
 ) -> dict[str, object]:
+    store.reconcile_workspace(workspace_root)
     root, record = _load_record(store, workspace_root, change_set_id)
     busy_sets = cast(list[dict[str, object]], list_change_sets(store, root)["change_sets"])
     if any(
@@ -94,10 +106,7 @@ def preflight_undo(
     if restore["status"] == "interrupted":
         raise WorkspaceRestoreError("restore_needs_review", "Interrupted restore requires manual review.", details={"status": "needs_review"})
     if restore["status"] == "in_progress":
-        raise WorkspaceRestoreError(
-            "restore_in_progress",
-            "Workspace restore is already in progress; call undo to resume it.",
-        )
+        return _resume_preflight(root, record)
     _verify_recovery_objects(root, record)
     plan = _inverse_plan(record)
     staging = _plan_staging(root, record, plan)
@@ -134,6 +143,7 @@ def undo_change_set(
     *,
     after_inverse_step_persisted: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
+    store.reconcile_workspace(workspace_root)
     root, record = _load_record(store, workspace_root, change_set_id)
     busy_sets = cast(list[dict[str, object]], list_change_sets(store, root)["change_sets"])
     if any(
@@ -160,7 +170,7 @@ def undo_change_set(
         staging = cast(list[dict[str, Any]], restore["staging_entries"])
         conflicts = _preflight_conflicts(root, plan, staging)
         normalized = _normalize_decisions(decisions, conflicts, change_set_id, root)
-        restore["decisions"] = normalized
+        restore["decisions"] = normalized + _dependent_skips(root, plan, staging, normalized)
         restore["status"] = "in_progress"
         restore["updated_at"] = _utc_now()
         _write_required(store, root, record)
@@ -169,16 +179,14 @@ def undo_change_set(
         staging = cast(list[dict[str, Any]], restore["staging_entries"])
 
     try:
-        _validate_resume_state(root, record, plan, staging)
-        _stage_move_sources(root, record, plan, staging)
-        _execute_missing_steps(
-            store,
-            root,
-            record,
-            plan,
-            staging,
-            after_inverse_step_persisted,
-        )
+        with bound_workspace(root):
+            _validate_resume_state(root, record, plan, staging)
+            _stage_move_sources(root, record, plan, staging)
+            _execute_missing_steps(store, root, record, plan, staging, after_inverse_step_persisted)
+    except RestorePathUnsafe as error:
+        raise _resumable_failure(record, error.reason, str(error) if error.details else "A restore path changed before Undo wrote it, so nothing was written there.", error) from error
+    except OSError as error:
+        raise _resumable_failure(record, "restore_io_failed", "Undo stopped before it finished; run Undo again to resume it.", error) from error
     except WorkspaceRestoreError as error:
         if error.reason in {"recovery_object_changed", "restore_state_ambiguous"}:
             record["state"] = "interrupted"
@@ -191,6 +199,15 @@ def undo_change_set(
     _commit_restore(record)
     _write_required(store, root, record)
     return _receipt(record)
+
+def _resumable_failure(record: Mapping[str, Any], reason: str, message: str, error: BaseException) -> WorkspaceRestoreError:
+    """A typed failure for a restore left in progress; its completed steps stay
+    persisted, and the resumable preflight reports them as ``resume.receipt``."""
+    completed = cast(list[str], record["restore"]["completed_inverse_step_ids"])
+    return WorkspaceRestoreError(reason, message, details={
+        "status": "in_progress", "error_type": type(error).__name__, "completed_count": len(completed), **getattr(error, "details", {}),
+    })
+
 
 def abandon_restore(
     store: WorkspaceMutationJournalStore,
@@ -258,10 +275,14 @@ def restore_trash_entry(
     if outcome == "alternate_name":
         assert normalized is not None
         target = _safe_path(root_path, cast(str, normalized["alternate_relative_path"]))
-    elif outcome == "protect_then_replace":
-        protected = _protect_occupant(root_path, destination, name[:8], "trash.1")
     expected_target = current if target == destination else PathSignature("missing", 0, EMPTY_SHA256)
-    _copy_recovery_object(source, target, name[:8], 1, expected_target)
+    try:
+        with bound_workspace(root_path):
+            if outcome == "protect_then_replace":
+                protected = _protect_occupant(root_path, destination, name[:8], "trash.1")
+            _copy_recovery_object(source, target, name[:8], 1, expected_target)
+    except RestorePathUnsafe as error:
+        raise WorkspaceRestoreError(error.reason, str(error) if error.details else "A restore path changed before it was written, so nothing was written there.", details=error.details) from error
     return {
         "name": name,
         "status": "committed",
@@ -376,9 +397,8 @@ def _plan_staging(
         )
     return staging
 
-def _preflight_conflicts(
-    root: Path, plan: Sequence[Mapping[str, Any]], staging: Sequence[Mapping[str, Any]]
-) -> list[dict[str, object]]:
+def _preflight_conflicts(root: Path, plan: Sequence[Mapping[str, Any]], staging: Sequence[Mapping[str, Any]], decisions: Mapping[str, Mapping[str, Any]] | None = None) -> list[dict[str, object]]:
+    """Conflicts against the state each step meets; a kept path (skip, alternate name) stays as on disk."""
     virtual: dict[str, PathSignature] = {}
     stage_by_id = {cast(str, item["inverse_step_id"]): item for item in staging}
     move_sources = {
@@ -425,6 +445,8 @@ def _preflight_conflicts(
                     pass
                 else:
                     reasons.append("destination_occupied")
+            elif kind == "restore_object" and expected.kind != "missing":  # A19-F6: the edited file is gone
+                reasons.append("destination_missing")
         if reasons:
             conflicts.append(
                 {
@@ -438,17 +460,37 @@ def _preflight_conflicts(
                     "allowed_outcomes": list(ALLOWED_OUTCOMES),
                 }
             )
-        _apply_virtual_inverse(root, virtual, step)
+        _apply_virtual_inverse(root, virtual, step, (decisions or {}).get(cast(str, step["step_id"])))
     return conflicts
 
+def _dependent_skips(
+    root: Path, plan: Sequence[Mapping[str, Any]], staging: Sequence[Mapping[str, Any]],
+    decisions: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Skips for older steps that conflict only because a kept file was not
+    undone (A19-F5): they depend on the skipped same-file transition."""
+    derived: list[dict[str, object]] = []
+    while True:
+        decided = {cast(str, item["inverse_step_id"]): item for item in [*decisions, *derived]}
+        new = [item for item in _preflight_conflicts(root, plan, staging, decided) if item["inverse_step_id"] not in decided]
+        if not new:
+            return derived
+        derived += [{"inverse_step_id": item["inverse_step_id"], "outcome": "skip", "alternate_relative_path": None} for item in new]
+
 def _apply_virtual_inverse(
-    root: Path, virtual: dict[str, PathSignature], step: Mapping[str, Any]
+    root: Path, virtual: dict[str, PathSignature], step: Mapping[str, Any],
+    decision: Mapping[str, Any] | None = None,
 ) -> None:
     kind = cast(str, step["kind"])
     source = cast(str, step["from_relative_path"] or "")
     destination = cast(str, step["to_relative_path"] or "")
     missing = PathSignature("missing", 0, EMPTY_SHA256)
-    if kind in {"remove_created", "remove_empty_parent"}:
+    outcome = decision["outcome"] if decision else None
+    if outcome == "skip" or (outcome == "alternate_name" and kind not in {"remove_created", "move_back"}):
+        return
+    if outcome == "alternate_name":
+        virtual[source] = missing  # the source moved to the alternate name
+    elif kind in {"remove_created", "remove_empty_parent"}:
         virtual[source] = missing
     elif kind == "move_back":
         value = PathSignature.from_mapping(step["expected_current_signature"])
@@ -557,7 +599,9 @@ def _execute_missing_steps(  # noqa: PLR0913
                 (entry for entry in occupants if marker in str(entry["object_id"])),
                 None,
             )
-            if protected is None:
+            if protected is None and _signature(_safe_path(root, target_relative)).kind == "missing":
+                pass  # A missing destination has no occupant to protect.
+            elif protected is None:
                 protected = _protect_occupant(
                     root,
                     _safe_path(root, target_relative),
@@ -589,7 +633,7 @@ def _execute_missing_steps(  # noqa: PLR0913
         if callback is not None:
             callback(step_id)
 
-def _execute_step(  # noqa: C901, PLR0912, PLR0915
+def _execute_step(  # noqa: C901, PLR0912
     root: Path,
     record: dict[str, Any],
     step: Mapping[str, Any],
@@ -612,8 +656,7 @@ def _execute_step(  # noqa: C901, PLR0912, PLR0915
                     "restore_state_ambiguous",
                     "Restore staging source destination became occupied.",
                 )
-            os.replace(source, original)
-            _fsync_directory(original.parent)
+            _guarded_replace(source, original)
         return "skipped"
     if outcome == "alternate_name":
         assert decision is not None
@@ -625,17 +668,15 @@ def _execute_step(  # noqa: C901, PLR0912, PLR0915
         if _signature(source) != expected:
             return "skipped"
         try:
-            source.rmdir()
+            _guarded_rmdir(source)
         except OSError:
             return "skipped"
-        _fsync_directory(source.parent)
     elif kind == "remove_created":
         if decision is None:
             _assert_signature(source, step["expected_current_signature"], "restore_state_ambiguous")
         if outcome == "alternate_name":
-            target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(source, target)
-            _fsync_directory(target.parent)
+            make_parents(target)
+            _guarded_replace(source, target)
         else:
             _remove_exact(source)
     elif kind == "restore_object":
@@ -652,11 +693,10 @@ def _execute_step(  # noqa: C901, PLR0912, PLR0915
     elif kind == "move_back":
         expected_source = stage["expected_signature"] if stage is not None else step["expected_current_signature"]
         _assert_signature(source, expected_source, "restore_state_ambiguous")
-        target.parent.mkdir(parents=True, exist_ok=True)
+        make_parents(target)
         if _signature(target).kind != "missing":
             raise WorkspaceRestoreError("restore_state_ambiguous", "Restore destination changed after preflight.")
-        os.replace(source, target)
-        _fsync_directory(target.parent)
+        _guarded_replace(source, target)
     else:
         raise WorkspaceRestoreError("inverse_step_invalid", "Restore plan contains an unknown step.")
     return {
@@ -683,46 +723,30 @@ def _protect_occupant(root: Path, occupant: Path, short: str, step_id: str) -> d
 def _copy_recovery_object(
     source: Path, target: Path, short: str, sequence: int, expected_target: PathSignature | None
 ) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
+    # Staged beside the target through the guarded primitive, then committed by
+    # a rename under the same pinned-parent check; never by pathname alone.
+    make_parents(target)
     temp = target.parent / f".jenny-restore-{short}-{sequence}-{secrets.token_hex(4)}"
     _copy_exclusive(source, temp)
-    if expected_target is not None and _signature(target) != expected_target:
-        _remove_exact(temp)
-        raise WorkspaceRestoreError(
-            "restore_state_ambiguous", "Restore target changed during recovery."
-        )
-    if temp.is_dir() and target.is_dir():  # preserve capped source layout.
-        _remove_exact(target)
     try:
-        os.replace(temp, target)
-    except OSError:
-        _remove_exact(temp)
+        if expected_target is not None and _signature(target) != expected_target:
+            raise WorkspaceRestoreError("restore_state_ambiguous", "Restore target changed during recovery.")
+        if temp.is_dir() and target.is_dir():  # preserve capped source layout.
+            _remove_exact(target)
+        _guarded_replace(temp, target)
+    except BaseException:
+        try:
+            _remove_exact(temp)
+        except (OSError, RestorePathUnsafe):
+            pass  # A temp behind a changed parent is left in place, never chased.
         raise
-    _fsync_directory(target.parent)
 
 
 def _copy_exclusive(source: Path, destination: Path) -> None:
-    source_stat = source.lstat()
-    if stat.S_ISREG(source_stat.st_mode):
-        with source.open("rb") as reader, destination.open("xb") as writer:
-            shutil.copyfileobj(reader, writer, length=1024 * 1024)
-            writer.flush()
-            os.fsync(writer.fileno())
-        shutil.copystat(source, destination, follow_symlinks=False)
-    elif stat.S_ISDIR(source_stat.st_mode):
-        shutil.copytree(source, destination, copy_function=shutil.copy2, symlinks=True)
-        _fsync_tree(destination)
-    else:
-        raise WorkspaceRestoreError("recovery_object_unsupported", "Recovery object type is unsupported.")
-    _fsync_directory(destination.parent)
-
-
-def _remove_exact(path: Path) -> None:
-    if path.is_symlink() or path.is_file():
-        path.unlink()
-    elif path.is_dir():
-        shutil.rmtree(path)
-    _fsync_directory(path.parent)
+    try:
+        copy_new(source, destination)
+    except ValueError as error:
+        raise WorkspaceRestoreError("recovery_object_unsupported", "Recovery object type is unsupported.") from error
 
 
 def _commit_restore(record: dict[str, Any]) -> None:
@@ -753,7 +777,7 @@ def _commit_restore(record: dict[str, Any]) -> None:
     }
 
 
-def _receipt(record: Mapping[str, Any]) -> dict[str, object]:
+def _receipt(record: Mapping[str, Any], *, only: set[str] | None = None) -> dict[str, object]:
     restore = cast(Mapping[str, Any], record["restore"])
     decisions = cast(list[dict[str, Any]], restore["decisions"])
     decision_by_id = {item["inverse_step_id"]: item for item in decisions}
@@ -764,6 +788,8 @@ def _receipt(record: Mapping[str, Any]) -> dict[str, object]:
     for item in _inverse_plan(record):
         step = cast(dict[str, Any], item["step"])
         step_id = step["step_id"]
+        if only is not None and step_id not in only:
+            continue
         relative = step["to_relative_path"] or step["from_relative_path"]
         decision = decision_by_id.get(step_id)
         parent_cleanup_skipped = (
@@ -947,6 +973,7 @@ def _change_set_summary(record: Mapping[str, Any]) -> dict[str, object]:
     return {
         "change_set_id": record["change_set_id"],
         "state": record["state"],
+        "session_id": record["session_id"], "turn_id": record["turn_id"],  # a suggested-change apply's id
         "restore_status": record["restore"]["status"],
         "operation_count": record["operation_count"],
         "updated_at": record["wall_time"]["updated_at"],
@@ -973,31 +1000,8 @@ def _relative(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix()
 
 
-def _fsync_tree(root: Path) -> None:
-    for path in root.rglob("*"):
-        if path.is_file() and not path.is_symlink():
-            with path.open("rb+") as handle:
-                os.fsync(handle.fileno())
-    for path in sorted((item for item in root.rglob("*") if item.is_dir()), reverse=True):
-        _fsync_directory(path)
-    _fsync_directory(root)
-
-
-def _fsync_directory(path: Path) -> None:
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    try:
-        descriptor = os.open(str(path), flags)
-    except OSError:
-        return
-    try:
-        os.fsync(descriptor)
-    except OSError:
-        pass
-    finally:
-        os.close(descriptor)
-
 def _is_junction(path: Path) -> bool:
-    checker = getattr(os.path, "isjunction", None)
+    checker = getattr(os_path, "isjunction", None)
     return bool(checker(path)) if checker is not None else False
 
 def _utc_now() -> str:

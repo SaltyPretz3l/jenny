@@ -438,7 +438,7 @@ describe('registerMainIpcHandlers', () => {
       app: { getPath: () => '/tmp/userData' },
       ipcMain: createFakeIpcMain(),
       backendService,
-      logStore: { list: () => ['log-line'] },
+      logStore: { getSnapshot: (...args) => { assert.deepEqual(args, []); return ['log-line']; } },
       updateService: {
         getState: () => 'update-state',
         check: () => 'checked',
@@ -493,7 +493,6 @@ describe('registerMainIpcHandlers', () => {
       refreshGpuMemorySample: async () => null,
       getCurrentSystemStatsPayload: () => ({ cpu: 0 }),
       buildFeatureStatePayload: () => ({ flags: {} }),
-      getProcessLogWriter: () => null,
       getLogRedactionPrefixes: () => [],
       sendBridgeEvent: () => {},
       workspaceSnapshotStore: null,
@@ -523,7 +522,7 @@ describe('registerMainIpcHandlers', () => {
       'system.getStats',
       'system.refreshStats',
       'system.setStatsWatch',
-      'logs.list',
+      'diagnostics.logs.getSnapshot',
       'updates.getState',
       'personality.getState',
       'memory.contextFiles.getState',
@@ -534,6 +533,7 @@ describe('registerMainIpcHandlers', () => {
         `expected channel for ${methodPath}`
       );
     }
+    assert.deepEqual(deps.ipcMain.invoke.get(invokeChannel('diagnostics.logs.getSnapshot'))({}, { limit: 1 }), ['log-line']);
     // The comet overlay relay was removed (sweep S9): no comet send channel survives.
     assert.equal([...deps.ipcMain.send.keys()].some((channel) => String(channel).startsWith('comet:')), false);
   });
@@ -681,7 +681,7 @@ describe('registerMainIpcHandlers', () => {
     });
     registerMainIpcHandlers(deps);
     assert.ok(shutdownTasks.length >= 2);
-    shutdownTasks[0]();
+    for (const task of shutdownTasks) await task();
     const result = await deps.ipcMain.invoke.get(invokeChannel('modelTuning.update'))({}, {
       modelId: 'gemma3:latest', streamInactivitySeconds: 60,
     });

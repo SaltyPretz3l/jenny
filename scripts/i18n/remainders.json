@@ -22,5 +22,17 @@
     "file": "renderer/features/renderer-dashboard-scratchpad-actions.js",
     "text": "Note 1",
     "reason": "persisted generated scratchpad title; translated at display time"
+  },
+  {
+    "name": "image-edit-model-context",
+    "file": "renderer/features/renderer-image-edit-draft.js",
+    "text": "[Image selected by the user for editing in this chat. Use image_generate to edit this reference; do not generate an unrelated replacement.",
+    "reason": "Model-facing selection instructions appended only to the provider prompt; visiblePrompt retains the human message. Tool parameter vocabulary must remain stable."
+  },
+  {
+    "name": "image-edit-model-context",
+    "file": "renderer/features/renderer-image-edit-draft.js",
+    "text": "Copy source_artifact_id and region exactly; if region is absent, omit region. Omit width and height to keep the source size. Give the edited variant a short descriptive title.",
+    "reason": "Model-facing selection instructions appended only to the provider prompt; visiblePrompt retains the human message. Tool parameter vocabulary must remain stable."
   }
 ]

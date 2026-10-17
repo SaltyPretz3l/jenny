@@ -126,6 +126,38 @@ test('managed runtime defaults delegate on but preserves an explicit off prefere
   assert.equal(service._buildManagedSidecarConfig().tools_subagents_enabled, false);
 });
 
+test('managed sidecar memory tool follows the memory_v2 kill switch', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-memory-flag-'));
+  trackDirectory(userDataPath);
+  const config = { getState() { return {}; } };
+
+  const on = createManagedServiceWithConfig(userDataPath, config, {
+    featureFlags: { memory_v2_enabled: true },
+  });
+  const off = createManagedServiceWithConfig(userDataPath, config, {
+    featureFlags: { memory_v2_enabled: false },
+  });
+
+  assert.equal(on._buildManagedSidecarConfig().tools_memory_enabled, true);
+  assert.equal(off._buildManagedSidecarConfig().tools_memory_enabled, false);
+});
+
+test('managed sidecar config carries the conversation index and the hybrid recall flag (row 58 W4)', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-conversation-index-'));
+  trackDirectory(userDataPath);
+  const config = { getState() { return {}; } };
+  const build = featureFlags => createManagedServiceWithConfig(userDataPath, config, { featureFlags })
+    ._buildManagedSidecarConfig();
+
+  const on = build({ memory_v2_enabled: true });
+  assert.deepEqual(on.conversation_index, {
+    enabled: true, db_path: path.join(userDataPath, 'conversation-index.db'),
+  });
+  assert.equal(on.memory_hybrid_recall_enabled, false);
+  assert.equal(build({ memory_v2_enabled: false }).conversation_index, undefined);
+  assert.equal(build({ memory_v2_enabled: true, memory_hybrid_recall: true }).memory_hybrid_recall_enabled, true);
+});
+
 test('managed sidecar config ignores an unusable OLLAMA_MODELS path', () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-config-bad-ollama-models-'));
   trackDirectory(userDataPath);

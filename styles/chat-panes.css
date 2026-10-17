@@ -4,6 +4,50 @@
    the context/artifact column files, so its rules win equal-specificity ties.
    Logical properties only; no side bars, cards or tinted backgrounds. */
 
+/* ── Reading measure (row 59 checkpoint 1) ──
+   The measure is relative to the PANE, not the window: min(the line-length cap,
+   the pane's inline size minus a gutter on each side). The gutter is 3% of the
+   pane, 16 to 40px (12px floor in a split pane), and never narrower than the avatar rail so the rail always
+   sits inside it. In one pane it also makes room for the floating transcript utilities:
+   --chat-utility-reserve is how far they reach in from the stage's end
+   (renderer-chat-pane-surface-controllers.js), and the gutter grows to it so text never scrolls under
+   them, but only while the measure keeps --chat-reading-floor (the 320px pane floor); a narrower pane
+   keeps its reading width and lets the utilities float over the edge. The timeline and the composer
+   read the same value.
+   - --content-column-width is for the timeline column. It uses cqi, which
+     resolves against #chatThreadStage (the `chatstage` size container, as wide
+     as the pane).
+   - --composer-width is for the composer, which is not inside that container:
+     the same arithmetic in percentages of its own grid area, which is also the
+     pane's width. Equal results, one per unit system.
+   - --chat-measure-lock (a px length) is set on a pane while a side panel moves
+     (renderer-side-panel-motion.js): both tokens then use exactly that width,
+     so the text reflows once instead of per frame.
+   The IDE chat dock sets its own widths: the main dock is not a .chat-pane, and a pane hosted in the
+   Workspace (renderer-app-pane-composition.js setPaneHost adds .ide-chat-dock-body to its root) is
+   excluded here so the dock's tokens in ide-chat-dock.css keep applying. */
+.chat-pane:not(.ide-chat-dock-body) {
+  --chat-gutter-min: 16px;
+  --chat-reading-floor: 320px;
+  --chat-utility-room: var(--chat-utility-reserve, 0px);
+  --content-column-width: var(--chat-measure-lock, min(var(--chat-measure-cap), calc(100cqi - 2 * max(clamp(var(--chat-gutter-min), 3cqi, 40px), var(--chat-sprite-rail-offset), min(var(--chat-utility-room), (100cqi - var(--chat-reading-floor)) / 2)))));
+  --composer-width: var(--chat-measure-lock, min(var(--chat-measure-cap), calc(100% - 2 * max(clamp(var(--chat-gutter-min), 3%, 40px), var(--chat-sprite-rail-offset), min(var(--chat-utility-room), (100% - var(--chat-reading-floor)) / 2)))));
+}
+
+/* Split panes may be as narrow as the 320px resizer floor, where the streaming
+   composer row only fits with the 12px (space-6) gutter the split always used;
+   their utilities keep floating over the edge as before. */
+.chat-view[data-pane-count="2"] .chat-pane {
+  --chat-gutter-min: var(--space-6);
+  --chat-utility-room: 0px;
+}
+
+/* The scroller keeps its scrollbar gutter on BOTH edges, so the column centres
+   on the pane exactly as the composer does whatever the scrollbar's width. */
+.chat-pane .chat-thread-scroll {
+  scrollbar-gutter: stable both-edges;
+}
+
 /* One pane: the wrapper generates no box. Pane 0's children stay grid
    children of #chatView exactly as before the wrapper existed (same tracks,
    containing blocks and clipping), including after the IDE dock restores
@@ -107,14 +151,12 @@
   grid-row: 2;
 }
 
-/* Split composers dock at the same height (no empty-hero lift, see below)
-   and keep an equal gutter from the pane edges: --composer-width is sized to
-   the viewport, so a half-width pane would otherwise fill edge to edge. */
+/* Split composers dock at the same height (no empty-hero lift, see below);
+   their width is the pane's own measure (--composer-width, above). */
 .chat-view[data-pane-count="2"] > .chat-pane > .composer-wrap {
   grid-column: 1;
   grid-row: 3;
   align-self: end;
-  max-width: min(var(--composer-width), calc(100% - 2 * var(--space-6)));
   transform: none;
 }
 

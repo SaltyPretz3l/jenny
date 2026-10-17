@@ -3,6 +3,7 @@
   "families": {
     "qwen_image21": {
       "label": "Qwen-Image 2.1",
+      "vision_flag": "--llm_vision",
       "architectures": ["qwen_image21"],
       "diffusion_flag": "--diffusion-model",
       "encoder_flag": "--llm",

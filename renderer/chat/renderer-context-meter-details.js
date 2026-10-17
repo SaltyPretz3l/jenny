@@ -143,7 +143,12 @@
     var narrowing = summary.automatic_narrowing
       ? jt('chat.contextMeter.automaticNarrowing', ' Automatic narrowing will omit {count} older message(s).', { count: Math.max(0, availableCount - historyCount) })
       : '';
-    return jt('chat.contextMeter.historySummary', '{scope}: {count} history message(s). ', { scope: scope, count: historyCount })
+    var preview = summary.preview;
+    var estimate = preview?.status === 'estimated'
+      ? jt('chat.sessionRail.context.nextSend', 'Estimated for the next send; retrieval may add context.') + ' '
+        + jt('chat.sessionRail.context.tokens', '{count} tokens', { count: preview.used_tokens }) + '. '
+      : '';
+    return estimate + jt('chat.contextMeter.historySummary', '{scope}: {count} history message(s). ', { scope: scope, count: historyCount })
       + (enabled.length ? jt('chat.contextMeter.additionalContextPlanned', 'Additional context planned: {context}.', { context: enabled.join(', ') }) : jt('chat.contextMeter.noOptionalContext', 'No optional context is planned.'))
       + (summary.compaction_snapshot_present ? jt('chat.contextMeter.compactedSnapshot', ' A bounded compacted snapshot may replace its covered prefix.') : '')
       + narrowing;
@@ -167,6 +172,11 @@
       });
       if (!previewGate.isCurrent(previewToken) || !output.isConnected
         || String(state?.currentSessionId || '').trim() !== sessionId) return;
+      var input = popover.closest('.composer-wrap')?.querySelector('[data-chat-node="chatInput"], #chatInput')
+        || popover.__invPopoverTrigger?.closest('.composer-wrap')?.querySelector('[data-chat-node="chatInput"], #chatInput');
+      if (summary?.preview && root?.rendererContextPreview?.withDraft) {
+        summary = { ...summary, preview: root.rendererContextPreview.withDraft(summary.preview, input?.value, queuedAttachments) };
+      }
       output.textContent = formatSummary(summary);
       delete output.dataset.contextPreviewPending;
       positionPopover(popover, popover.__invPopoverTrigger);

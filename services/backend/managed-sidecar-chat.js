@@ -1,9 +1,7 @@
 const { applyRuntimeChildSendFields } = require('../session-runtime/child-capabilities');
 const {
   buildRecallQuery,
-  normalizeManagedToolPreferences,
   inferEngineTypeFromModel,
-  promptHasExplicitResponseStyleInstruction,
 } = require('./backend-service-utils');
 const { resolveSessionLockdownRequest } = require('./session-lockdown-gate');
 const { inspectContextPreferences } = require('./context-preferences');
@@ -11,9 +9,6 @@ const { buildPreparedMessages } = require('./chat-stream-reasoning');
 const { resolveSessionTranscriptAnswer } = require('./session-transcript-queries');
 const { applySessionTitleAtSend, prepareManagedSession } = require('./managed-sidecar-session-preflight');
 const { validateImageAttachmentsForManagedSend } = require('./managed-sidecar-attachments');
-const {
-  buildResumePayload,
-} = require('../session-recovery-service');
 const { API_VERSION } = require('./sidecar-client');
 const { buildRequestReasoningEffortField } = require('./backend-managed-reasoning');
 const {
@@ -42,12 +37,14 @@ const {
   TERMINAL_STATUS_COMPLETED,
   streamErrorDetailsFromAbortSignal,
 } = require('./chat-stream-terminal-utils');
+const { inferencePerformanceRequestField } = require('../performance/provider-identity');
 const {
   assembleContextForChat,
 } = require('./chat-stream-context-assembly');
 const {
   ensureManagedEngineNotFallbackForChat,
   ensureManagedLlamaServerReadyForChat,
+  ensureManagedNinferReadyForChat,
   ensureManagedOllamaReadyForChat,
   ensureManagedSidecarReadyForChat,
   waitForManagedInitialization,
@@ -65,7 +62,7 @@ const {
   noteToolObservationPromotions,
 } = require('./tool-observation-promotion');
 const {
-  buildManagedSidecarChatSendOptions,
+  abortImageBridgeExecutions, buildManagedSidecarChatSendOptions, releaseImageBridgeExecutions,
 } = require('./electron-tool-bridge');
 const {
   createTurnEffectProbe,
@@ -76,12 +73,13 @@ const {
   projectCanonicalSessionMessagesForSend,
 } = require('./chat-send-frame-budget');
 const {
-  prepareResumedHistory,
+  admitTurnContextRows, managedToolPreferenceInput, wireContextKinds,
   buildImageAttachmentSendParams,
   buildAutomaticCompactionSendContext,
   buildLeanContextPreferences,
   captureManagedExecutionAuthority,
   createChatStreamWatchdog,
+  deriveManagedTurnHistory,
   emitManagedHistoryScopeNarrowing,
   emitManagedTurnPerformanceSummary,
   normalizeDebugOptions,
@@ -89,9 +87,6 @@ const {
   summarizePromptMessages,
 } = require('./managed-sidecar-chat-helpers');
 const { resolveConfiguredLocalMaxLoopWallSeconds } = require('./chat-stream-admission');
-const {
-  applyCompactionSnapshotForChatSend,
-} = require('./session-compaction-snapshot');
 const { computeInterruptedTurnReceipts, acknowledgeInterruptedTurnReceipts } = require('./interrupted-turn-receipts');
 const { buildManagedStartResult, retainManagedRuntimeController } = require('./chat-lifecycle-contracts');
 const { ensureSessionTurnActorRegistry } = require('./session-turn-actor');
@@ -99,7 +94,9 @@ const { buildApprovedPlanSendFields } = require('./approved-plan-context');
 const { buildProposeSendFields, isProposeRunMode } = require('./propose-mode');
 const { activeUseRequestFields } = require('../workspace-active-use-tracker');
 const { retainRuntimeSettlementHandler } = require('./sidecar-client-request-rpc');
-const { assertRuntimeOperationsProtocol, assertRuntimeBudgetProtocol } = require('../session-runtime/inference-protocol');
+const {
+  assertRuntimeOperationsProtocol, assertRuntimeBudgetProtocol,
+} = require('../session-runtime/inference-protocol');
 const { prepareManagedCheckpointHistory, createManagedContinuationSend } = require('./managed-sidecar-continuation');
 // Idle watchdog + absolute backstop are engine-keyed (cloud engines get wider
 // ceilings than local ones) — see resolveChatStreamCeilings in
@@ -132,6 +129,7 @@ async function startManagedSidecarChatStream(service, {
   runtimeExecutionAuthority = null, runtimeOperationGateway = null,
   runtimeRoute = null, runtimeAssertCurrent = null, runtimeOnInferenceSettlement = null,
   runtimeContinuation = null, runtimeAdmission = null, safetyPolicy = null,
+  sessionHandoffPreparation = null, sessionHandoff = null,
 }) {
   const {
     exchangeTitle, existingSession, imageAttachments, normalizedAttachments,
@@ -321,7 +319,8 @@ async function startManagedSidecarChatStream(service, {
 
       ensureNotAborted();
       const userMessagePersistedStartedAt = Date.now();
-      if (runtime.persistUserMessage()) {
+      const userRowPersisted = runtime.persistUserMessage();
+      if (userRowPersisted) {
         service.sessionAttachmentAuthority?.noteCanonicalAttachmentsPersisted(resolvedSessionId);
         recordTiming('chat.user_message_persisted', userMessagePersistedStartedAt, 'user_message_persisted', {
           attachmentCount: normalizedAttachments.length,
@@ -333,7 +332,7 @@ async function startManagedSidecarChatStream(service, {
       const sessionSummary = service.sessionStore.getSession(resolvedSessionId);
       const sessionMessages = [...(sessionSummary?.messages || [])];
       const checkpointHistory = prepareManagedCheckpointHistory(service, runtimeContinuation);
-      const canonicalSessionMessages = checkpointHistory?.canonicalHistoryMessages || sessionMessages
+      let canonicalSessionMessages = checkpointHistory?.canonicalHistoryMessages || sessionMessages
         .filter((message) => String(message?.id || '').trim() !== userMessageId);
       const transcriptQueryMessages = canonicalSessionMessages;
       const transcriptAnswer = !checkpointHistory && resolveSessionTranscriptAnswer({
@@ -390,7 +389,8 @@ async function startManagedSidecarChatStream(service, {
       const requestedModel = String(runtimePreferredModel || normalizedPreferences.preferred_model || '').trim();
       const requestedEngine = String(runtimePreferredEngineType || '').trim().toLowerCase();
       const lockdownRequest = resolveSessionLockdownRequest(service, sessionSummary,
-        { requestedEngine, requestedModel }, normalizeManagedToolPreferences(toolPreferences, { catalog: service.currentStatus?.tools_status }));
+        { requestedEngine, requestedModel }, managedToolPreferenceInput(toolPreferences,
+          { catalog: service.currentStatus?.tools_status, handoffPreparation: sessionHandoffPreparation }));
       const requestToolPreferences = lockdownRequest.toolPreferences;
       const modelTimingStartedAt = Date.now();
       runtimeAssertCurrent?.();
@@ -418,25 +418,11 @@ async function startManagedSidecarChatStream(service, {
       executionAuthority = runtimeExecutionAuthority || captureManagedExecutionAuthority(service, resolvedSessionId, {
         requestId, signal: controller.signal,
         mode: normalizedPreferences.plan_mode === true ? 'plan' : effectiveMode,
-        toolPreferences: requestToolPreferences,
+        toolPreferences: requestToolPreferences, handoffPreparation: sessionHandoffPreparation,
         readOnly: isProposeRunMode(sessionSummary), approvalMode: isProposeRunMode(sessionSummary) ? 'prompt' : approvalMode,
       });
       // Cloud engines get wider stream ceilings (mirrors the sidecar's cloud loop profile); re-arm both timers now that the engine is known.
       streamWatchdog.applyEngineType(engineType);
-      // JCA-003: a valid manual-compaction snapshot replaces the summarized prefix
-      // in the PROMPT history only; the canonical record stays full.
-      const compactedHistory = checkpointHistory?.compactedHistory || applyCompactionSnapshotForChatSend(
-        service,
-        resolvedSessionId,
-        canonicalSessionMessages
-      );
-      const resumePayload = buildResumePayload({
-        ...sessionSummary,
-        messages: compactedHistory.messages,
-        // The actor already terminalized any orphan; never resume that generation.
-        active_turn: null,
-      });
-      const preparedHistoryMessages = prepareResumedHistory(service, resumePayload);
       const {
         normalized: storedContextPreferences,
         warnings: contextPreferenceWarnings,
@@ -452,17 +438,19 @@ async function startManagedSidecarChatStream(service, {
         : storedContextPreferences;
       if (checkpointHistory) contextPreferences.history_scope = checkpointHistory.historySelector.history_scope;
 
-      const preparedMessages = checkpointHistory?.preparedMessages || buildPreparedMessages(preparedHistoryMessages, prompt, {
-        attachments: textAttachments, skillInvocation,
+      const turnHistoryInput = {
+        sessionId: resolvedSessionId, userMessageId, sessionSummary, checkpointHistory, prompt, textAttachments, skillInvocation,
         contextPreferences,
+      };
+      let wireKinds = wireContextKinds(service.sidecarClient);
+      let { compactedHistory, preparedHistoryMessages, preparedMessages } = deriveManagedTurnHistory(service, {
+        ...turnHistoryInput, sessionMessages, wireKinds,
       });
       const promptContributions = {
         base_history: summarizePromptMessages(preparedMessages.slice(0, -1)),
         current_user_prompt: summarizePromptMessages(preparedMessages.slice(-1)),
       };
       const recallQuery = buildRecallQuery(canonicalSessionMessages, transcriptPrompt);
-      const promptHasExplicitStyleInstruction =
-        promptHasExplicitResponseStyleInstruction(transcriptPrompt);
       const recentUserTurns = canonicalSessionMessages
         .filter((message) => message?.role === 'user' && !String(message?.kind || '').trim())
         .slice(-2)
@@ -472,6 +460,12 @@ async function startManagedSidecarChatStream(service, {
       // Server before sidecar: a sidecar initialized against a dead endpoint
       // falls back and throws, so the restart below would never be reached.
       await ensureManagedLlamaServerReadyForChat(service, {
+        engineType,
+        sessionId: resolvedSessionId,
+        streamId,
+        traceId: requestTraceId,
+      });
+      await ensureManagedNinferReadyForChat(service, {
         engineType,
         sessionId: resolvedSessionId,
         streamId,
@@ -493,6 +487,25 @@ async function startManagedSidecarChatStream(service, {
         streamId,
         traceId: requestTraceId,
       });
+
+      // The first turn's handoff row (fail-closed: a coded error, never a turn without it) and queued session
+      // mail join only a brand-new model turn (a resume or edit/failure retry reuses the rows before its anchor);
+      // the history is rebuilt when rows were placed or the readiness checks changed the negotiated kinds.
+      const contextAdmission = admitTurnContextRows(service, {
+        sessionHandoff, brandNew: userRowPersisted && !checkpointHistory && !editedAnchorMessageId && !failureRetry,
+        sessionId: resolvedSessionId, turnId, userMessageId, preparedMessages, lease: activeTurnLease, previousKinds: wireKinds,
+        handoffPreparation: sessionHandoffPreparation, resumed: Boolean(checkpointHistory),
+      });
+      if (contextAdmission.rebuild) {
+        wireKinds = contextAdmission.kinds;
+        ({
+          canonicalSessionMessages, compactedHistory, preparedHistoryMessages, preparedMessages,
+        } = deriveManagedTurnHistory(service, {
+          ...turnHistoryInput,
+          sessionMessages: [...(service.sessionStore.getSession(resolvedSessionId)?.messages || [])],
+          wireKinds,
+        }));
+      }
 
       const contextAssemblyStartedAt = Date.now();
       recordTimingMarker('context_assembly_started');
@@ -533,7 +546,6 @@ async function startManagedSidecarChatStream(service, {
         sessionMessages: canonicalSessionMessages,
         prompt: transcriptPrompt,
         recentUserTurns,
-        promptHasExplicitStyleInstruction,
         preparedMessages,
         recallQuery,
         logTiming,
@@ -557,7 +569,6 @@ async function startManagedSidecarChatStream(service, {
         included_git_context: contextPreferences.include_git_context !== false,
         included_codebase_context: contextPreferences.include_codebase_context !== false,
         memory_policy_enabled: memoryPolicy?.enabled === true,
-        memory_response_style_enabled: memoryPolicy?.include_response_style === true,
       });
 
       if (!runtimeAdmission) service.emit('chat-stream', {
@@ -644,6 +655,9 @@ async function startManagedSidecarChatStream(service, {
         logger: promotionLogger,
       });
       const chatSendParams = {
+        subagent_routing: require('../subagent-routing-settings').normalizeSubagentRouting(
+          service.configService?.getState?.()?.subagentRouting
+        ),
         accept_version: API_VERSION,
         request_id: requestId, logical_turn_id: turnId,
         trace_id: requestTraceId,
@@ -666,10 +680,10 @@ async function startManagedSidecarChatStream(service, {
         ...(interruptedTurnReceipts ? { interrupted_turn_receipts: interruptedTurnReceipts } : {}),
         memory_policy: memoryPolicy,
         ...(contextBlocks?.length ? { context_blocks: contextBlocks } : {}),
-        ...(requestToolPreferences ? { tool_preferences: requestToolPreferences } : {}),
+        ...(requestToolPreferences ? { tool_preferences: requestToolPreferences } : {}), ...(sessionHandoffPreparation ? { handoff_preparation: sessionHandoffPreparation } : {}),
         approval_mode: requestApprovalMode, ...safetyRequestFields(service, safetyPolicy),
-        ...(normalizedDebugOptions ? { debug_options: normalizedDebugOptions } : {}),
-        ...(skillInvocation ? { skill_invocation: skillInvocation } : {}),
+        ...inferencePerformanceRequestField(service, { engineType, sessionId: resolvedSessionId, requestId }),
+        ...(normalizedDebugOptions ? { debug_options: normalizedDebugOptions } : {}), ...(skillInvocation ? { skill_invocation: skillInvocation } : {}),
         execution_context: service.sessionExecutionAuthority.toExecutionContext(executionAuthority),
       };
       await waitForManagedInitialization(service, controller.signal);
@@ -680,7 +694,7 @@ async function startManagedSidecarChatStream(service, {
       // Frame fitting trims canonical history first, then whole history rounds.
       const frameFit = fitChatSendParamsToFrameBudgetWithOutcome(chatSendParams, {
         rebuildMessages: checkpointHistory ? undefined : (historyScope) => buildPreparedMessages(preparedHistoryMessages, prompt, {
-          attachments: textAttachments, skillInvocation,
+          attachments: textAttachments, skillInvocation, ...wireKinds,
           contextPreferences: { ...contextPreferences, history_scope: historyScope },
         }),
         // The helper reports an irreducible frame at ERROR.
@@ -711,7 +725,7 @@ async function startManagedSidecarChatStream(service, {
           pauseStreamIdleTimer: streamWatchdog.pauseForApproval,
           onNotificationObserved: turnEffectProbe.note,
           onApprovalObserved: turnEffectProbe.noteApproval,
-          executionAuthority,
+          executionAuthority, turnIdentity: activeTurnLease.identity,
           // The idle watchdog handles progress; transport follows the absolute cap.
           timeoutMs: streamWatchdog.getCeilings().absoluteTimeoutMs
             + CHAT_STREAM_REQUEST_SETTLE_GRACE_MS,
@@ -868,6 +882,7 @@ async function startManagedSidecarChatStream(service, {
           ? 'timeout'
           : (controller.signal.aborted ? 'cancelled' : sidecarErrorCategory)
       );
+      await abortImageBridgeExecutions(service, streamId); // A lost transport cannot carry the render's result.
       await settleHostedExecution(service, streamId, normalizedErrorPayload);
       if (sidecarErrorCode && !normalizedErrorPayload.error_code) {
         normalizedErrorPayload.error_code = sidecarErrorCode;
@@ -974,6 +989,7 @@ async function startManagedSidecarChatStream(service, {
       }
     } finally {
       streamWatchdog.clear();
+      releaseImageBridgeExecutions(service, streamId);
       if (!runtimeExecutionAuthority) service.sessionExecutionAuthority?.close?.(executionAuthority);
       if (!continuationPausePending) runtimeCompletion = await finishManagedRuntimeCompletion({
         service, runtime, actorRegistry, lease: activeTurnLease, turnEventCollector,

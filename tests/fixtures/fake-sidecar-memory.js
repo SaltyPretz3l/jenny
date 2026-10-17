@@ -1,53 +1,31 @@
-const {
-  GENERIC_CAPTURE_VALUES,
-  GOAL_CANDIDATES,
-  IMPORTANT_PERSON_CANDIDATES,
-  MEMORY_PATTERNS,
-  PROJECT_CONTEXT_CANDIDATES,
-  PROJECT_CONTEXT_FAMILY_BY_LESSON_TEXT,
-  PROJECT_CONTEXT_FAMILY_PATTERNS,
-  RECALL_STOPWORDS,
-  RESPONSE_STYLE_CANDIDATES,
-  ROUTINE_CANDIDATES,
-  TOOL_STRATEGY_CANDIDATES,
-  TOOL_STRATEGY_FAMILY_BY_FINGERPRINT,
-  TOOL_STRATEGY_QUERY_PATTERNS,
-  WORKING_PREFERENCE_FAMILY_BY_LESSON_TEXT,
-  WORKING_PREFERENCE_CANDIDATES,
-  WORKING_PREFERENCE_FAMILY_PATTERNS,
-} = require('./fake-sidecar-memory-patterns');
+// Recall-side fixtures: the stopwords the fake uses to tokenize recall queries.
+const RECALL_STOPWORDS = new Set([
+  'the',
+  'and',
+  'for',
+  'with',
+  'that',
+  'this',
+  'from',
+  'have',
+  'what',
+  'when',
+  'where',
+  'your',
+  'about',
+  'should',
+  'would',
+  'could',
+  'there',
+  'their',
+  'them',
+  'then',
+  'into',
+  'user',
+]);
 
 function normalizeSpaces(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
-}
-
-function normalizeCapture(value) {
-  return normalizeSpaces(String(value || '').replace(/\b(?:please|thanks|thank you)\b/gi, ''))
-    .replace(/^[\s.,!?;:-]+|[\s.,!?;:-]+$/g, '');
-}
-
-function titleCaseWords(value) {
-  return normalizeSpaces(value)
-    .split(' ')
-    .filter(Boolean)
-    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1).toLowerCase())
-    .join(' ');
-}
-
-function normalizeTemplateCaptures(groups) {
-  const captures = {};
-  for (const [key, rawValue] of Object.entries(groups || {})) {
-    let normalized = normalizeCapture(rawValue);
-    if (key === 'day' || key === 'month' || key === 'relationship') {
-      normalized = normalized.toLowerCase();
-    }
-    captures[key] = normalized;
-  }
-  return captures;
-}
-
-function renderCandidateTemplate(template, captures) {
-  return String(template || '').replace(/\{(\w+)\}/g, (_, key) => captures?.[key] || '');
 }
 
 function normalizeTitle(value) {
@@ -68,248 +46,6 @@ function buildFingerprint(lessonKind, lessonText) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return `${String(lessonKind || '').trim().toLowerCase()}:${normalizedText}`.slice(0, 160);
-}
-
-function validateCapture(value) {
-  const normalized = normalizeCapture(value);
-  if (normalized.length < 3 || normalized.length > 80) {
-    return false;
-  }
-  if (GENERIC_CAPTURE_VALUES.has(normalized.toLowerCase())) {
-    return false;
-  }
-  return normalized.split(' ').length <= 11;
-}
-
-function buildCandidate({ title, lessonText, lessonKind, confidence, sourceExcerpt }) {
-  const normalizedLessonText = normalizeLessonText(lessonText);
-  return {
-    title: normalizeTitle(title),
-    lesson_text: normalizedLessonText,
-    lesson_kind: lessonKind,
-    confidence: Math.max(0, Math.min(Number(confidence || 0), 1)),
-    source_excerpt: normalizeSpaces(sourceExcerpt).slice(0, 240),
-    content_fingerprint: buildFingerprint(lessonKind, normalizedLessonText),
-  };
-}
-
-function maybeAddSuggestionCandidate(suggestions, seenFingerprints, candidate, savedMemories) {
-  if (!candidate || typeof candidate !== 'object') {
-    return false;
-  }
-  const fingerprint = String(candidate.content_fingerprint || '').trim().toLowerCase();
-  if (!fingerprint || seenFingerprints.has(fingerprint) || savedMemories.has(fingerprint)) {
-    return false;
-  }
-  seenFingerprints.add(fingerprint);
-  suggestions.push(candidate);
-  return true;
-}
-
-function buildMemorySuggestion(params, savedMemories) {
-  const messages = Array.isArray(params?.messages) ? params.messages : [];
-  const suggestions = [];
-  const seenFingerprints = new Set();
-
-  for (const message of messages) {
-    if (String(message?.role || '').trim().toLowerCase() !== 'user') {
-      continue;
-    }
-    const content = normalizeSpaces(message?.content || '');
-    if (!content) {
-      continue;
-    }
-
-    for (const candidateConfig of MEMORY_PATTERNS) {
-      const match = content.match(candidateConfig.pattern);
-      if (!match) {
-        continue;
-      }
-      const value = match.groups?.value;
-      if (!validateCapture(value)) {
-        continue;
-      }
-      const normalizedValue = candidateConfig.lessonKind === 'profile'
-        ? titleCaseWords(normalizeCapture(value))
-        : normalizeCapture(value);
-      const formatted = candidateConfig.formatter(normalizedValue);
-      maybeAddSuggestionCandidate(
-        suggestions,
-        seenFingerprints,
-        buildCandidate({
-          title: formatted.title,
-          lessonText: formatted.lesson_text,
-          lessonKind: candidateConfig.lessonKind,
-          confidence: candidateConfig.confidence,
-          sourceExcerpt: match[0],
-        }),
-        savedMemories
-      );
-      break;
-    }
-
-    for (const candidateConfig of RESPONSE_STYLE_CANDIDATES) {
-      const match = content.match(candidateConfig.pattern);
-      if (!match) {
-        continue;
-      }
-      maybeAddSuggestionCandidate(
-        suggestions,
-        seenFingerprints,
-        buildCandidate({
-          title: candidateConfig.title,
-          lessonText: candidateConfig.lesson_text,
-          lessonKind: 'response_style',
-          confidence: candidateConfig.confidence,
-          sourceExcerpt: match[0],
-        }),
-        savedMemories
-      );
-      break;
-    }
-
-    for (const candidateConfig of TOOL_STRATEGY_CANDIDATES) {
-      const match = content.match(candidateConfig.pattern);
-      if (!match) {
-        continue;
-      }
-      maybeAddSuggestionCandidate(
-        suggestions,
-        seenFingerprints,
-        buildCandidate({
-          title: candidateConfig.title,
-          lessonText: candidateConfig.lesson_text,
-          lessonKind: 'tool_strategy',
-          confidence: candidateConfig.confidence,
-          sourceExcerpt: match[0],
-        }),
-        savedMemories
-      );
-      break;
-    }
-
-    for (const candidateConfig of WORKING_PREFERENCE_CANDIDATES) {
-      const match = content.match(candidateConfig.pattern);
-      if (!match) {
-        continue;
-      }
-      maybeAddSuggestionCandidate(
-        suggestions,
-        seenFingerprints,
-        buildCandidate({
-          title: candidateConfig.title,
-          lessonText: candidateConfig.lesson_text,
-          lessonKind: 'working_preference',
-          confidence: candidateConfig.confidence,
-          sourceExcerpt: match[0],
-        }),
-        savedMemories
-      );
-      break;
-    }
-
-    for (const candidateConfig of PROJECT_CONTEXT_CANDIDATES) {
-      const match = content.match(candidateConfig.pattern);
-      if (!match) {
-        continue;
-      }
-      maybeAddSuggestionCandidate(
-        suggestions,
-        seenFingerprints,
-        buildCandidate({
-          title: candidateConfig.title,
-          lessonText: candidateConfig.lesson_text,
-          lessonKind: 'project_context',
-          confidence: candidateConfig.confidence,
-          sourceExcerpt: match[0],
-        }),
-        savedMemories
-      );
-      break;
-    }
-
-    for (const candidateConfig of ROUTINE_CANDIDATES) {
-      const match = content.match(candidateConfig.pattern);
-      if (!match) {
-        continue;
-      }
-      const captures = normalizeTemplateCaptures(match.groups);
-      if (!validateCapture(captures.value)) {
-        continue;
-      }
-      maybeAddSuggestionCandidate(
-        suggestions,
-        seenFingerprints,
-        buildCandidate({
-          title: renderCandidateTemplate(candidateConfig.title, captures),
-          lessonText: renderCandidateTemplate(candidateConfig.lesson_text, captures),
-          lessonKind: 'routine',
-          confidence: candidateConfig.confidence,
-          sourceExcerpt: match[0],
-        }),
-        savedMemories
-      );
-      break;
-    }
-
-    for (const candidateConfig of GOAL_CANDIDATES) {
-      const match = content.match(candidateConfig.pattern);
-      if (!match) {
-        continue;
-      }
-      const captures = normalizeTemplateCaptures(match.groups);
-      if (!validateCapture(captures.value)) {
-        continue;
-      }
-      maybeAddSuggestionCandidate(
-        suggestions,
-        seenFingerprints,
-        buildCandidate({
-          title: renderCandidateTemplate(candidateConfig.title, captures),
-          lessonText: renderCandidateTemplate(candidateConfig.lesson_text, captures),
-          lessonKind: 'goal',
-          confidence: candidateConfig.confidence,
-          sourceExcerpt: match[0],
-        }),
-        savedMemories
-      );
-      break;
-    }
-
-    for (const candidateConfig of IMPORTANT_PERSON_CANDIDATES) {
-      const match = content.match(candidateConfig.pattern);
-      if (!match) {
-        continue;
-      }
-      const value = match.groups?.value;
-      if (!validateCapture(value)) {
-        continue;
-      }
-      const formatted = candidateConfig.formatter(normalizeCapture(value));
-      maybeAddSuggestionCandidate(
-        suggestions,
-        seenFingerprints,
-        buildCandidate({
-          title: formatted.title,
-          lessonText: formatted.lesson_text,
-          lessonKind: candidateConfig.lessonKind,
-          confidence: candidateConfig.confidence,
-          sourceExcerpt: match[0],
-        }),
-        savedMemories
-      );
-      break;
-    }
-  }
-
-  suggestions.sort((left, right) => {
-    const confidenceCompare = Number(right.confidence || 0) - Number(left.confidence || 0);
-    if (confidenceCompare !== 0) {
-      return confidenceCompare;
-    }
-    return String(right.lesson_text || '').length - String(left.lesson_text || '').length;
-  });
-  return suggestions[0] || null;
 }
 
 function tokenize(value) {
@@ -339,60 +75,41 @@ function recencyBonus(updatedAt) {
   return 0;
 }
 
-function toolStrategyMatchesIntent(memory, query) {
-  const familyKey = String(memory?.family_key || '').trim().toLowerCase();
-  if (!familyKey) {
-    return false;
-  }
-  const patterns = TOOL_STRATEGY_QUERY_PATTERNS[familyKey];
-  if (!patterns) {
-    return false;
-  }
-  return patterns.some((pattern) => pattern.test(query));
+const GENERAL_PROJECT_ID = 'project_general';
+const MEMORY_KINDS = new Set(['preference', 'fact', 'decision', 'convention', 'person', 'routine', 'lesson']);
+const STALE_REVISION = { reason: 'stale_revision', code: 'CMP-MEM-0012' };
+const NOT_FOUND = { reason: 'not_found', code: 'CMP-MEM-0004' };
+const SUPPRESSED = { reason: 'suppressed', code: 'CMP-MEM-0013' };
+
+// Suppression tombstones and the operation ledger live for the life of the fake process.
+const suppressedFingerprints = new Set();
+const operations = new Map();
+let operationCounter = 0;
+
+function nextOperationId() {
+  operationCounter += 1;
+  return `rpc:fake-${operationCounter}`;
 }
 
-function workingPreferenceMatchesIntent(memory, query) {
-  const familyKey = String(memory?.family_key || '').trim().toLowerCase();
-  if (!familyKey) {
-    return false;
-  }
-  const patterns = WORKING_PREFERENCE_FAMILY_PATTERNS[familyKey];
-  if (!patterns || !patterns.length) {
-    return false;
-  }
-  return patterns.some((pattern) => pattern.test(query));
+// The shared v9 write payload (sidecar/runtime/memory.py serialize_write_result).
+function writeResult(status, memory, extra = {}) {
+  return {
+    status,
+    memory: memory || null,
+    operation_id: null,
+    duplicate: false,
+    replayed: false,
+    undoable: false,
+    ...extra,
+  };
 }
 
-function projectContextMatchesIntent(memory, query) {
-  const familyKey = String(memory?.family_key || '').trim().toLowerCase();
-  if (!familyKey) {
-    return false;
-  }
-  const patterns = PROJECT_CONTEXT_FAMILY_PATTERNS[familyKey];
-  if (!patterns || !patterns.length) {
-    return false;
-  }
-  return patterns.some((pattern) => pattern.test(query));
-}
-
-function resolveFamilyKey(lessonKind, lessonText, fingerprint) {
-  const normalizedKind = normalizeSpaces(lessonKind).toLowerCase();
-  const normalizedLessonText = normalizeLessonText(lessonText).toLowerCase();
-  const normalizedFingerprint = normalizeSpaces(fingerprint).toLowerCase();
-  if (normalizedKind === 'tool_strategy') {
-    return TOOL_STRATEGY_FAMILY_BY_FINGERPRINT[normalizedFingerprint] || '';
-  }
-  if (normalizedKind === 'working_preference') {
-    return WORKING_PREFERENCE_FAMILY_BY_LESSON_TEXT[normalizedLessonText] || '';
-  }
-  if (normalizedKind === 'project_context') {
-    return PROJECT_CONTEXT_FAMILY_BY_LESSON_TEXT[normalizedLessonText] || '';
-  }
-  return '';
+function isActive(memory) {
+  return memory.status !== 'archived';
 }
 
 function listApprovedMemories(savedMemories) {
-  return Array.from(savedMemories.values()).sort((left, right) => {
+  return Array.from(savedMemories.values()).filter(isActive).sort((left, right) => {
     const updatedCompare = String(right.updated_at || '').localeCompare(String(left.updated_at || ''));
     if (updatedCompare !== 0) {
       return updatedCompare;
@@ -401,19 +118,19 @@ function listApprovedMemories(savedMemories) {
   });
 }
 
-function findMemoryById(savedMemories, memoryId) {
+function findMemoryById(savedMemories, memoryId, { includeArchived = false } = {}) {
   const normalizedId = Number(memoryId);
   if (!Number.isInteger(normalizedId) || normalizedId <= 0) {
     return null;
   }
-  return listApprovedMemories(savedMemories).find((memory) => Number(memory.id || 0) === normalizedId) || null;
+  return Array.from(savedMemories.values())
+    .find((memory) => memory.id === normalizedId && (includeArchived || isActive(memory))) || null;
 }
 
-const ALLOWED_LESSON_KINDS = new Set([
-  'profile', 'preference', 'response_style',
-  'tool_strategy', 'working_preference', 'project_context',
-  'routine', 'goal', 'important_person',
-]);
+function staleRevision(params, existing) {
+  const expected = params?.expected_revision;
+  return Number.isInteger(expected) && expected !== existing.revision;
+}
 
 function saveMemory(params, savedMemories, nextMemoryId) {
   const sessionId = String(params?.session_id || '').trim();
@@ -424,82 +141,101 @@ function saveMemory(params, savedMemories, nextMemoryId) {
   const title = normalizeTitle(candidate?.title || '');
   const lessonText = normalizeLessonText(candidate?.lesson_text || '');
   const fingerprint = buildFingerprint(lessonKind, lessonText);
-  const familyKey = resolveFamilyKey(lessonKind, lessonText, fingerprint);
   if (!sessionId || !candidate || !lessonKind || !title || !lessonText) {
     return {
       errorDetail: 'candidate and session_id are required',
       nextMemoryId,
     };
   }
-  if (!ALLOWED_LESSON_KINDS.has(lessonKind)) {
+  if (!MEMORY_KINDS.has(lessonKind)) {
     return {
       errorDetail: `unsupported lesson_kind: ${lessonKind}`,
       nextMemoryId,
     };
   }
 
-  let record = savedMemories.get(fingerprint);
-  let created = false;
-  const timestamp = new Date().toISOString();
-  if (!record) {
-    record = {
-      id: nextMemoryId,
-      session_id: sessionId,
-      title,
-      lesson_text: lessonText,
-      lesson_kind: lessonKind,
-      confidence: Math.max(0, Math.min(Number(candidate.confidence || 0), 1)),
-      source_excerpt: normalizeSpaces(candidate.source_excerpt || '').slice(0, 240),
-      content_fingerprint: fingerprint,
-      family_key: familyKey,
-      created_at: timestamp,
-      updated_at: timestamp,
+  const existing = savedMemories.get(fingerprint);
+  if (existing && isActive(existing)) {
+    return {
+      result: { created: false, ...writeResult('saved', existing, { duplicate: true }) },
+      nextMemoryId,
     };
-    savedMemories.set(fingerprint, record);
-    created = true;
-    nextMemoryId += 1;
-  } else {
-    record = {
-      ...record,
-      session_id: sessionId,
-      title,
-      lesson_text: lessonText,
-      lesson_kind: lessonKind,
-      confidence: Math.max(0, Math.min(Number(candidate.confidence || 0), 1)),
-      source_excerpt: normalizeSpaces(candidate.source_excerpt || '').slice(0, 240),
-      content_fingerprint: fingerprint,
-      family_key: familyKey,
-      updated_at: timestamp,
-    };
-    savedMemories.set(fingerprint, record);
   }
+  // A user save of a forgotten fingerprint lifts its tombstone, as production does.
+  suppressedFingerprints.delete(fingerprint);
+  const timestamp = new Date().toISOString();
+  const record = {
+    id: existing ? existing.id : nextMemoryId,
+    session_id: sessionId,
+    title,
+    lesson_text: lessonText,
+    lesson_kind: lessonKind,
+    confidence: Math.max(0, Math.min(Number(candidate.confidence || 0), 1)),
+    source_excerpt: normalizeSpaces(candidate.source_excerpt || '').slice(0, 240),
+    content_fingerprint: fingerprint,
+    provenance: 'user_approved',
+    created_at: existing ? existing.created_at : timestamp,
+    updated_at: timestamp,
+    project_id: String(params?.project_id || GENERAL_PROJECT_ID),
+    scope_session_id: null,
+    origin: 'user',
+    status: 'active',
+    archived_at: null,
+    revision: existing ? existing.revision + 1 : 1,
+    protected: false,
+    always_on: false,
+    source_message_ids: [],
+  };
+  savedMemories.set(fingerprint, record);
   return {
     result: {
-      created,
-      memory: record,
+      created: true,
+      ...writeResult('saved', record, { operation_id: nextOperationId(), undoable: true }),
     },
-    nextMemoryId,
+    nextMemoryId: existing ? nextMemoryId : nextMemoryId + 1,
   };
 }
 
+function rekeyMemory(savedMemories, previous, next) {
+  savedMemories.delete(String(previous.content_fingerprint || '').trim().toLowerCase());
+  savedMemories.set(next.content_fingerprint, next);
+}
+
+// An operation remembers the revision it produced: undo is a compare-and-set
+// on it, so a newer write wins over the undo (production answers `conflict`).
+function recordOperation(before, after) {
+  const operationId = nextOperationId();
+  operations.set(operationId, { before, projectId: before.project_id, resultRevision: after.revision });
+  return operationId;
+}
+
+// memory.update takes flat fields (schema v9, 2026-10-15); `patch` is refused
+// like production does. The reply is the shared write result (`status`), and a
+// stale `expected_revision` answers a conflict that carries the current row.
 function updateMemory(params, savedMemories) {
   const memoryId = Number(params?.memory_id);
-  const patch = params?.patch && typeof params.patch === 'object'
-    ? params.patch
-    : null;
+  if (params && Object.prototype.hasOwnProperty.call(params, 'patch')) {
+    return { errorDetail: 'memory.update takes flat fields; patch is not supported' };
+  }
   const existing = findMemoryById(savedMemories, memoryId);
-  const title = normalizeTitle(patch?.title || '');
-  const lessonText = normalizeLessonText(patch?.lesson_text || '');
-  if (!existing || !patch || !title || !lessonText) {
-    return {
-      errorDetail: !existing ? 'memory not found' : 'memory_id and patch are required',
-    };
+  if (!existing) {
+    return { errorDetail: 'memory not found' };
+  }
+  if (staleRevision(params, existing)) {
+    return { result: writeResult('conflict', existing, STALE_REVISION) };
+  }
+  const title = normalizeTitle(params?.title || existing.title);
+  const lessonText = normalizeLessonText(params?.lesson_text || existing.lesson_text);
+  const lessonKind = params?.lesson_kind === undefined
+    ? existing.lesson_kind
+    : normalizeSpaces(params.lesson_kind).toLowerCase();
+  if (!title || !lessonText || !MEMORY_KINDS.has(lessonKind)) {
+    return { errorDetail: 'memory.update needs one of lesson_text, lesson_kind, title, always_on, remove_provenance' };
   }
 
+  const nextFingerprint = buildFingerprint(lessonKind, lessonText);
   const duplicate = listApprovedMemories(savedMemories).find((memory) =>
-    memory.id !== existing.id
-    && String(memory.lesson_kind || '').trim().toLowerCase() === String(existing.lesson_kind || '').trim().toLowerCase()
-    && normalizeLessonText(memory.lesson_text) === lessonText
+    memory.id !== existing.id && memory.content_fingerprint === nextFingerprint
   );
   if (duplicate) {
     return {
@@ -507,49 +243,101 @@ function updateMemory(params, savedMemories) {
     };
   }
 
-  const nextFingerprint = buildFingerprint(existing.lesson_kind, lessonText);
-  savedMemories.delete(String(existing.content_fingerprint || '').trim().toLowerCase());
   const updated = {
     ...existing,
     title,
     lesson_text: lessonText,
+    lesson_kind: lessonKind,
     content_fingerprint: nextFingerprint,
-    family_key: existing.family_key || '',
+    always_on: params?.always_on === undefined ? existing.always_on : params.always_on === true,
+    ...(params?.remove_provenance === true ? { source_excerpt: '', provenance: 'source_removed' } : {}),
+    revision: existing.revision + 1,
     updated_at: new Date().toISOString(),
   };
-  savedMemories.set(nextFingerprint, updated);
+  rekeyMemory(savedMemories, existing, updated);
   return {
-    result: {
-      updated: true,
-      memory: updated,
-    },
+    result: writeResult('saved', updated, { operation_id: recordOperation(existing, updated), undoable: true }),
   };
 }
 
-// KNOWN DIVERGENCE from production, deliberately not simulated.
-// sidecar/ai/memory/store_approved.py's delete_memory() also writes a
-// memory_suppressions row with reason 'forgotten', which is what stops a deleted
-// lesson being suggested again. This fake only drops the row. Nothing today
-// asserts suppression through this fixture (it reaches only
-// tests/fixtures/fake-sidecar.js and two sidecar-manager suites), so no test is
-// currently passing that should fail -- but a future "a forgotten memory is not
-// re-suggested" test written against this fake would pass vacuously. Add the
-// tombstone here in the same change as the test that needs it.
+// memory.delete archives the row and records a 'forgotten' tombstone, which is
+// what stops the lesson being suggested again (store_approved.py delete_memory).
 function deleteMemory(params, savedMemories) {
-  const memoryId = Number(params?.memory_id);
-  const existing = findMemoryById(savedMemories, memoryId);
+  const existing = findMemoryById(savedMemories, params?.memory_id);
   if (!existing) {
     return {
       errorDetail: 'memory_id must be a positive integer',
     };
   }
-  savedMemories.delete(String(existing.content_fingerprint || '').trim().toLowerCase());
+  if (staleRevision(params, existing)) {
+    return { result: { deleted: false, ...writeResult('conflict', existing, STALE_REVISION) } };
+  }
+  const timestamp = new Date().toISOString();
+  const archived = {
+    ...existing,
+    status: 'archived',
+    archived_at: timestamp,
+    revision: existing.revision + 1,
+    updated_at: timestamp,
+  };
+  savedMemories.set(archived.content_fingerprint, archived);
+  suppressedFingerprints.add(archived.content_fingerprint);
   return {
     result: {
       deleted: true,
       memory_id: existing.id,
+      ...writeResult('saved', archived, { operation_id: recordOperation(existing, archived), undoable: true }),
     },
   };
+}
+
+// memory.undo inverts one recorded operation of the named project: the row goes
+// back to its prior state and a delete's tombstone is lifted.
+function undoMemory(params, savedMemories) {
+  const operation = operations.get(String(params?.operation_id || ''));
+  if (!operation || operation.projectId !== params?.project_id) {
+    return writeResult('refused', null, NOT_FOUND);
+  }
+  const { before } = operation;
+  const current = findMemoryById(savedMemories, before.id, { includeArchived: true });
+  if (current && current.revision !== operation.resultRevision) {
+    return writeResult('conflict', current, STALE_REVISION);
+  }
+  operations.delete(params.operation_id);
+  const restored = { ...before, revision: (current ? current.revision : before.revision) + 1 };
+  if (current) {
+    rekeyMemory(savedMemories, current, restored);
+  } else {
+    savedMemories.set(restored.content_fingerprint, restored);
+  }
+  suppressedFingerprints.delete(restored.content_fingerprint);
+  return writeResult('saved', restored, { operation_id: String(params?.undo_operation_id || nextOperationId()) });
+}
+
+// memory.pending.accept writes the queued row (found by the caller) into its own
+// project; a forgotten fingerprint is refused as `suppressed`.
+function acceptPendingMemory(params, pending, savedMemories, nextMemoryId) {
+  const refused = (reason) => ({
+    result: { accepted: false, ...writeResult('refused', null, reason) },
+    nextMemoryId,
+  });
+  if (!pending) {
+    return refused(NOT_FOUND);
+  }
+  const fingerprint = buildFingerprint(pending.lesson_kind, normalizeLessonText(pending.lesson_text));
+  if (suppressedFingerprints.has(fingerprint)) {
+    return refused(SUPPRESSED);
+  }
+  const saved = saveMemory({
+    session_id: pending.session_id,
+    project_id: pending.project_id || params?.project_id,
+    candidate: pending,
+  }, savedMemories, nextMemoryId);
+  if (saved.errorDetail) {
+    return refused(NOT_FOUND);
+  }
+  const { created: _created, ...write } = saved.result;
+  return { result: { accepted: true, ...write }, nextMemoryId: saved.nextMemoryId };
 }
 
 function recallMemories(params, savedMemories) {
@@ -561,26 +349,8 @@ function recallMemories(params, savedMemories) {
   if (!queryTokens.size) {
     return [];
   }
-  return Array.from(savedMemories.values())
+  return listApprovedMemories(savedMemories)
     .map((memory) => {
-      if (
-        String(memory.lesson_kind || '').trim().toLowerCase() === 'tool_strategy'
-        && !toolStrategyMatchesIntent(memory, query)
-      ) {
-        return { memory, score: 0 };
-      }
-      if (
-        String(memory.lesson_kind || '').trim().toLowerCase() === 'working_preference'
-        && !workingPreferenceMatchesIntent(memory, query)
-      ) {
-        return { memory, score: 0 };
-      }
-      if (
-        String(memory.lesson_kind || '').trim().toLowerCase() === 'project_context'
-        && !projectContextMatchesIntent(memory, query)
-      ) {
-        return { memory, score: 0 };
-      }
       const titleTokens = new Set(tokenize(memory.title));
       const lessonTokens = new Set(tokenize(memory.lesson_text));
       const sourceTokens = new Set(tokenize(memory.source_excerpt));
@@ -599,9 +369,7 @@ function recallMemories(params, savedMemories) {
         }
       }
       const weightedOverlap = titleOverlap * 12 + lessonOverlap * 10 + sourceOverlap * 8;
-      const isGated = ['tool_strategy', 'working_preference', 'project_context']
-        .includes(String(memory.lesson_kind || '').trim().toLowerCase());
-      if (weightedOverlap <= 0 || (isGated && weightedOverlap < 16)) {
+      if (weightedOverlap <= 0) {
         return { memory, score: 0 };
       }
       return {
@@ -623,23 +391,6 @@ function recallMemories(params, savedMemories) {
     })
     .slice(0, Math.max(1, Math.min(Number(params?.limit || 3), 5)))
     .map((entry) => entry.memory);
-}
-
-function recallRecentMemories(params, savedMemories) {
-  const lessonKind = normalizeSpaces(params?.lesson_kind || '').toLowerCase();
-  if (!lessonKind) {
-    return [];
-  }
-  return Array.from(savedMemories.values())
-    .filter((memory) => String(memory.lesson_kind || '').trim().toLowerCase() === lessonKind)
-    .sort((left, right) => {
-      const updatedCompare = String(right.updated_at || '').localeCompare(String(left.updated_at || ''));
-      if (updatedCompare !== 0) {
-        return updatedCompare;
-      }
-      return Number(right.id || 0) - Number(left.id || 0);
-    })
-    .slice(0, Math.max(1, Math.min(Number(params?.limit || 3), 5)));
 }
 
 function buildMemoryContextLessons(params, fallbackContent, savedMemories) {
@@ -664,21 +415,98 @@ function buildMemoryContextLessons(params, fallbackContent, savedMemories) {
     .join('\n')
     .slice(-600) || fallbackContent;
   const lessons = recallMemories({ query: recallQuery, limit: 3 }, savedMemories);
-  if (memoryPolicy.include_response_style === true) {
-    lessons.push(...recallRecentMemories({ lesson_kind: 'response_style', limit: 1 }, savedMemories));
-  }
   return [...new Map(
     lessons.map((memory) => [memory.content_fingerprint, memory])
   ).values()].slice(0, 5);
 }
 
+// Chat-scope portable state is keyed by session id, independently of project
+// memories and reflection cursors. Callers own the map for test isolation.
+function exportSessionMemory(params, sessions) {
+  const state = sessions.get(params.session_id);
+  return { notes: state?.notes || [], recap: state?.recap || null };
+}
+
+function importSessionMemory(params, sessions) {
+  const timestamp = new Date().toISOString();
+  const notes = params.notes.map(note => ({ ...note, origin: note.origin || 'user', created_at: timestamp }));
+  sessions.set(params.session_id, { project_id: params.project_id, notes,
+    recap: params.recap ? { text: params.recap, updated_at: timestamp } : null });
+  return { status: 'imported', imported: notes.length, skipped: 0 };
+}
+
+function chatMemorySessions(params, sessions) {
+  const ids = [...sessions.keys()];
+  const limit = params.limit ?? 2000;
+  return { session_ids: ids.slice(0, limit), truncated: ids.length > limit };
+}
+
+function requestSessionMemory(method, params, sessions) {
+  if (method === 'memory.export_session') return exportSessionMemory(params, sessions);
+  if (method === 'memory.import_session') return importSessionMemory(params, sessions);
+  if (method === 'memory.chat_sessions') return chatMemorySessions(params, sessions);
+  return undefined;
+}
+
+// Settings > Memory page methods (row 58 W4): the archived list, restore,
+// erase, the operation ledger and clearing the forgotten list. Returns
+// undefined for any other call (the active list stays with the dispatcher).
+function settingsMemoryRows(savedMemories, projectId) {
+  return Array.from(savedMemories.values()).filter(memory => memory.project_id === projectId);
+}
+
+function restoreMemory(params, savedMemories) {
+  const existing = settingsMemoryRows(savedMemories, params?.project_id)
+    .find(memory => memory.id === params?.memory_id && !isActive(memory));
+  if (!existing) return writeResult('refused', null, NOT_FOUND);
+  // `target_project_id`: a deleted project's row restored into another project.
+  const restored = { ...existing, status: 'active', archived_at: null, revision: existing.revision + 1,
+    updated_at: new Date().toISOString(), project_id: params?.target_project_id || existing.project_id };
+  savedMemories.set(restored.content_fingerprint, restored);
+  suppressedFingerprints.delete(restored.content_fingerprint);
+  return writeResult('saved', restored, { operation_id: recordOperation(existing, restored), undoable: true });
+}
+
+function eraseMemory(params, savedMemories) {
+  const existing = settingsMemoryRows(savedMemories, params?.project_id).find(memory => memory.id === params?.memory_id);
+  if (!existing) return { status: 'not_found' };
+  savedMemories.delete(existing.content_fingerprint);
+  return { status: 'erased' };
+}
+
+function memoryOperations(params) {
+  const limit = Math.max(1, Math.min(Number(params?.limit) || 50, 50));
+  return { operations: [...operations.entries()].filter(([, entry]) => entry.projectId === params?.project_id)
+    .slice(-limit).reverse().map(([operationId, entry]) => ({ operation_id: operationId, op: 'update', origin: 'user',
+      memory_id: entry.before.id, result_revision: entry.resultRevision, created_at: entry.before.updated_at,
+      expires_at: null, undone_at: null, undoable: true })) };
+}
+
+function requestSettingsMemory(method, params, savedMemories) {
+  if (method === 'memory.list' && params?.status === 'archived') {
+    return { memories: settingsMemoryRows(savedMemories, params.project_id).filter(memory => !isActive(memory)),
+      next_cursor: null };
+  }
+  if (method === 'memory.restore') return restoreMemory(params, savedMemories);
+  if (method === 'memory.erase') return eraseMemory(params, savedMemories);
+  if (method === 'memory.operations') return memoryOperations(params);
+  if (method === 'memory.clear_suppressions') {
+    const cleared = suppressedFingerprints.size;
+    suppressedFingerprints.clear();
+    return { cleared };
+  }
+  return undefined;
+}
+
 module.exports = {
+  requestSessionMemory,
+  requestSettingsMemory,
+  acceptPendingMemory,
   buildMemoryContextLessons,
-  buildMemorySuggestion,
   deleteMemory,
   listApprovedMemories,
   recallMemories,
-  recallRecentMemories,
   saveMemory,
+  undoMemory,
   updateMemory,
 };

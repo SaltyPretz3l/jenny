@@ -1,6 +1,8 @@
 'use strict';
 
 const { summarizeCompactionSnapshot } = require('./session-compaction-snapshot');
+const { normalizeSpawnedFrom, isCoordinationContainerFrozen } = require('./session-coordination-records');
+const { countUnreadInbox } = require('./session-mail-records');
 
 // Renderer-facing projection of a normalized session record (the "summary"
 // carried by the session index and every `sessions:*` IPC reply). Extracted
@@ -13,6 +15,7 @@ const { summarizeCompactionSnapshot } = require('./session-compaction-snapshot')
 // is the bounded projection of that snapshot, and `context_usage` is the
 // bounded last-authoritative-reading seed for the composer context ring.
 function buildSessionSummary(session) {
+  const origin = normalizeSpawnedFrom(session.spawned_from);
   return {
     id: session.id,
     project_id: session.project_id,
@@ -60,6 +63,22 @@ function buildSessionSummary(session) {
     linked_session_ids: session.linked_session_ids,
     linked_task_id: session.linked_task_id || '',
     branch_origin: session.branch_origin || null,
+    spawned_from: origin?.schema_version === 1 ? {
+      parent_session_id: origin.parent_session_id, proposal_id: origin.proposal_id, created_at: origin.created_at,
+    } : null,
+    coordination_revision: Number.isSafeInteger(session.coordination_revision) && session.coordination_revision >= 0
+      ? session.coordination_revision : null,
+    children_expanded: typeof session.workspace_view?.children_expanded === 'boolean'
+      ? session.workspace_view.children_expanded : null,
+    session_incarnation: typeof session.session_incarnation === 'string' && session.session_incarnation
+      ? session.session_incarnation : null,
+    // A linked child's "Report back to the original chat" switch; null for any other chat or a frozen container.
+    reporting_enabled: origin?.schema_version === 1 && !isCoordinationContainerFrozen(session.session_mail)
+      ? session.session_mail?.reporting_enabled === true : null,
+    // Inbox messages the user has not seen yet; 0 when there is no mail or the container is frozen.
+    unread_message_count: isCoordinationContainerFrozen(session.session_mail) ? 0 : countUnreadInbox(session.session_mail),
+    // Addressed messages bind both incarnations; an imported or legacy chat gets one on its first turn.
+    messaging_addressable: Boolean(String(session.session_incarnation || '').trim()),
   };
 }
 

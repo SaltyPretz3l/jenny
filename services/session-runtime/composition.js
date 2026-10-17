@@ -15,6 +15,7 @@ const { SessionRuntimeScheduler } = require('./scheduler');
 const { RuntimeStore } = require('./store');
 const { SessionRuntimeService } = require('./service');
 const { SessionRuntimeChatAdapter } = require('../backend/session-runtime-chat-adapter');
+const { CommandProposalRuntimeAdapter } = require('../backend/command-proposal-runtime-adapter');
 const { ResourceBroker } = require('./resource-broker');
 const { PhysicalPathResolver } = require('./physical-paths');
 const { CheckpointStore } = require('./checkpoint-store');
@@ -68,19 +69,24 @@ function initializeSessionRuntimeComposition(service) {
   const chatAdapter = new SessionRuntimeChatAdapter(service, {
     lanes, resourceBroker, pathResolver, checkpointStore, conversationStore, budgetStore,
   });
+  // Exact-command Run work (input.kind command_proposal) has its own ports: a
+  // synthetic route, no model or inference lease, and no resume (see the adapter).
+  const commandAdapter = new CommandProposalRuntimeAdapter(service, { lanes, resourceBroker, pathResolver });
+  const adapterFor = work => (commandAdapter.isCommandWork(work) ? commandAdapter : chatAdapter);
   scheduler = new SessionRuntimeScheduler({
     store,
     lanes,
     enabled: service.featureFlags.session_runtime === true,
-    resolveRoute: work => chatAdapter.resolveRoute(work),
-    validateWork: (work, route) => chatAdapter.validateWork(work, route),
-    prepareCanonical: (work, route) => chatAdapter.prepareCanonical(work, route),
-    claimCanonical: (work, route) => chatAdapter.claimCanonical(work, route),
-    startProducer: context => chatAdapter.startProducer(context),
-    pauseProducer: work => pauseRuntimeDecision(service, chatAdapter.contexts.get(work.work_id), work),
-    cancelProducer: (work, reason, options) => chatAdapter.cancelProducer(work, reason, options),
-    discardPending: work => chatAdapter.discardPending(work),
-    provePausedCleanup: (work, options) => chatAdapter.provePausedCleanup(work, options),
+    resolveRoute: work => adapterFor(work).resolveRoute(work),
+    validateWork: (work, route) => adapterFor(work).validateWork(work, route),
+    prepareCanonical: (work, route) => adapterFor(work).prepareCanonical(work, route),
+    claimCanonical: (work, route) => adapterFor(work).claimCanonical(work, route),
+    startProducer: context => adapterFor(context.work).startProducer(context),
+    pauseProducer: work => (commandAdapter.isCommandWork(work) ? commandAdapter.pauseProducer(work)
+      : pauseRuntimeDecision(service, chatAdapter.contexts.get(work.work_id), work)),
+    cancelProducer: (work, reason, options) => adapterFor(work).cancelProducer(work, reason, options),
+    discardPending: work => adapterFor(work).discardPending(work),
+    provePausedCleanup: (work, options) => adapterFor(work).provePausedCleanup(work, options),
     onAttention: details => log('ERROR', 'session_runtime.attention_required', details),
     onWorkChange: work => {
       eligibilityCoordinator?.wake();
@@ -125,7 +131,7 @@ function initializeSessionRuntimeComposition(service) {
     log,
   });
   resourceBroker.onAvailabilityChange(() => waitNotices.refresh());
-  runtime = new SessionRuntimeService({ store, scheduler, chatAdapter, resourceBroker, pathResolver,
+  runtime = new SessionRuntimeService({ store, scheduler, chatAdapter, commandAdapter, resourceBroker, pathResolver,
     checkpointStore, budgetStore, lineageStore, conversationStore, eligibilityCoordinator });
   runtime.mutationJournalProof = mutationJournalProof;
   runtime.reconcileMutationPreparations = () => reconcileMutationPreparations(service, runtime);

@@ -80,6 +80,59 @@ def test_paths_outside_the_root_are_never_read(root: Path, tmp_path: Path) -> No
         assert result.sections == []
 
 
+def _link_directory(target: Path, link: Path) -> bool:
+    if sys.platform == "win32":
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+        return True
+    try:
+        os.symlink(target, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        return False
+    return True
+
+
+class _SwapAfterValidation(WorkspaceGuard):
+    """Replaces ``sub`` with a link outside the root right after a path is validated."""
+
+    def __init__(self, root: Path, outside: Path) -> None:
+        super().__init__(str(root))
+        self._sub, self._outside, self.swapped = root / "sub", outside, False
+
+    def ensure_within_root(self, resolved_path: Path) -> Path:
+        resolved = super().ensure_within_root(resolved_path)
+        if not self.swapped:
+            self._sub.rename(self._sub.with_name("sub-original"))
+            self.swapped = _link_directory(self._outside, self._sub)
+        return resolved
+
+
+@pytest.mark.parametrize("name", ["notes.md", "doc.docx"])
+def test_a_child_swapped_for_an_outside_link_after_validation_is_never_read(
+    root: Path, tmp_path: Path, name: str
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "sub").mkdir()
+    for folder, text in ((root / "sub", "inside words"), (outside, "outside secret")):
+        if name.endswith(".docx"):
+            with zipfile.ZipFile(folder / name, "w") as archive:
+                archive.writestr("word/document.xml", _DOCX_XML.replace("Second paragraph", text))
+        else:
+            (folder / name).write_text(text, encoding="utf-8")
+    guard = _SwapAfterValidation(root, outside)
+
+    result = extract_document(root / "sub" / name, guard)
+
+    if not guard.swapped:
+        pytest.skip("the OS refused to create a directory link")
+    assert (result.status, result.reason) == ("skipped", "outside_root")
+    assert result.sections == []
+    assert result.sha256 is None
+    assert "outside secret" not in repr(result)
+
+
 def test_docx_paragraphs_and_malformed_docx(root: Path) -> None:
     good = root / "doc.docx"
     with zipfile.ZipFile(good, "w") as archive:
@@ -171,7 +224,8 @@ def test_pdf_extraction_stops_at_its_time_and_text_bounds(
     monkeypatch.setattr(extract_module.time, "monotonic", lambda: clock[0])
     pdf = _FakePdf(50, "slow page text", clock)
     monkeypatch.setattr(
-        extract_module, "_load_fitz", lambda: type("Fitz", (), {"open": staticmethod(lambda _p: pdf)})
+        extract_module, "_load_fitz",
+        lambda: type("Fitz", (), {"open": staticmethod(lambda *_a, **_kw: pdf)}),
     )
     result = extract_document(root / "long.pdf", WorkspaceGuard(str(root)))
     assert result.status == "ok"
@@ -181,3 +235,24 @@ def test_pdf_extraction_stops_at_its_time_and_text_bounds(
     monkeypatch.setattr(extract_module, "MAX_PDF_TEXT_CHARS", 30)
     capped = extract_document(root / "long.pdf", WorkspaceGuard(str(root)))
     assert len(capped.sections) == 3
+
+
+def test_malformed_pdf_diagnostics_cannot_corrupt_protocol_stdout():
+    import subprocess
+
+    fixture = Path(__file__).resolve().parents[3] / "fixtures/documents/malformed.pdf"
+    script = (
+        "import json,sys; from pathlib import Path; "
+        "from sidecar.ai.semantic.extract import extract_document; "
+        "from sidecar.ai.tools.workspace import WorkspaceGuard; "
+        f"p=Path({str(fixture)!r}); "
+        "r=extract_document(p,WorkspaceGuard(str(p.parent))); "
+        "sys.stdout.write(json.dumps({'status':r.status,'reason':r.reason}))"
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                            text=True, encoding="utf-8", timeout=15, check=True)
+    # Parsing the complete stream fails if native diagnostic prose precedes it.
+    import json
+    payload = json.loads(result.stdout)
+    assert payload == {"status": "skipped", "reason": "needs_ocr"}
+    assert "MuPDF" in result.stderr

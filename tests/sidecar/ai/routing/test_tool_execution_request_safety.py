@@ -238,6 +238,7 @@ def test_parallel_delegate_children_run_inside_the_request_safety_context(
             task_iteration_limit=3,
             on_task_started=None,
             on_task_settled=None,
+            on_task_event=None,
         )
 
     invocations, failed = _in_chat_send({"safety_mode": "paranoid"}, run)

@@ -138,4 +138,23 @@ describe('collectDataInventory', () => {
     const result = collectDataInventory({ userDataPath: root, runtimeArchivePort });
     assert.equal(result.entries.some((entry) => entry.logicalPath.includes('coordination')), false);
   }));
+
+  it('reports derived indexes by size only and never archives them', () => withTempDir((root) => {
+    fs.writeFileSync(path.join(root, 'semantic-catalog.db'), Buffer.alloc(4096, 1));
+    fs.writeFileSync(path.join(root, 'semantic-catalog.db-wal'), Buffer.alloc(64, 1));
+    fs.writeFileSync(path.join(root, 'conversation-index.db'), Buffer.alloc(8192, 1));
+    fs.writeFileSync(path.join(root, 'conversation-index.db.corrupt-20261015T120000123456Z'), 'old');
+    fs.mkdirSync(path.join(root, 'conversation-index.db-shm'));
+
+    const result = collectDataInventory({ userDataPath: root });
+
+    assert.deepEqual(result.derived, [
+      { name: 'semantic-catalog.db', size: 4096, archived: false },
+      { name: 'semantic-catalog.db-wal', size: 64, archived: false },
+      { name: 'conversation-index.db', size: 8192, archived: false },
+    ]);
+    assert.equal(result.entries.some((entry) => /semantic-catalog|conversation-index/.test(entry.logicalPath)), false);
+    assert.equal(result.counts.totalBytes, 0, 'derived bytes never count toward the archive');
+    assert.equal(result.counts.memory, 0);
+  }));
 });

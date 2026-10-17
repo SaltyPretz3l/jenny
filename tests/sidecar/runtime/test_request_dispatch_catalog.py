@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Iterator
 from pathlib import Path
@@ -193,7 +194,13 @@ def test_index_search_status_purge_round_trip(
     )).response["result"]
     assert search["available"] is True and search["partial"] is False
     assert search["hits"][0]["rel_path"] == "orbit.md"
-    assert set(search["hits"][0]) == {"root_path", "rel_path", "locator", "snippet", "score"}
+    assert set(search["hits"][0]) == {
+        "root_path", "rel_path", "locator", "snippet", "score", "source_hash", "extraction"
+    }
+    assert search["hits"][0]["source_hash"] == hashlib.sha256(
+        (root / "orbit.md").read_bytes()).hexdigest()
+    assert search["hits"][0]["extraction"] is None
+    assert search["source_statuses"] == []
 
     status = _run(CATALOG_STATUS_METHOD, _params()).response["result"]
     assert status["roots"][0]["indexed"] == 1

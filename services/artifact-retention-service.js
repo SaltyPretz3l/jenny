@@ -34,6 +34,7 @@ const pathDefault = require('path');
 const crypto = require('crypto');
 const { readSessionMessagesForReferenceScan } = require('./backend/session-reference-scan');
 const { ensureJennyDirGitignore } = require('./jenny-project-dir');
+const { removeTree } = require('./fs-remove-no-follow');
 
 const REDACTED_PATH_TOKEN = '[redacted:path]';
 const ARTIFACTS_SUBPATH = ['.jenny', 'artifacts'];
@@ -211,7 +212,7 @@ function createArtifactRetentionService({
       if (!Number.isFinite(quarantinedAt) || nowMs - quarantinedAt < limits.quarantineMaxAgeMs) continue;
       try {
         await validateMutation(entryPath);
-        await fsImpl.rm(entryPath, { recursive: true, force: true });
+        await removeTree(entryPath, { fsImpl });
         result.purgedQuarantine += 1;
       } catch (_error) {
         result.errors += 1;

@@ -49,7 +49,6 @@ from sidecar.ai.routing.loop_events import (
 from sidecar.ai.routing.plan_mode_transition import context_with_plan_decision
 from sidecar.ai.routing.route_policy_runtime import with_request_safety
 from sidecar.ai.routing.tool_resource_deferral import ToolLoopSuspended
-from sidecar.ai.tools.workspace_retention import touch_workspace_active_use
 from sidecar.protocol import CHAT_SEND_METHOD
 from sidecar.runtime.approval import ApprovalResolution
 from sidecar.runtime.approval_plan import ApprovalPlanCacheCapacityError
@@ -241,6 +240,8 @@ def process_chat_send_request(
     # retention accounting from the optional `workspace_active_use_seconds`
     # field. No-ops entirely when the field, workspace root, or recovery root
     # is absent; never raises into the chat.send response.
+    from sidecar.ai.tools.workspace_retention import touch_workspace_active_use
+
     touch_workspace_active_use(brain_container, params)
     started_at = perf_counter()
     phase_events_enabled = _rd_hub.is_feature_flag_enabled(
@@ -277,7 +278,16 @@ def process_chat_send_request(
             notifications=[chat_error_notification(mismatch_error)],
         )
 
-    semantic_error = _validate_chat_send_semantics(params=params, message_id=message_id)
+    semantic_error = _validate_chat_send_semantics(
+        params=params,
+        message_id=message_id,
+        session_messages_enabled=(
+            getattr(brain_container, "chat_workspace_session_messages", False) is True
+        ),
+        session_handoff_enabled=(
+            getattr(brain_container, "chat_workspace_session_handoff", False) is True
+        ),
+    )
     if semantic_error is not None:
         return chat_error_outcome(
             initialized=initialized,
@@ -502,6 +512,8 @@ def process_chat_send_request(
             and approval_round < max_approval_rounds
         ):
             approval_round += 1
+            from sidecar.ai.routing.mutation_run_settlement import discard_approval_mutations
+
             approval_plan = chat_response.approval_plan
             approval_wait_timeout = _effective_approval_wait_timeout(
                 approval_plan,
@@ -518,8 +530,11 @@ def process_chat_send_request(
                     _rd_hub._APPROVAL_PLAN_CACHE.put(
                         approval_plan,
                         ttl_seconds=approval_wait_timeout,
+                        on_discard=lambda plan=approval_plan: discard_approval_mutations(
+                            plan, config=brain_container.stack.config),
                     )
                 except ApprovalPlanCacheCapacityError as cache_error:
+                    discard_approval_mutations(approval_plan, config=brain_container.stack.config)
                     _rd_hub.log_event(
                         logger,
                         logging.ERROR,
@@ -614,6 +629,8 @@ def process_chat_send_request(
                     _rd_hub._APPROVAL_PLAN_CACHE.put(
                         cached_plan,
                         ttl_seconds=UNATTENDED_PAUSE_APPROVAL_TIMEOUT_SECONDS,
+                        on_discard=lambda plan=cached_plan: discard_approval_mutations(
+                            plan, config=brain_container.stack.config),
                     )
                 return UNATTENDED_PAUSE_APPROVAL_TIMEOUT_SECONDS - initial_timeout
 
@@ -629,11 +646,17 @@ def process_chat_send_request(
                     extra_wait_seconds=_extra_approval_wait_seconds,
                     cancel_handle=cancel_handle,
                 )
+            except Exception:
+                discarded = (_rd_hub._APPROVAL_PLAN_CACHE.evict(request_id, call_id)
+                             if call_id else None)
+                if discarded is None:
+                    discard_approval_mutations(approval_plan, config=brain_container.stack.config)
+                raise
             finally:
                 approval_wait_seconds = max(0.0, monotonic() - approval_wait_started_at)
             if (isinstance(raw_approval_resolution, ApprovalResolution)
                     and raw_approval_resolution.status.startswith("runtime_pause")):
-                _rd_hub._APPROVAL_PLAN_CACHE.evict(request_id, call_id)
+                _rd_hub._APPROVAL_PLAN_CACHE.take_for_handoff(request_id, call_id)
                 try:
                     if decision_snapshot is None:
                         raise ValueError("decision_snapshot_unavailable")
@@ -649,6 +672,7 @@ def process_chat_send_request(
                         error=error, logger=logger,
                     )
                 except Exception:  # noqa: BLE001 - invalidated consent cannot become denial.
+                    discard_approval_mutations(approval_plan, config=brain_container.stack.config)
                     return _rd_hub._chat_unexpected_failure_outcome(
                         initialized=initialized, message_id=message_id, params=params,
                         message="Decision checkpoint publication failed", logger=logger,
@@ -730,8 +754,10 @@ def process_chat_send_request(
                 elif approval_resolution.status == TURN_STATE_RUNTIME_ERROR:
                     terminal_status = TURN_STATE_RUNTIME_ERROR
                     terminal_subcode = None
-                if call_id:
-                    _rd_hub._APPROVAL_PLAN_CACHE.evict(request_id, call_id)
+                discarded = (_rd_hub._APPROVAL_PLAN_CACHE.evict(request_id, call_id)
+                             if call_id else None)
+                if discarded is None:
+                    discard_approval_mutations(approval_plan, config=brain_container.stack.config)
                 log_event_name, log_message = _approval_terminal_log_fields(terminal_status)
                 _rd_hub.log_event(
                     logger,
@@ -844,6 +870,7 @@ def process_chat_send_request(
                     error=error, logger=logger,
                 )
             except ChatRequestError as error:
+                discard_approval_mutations(approval_plan, config=brain_container.stack.config)
                 return chat_error_outcome(
                     initialized=initialized,
                     message_id=message_id,
@@ -852,6 +879,7 @@ def process_chat_send_request(
                     chat_error_notification=chat_error_notification,
                 )
             except InnerRetryableTurnError as error:
+                discard_approval_mutations(approval_plan, config=brain_container.stack.config)
                 terminal_outcome = _post_approval_retryable_terminal_outcome(
                     initialized=initialized,
                     message_id=message_id,
@@ -868,6 +896,7 @@ def process_chat_send_request(
                     logger=logger,
                 )
             except Exception:  # noqa: BLE001
+                discard_approval_mutations(approval_plan, config=brain_container.stack.config)
                 return _rd_hub._chat_unexpected_failure_outcome(
                     initialized=initialized,
                     message_id=message_id,

@@ -72,3 +72,38 @@ test('selection layout permits wrapping and confirmation overlays within the sid
   assert.match(dialog, /overflow-y:\s*auto/);
   assert.match(dialog, /animation:\s*none/);
 });
+
+test('linked-chat tree styles use logical properties, keep the row height and leave chats-panel.css under the ratchet', () => {
+  const treeCss = fs.readFileSync(path.join(__dirname, '..', 'styles', 'chats-panel-tree.css'), 'utf8');
+  assert.ok(panelCss.split('\n').length <= 600, 'chats-panel.css stays within the 600-line ratchet');
+  assert.doesNotMatch(treeCss, /(?:^|[;{\s])(?:left|right|margin-left|margin-right|padding-left|padding-right|border-left|border-right)\s*:/m);
+  assert.match(treeCss, /--cw-indent:\s*16px/);
+  assert.match(treeCss, /padding-inline-start:\s*calc\(var\(--cw-depth, 0\) \* var\(--cw-indent\)\)/);
+  assert.match(treeCss, /--cw-thread:\s*var\(--line-strong\)/);
+  assert.match(treeCss, /text-box:\s*trim-both cap alphabetic/);
+  assert.doesNotMatch(treeCss, /font-size:\s*[\d.]+(?:px|rem)/, 'type uses the role tokens');
+  const withoutOrigin = treeCss.replace(/\.session-row\[data-tree-origin\] \.session-row__open \{[^}]*\}/, '');
+  assert.doesNotMatch(withoutOrigin, /(?:^|[\s;{])(?:block-size|height)\s*:\s*[^;]*session-row-height/m, 'only origin rows may grow past the row height');
+  const imports = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  if (imports.includes('chats-panel-tree.css')) {
+    assert.ok(imports.indexOf('chats-panel-tree.css') > imports.indexOf('chats-panel.css'));
+    assert.ok(imports.indexOf('chats-panel-tree.css') < imports.indexOf('chats-panel-selection.css'), 'bulk selection still wins the grid');
+  }
+});
+
+test('tree rows: thread levels resolve through the attribute selectors', t => {
+  const treeCss = fs.readFileSync(path.join(__dirname, '..', 'styles', 'chats-panel-tree.css'), 'utf8');
+  const dom = new JSDOM('<!doctype html><head></head><body></body>');
+  t.after(() => dom.window.close());
+  const style = dom.window.document.createElement('style');
+  style.textContent = treeCss.slice(treeCss.indexOf('.session-row {'), treeCss.indexOf('.session-row[data-tree-depth]:not'))
+    + treeCss.slice(treeCss.indexOf('.session-row[data-tree-through~="1"]'), treeCss.indexOf('/* The last child'));
+  dom.window.document.head.append(style);
+  dom.window.document.body.innerHTML = '<ul><li class="session-row" data-tree-depth="2" data-tree-last="true" data-tree-through="1"></li>'
+    + '<li class="session-row" data-tree-depth="1" data-tree-last="false" data-tree-through="1 2"></li></ul>';
+  const [grand, middle] = dom.window.document.querySelectorAll('.session-row');
+  const computed = node => dom.window.getComputedStyle(node);
+  assert.equal(computed(grand).getPropertyValue('--cw-c1').trim(), 'var(--cw-thread)', 'the grandparent level-1 line runs through the grandchild');
+  assert.equal(computed(grand).getPropertyValue('--cw-c2').trim(), '', 'the last child draws an elbow, not a level-2 line');
+  assert.equal(computed(middle).getPropertyValue('--cw-c2').trim(), 'var(--cw-thread)');
+});

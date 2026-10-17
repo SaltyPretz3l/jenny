@@ -387,3 +387,69 @@ def test_tool_call_identifier_falls_back_to_call_id() -> None:
 def test_tool_call_identifier_returns_none_when_both_absent() -> None:
     result = chat_message_validation._tool_call_identifier({})
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# role "context" (attributed session messages, row 59 cp4)
+# ---------------------------------------------------------------------------
+
+
+def _context_message() -> dict[str, object]:
+    import hashlib
+
+    body = "note from another chat"
+    return {
+        "role": "context",
+        "kind": "session_message",
+        "content": body,
+        "session_message": {
+            "schema_version": 1,
+            "message_id": "m-1",
+            "source_session_id": "s-1",
+            "source_session_incarnation": "i-1",
+            "source_project_id": "p-1",
+            "destination_session_id": "s-2",
+            "destination_session_incarnation": "i-2",
+            "destination_project_id": None,
+            "source_turn_id": None,
+            "kind": "user_message",
+            "created_at": "2026-10-15T00:00:00.000Z",
+            "body": body,
+            "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            "report": None,
+        },
+    }
+
+
+def test_validate_chat_messages_rejects_context_role_unless_negotiated() -> None:
+    with pytest.raises(ValueError, match="session_messages capability"):
+        chat_message_validation.validate_chat_messages([_context_message()])
+
+
+def test_validate_chat_messages_accepts_valid_context_row_when_negotiated() -> None:
+    chat_message_validation.validate_chat_messages(
+        [_context_message(), {"role": "user", "content": "go"}],
+        session_messages_enabled=True,
+    )
+
+
+@pytest.mark.parametrize("field", ["content", "kind", "session_message"])
+def test_validate_chat_messages_rejects_tampered_context_row(field: str) -> None:
+    message = _context_message()
+    message[field] = "tampered" if field != "session_message" else None
+    with pytest.raises(ValueError, match="session message"):
+        chat_message_validation.validate_chat_messages([message], session_messages_enabled=True)
+
+
+def test_validate_chat_messages_rejects_receipt_kind_as_wire_kind() -> None:
+    message = _context_message()
+    message["kind"] = "session_message_receipt"
+    with pytest.raises(ValueError, match="kind must be session_message"):
+        chat_message_validation.validate_chat_messages([message], session_messages_enabled=True)
+
+
+def test_validate_chat_messages_unknown_roles_still_rejected() -> None:
+    with pytest.raises(ValueError, match="role must be one of"):
+        chat_message_validation.validate_chat_messages(
+            [{"role": "developer", "content": "x"}], session_messages_enabled=True
+        )

@@ -9,11 +9,11 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('../inventory/artifact-figure'));
     return;
   }
-  root.toolShellUtils = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.toolShellUtils = factory(root.inventoryArtifactFigure || null);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (inventoryArtifactFigure) {
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -41,6 +41,52 @@
 
   function hasSpecializedToolShell(toolKind) {
     return SPECIALIZED_TOOL_KINDS.has(String(toolKind || '').trim());
+  }
+
+  function isAllowedImageSource(raw) {
+    var src = String(raw || '').trim();
+    if (/^data:image\//i.test(src)) return true;
+    if (/^file:/i.test(src)) {
+      try {
+        var host = String(new URL(src).hostname || '').trim().toLowerCase();
+        return !host || host === 'localhost';
+      } catch (_e) {
+        return false;
+      }
+    }
+    return /^[a-zA-Z]:[\\/]/.test(src) || (/^\//.test(src) && !/^\/\//.test(src));
+  }
+
+  /* Python output images for both tool shells: the legacy parsed images[] through the
+   * allow-list plus the trusted stored refs, one entry per source (a trusted id wins).
+   * `blocked` counts only the legacy images the allow-list refused. */
+  function pythonOutputImages(images, trustedImages) {
+    var legacy = (Array.isArray(images) ? images : []).filter(function (src) { return typeof src === 'string'; });
+    var trusted = (Array.isArray(trustedImages) ? trustedImages : []).filter(function (image) { return image && isAllowedImageSource(image.src); });
+    var bySrc = new Map();
+    legacy.filter(isAllowedImageSource).map(function (src) { return { src: src, id: '' }; }).concat(trusted).forEach(function (entry) {
+      var item = { src: String(entry.src), id: String(entry.id || '') };
+      if (!bySrc.has(item.src)) bySrc.set(item.src, item);
+      else if (item.id) bySrc.get(item.src).id = item.id;
+    });
+    return { items: Array.from(bySrc.values()), blocked: legacy.filter(function (src) { return !isAllowedImageSource(src); }).length };
+  }
+
+  /* The framed figures for pythonOutputImages().items ('' without the primitive). */
+  function renderPythonOutputImages(items) {
+    if (!inventoryArtifactFigure || !items.length) return '';
+    var figures = items.map(function (item, index) {
+      var alt = items.length === 1 ? jt('chat.toolShell.pythonOutputImageAlt', 'Python output image')
+        : jt('chat.toolShell.pythonOutputImageOf', 'Python output image {index} of {count}', { index: index + 1, count: items.length });
+      return inventoryArtifactFigure.renderSourceFigure({ kind: 'tool', id: item.id, sessionId: '', src: item.src, alt: alt, labels: {
+        viewAria: jt('chat.artifactFigure.viewAria', 'View {title}', { title: alt }),
+        unavailable: jt('chat.artifactFigure.unavailable', 'Image unavailable'),
+        copy: jt('chat.artifactFigure.copyImage', 'Copy image'),
+        saveAs: jt('chat.artifactFigure.saveAs', 'Save as…'),
+        actions: jt('chat.artifactFigure.actions', 'Image actions'),
+      } });
+    }).join('');
+    return items.length > 1 ? '<div class="inv-artifact-figures">' + figures + '</div>' : figures;
   }
 
   /* ── Changed files (row 34 S5): shared by the detail body and the shells ── */
@@ -410,31 +456,6 @@
       return kvGrid(filtered);
     }
 
-    function isAllowedImageSource(raw) {
-      var src = String(raw || '').trim();
-      if (!src) return false;
-      if (/^data:image\//i.test(src)) return true;
-      if (/^file:/i.test(src)) {
-        try {
-          var parsed = new URL(src);
-          var host = String(parsed.hostname || '').trim().toLowerCase();
-          return !host || host === 'localhost';
-        } catch (_e) {
-          return false;
-        }
-      }
-      if (/^[a-zA-Z]:[\\/]/.test(src)) return true;
-      if (/^\//.test(src)) return !/^\/\//.test(src);
-      if (/^\\\\/.test(src)) return false;
-      return false;
-    }
-
-    function toolResultImageSources(model) {
-      return Array.isArray(model && model.trustedAttachmentImageUrls)
-        ? model.trustedAttachmentImageUrls.filter(isAllowedImageSource)
-        : [];
-    }
-
     function tryPrettyPrintJson(text) {
       var trimmed = String(text || '').trim();
       if ((!trimmed.startsWith('{') && !trimmed.startsWith('[')) || trimmed.length > MAX_SHELL_OUTPUT_CHARS) return null;
@@ -673,15 +694,12 @@
       } catch (_e) { /* ignore */ }
       var code = String(parsedInput && parsedInput.code || '').trim();
 
-      var images = Array.isArray(parsed.images) ? parsed.images : [];
       var tables = Array.isArray(parsed.tables) ? parsed.tables : [];
       var error = parsed.error && typeof parsed.error === 'object' ? parsed.error : null;
       var stdout = String(parsed.stdout || '');
       var stderr = String(parsed.stderr || '');
       var lastExpr = String(parsed.last_expr_repr || '');
-      var legacyImages = images.filter(function (src) { return typeof src === 'string'; });
-      var safeImages = legacyImages.filter(isAllowedImageSource).concat(toolResultImageSources(model));
-      var blockedImageCount = Math.max(0, images.length - safeImages.length);
+      var outputImages = pythonOutputImages(parsed.images, model.trustedAttachmentImages);
 
       var parts = [];
       var extraArgs = argsKvGridFromParsed(parsedInput, ['code']);
@@ -716,17 +734,11 @@
           ariaLabel: jt('chat.toolShell.returnValuePreview', 'Return value preview'), maxChars: MAX_SHELL_OUTPUT_CHARS,
         })));
       }
-      if (safeImages.length) {
-        parts.push(section('Images', '<div>'
-          + safeImages.map(function (src) {
-            return '<img class="python-output-image" src="'
-              + escapeHtml(String(src || '')) + '" alt="' + escapeHtml(jt('chat.toolShell.pythonOutputImageAlt', 'Python output image')) + '">';
-          }).join('')
-          + '</div>'));
-      }
-      if (blockedImageCount > 0) {
+      var imageFigures = renderPythonOutputImages(outputImages.items);
+      if (imageFigures) parts.push(section('Images', imageFigures));
+      if (outputImages.blocked > 0) {
         parts.push(section('Images', '<div class="tool-call-empty">'
-          + escapeHtml(jt('chat.toolShell.imagesUnavailable', '{count} image output(s) are unavailable.', { count: blockedImageCount }))
+          + escapeHtml(jt('chat.toolShell.imagesUnavailable', '{count} image output(s) are unavailable.', { count: outputImages.blocked }))
           + '</div>'));
       }
       if (tables.length && sanitizeHtmlFragment) {
@@ -899,7 +911,7 @@
         artifacts = model.generatedArtifacts;
       }
       if (!Array.isArray(artifacts) || artifacts.length === 0) return html;
-      var cardsHtml = artifactCardUtils.renderArtifactCards(artifacts, model.callId);
+      var cardsHtml = artifactCardUtils.renderArtifactCards(artifacts, model.callId, { sessionId: model.sessionId || '' });
       return cardsHtml ? html + cardsHtml : html;
     }
 
@@ -963,5 +975,7 @@
     isScriptedChangeTool: isScriptedChangeTool,
     buildFileDiffRowsMarkup: buildFileDiffRowsMarkup,
     buildScriptedChangesContent: buildScriptedChangesContent,
+    pythonOutputImages: pythonOutputImages,
+    renderPythonOutputImages: renderPythonOutputImages,
   };
 });

@@ -56,13 +56,14 @@
     'test-runner': Object.freeze({ home: 'bottom', minWidth: 240, minHeight: 120, placement: 'edge+group' }),
     // A test run's output (F6); shown only while a run has output to show.
     'test-output': Object.freeze({ home: 'bottom', minWidth: 240, minHeight: 120, placement: 'edge+group' }),
+    activity: Object.freeze({ home: 'bottom', minWidth: 240, minHeight: 120, placement: 'edge' }),
     chat: Object.freeze({ home: 'right', minWidth: 320, minHeight: 200, placement: 'edge+group' }),
     changes: Object.freeze({ home: 'right', minWidth: 280, minHeight: 160, placement: 'edge+group' }),
   });
 
   var CATALOG_IDS = Object.keys(VIEW_CATALOG);
   var LEFT_VIEWS = ['explorer', 'search', 'source-control'];
-  var BOTTOM_VIEWS = ['terminal', 'problems', 'run', 'test-runner', 'test-output'];
+  var BOTTOM_VIEWS = ['terminal', 'problems', 'run', 'test-runner', 'test-output', 'activity'];
   // Extra terminals (F3: four in all) are instances of the `terminal` view: terminal-2..4.
   // They persist where the user put them but are never re-homed when absent.
   var MAX_TERMINALS = 4;

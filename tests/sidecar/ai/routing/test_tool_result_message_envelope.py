@@ -155,6 +155,31 @@ def test_flag_on_wire_fields_survive_unchanged() -> None:
     assert isinstance(message.get("metadata"), dict)
 
 
+def test_image_dimension_failure_keeps_tool_identity_and_actionable_argument_class() -> None:
+    remediation = (
+        "Retry image_generate with width 1120 and height 1472, "
+        "or omit both dimensions for the 1024x1024 default."
+    )
+    outcome = _outcome(
+        tool_name="image_generate", success=False,
+        output="Invalid width/height. Supported sizes: 1024x1024, 1120x1472.",
+        error_code="CMP-TOOL-0004",
+        metadata={"failure_class": "bad_arguments", "effects": "none", "remediation": remediation},
+    )
+    for enabled in (False, True):
+        message = tool_result_message(_call("image_generate"), outcome, config=_config(enabled))
+        assert message["role"] == "tool"
+        assert message["tool_call_id"] == "call_1"
+        assert message["name"] == "image_generate"
+        assert message["is_error"] is True
+        assert message["metadata"]["failure_class"] == "bad_arguments"
+        assert message["metadata"]["remediation"] == remediation
+        if enabled:
+            assert "error_class: bad_arguments" in message["content"]
+            assert "effects: none" in message["content"]
+            assert "fix: " + remediation in message["content"]
+
+
 def test_flag_on_content_is_never_empty_for_empty_output() -> None:
     # engine_messages drops empty-content tool rows for EVERY engine; the
     # envelope must make that impossible.

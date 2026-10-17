@@ -5,9 +5,9 @@ const assert = require('node:assert/strict');
 
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
 
-/* End-to-end intake hardening: drive the real jennyShell.logs.onAppend wiring
+/* End-to-end intake hardening: drive the real jennyShell.diagnostics.logs.onEntry wiring
    (pushIncomingLog) with hostile payloads and assert the buffer stays clean. */
-test('onAppend intake clamps malformed ts, coerces level/event, and size-caps details', async (t) => {
+test('onEntry intake clamps malformed ts, coerces level/event, and size-caps details', async (t) => {
   const app = await loadRendererApp();
   t.after(async () => {
     await app.dispose();

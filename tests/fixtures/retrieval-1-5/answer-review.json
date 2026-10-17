@@ -1,0 +1,242 @@
+{
+  "Q01": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q02": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q03": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q04": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q05": {
+    "grade": "fail",
+    "note": "Evidence projection omitted the approval clause; answer incorrectly said unavailable."
+  },
+  "Q06": {
+    "grade": "fail",
+    "note": "Did not recover null-root conversation-only clause."
+  },
+  "Q07": {
+    "grade": "fail",
+    "note": "Substituted verification commands for build pipeline."
+  },
+  "Q08": {
+    "grade": "fail",
+    "note": "Substituted readiness conditions for python -m sidecar."
+  },
+  "Q09": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q10": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q11": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q12": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q13": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q14": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q15": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q16": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q17": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q18": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q19": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q20": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q21": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q22": {
+    "grade": "partial",
+    "note": "Correct length/distinctness, omitted eight-term maximum."
+  },
+  "Q23": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q24": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q25": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q26": {
+    "grade": "partial",
+    "note": "Reported 1.5 seconds but omitted 16-chunk budget."
+  },
+  "Q27": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q28": {
+    "grade": "partial",
+    "note": "Generic unavailable fallback; missed explicit hosted reader disable."
+  },
+  "Q29": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q30": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q31": {
+    "grade": "fail",
+    "note": "Answered Python 17 for Zig 23; unsupported target numeric answer."
+  },
+  "Q32": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q33": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q34": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q35": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q36": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q37": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q38": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q39": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q40": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q41": {
+    "grade": "partial",
+    "note": "Correct signed number and C, but degree symbol became U+FFFD."
+  },
+  "Q42": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q43": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q44": {
+    "grade": "fail",
+    "note": "Missing-number conclusion uses unrelated text.pdf rather than scan-only source."
+  },
+  "Q45": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q46": {
+    "grade": "fail",
+    "note": "Answered with unrelated statement item range; omitted image-only evidence gap."
+  },
+  "Q47": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q48": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q49": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q50": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q51": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q52": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q53": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q54": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q55": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q56": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q57": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q58": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q59": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  },
+  "Q60": {
+    "grade": "pass",
+    "note": "Expected fact/outcome supported."
+  }
+}

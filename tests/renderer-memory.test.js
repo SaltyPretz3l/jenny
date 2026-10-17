@@ -24,25 +24,72 @@ async function openMemorySettings(window, settleMs = 80) {
   await waitForUi(window, settleMs);
 }
 
-test('renderer memory kind labels include new approved memory kinds', () => {
+// The harness bridge stub has no ledger methods (undoChange, acceptPending), so tests install them on the bridge.
+function installLedgerBridge(window, methods) {
+  Object.assign(window.jennyShell.memory, methods);
+}
+
+// Forget is the ⋯ menu's second item on a memory row (row 58 W4 page).
+async function forgetFirstMemory(window) {
+  window.document.querySelector('#approvedMemoryList [data-memory-page-action="menu"]').click();
+  await waitForUi(window, 10);
+  const item = [...window.document.querySelectorAll('.inv-context-menu-item')].find((node) => /Forget/.test(node.textContent));
+  assert.ok(item, 'the ⋯ menu offers Forget');
+  item.click();
+}
+
+test('renderer memory kind labels are the schema v9 kinds', () => {
   assert.deepEqual(
     getApprovedMemoryKindOptions().map((option) => [option.value, option.label]),
     [
       ['all', 'All'],
-      ['profile', 'Profile'],
       ['preference', 'Preference'],
-      ['response_style', 'Response Style'],
-      ['tool_strategy', 'Tool Strategy'],
-      ['working_preference', 'Working Preference'],
-      ['project_context', 'Project Context'],
+      ['fact', 'Fact'],
+      ['decision', 'Decision'],
+      ['convention', 'Convention'],
+      ['person', 'Person'],
       ['routine', 'Routine'],
-      ['goal', 'Goal'],
-      ['important_person', 'People'],
+      ['lesson', 'Lesson'],
     ]
   );
   assert.equal(getApprovedMemoryKindLabel('routine'), 'Routine');
-  assert.equal(getApprovedMemoryKindLabel('goal'), 'Goal');
-  assert.equal(getApprovedMemoryKindLabel('important_person'), 'People');
+  assert.equal(getApprovedMemoryKindLabel('person'), 'Person');
+  assert.equal(getApprovedMemoryKindLabel('lesson'), 'Lesson');
+});
+
+test('Memory page renders the three memory v2 switches and saves one through the features bridge', async () => {
+  const calls = [];
+  const app = await loadRendererApp({
+    shell: {
+      memory: {
+        async listApproved() { return { memories: [] }; },
+        async listPending() { return { candidates: [] }; },
+      },
+      features: {
+        async updateSettings(patch) {
+          calls.push(patch);
+          return { memory: { takeNotes: true, askBeforeSaving: false, pauseSaving: patch.memory?.pauseSaving === true, useInChats: true } };
+        },
+      },
+    },
+  });
+  const { window } = app;
+  try {
+    await openMemorySettings(window, 40);
+    const doc = window.document;
+    const checked = (id) => doc.querySelector(`#memoryPolicyHost [data-inv-toggle="${id}"]`)?.getAttribute('aria-checked');
+    assert.deepEqual(['memoryTakeNotes', 'memoryAskBeforeSaving', 'memoryPauseSaving', 'memoryUseInChats'].map(checked), ['true', 'false', 'false', 'true']);
+    doc.getElementById('memorySettingsSection').dispatchEvent(new window.CustomEvent(
+      'inv-toggle-change',
+      { bubbles: true, detail: { id: 'memoryPauseSaving', checked: true } }
+    ));
+    await waitForUi(window, 80);
+    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ memory: { pauseSaving: true } }]);
+    assert.equal(window.__rendererState.features.memory.pauseSaving, true);
+    assert.equal(checked('memoryPauseSaving'), 'true');
+  } finally {
+    await app.dispose();
+  }
 });
 
 test('memory status normalization bounds reasons and maps known health conditions', () => {
@@ -107,213 +154,20 @@ test('Settings Memory category owns the memory admin surface', async () => {
     assert.equal(window.__rendererState.ui.activeSettingsSection, 'memories');
     assert.equal(memorySettings.classList.contains('settings-section-active'), true);
     assert.ok(window.document.getElementById('approvedMemoryStatus'));
-    assert.ok(window.document.getElementById('pendingMemoryStatus'));
     assert.ok(window.document.getElementById('memoryManagerSearchInput'));
     assert.ok(window.document.getElementById('memoryManagerKindFilter'));
-    assert.ok(window.document.getElementById('memoryManagerProjectFilter'));
+    assert.equal(window.document.getElementById('memoryManagerProjectFilter'), null, 'scope tabs replace the project filter');
+    assert.equal(window.document.querySelector('#memoryTabsHost [role="tablist"] [data-memory-scope="project_general"]')?.getAttribute('aria-selected'), 'true');
     assert.equal(window.document.getElementById('memoryTopRailTab'), null);
     assert.equal(window.document.getElementById('memoryPageHeading').tabIndex, -1);
     assert.equal(window.document.getElementById('approvedMemoryStatus').getAttribute('role'), 'status');
-    assert.equal(window.document.getElementById('pendingMemoryStatus').getAttribute('aria-live'), 'polite');
+    assert.equal(window.document.getElementById('approvedMemoryStatus').getAttribute('aria-live'), 'polite');
+    assert.equal(window.document.getElementById('pendingMemoryHost').hidden, true, 'no proposals, no pending group');
+    assert.equal(window.document.getElementById('memoryNotesFieldHost'), null, 'the inline notes editor is gone');
     assert.equal(memorySettings.dataset.settingsSection, 'memories');
     assert.equal(memorySettings.dataset.settingsField, 'memoryManager');
-    assert.equal(memorySettings.querySelector('[aria-labelledby="approvedMemoryHeading"]').hasAttribute('data-settings-field'), false);
     assert.equal(memorySettings.querySelector('h3')?.id, 'memoryPageHeading');
     assert.equal(memorySettings.querySelectorAll('h5').length, 0);
-  } finally {
-    await app.dispose();
-  }
-});
-
-test('Memory page supports bounded expansion, review actions, and source removal', async () => {
-  const approved = Array.from({ length: 201 }, (_entry, index) => ({
-    id: index + 1,
-    session_id: 'session-approved',
-    project_id: index === 0 ? 'project_garden' : 'project_general',
-    title: index === 0 ? 'Preference: tea' : `Memory ${index + 1}`,
-    lesson_text: index === 0 ? 'The user prefers tea.' : `The user prefers item ${index + 1}.`,
-    lesson_kind: index === 0 ? 'preference' : 'project_context',
-    confidence: 0.9,
-    source_excerpt: index === 0 ? 'I prefer tea while coding.' : '',
-    provenance: index === 1 ? 'source_removed' : 'user_approved',
-    content_fingerprint: `sha256:${String(index + 1).padStart(64, '0')}`,
-    created_at: '2026-08-16T12:00:00.000Z',
-    updated_at: `2026-08-16T12:${String(index % 60).padStart(2, '0')}:00.000Z`,
-  }));
-  const pending = [
-    {
-      id: 501,
-      session_id: 'session-approve',
-      project_id: 'project_garden',
-      title: 'Goal: ship Jenny',
-      lesson_text: 'The user wants to ship Jenny.',
-      lesson_kind: 'goal',
-      confidence: 0.92,
-      source_excerpt: 'I want to ship Jenny.',
-      content_fingerprint: 'sha256:' + 'a'.repeat(64),
-      created_at: '2026-08-16T13:00:00.000Z',
-      updated_at: '2026-08-16T13:00:00.000Z',
-    },
-    {
-      id: 502,
-      session_id: 'session-dismiss',
-      title: 'Routine: tea',
-      lesson_text: 'The user drinks tea each morning.',
-      lesson_kind: 'routine',
-      confidence: 0.8,
-      source_excerpt: 'I drink tea each morning.',
-      content_fingerprint: 'sha256:' + 'b'.repeat(64),
-      created_at: '2026-08-16T12:00:00.000Z',
-      updated_at: '2026-08-16T12:00:00.000Z',
-    },
-  ];
-  const calls = { status: 0, updates: [], saves: [], deletes: [], dismisses: [] };
-  const app = await loadRendererApp({
-    shell: {
-      projects: {
-        async list() {
-          return { ok: true, projects: [{ id: 'project_general', name: 'General' }, { id: 'project_garden', name: 'Garden' }] };
-        },
-      },
-      memory: {
-        async status() {
-          calls.status += 1;
-          return {
-            available: true,
-            counts: { approved: approved.length, pending: pending.length },
-            storage: { state: 'ready' },
-            degraded_reasons: [],
-          };
-        },
-        async listApproved() { return { memories: approved }; },
-        async listPending() { return { candidates: pending }; },
-        async update(memoryId, patch, projectId) {
-          calls.updates.push({ memoryId, patch, projectId });
-          return { updated: true, memory: { ...approved[0], ...patch, source_excerpt: '' } };
-        },
-        async save(sessionId, candidate) {
-          calls.saves.push({ sessionId, candidate });
-          return { created: true, memory: candidate };
-        },
-        async delete(memoryId, projectId) {
-          calls.deletes.push({ memoryId, projectId });
-          return { deleted: true, memory_id: memoryId };
-        },
-        async deletePending(sessionId, fingerprint) {
-          calls.deletes.push({ sessionId, fingerprint });
-          return { deleted: true };
-        },
-        async dismiss(sessionId, fingerprint) {
-          calls.dismisses.push({ sessionId, fingerprint });
-          return { dismissed: true };
-        },
-      },
-    },
-  });
-  const { window } = app;
-  const doc = window.document;
-
-  try {
-    await openMemorySettings(window);
-
-    assert.equal(doc.querySelectorAll('#approvedMemoryList > article.memory-record').length, 200);
-    assert.equal(doc.querySelector('#approvedMemoryList > article')?.getAttribute('role'), 'listitem');
-    assert.ok(doc.querySelector('#approvedMemoryList .inv-badge--muted'));
-    assert.match(doc.querySelector('#approvedMemoryList [data-inv-collapsible]')?.textContent || '', /Source · 2026-08-16/);
-    assert.match(doc.querySelector('[data-memory-id="2"]')?.textContent || '', /Source removed; memory retained/i);
-    assert.equal(doc.querySelector('[data-memory-id="2"] [data-inv-collapsible]'), null);
-    assert.equal(calls.status, 1);
-    doc.querySelector('[data-memory-page-action="show-more-approved"]').click();
-    await waitForUi(window, 30);
-    assert.equal(doc.querySelectorAll('#approvedMemoryList > article.memory-record').length, 201);
-    assert.equal(doc.querySelector('[data-inv-toggle="memoryCaptureSuggestions"]')?.getAttribute('aria-checked'), 'true');
-    assert.equal(doc.querySelector('[data-memory-id="1"] .memory-record-project')?.textContent.trim(), 'Garden');
-    assert.equal(doc.querySelector('[data-memory-id="2"] .memory-record-project'), null, 'General memories carry no project badge');
-    const pendingRow = (sessionId) => doc.querySelector(`[data-pending-memory-action="approve"][data-session-id="${sessionId}"]`).closest('article');
-    assert.equal(pendingRow('session-approve').querySelector('.memory-record-project')?.textContent.trim(), 'Garden', 'pending rows carry their project badge');
-    assert.equal(pendingRow('session-dismiss').querySelector('.memory-record-project'), null, 'General pending rows carry no project badge');
-    const projectFilter = doc.getElementById('memoryManagerProjectFilter');
-    assert.deepEqual(
-      Array.from(projectFilter.options).map((option) => [option.value, option.textContent.trim()]),
-      [['all', 'All'], ['project_general', 'General'], ['project_garden', 'Garden']]
-    );
-    projectFilter.value = 'project_garden';
-    projectFilter.dispatchEvent(new window.Event('change', { bubbles: true }));
-    await waitForUi(window, 30);
-    assert.equal(doc.querySelectorAll('#approvedMemoryList > article.memory-record').length, 1);
-    assert.equal(doc.getElementById('memoryManagerProjectFilter').value, 'project_garden');
-    doc.getElementById('memoryManagerProjectFilter').value = 'all';
-    doc.getElementById('memoryManagerProjectFilter').dispatchEvent(new window.Event('change', { bubbles: true }));
-    await waitForUi(window, 30);
-    assert.equal(doc.querySelectorAll('#approvedMemoryList > article.memory-record').length, 200);
-    doc.querySelector('[data-memory-page-action="show-more-approved"]').click();
-    await waitForUi(window, 30);
-    assert.equal(doc.querySelectorAll('#approvedMemoryList > article.memory-record').length, 201);
-
-    doc.querySelector('[data-memory-action="remove-provenance"][data-memory-id="1"]').click();
-    await waitForUi(window, 80);
-    assert.deepEqual(JSON.parse(JSON.stringify(calls.updates[0])), {
-      memoryId: 1,
-      projectId: 'project_garden',
-      patch: {
-        title: 'Preference: tea',
-        lesson_text: 'The user prefers tea.',
-        remove_provenance: true,
-      },
-    });
-    assert.equal(calls.status, 1, 'source removal must keep status refresh list-only');
-
-    doc.querySelector('[data-memory-action="edit"][data-memory-id="2"]').click();
-    await waitForUi(window, 30);
-    const titleDraft = doc.querySelector('[data-memory-draft-field="title"][data-memory-id="2"]');
-    assert.equal(doc.activeElement, titleDraft, 'Edit must move focus into the title field');
-    assert.equal(doc.querySelector('[data-memory-draft-field="lesson_text"][data-memory-id="2"]').maxLength, 240);
-    titleDraft.value = 'Edited memory title';
-    titleDraft.dispatchEvent(new window.Event('input', { bubbles: true }));
-    assert.equal(doc.activeElement, titleDraft, 'editing must preserve focus while the draft changes');
-    assert.equal(doc.querySelector('[data-memory-action="save"][data-memory-id="2"]').disabled, false);
-    doc.querySelector('[data-memory-action="save"][data-memory-id="2"]').click();
-    await waitForUi(window, 80);
-    assert.deepEqual(JSON.parse(JSON.stringify(calls.updates[1])), {
-      memoryId: 2,
-      projectId: 'project_general',
-      patch: { title: 'Edited memory title', lesson_text: 'The user prefers item 2.' },
-    });
-    assert.equal(doc.activeElement, doc.querySelector('[data-memory-action="edit"][data-memory-id="2"]'));
-    assert.equal(calls.status, 1, 'editing must keep status refresh list-only');
-
-    doc.querySelector('[data-memory-action="edit"][data-memory-id="4"]').click();
-    await waitForUi(window, 20);
-    doc.querySelector('[data-memory-action="cancel"][data-memory-id="4"]').click();
-    assert.equal(doc.activeElement, doc.querySelector('[data-memory-action="edit"][data-memory-id="4"]'));
-
-    doc.querySelector('[data-memory-action="delete"][data-memory-id="3"]').click();
-    doc.querySelector('[data-toast-action-id="confirm-delete"]').click();
-    await waitForUi(window, 80);
-    assert.deepEqual(calls.deletes, [{ memoryId: 3, projectId: 'project_general' }]);
-    assert.equal(calls.status, 2);
-    doc.querySelector('[data-toast-action-id="undo-delete"]').click();
-    await waitForUi(window, 80);
-    assert.equal(calls.saves[0].sessionId, 'session-approved');
-    assert.equal(calls.status, 3);
-
-    doc.querySelector('[data-pending-memory-action="approve"][data-session-id="session-approve"]').click();
-    await waitForUi(window, 80);
-    assert.equal(calls.saves.length, 2, 'approval requires an explicit page action');
-    assert.equal(calls.saves[1].sessionId, 'session-approve');
-    assert.equal(calls.status, 4);
-
-    doc.querySelector('[data-pending-memory-action="discard"][data-session-id="session-dismiss"]').click();
-    await waitForUi(window, 80);
-    assert.deepEqual(JSON.parse(JSON.stringify(calls.deletes[1])), {
-      sessionId: 'session-dismiss',
-      fingerprint: 'sha256:' + 'b'.repeat(64),
-    });
-    assert.deepEqual(calls.dismisses, [{
-      sessionId: 'session-dismiss',
-      fingerprint: 'sha256:' + 'b'.repeat(64),
-    }]);
-    assert.equal(calls.status, 5);
   } finally {
     await app.dispose();
   }
@@ -341,8 +195,7 @@ test('Memory status uses authoritative counts and bounded degraded guidance', as
   try {
     await openMemorySettings(app.window);
     const doc = app.window.document;
-    assert.equal(doc.getElementById('approvedMemoryCount').textContent, '4');
-    assert.equal(doc.getElementById('pendingMemoryCount').textContent, '2');
+    assert.equal(doc.getElementById('memoryBadge').textContent.trim(), '4 saved');
     assert.equal(doc.getElementById('memoryBadge').dataset.state, 'warn');
     assert.match(doc.getElementById('memoryHealthNote').textContent, /needs review/i);
     assert.match(doc.getElementById('memoryHealthNote').textContent, /Fast recall indexing/i);
@@ -386,12 +239,10 @@ test('failed status refresh keeps records and falls back to list-derived counts'
 
   try {
     await openMemorySettings(window);
-    assert.equal(window.document.getElementById('approvedMemoryCount').textContent, '99');
-    window.document.querySelector('[data-memory-action="delete"]').click();
-    window.document.querySelector('[data-toast-action-id="confirm-delete"]').click();
+    assert.equal(window.document.getElementById('memoryBadge').textContent.trim(), '99 saved');
+    await forgetFirstMemory(window);
     await waitForUi(window, 80);
     assert.equal(window.document.querySelectorAll('#approvedMemoryList > article').length, 1);
-    assert.equal(window.document.getElementById('approvedMemoryCount').textContent, '1');
     assert.equal(window.document.getElementById('memoryBadge').dataset.state, 'error');
     assert.match(window.document.getElementById('memoryHealthNote').textContent, /health details are unavailable/i);
   } finally {
@@ -462,213 +313,6 @@ test('revisiting Memory forces fresh approved, pending, and status snapshots', a
   }
 });
 
-test('pending provenance disclosure ids remain unique for repeated fingerprints', async () => {
-  const fingerprint = `sha256:${'6'.repeat(64)}`;
-  const candidates = ['session-one', 'session-two'].map((sessionId, index) => ({
-    id: index + 1,
-    session_id: sessionId,
-    title: `Candidate ${index + 1}`,
-    lesson_text: `Candidate memory ${index + 1}.`,
-    lesson_kind: 'profile',
-    source_excerpt: `Source ${index + 1}`,
-    content_fingerprint: fingerprint,
-    created_at: '2026-08-16T13:00:00.000Z',
-  }));
-  const app = await loadRendererApp({
-    shell: { memory: {
-      async listApproved() { return { memories: [] }; },
-      async listPending() { return { candidates }; },
-    } },
-  });
-  try {
-    await openMemorySettings(app.window);
-    const controls = [...app.window.document.querySelectorAll('#pendingMemoryList [data-inv-collapsible]')]
-      .map((node) => node.getAttribute('aria-controls'));
-    assert.equal(controls.length, 2);
-    assert.equal(new Set(controls).size, 2);
-    controls.forEach((id) => assert.ok(app.window.document.getElementById(id)));
-  } finally {
-    await app.dispose();
-  }
-});
-
-test('legacy capture preference adoption serializes a newer user toggle', async () => {
-  const calls = [];
-  let resolveAdoption;
-  const adoptionGate = new Promise((resolve) => { resolveAdoption = resolve; });
-  const app = await loadRendererApp({
-    legacyMemoryCapturePreference: '0',
-    shell: {
-      features: {
-        async updateSettings(patch) {
-          calls.push(patch);
-          if (calls.length === 1) await adoptionGate;
-          return { memory: { captureSuggestions: patch.memory.captureSuggestions } };
-        },
-      },
-    },
-  });
-  try {
-    await openMemorySettings(app.window, 30);
-    app.window.document.getElementById('memorySettingsSection').dispatchEvent(new app.window.CustomEvent(
-      'inv-toggle-change',
-      { bubbles: true, detail: { id: 'memoryCaptureSuggestions', checked: true } }
-    ));
-    resolveAdoption();
-    await waitForUi(app.window, 80);
-    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
-      { memory: { captureSuggestions: false } },
-      { memory: { captureSuggestions: true } },
-    ]);
-    assert.equal(app.window.__rendererState.features.memory.captureSuggestions, true);
-    assert.equal(app.window.localStorage.getItem('jenny.memory.captureSuggestions'), null);
-  } finally {
-    await app.dispose();
-  }
-});
-
-test('failed legacy capture preference adoption retains and honors the local value', async () => {
-  const app = await loadRendererApp({
-    legacyMemoryCapturePreference: '0',
-    shell: {
-      features: {
-        async updateSettings() { throw new Error('disk unavailable'); },
-      },
-    },
-  });
-  try {
-    await openMemorySettings(app.window, 50);
-    assert.equal(app.window.__rendererState.features.memory.captureSuggestions, false);
-    assert.equal(app.window.localStorage.getItem('jenny.memory.captureSuggestions'), '0');
-  } finally {
-    await app.dispose();
-  }
-});
-
-test('malformed legacy adoption acknowledgement retains and honors the local value', async () => {
-  const app = await loadRendererApp({
-    legacyMemoryCapturePreference: '0',
-    shell: { features: { async updateSettings() { return {}; } } },
-  });
-  try {
-    await openMemorySettings(app.window, 50);
-    assert.equal(app.window.__rendererState.features.memory.captureSuggestions, false);
-    assert.equal(app.window.localStorage.getItem('jenny.memory.captureSuggestions'), '0');
-  } finally {
-    await app.dispose();
-  }
-});
-
-test('two failed capture toggles roll back to the last confirmed preference', async () => {
-  let calls = 0;
-  const app = await loadRendererApp({
-    shell: { features: { async updateSettings() { calls += 1; throw new Error('disk unavailable'); } } },
-  });
-  try {
-    await openMemorySettings(app.window, 30);
-    const section = app.window.document.getElementById('memorySettingsSection');
-    section.dispatchEvent(new app.window.CustomEvent('inv-toggle-change', {
-      bubbles: true,
-      detail: { id: 'memoryCaptureSuggestions', checked: false },
-    }));
-    section.dispatchEvent(new app.window.CustomEvent('inv-toggle-change', {
-      bubbles: true,
-      detail: { id: 'memoryCaptureSuggestions', checked: true },
-    }));
-    await waitForUi(app.window, 80);
-    assert.equal(calls, 2);
-    assert.equal(app.window.__rendererState.features.memory.captureSuggestions, true);
-  } finally {
-    await app.dispose();
-  }
-});
-
-test('failed first toggle restores the hydrated durable preference', async () => {
-  const app = await loadRendererApp({
-    shell: {
-      features: {
-        state: { memory: { captureSuggestions: false } },
-        async updateSettings() { throw new Error('disk unavailable'); },
-      },
-    },
-  });
-  try {
-    await openMemorySettings(app.window, 40);
-    await app.shell.__emitFeaturesChanged({ memory: { captureSuggestions: false } });
-    await waitForUi(app.window, 30);
-    assert.equal(app.window.__rendererState.features.memory.captureSuggestions, false);
-    app.window.document.getElementById('memorySettingsSection').dispatchEvent(new app.window.CustomEvent(
-      'inv-toggle-change',
-      { bubbles: true, detail: { id: 'memoryCaptureSuggestions', checked: true } }
-    ));
-    await waitForUi(app.window, 60);
-    assert.equal(app.window.__rendererState.features.memory.captureSuggestions, false);
-  } finally {
-    await app.dispose();
-  }
-});
-
-test('capture switch writes once through the shared binding and adopts only the echoed preference', async () => {
-  const calls = [];
-  let release;
-  let mode = 'echo';
-  const app = await loadRendererApp({
-    shell: {
-      features: {
-        async updateSettings(patch) {
-          calls.push(JSON.parse(JSON.stringify(patch)));
-          if (mode === 'hold') await new Promise((resolve) => { release = resolve; });
-          if (mode === 'reject') throw new Error('disk unavailable');
-          if (mode === 'stale') return { memory: { captureSuggestions: !patch.memory.captureSuggestions } };
-          return { memory: { captureSuggestions: patch.memory.captureSuggestions } };
-        },
-      },
-    },
-  });
-  const doc = app.window.document;
-  const track = () => doc.querySelector('[data-inv-toggle="memoryCaptureSuggestions"]');
-  const preference = () => app.window.__rendererState.features.memory.captureSuggestions;
-  const mirror = () => app.window.localStorage.getItem('jenny.memory.captureSuggestions');
-  try {
-    await openMemorySettings(app.window, 40);
-    assert.equal(track().getAttribute('aria-checked'), 'true');
-
-    mode = 'hold';
-    track().click();
-    await waitForUi(app.window, 20);
-    assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0], { memory: { captureSuggestions: false } });
-    assert.equal(preference(), true, 'the preference waits for the acknowledgement');
-    assert.equal(mirror(), null, 'storage never carries the unacknowledged value');
-    assert.equal(track().disabled, true, 'the switch is busy while the write is in flight');
-    mode = 'echo';
-    release();
-    await waitForUi(app.window, 40);
-    assert.equal(calls.length, 1, 'one toggle is one write');
-    assert.equal(preference(), false);
-    assert.equal(track().getAttribute('aria-checked'), 'false');
-    assert.equal(track().disabled, false);
-    assert.equal(mirror(), null);
-
-    for (const failure of ['stale', 'reject', 'missing']) {
-      const before = calls.length;
-      mode = failure;
-      const restoreBridge = app.window.jennyShell.features.updateSettings;
-      if (failure === 'missing') delete app.window.jennyShell.features.updateSettings;
-      track().click();
-      await waitForUi(app.window, 40);
-      if (failure === 'missing') app.window.jennyShell.features.updateSettings = restoreBridge;
-      assert.equal(calls.length, before + (failure === 'missing' ? 0 : 1), failure);
-      assert.equal(preference(), false, `${failure}: the acknowledged preference stands`);
-      assert.equal(track().getAttribute('aria-checked'), 'false', `${failure}: the switch shows the acknowledged preference`);
-      assert.equal(mirror(), null, `${failure}: storage keeps the acknowledged state`);
-      assert.equal(track().disabled, false, `${failure}: the switch is usable again`);
-    }
-  } finally {
-    await app.dispose();
-  }
-});
-
 test('Memory page rejects false-success review responses and leaves candidates actionable', async () => {
   const candidate = {
     id: 501,
@@ -682,20 +326,18 @@ test('Memory page rejects false-success review responses and leaves candidates a
     created_at: '2026-08-16T13:00:00.000Z',
     updated_at: '2026-08-16T13:00:00.000Z',
   };
-  let dismissCalls = 0;
   const app = await loadRendererApp({
     shell: {
       memory: {
         async listApproved() { return { memories: [] }; },
         async listPending() { return { candidates: [candidate] }; },
-        async save() { return { created: false, memory: null }; },
         async deletePending() { return { deleted: false }; },
-        async dismiss() { dismissCalls += 1; return { dismissed: true }; },
       },
     },
   });
   const { window } = app;
   const doc = window.document;
+  installLedgerBridge(window, { async acceptPending() { return { accepted: false }; } });
 
   try {
     await openMemorySettings(window);
@@ -707,7 +349,7 @@ test('Memory page rejects false-success review responses and leaves candidates a
 
     doc.querySelector('[data-pending-memory-action="discard"]').click();
     await waitForUi(window, 40);
-    assert.equal(dismissCalls, 0, 'suppression must not run when pending deletion was rejected');
+    assert.match(doc.getElementById('toastViewport').textContent, /Memory Review Failed/i);
     assert.ok(doc.querySelector('[data-pending-memory-action="discard"]'));
   } finally {
     await app.dispose();
@@ -730,18 +372,17 @@ test('Memory delete undo rejects an unavailable false-success restore', async ()
       memory: {
         async listApproved() { return { memories: [memory] }; },
         async listPending() { return { candidates: [] }; },
-        async delete() { return { deleted: true, memory_id: memory.id }; },
-        async save() { return { created: false, memory: null }; },
+        async delete() { return { deleted: true, memory_id: memory.id, operation_id: 'rpc:del1', undoable: true }; },
       },
     },
   });
   const { window } = app;
   const doc = window.document;
+  installLedgerBridge(window, { async undoChange() { return { status: 'refused', reason: 'sidecar_unavailable' }; } });
 
   try {
     await openMemorySettings(window);
-    doc.querySelector('[data-memory-action="delete"]').click();
-    doc.querySelector('[data-toast-action-id="confirm-delete"]').click();
+    await forgetFirstMemory(window);
     await waitForUi(window, 50);
     doc.querySelector('[data-toast-action-id="undo-delete"]').click();
     await waitForUi(window, 40);
@@ -780,7 +421,8 @@ test('Memory page reports malformed partial results instead of treating them as 
     assert.equal(window.document.querySelectorAll('#approvedMemoryList > article').length, 1);
     assert.match(window.document.getElementById('memorySummary').textContent, /partially available/i);
     assert.match(window.document.getElementById('memoryHealthNote').textContent, /health details are unavailable/i);
-    assert.match(window.document.getElementById('pendingMemoryStatus').textContent, /malformed response/i);
+    assert.match(window.document.getElementById('memoryHealthNote').textContent, /could not be loaded/i);
+    assert.equal(window.document.getElementById('pendingMemoryHost').hidden, true);
   } finally {
     await app.dispose();
   }
@@ -801,9 +443,8 @@ test('Memory page reports unavailable managed-sidecar reads without presenting a
     await openMemorySettings(window);
     assert.match(window.document.getElementById('memorySummary').textContent, /unavailable/i);
     assert.match(window.document.getElementById('approvedMemoryStatus').textContent, /unavailable/i);
-    assert.match(window.document.getElementById('pendingMemoryStatus').textContent, /unavailable/i);
     assert.equal(window.document.querySelectorAll('#approvedMemoryList > article').length, 0);
-    assert.equal(window.document.querySelectorAll('#pendingMemoryList > article').length, 0);
+    assert.equal(window.document.getElementById('pendingMemoryHost').hidden, true);
   } finally {
     await app.dispose();
   }
@@ -866,8 +507,7 @@ test('Memory status queues one forced refresh and ignores a late response after 
   const { window } = app;
 
   await openMemorySettings(window, 40);
-  window.document.querySelector('[data-memory-action="delete"]').click();
-  window.document.querySelector('[data-toast-action-id="confirm-delete"]').click();
+  await forgetFirstMemory(window);
   await waitForUi(window, 40);
   assert.equal(statusCalls, 1, 'forced refresh should queue behind the in-flight status request');
 
@@ -892,9 +532,9 @@ test('Memory status queues one forced refresh and ignores a late response after 
   await app.dispose();
 });
 
-// The toast store dismisses by the id showToastMessage returns, never by
-// dedupeKey, and an action click does not close its toast on its own.
-async function openDeleteConfirm(t) {
+// Forget needs no confirmation (Undo and the Forgotten fold bring it back);
+// Undo closes the toast it was clicked on (the store dismisses by toast id).
+test('Memory Forget shows an Undo toast and Undo closes it', async (t) => {
   const memory = {
     id: 1,
     session_id: 'session-approved',
@@ -902,7 +542,6 @@ async function openDeleteConfirm(t) {
     lesson_text: 'The user prefers tea.',
     lesson_kind: 'preference',
     confidence: 0.9,
-    source_excerpt: 'I prefer tea.',
     content_fingerprint: 'sha256:' + 'f'.repeat(64),
   };
   const app = await loadRendererApp({
@@ -910,38 +549,22 @@ async function openDeleteConfirm(t) {
       memory: {
         async listApproved() { return { memories: [memory] }; },
         async listPending() { return { candidates: [] }; },
-        async delete() { return { deleted: true, memory_id: memory.id }; },
-        async save() { return { created: true, memory }; },
+        async delete() { return { deleted: true, memory_id: memory.id, operation_id: 'rpc:del1', undoable: true }; },
       },
     },
   });
   t.after(async () => { await app.dispose(); });
   const { window } = app;
   const doc = window.document;
-  await openMemorySettings(window);
-  doc.querySelector('[data-memory-action="delete"]').click();
-  await waitForUi(window, 20);
   const toastText = () => doc.getElementById('toastViewport').textContent;
-  assert.match(toastText(), /Confirm Delete/i, 'precondition: the confirm toast is shown');
-  return { window, doc, toastText };
-}
-
-test('Memory delete Cancel closes the sticky confirm toast', async (t) => {
-  const { window, doc, toastText } = await openDeleteConfirm(t);
-  doc.querySelector('[data-toast-action-id="cancel-delete"]').click();
-  await waitForUi(window, 20);
-  assert.doesNotMatch(toastText(), /Confirm Delete/i);
-});
-
-test('Memory delete confirm and Undo each close the toast they were clicked on', async (t) => {
-  const { window, doc, toastText } = await openDeleteConfirm(t);
-  doc.querySelector('[data-toast-action-id="confirm-delete"]').click();
+  installLedgerBridge(window, { async undoChange() { return { status: 'saved' }; } });
+  await openMemorySettings(window);
+  await forgetFirstMemory(window);
   await waitForUi(window, 50);
-  assert.doesNotMatch(toastText(), /Confirm Delete/i, 'Delete closes the confirm toast');
-  assert.match(toastText(), /Memory Deleted/i, 'precondition: the undo toast is shown');
-
+  assert.doesNotMatch(toastText(), /Confirm/i, 'Forget asks no confirmation');
+  assert.match(toastText(), /Memory Forgotten/i, 'precondition: the undo toast is shown');
   doc.querySelector('[data-toast-action-id="undo-delete"]').click();
   await waitForUi(window, 50);
   assert.match(toastText(), /Undo Successful/i, 'precondition: the restore succeeded');
-  assert.doesNotMatch(toastText(), /Memory Deleted/i, 'Undo closes the undo toast');
+  assert.doesNotMatch(toastText(), /Memory Forgotten/i, 'Undo closes the undo toast');
 });

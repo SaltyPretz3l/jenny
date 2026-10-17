@@ -252,6 +252,46 @@
     return allowedValues.has(normalized) ? normalized : '';
   }
 
+  // Agent-to-chat message approval (row 59 cp5b-2). The request carries the whole body, the
+  // recipient and the envelope hash in its own field, because the stock input preview clips. The
+  // value arrives from a persisted/replayed payload, so it is validated and rebuilt, not trusted.
+  const SESSION_MESSAGE_TOOL = 'session_message';
+  const SESSION_MESSAGE_TITLE_MAX_CHARS = 120;
+  const SESSION_MESSAGE_PROJECT_MAX_CHARS = 80;
+  const SESSION_MESSAGE_HASH_CHARS = 12;
+  const SHA256_HEX = /^[0-9a-f]{64}$/i;
+
+  function normalizeSessionMessageApproval(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const destination = value.destination;
+    if (value.schema_version !== 1 || !destination || typeof destination !== 'object' || Array.isArray(destination)) return null;
+    if (typeof value.body !== 'string' || !value.body.length) return null;
+    if (typeof destination.session_id !== 'string' || !destination.session_id) return null;
+    const hash = typeof value.envelope_sha256 === 'string' ? value.envelope_sha256.trim() : '';
+    if (!SHA256_HEX.test(hash)) return null;
+    return {
+      title: boundedText(destination.title, SESSION_MESSAGE_TITLE_MAX_CHARS) || jt('chat.messages.untitledChat', 'Untitled chat'),
+      project: boundedText(destination.project_label, SESSION_MESSAGE_PROJECT_MAX_CHARS),
+      body: value.body,
+      shortHash: hash.slice(0, SESSION_MESSAGE_HASH_CHARS).toLowerCase(),
+    };
+  }
+
+  // The recipient, the full body (scrollable, selectable, text only) and the short hash.
+  function renderSessionMessageApproval(message, escapeHtml) {
+    return `<div class="tool-approval-message" data-approval-session-message>`
+      + `<div class="tool-approval-message-recipient"><span class="tool-approval-message-label">${escapeHtml(jt('approval.block.sessionMessageTo', 'To'))}</span>`
+      + `<span class="tool-approval-message-title">${escapeHtml(message.title)}</span>`
+      + (message.project ? `<span class="tool-approval-message-project">${escapeHtml(message.project)}</span>` : '')
+      + `</div>`
+      + `<pre class="tool-approval-message-body" tabindex="0" role="region"`
+      + ` aria-label="${escapeHtml(jt('approval.block.sessionMessageBodyLabel', 'Message to send, exactly as written'))}"`
+      + ` data-approval-message-body>${escapeHtml(message.body)}</pre>`
+      + `<p class="tool-approval-message-note">${escapeHtml(jt('approval.block.sessionMessageOneOff', 'This approval covers this one message only.'))}`
+      + ` <span class="tool-approval-message-hash">${escapeHtml(jt('approval.block.sessionMessageFingerprint', 'Fingerprint {hash}', { hash: message.shortHash }))}</span></p>`
+      + `</div>`;
+  }
+
   function renderApprovalBlock(options, deps) {
     const source = options || {};
     const dependencies = deps || {};
@@ -262,6 +302,10 @@
     const toolCallId = normalizeText(source.toolCallId);
     const approvalId = normalizeText(source.approvalId);
     const toolName = normalizeText(source.toolName);
+    // A message to another chat is approved against its full body or not at all: a request whose
+    // body did not arrive intact has no Allow button, so the stock clipped preview never stands in.
+    const sendsMessage = toolName === SESSION_MESSAGE_TOOL;
+    const sessionMessage = sendsMessage ? normalizeSessionMessageApproval(source.sessionMessageApproval) : null;
     const displayToolName = normalizeText(source.displayToolName) || toolName || jt('approval.block.thisTool', 'this tool');
     const mode = source.mode === 'card' ? 'card' : 'inline';
     const prompt = normalizeText(source.prompt)
@@ -338,6 +382,9 @@
     for (const fact of normalizeFacts(source.facts)) {
       chips.push({ field: fact.kind, label: fact.label });
     }
+    if (sendsMessage) {
+      chips.push({ field: 'send', label: jt('approval.block.sessionMessageFact', 'Sends a message to another chat') });
+    }
     const factsMarkup = `<ul class="tool-approval-facts">`
       + chips.map((chip) => `<li class="tool-approval-fact"`
         + ` data-approval-fact="${escapeHtml(chip.field)}">${escapeHtml(chip.label)}</li>`).join('')
@@ -350,7 +397,12 @@
     // meaningful to show or the preview would only repeat the headline.
     const commandText = String(source.commandText == null ? '' : source.commandText).trim();
     let commandMarkup = '';
-    if (commandText && commandText !== headline) {
+    if (sessionMessage) {
+      commandMarkup = renderSessionMessageApproval(sessionMessage, escapeHtml);
+    } else if (sendsMessage) {
+      commandMarkup = `<p class="tool-approval-message-note" data-approval-session-message-unavailable>`
+        + `${escapeHtml(jt('approval.block.sessionMessageUnavailable', "The full message can't be shown, so it can't be approved. Deny it."))}</p>`;
+    } else if (commandText && commandText !== headline) {
       const clipped = commandText.length > COMMAND_PREVIEW_MAX_CHARS
         ? jt('approval.block.clippedCommand', '{command}… (+{count} more chars)', { command: commandText.slice(0, COMMAND_PREVIEW_MAX_CHARS), count: commandText.length - COMMAND_PREVIEW_MAX_CHARS })
         : commandText;
@@ -371,7 +423,7 @@
     // travels on the button that was pressed.
     const buttonIdentity = ` data-tool-call-id="${callIdAttr}" data-call-id="${callIdAttr}"`
       + `${approvalAttrMarkup}`;
-    const alwaysAllowMarkup = source.oneOffOnly === true || source.one_off_only === true ? ''
+    const alwaysAllowMarkup = sendsMessage || source.oneOffOnly === true || source.one_off_only === true ? ''
       : `<button class="tool-approve-btn tool-approve-always-btn" type="button" data-action="approve"`
         + ` data-approval-scope="always"${buttonIdentity}`
         + ` title="${escapeHtml(jt('approval.block.alwaysAllowTitle', 'Allow this tool call and stop asking for {tool}', { tool: displayToolName }))}"`
@@ -392,9 +444,9 @@
       + `<span class="tool-approval-paused-note">${escapeHtml(jt('approval.block.pausedNote', 'Resume to answer.'))}</span>`
       + `</div>`;
     const actionsMarkup = cardState === 'paused' ? pausedActionsMarkup : `<div class="tool-approval-actions">`
-      + `<button class="tool-approve-btn" type="button" data-action="approve"`
+      + (sendsMessage && !sessionMessage ? '' : `<button class="tool-approve-btn" type="button" data-action="approve"`
       + ` data-approval-scope="once"${buttonIdentity}`
-      + ` title="${escapeHtml(jt('approval.block.allowTitle', 'Allow this tool call'))}" aria-label="${escapeHtml(jt('approval.block.allowOnceAriaLabel', 'Allow {tool} once', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.allowOnce', 'Allow once'))}</button>`
+      + ` title="${escapeHtml(jt('approval.block.allowTitle', 'Allow this tool call'))}" aria-label="${escapeHtml(jt('approval.block.allowOnceAriaLabel', 'Allow {tool} once', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.allowOnce', 'Allow once'))}</button>`)
       + alwaysAllowMarkup
       + `<button class="tool-deny-btn" type="button" data-action="deny"${buttonIdentity}`
       + ` title="${escapeHtml(jt('approval.block.denyTitle', 'Deny this tool call'))}" aria-label="${escapeHtml(jt('approval.block.denyAriaLabel', 'Deny {tool}', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.deny', 'Deny'))}</button>`
@@ -408,8 +460,10 @@
       + `</div>`;
 
     if (mode === 'inline') {
+      // An exact-content message approval is decided only on its own card, never by a batch.
       return `<div class="approval-gap-row" role="status" aria-live="polite"`
         + `${rowIdentity}`
+        + `${sendsMessage ? ' data-approval-exact="true"' : ''}`
         + ` data-approval-status="${approvalStatus}">`
         + `${block}`
         + `</div>`;
@@ -422,6 +476,7 @@
     approvalCardStateKey,
     approvalKeepsReceipt,
     deriveApprovalReceipt,
+    normalizeSessionMessageApproval,
     renderApprovalBlock,
     resolveApprovalCardState,
   };

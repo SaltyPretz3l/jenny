@@ -96,7 +96,7 @@ test('backgroundRun normalizes the task and forwards extra params over RPC', asy
   const request = decodeRequest(writes[0]);
   assert.equal(request.method, 'background.run');
   assert.equal(request.params.task, 'summarize-thread');
-  assert.equal(request.params.accept_version, '2026-08-17');
+  assert.equal(request.params.accept_version, '2026-10-15');
   assert.equal(request.params.thread_id, 'thread_42');
   assert.equal(result.accepted, true);
 });
@@ -116,7 +116,7 @@ test('hardwareProfile sends hardware.profile RPC and merges params', async () =>
 
   const request = decodeRequest(writes[0]);
   assert.equal(request.method, 'hardware.profile');
-  assert.equal(request.params.accept_version, '2026-08-17');
+  assert.equal(request.params.accept_version, '2026-10-15');
   assert.equal(request.params.refresh, true);
   assert.equal(result.gpu, 'sample-gpu');
 });
@@ -136,7 +136,7 @@ test('harnessInspect sends harness.inspect RPC and merges params', async () => {
 
   const request = decodeRequest(writes[0]);
   assert.equal(request.method, 'harness.inspect');
-  assert.equal(request.params.accept_version, '2026-08-17');
+  assert.equal(request.params.accept_version, '2026-10-15');
   assert.equal(request.params.session_id, 'session_inspect');
   assert.equal(result.turns, 3);
 });
@@ -168,7 +168,7 @@ test('request rejects immediately when the process is not connected', async () =
   const client = new SidecarClient();
   // Never attach a process.
   await assert.rejects(
-    client.request('models.list', { accept_version: '2026-08-17' }),
+    client.request('models.list', { accept_version: '2026-10-15' }),
     /Sidecar process is not connected/i
   );
 });
@@ -567,6 +567,7 @@ test('a parse error logs sidecar.frame_parse_error and emits parse-error', async
 
   const parseErrors = [];
   client.on('parse-error', (error) => parseErrors.push(error));
+  client.on('error', () => {}); // the malformed frame fails the transport (tests/sidecar-client-malformed-frame.test.js)
 
   const malformedBody = Buffer.from('{ broken json', 'utf8');
   const frame = Buffer.concat([

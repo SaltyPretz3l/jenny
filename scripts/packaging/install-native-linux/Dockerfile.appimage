@@ -1,0 +1,25 @@
+# Disposable AppImage-route image for scripts/packaging/install-native-linux.sh.
+# Debian with apt-get but NO sudo, so install.sh falls back to its AppImage route.
+FROM debian:12
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install --yes --no-install-recommends \
+        ca-certificates curl jq procps xvfb xauth dbus dbus-x11 xdg-utils \
+        libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 \
+        libatspi2.0-0 libuuid1 libsecret-1-0 libasound2 libgbm1 libdrm2 \
+        libxkbcommon0 libatk-bridge2.0-0 libcups2 libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --shell /bin/sh tester \
+    && mkdir -p -m 1777 /tmp/.X11-unix
+# The AppImage runtime normally mounts its payload with FUSE, which an unprivileged
+# container lacks. Extract-and-run unpacks to a temporary directory instead, so the
+# harness does not need to mount /dev/fuse or grant extra capabilities.
+ENV APPIMAGE_EXTRACT_AND_RUN=1
+COPY uname-shim scenario.sh markers.sh /usr/local/lib/jenny-install-native/
+# SHIM_KERNEL=1 only when the host detected a WSL2 Docker kernel (see the harness).
+ARG SHIM_KERNEL=0
+RUN if [ "$SHIM_KERNEL" = 1 ]; then \
+        install -m 755 /usr/local/lib/jenny-install-native/uname-shim /usr/local/bin/uname; \
+    fi
+USER tester
+WORKDIR /home/tester
+ENTRYPOINT ["/bin/sh", "/usr/local/lib/jenny-install-native/scenario.sh"]

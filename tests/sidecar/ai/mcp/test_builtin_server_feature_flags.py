@@ -16,6 +16,7 @@ from sidecar.ai.config import RuntimeConfig
 from sidecar.ai.container import _default_mcp_servers
 from sidecar.ai.mcp import builtin_server
 from sidecar.ai.tools.builtins import shell as shell_module
+from sidecar.ai.tools.builtins import shell_settings
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 
@@ -193,6 +194,38 @@ def test_main_defaults_shell_security_and_git_tracking_off(
 
     assert captured["shell_security_enabled"] is False
     assert captured["git_tracking_enabled"] is False
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ["shell_noninteractive_env", "shell_head_tail_output", "edit_match_fallbacks"],
+)
+def test_main_threads_row60_default_on_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    flag: str,
+) -> None:
+    option = f"--{flag.replace('_', '-')}-enabled"
+    default = _run_main_capturing_kwargs(monkeypatch, ["--workspace-root", str(tmp_path)])
+    off = _run_main_capturing_kwargs(
+        monkeypatch, ["--workspace-root", str(tmp_path), option, "0"]
+    )
+
+    assert default[f"{flag}_enabled"] is True
+    assert off[f"{flag}_enabled"] is False
+
+
+def test_default_tools_keep_row60_flags_on_unless_explicitly_off() -> None:
+    _reset_shell_flags()
+    try:
+        builtin_server._default_tools({"tools_shell_enabled": True})
+        assert shell_settings.default_on_feature_enabled("shell_noninteractive_env") is True
+        builtin_server._default_tools(
+            {"tools_shell_enabled": True, "feature_flags": {"shell_noninteractive_env": False}}
+        )
+        assert shell_settings.default_on_feature_enabled("shell_noninteractive_env") is False
+    finally:
+        _reset_shell_flags()
 
 
 def test_main_threads_delete_file_flag(

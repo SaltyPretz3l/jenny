@@ -11,7 +11,7 @@
   'use strict';
 
   var MAX_UNREAD_SESSION_STATES = 50;
-  var SKIPPED_KINDS = new Set(['question_batch', 'interactive_round_recap', 'proactive_suggestion', 'slash_command_output', 'tool_result']);
+  var SKIPPED_KINDS = new Set(['question_batch', 'interactive_round_recap', 'proactive_suggestion', 'slash_command_output', 'memory_note', 'tool_result']);
   var isNearBottom = scrollUtils && typeof scrollUtils.isNearBottom === 'function'
     ? scrollUtils.isNearBottom
     : function fallbackIsNearBottom(metrics) {

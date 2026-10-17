@@ -49,6 +49,25 @@ function sanitizeApprovalPolicyPresentation(params = {}) {
   };
 }
 
+function sessionMessageApprovalFields(params) {
+  if (params?.tool_name !== 'session_message') return {};
+  const value = params.messageFields?.session_message_approval;
+  const destination = value?.destination;
+  if (value?.schema_version !== 1 || value.one_off_only !== true
+    || typeof value.operation_id !== 'string' || value.operation_id.length > 256
+    || !/^[a-f0-9]{64}$/.test(value.envelope_sha256)
+    || typeof value.body !== 'string' || Buffer.byteLength(value.body, 'utf8') > 16384
+    || typeof destination?.session_id !== 'string' || destination.session_id.length > 256
+    || typeof destination.title !== 'string' || Buffer.byteLength(destination.title, 'utf8') > 512
+    || (destination.project_label !== null && (typeof destination.project_label !== 'string'
+      || Buffer.byteLength(destination.project_label, 'utf8') > 512))) return {};
+  return { session_message_approval: {
+    schema_version: 1, operation_id: value.operation_id,
+    destination: { session_id: destination.session_id, title: destination.title, project_label: destination.project_label },
+    body: value.body, envelope_sha256: value.envelope_sha256, one_off_only: true,
+  } };
+}
+
 function buildScopedApprovalId({ sessionId, streamId, callId } = {}) {
   return [
     'approval',
@@ -442,6 +461,7 @@ function toolResultExitCode(metadata) {
 }
 
 module.exports = {
+  sessionMessageApprovalFields,
   containsTraversal,
   normalizeDurationMs,
   toolResultExitCode,

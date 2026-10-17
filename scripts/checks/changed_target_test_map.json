@@ -12,10 +12,51 @@
     "server/"
   ],
   "rules": [
+    {"target_prefixes": ["services/performance/gpu-collector.js"], "required_tests": ["tests/gpu-collector.test.js"]},
+    {"target_prefixes": ["services/performance/gpu-memory-win32.ps1"], "required_tests": ["tests/gpu-collector.test.js"]},
+    {"target_prefixes": ["services/performance/gpu-warning-state.js"], "required_tests": ["tests/gpu-warning-state.test.js"]},
+    {"target_prefixes": ["services/performance/gpu-sampler.js"], "required_tests": ["tests/gpu-sampler.test.js"]},
+    {"target_prefixes": ["services/performance/inference-metrics.js"], "required_tests": ["tests/performance-inference-metrics.test.js"]},
+    {"target_prefixes": ["services/performance/inference-intake.js"], "required_tests": ["tests/performance-inference-intake.test.js"]},
+    {"target_prefixes": ["services/performance/provider-identity.js"], "required_tests": ["tests/performance-provider-identity.test.js"]},
+    {"target_prefixes": ["services/performance/performance-contract.js"], "required_tests": ["tests/performance-contract.test.js"]},
+    {"target_prefixes": ["services/performance/performance-service.js"], "required_tests": ["tests/performance-service.test.js"]},
+    {"target_prefixes": ["services/main/performance-ipc-registration.js", "services/main/performance-wiring.js"], "required_tests": ["tests/performance-ipc-registration.test.js"]},
+    {"target_prefixes": ["services/shell-config-performance.js"], "required_tests": ["tests/shell-config-performance.test.js"]},
+    {"target_prefixes": ["services/backend/chat-stream-managed-runtime-notifications.js"], "required_tests": ["tests/chat-stream-inference-performance-notification.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-session-rail-performance.js", "styles/chat-session-rail-performance.css"], "required_tests": ["tests/renderer-session-rail-performance-model.test.js", "tests/renderer-session-rail-performance.test.js"]},
+    {"target_prefixes": ["renderer/shell/renderer-performance-settings.js"], "required_tests": ["tests/renderer-performance-settings.test.js"]},
+    {"target_prefixes": ["renderer/shell/renderer-health-pill-gpu.js"], "required_tests": ["tests/renderer-health-pill-gpu.test.js"]},
+    {"target_prefixes": ["sidecar/ai/engines/provider_metrics.py"], "required_tests": ["tests/sidecar/ai/engines/test_provider_metrics.py", "tests/sidecar/runtime/test_chat_inference_performance.py"]},
+    {"target_prefixes": ["sidecar/ai/routing/inference_performance.py"], "required_tests": ["tests/sidecar/ai/routing/test_inference_performance.py", "tests/sidecar/runtime/test_chat_inference_performance.py"]},
+    {"target_prefixes": ["sidecar/ai/routing/tool_recall.py"], "required_tests": ["tests/sidecar/ai/routing/test_tool_recall.py"]},
+    {"target_prefixes": ["styles/chat-composer.css"], "required_tests": ["tests/renderer-composer-command-layout.test.js", "tests/renderer-composer-narrow-layout.test.js"]},
+    {"target_prefixes": ["sidecar/ai/mcp/builtin_command_discovery.py", "sidecar/ai/tools/builtins/temp_script_interpreter.py", "sidecar/ai/tools/builtins/temp_script.py", "sidecar/ai/tools/builtins/shell.py", "sidecar/ai/context/runtime_overlays.py"], "required_tests": ["tests/sidecar/ai/mcp/test_builtin_command_discovery.py", "tests/sidecar/ai/mcp/test_process_containment.py", "tests/sidecar/ai/tools/builtins/test_temp_script_interpreter.py", "tests/sidecar/ai/tools/builtins/test_temp_script_language.py", "tests/sidecar/ai/tools/test_shell_windows.py", "tests/sidecar/ai/context/test_session_environment_overlay.py", "tests/sidecar/ai/routing/test_chat_decision_session_environment.py"]},
+    {"target_prefixes": ["sidecar/ai/tools/workspace_mutation_live_owner.py", "sidecar/ai/tools/workspace_mutation_journal_store.py", "sidecar/ai/routing/mutation_change_set_lifecycle.py", "sidecar/ai/routing/mutation_run_settlement.py", "sidecar/runtime/mutation_continuation.py", "sidecar/runtime/chat_resume.py"], "required_tests": ["tests/sidecar/ai/tools/test_workspace_mutation_live_owner.py", "tests/sidecar/ai/tools/test_workspace_mutation_journal.py", "tests/sidecar/ai/routing/test_mutation_change_set_lifecycle.py", "tests/sidecar/runtime/test_mutation_terminal_cleanup.py", "tests/managed-sidecar/managed-sidecar-mutation-refresh.test.js"]},
+    {"target_prefixes": ["sidecar/ai/semantic/", "sidecar/ai/tools/builtins/knowledge/", "scripts/eval/retrieval-baseline/projection.py"], "required_tests": ["tests/sidecar/ai/tools/test_knowledge_scope_recovery.py", "tests/sidecar/ai/semantic/test_pdf_evidence.py", "tests/sidecar/ai/semantic/test_answer_projection.py", "tests/sidecar/ai/semantic/test_runtime.py", "tests/sidecar/ai/tools/test_knowledge_semantic.py"]},
+
+    {"target_prefixes": ["scripts/generate-image-tool-schema.js", "tests/helpers/image-generate-fixture.js"], "required_tests": ["tests/tools/image-generate-tool.test.js"]},
+    {"target_prefixes": ["services/image-edit-reference.js"], "required_tests": ["tests/image-edit-reference.test.js", "tests/tools/image-generate-tool.test.js"]},
+    {"target_prefixes": ["renderer/features/renderer-image-selection.js"], "required_tests": ["tests/renderer-image-selection.test.js", "tests/renderer-image-viewer.test.js"]},
+    {"target_prefixes": ["renderer/inventory/image-edit-draft.js", "renderer/features/renderer-image-edit-draft.js"], "required_tests": ["tests/renderer-image-edit-draft.test.js"]},
+
+    {"target_prefixes": ["renderer/inventory/image-viewer.js", "renderer/features/renderer-image-viewer.js", "renderer/app/renderer-app-image-viewer-binding.js"], "required_tests": ["tests/renderer-image-viewer.test.js", "tests/renderer-image-viewer-binding.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-artifact-image-references.js"], "required_tests": ["tests/renderer-artifact-image-references.test.js"]},
+    {"target_prefixes": ["services/artifact-open-with.js", "services/artifact-open-with-win32.ps1"], "required_tests": ["tests/artifact-open-with.test.js", "tests/artifact-file-actions.test.js"]},
+
+    {"target_prefixes":["services/conversation-transfer-","services/jenny-conversation-adapter.js","services/codex-conversation-adapter.js","services/codex-app-server-client.js","services/main/conversation-transfer-registration.js"],"required_tests":["tests/conversation-transfer-service.test.js","tests/conversation-transfer-registration.test.js","tests/codex-app-server-client.test.js"]},
+    {"target_prefixes": ["services/activity-projection.js", "services/main/activity-monitor-wiring.js"], "required_tests": ["tests/activity-projection.test.js", "tests/activity-monitor-wiring.test.js", "tests/ipc-contract.test.js"]},
+    {"target_prefixes": ["services/workspace-test-runner-observation.js", "services/workspace-test-runner-service.js", "services/workspace-test-runner-history.js", "services/main/workspace-test-runner-wiring.js"], "required_tests": ["tests/workspace-test-runner-activity.test.js", "tests/workspace-test-runner-observation.test.js", "tests/workspace-test-runner-history.test.js", "tests/workspace-test-runner-wiring.test.js"]},
+    {"target_prefixes": ["renderer/inventory/activity-list.js", "renderer/features/renderer-activity-view.js", "renderer/features/renderer-chat-activity.js", "renderer/features/renderer-ide-activity-wiring.js"], "required_tests": ["tests/renderer-activity-view.test.js", "tests/renderer-activity-hosts.test.js", "tests/renderer-shell-harness-parity.test.js"]},
+    {"target_prefixes": ["services/backend/prefill-progress.js", "sidecar/ai/routing/prefill_progress.py", "renderer/chat/renderer-stream-activity-typed.js", "sidecar/ai/engines/vllm_sse_stream.py"], "required_tests": ["tests/prefill-progress.test.js", "tests/sidecar/ai/routing/test_prefill_progress.py", "tests/sidecar/ai/engines/test_llama_prefill_progress.py", "tests/sidecar/ai/engines/test_llama_server_timings.py"]},
+    {"target_prefixes": ["sidecar/runtime/owned_process_ledger.py", "sidecar/runtime/owned_process_identity.py", "sidecar/runtime/owned_process_tracking.py", "sidecar/runtime/owned_process_handoff.py", "sidecar/runtime/owned_process_recovery.py", "sidecar/runtime/owned_process_ledger_helper.py", "services/backend/owned-process-recovery.js", "services/backend/owned-process-ledger-bridge.js"], "required_tests": ["tests/sidecar/runtime/test_owned_process_ledger.py", "tests/sidecar/runtime/test_owned_process_tracking.py", "tests/sidecar/runtime/test_owned_process_recovery.py", "tests/sidecar/runtime/test_owned_process_handoff.py", "tests/owned-process-recovery.test.js", "tests/owned-process-ledger-bridge.test.js"]},
+    {"target_prefixes": ["services/backend/ollama-daemon-", "services/main/ollama-daemon-ipc.js", "renderer/features/setup-scenes/ollama-daemon-view.js", "renderer/features/setup-scenes/ollama-engine-gate.js"], "required_tests": ["tests/ollama-daemon-port.test.js", "tests/ollama-daemon-identity.test.js", "tests/ollama-daemon-ipc.test.js", "tests/renderer-ollama-daemon.test.js", "tests/ollama-install-service-linux.test.js"]},
     {"target_prefixes": ["sidecar/ai/tools/text_tool_calls.py", "sidecar/ai/routing/tool_loop_recovery.py"], "required_tests": ["tests/sidecar/ai/tools/test_text_tool_calls.py", "tests/sidecar/ai/routing/test_tool_loop_text_tool_calls.py", "tests/sidecar/ai/routing/test_tool_loop_budget_endings.py"]},
     {"target_prefixes": ["sidecar/ai/tools/build_turn_tools.py", "sidecar/ai/routing/tool_budget_filter.py"], "required_tests": ["tests/sidecar/ai/tools/test_build_turn_tools.py", "tests/sidecar/ai/routing/test_tool_budget_filter_build_floor.py"]},
-    {"target_prefixes": ["sidecar/ai/context/builder_render.py", "sidecar/ai/context/builder_shared.py"], "required_tests": ["tests/sidecar/ai/context/test_deferred_tool_copy.py", "tests/sidecar/ai/context/test_executable_tools_names_only.py"]},
+    {"target_prefixes": ["sidecar/ai/context/builder_render.py", "sidecar/ai/context/builder_shared.py"], "required_tests": ["tests/sidecar/ai/context/test_deferred_tool_copy.py", "tests/sidecar/ai/context/test_executable_tools_names_only.py", "tests/sidecar/ai/context/test_knowledge_guidance.py"]},
     {"target_prefixes": ["sidecar/ai/context/compaction_diagnostics.py"], "required_tests": ["tests/sidecar/ai/context/test_compaction_diagnostics.py", "tests/sidecar/runtime/test_chat_serialization.py"]},
+    {"target_prefixes": ["sidecar/ai/routing/tool_execution_memory.py", "sidecar/ai/routing/tool_execution_tool_handlers.py"], "required_tests": ["tests/sidecar/ai/routing/test_memory_tool_execution.py", "tests/sidecar/ai/routing/test_monitor_tool_execution.py"]},
+    {"target_prefixes": ["services/backend/memory-result-metadata.js"], "required_tests": ["tests/tool-result-diff-metadata-memory.test.js"]},
     {"target_prefixes": ["sidecar/ai/routing/write_progress.py"], "required_tests": ["tests/sidecar/ai/routing/test_write_progress.py", "tests/sidecar/ai/routing/test_tool_loop_write_progress.py"]},
     {"target_prefixes": ["sidecar/ai/tools/builtins/worktree_change_tracking.py"], "required_tests": ["tests/sidecar/ai/tools/builtins/test_worktree_change_tracking.py", "tests/sidecar/ai/tools/builtins/test_worktree_source_change.py"]},
     {"target_prefixes": ["sidecar/ai/routing/plan_presentation.py"], "required_tests": ["tests/sidecar/ai/routing/test_plan_presentation.py", "tests/sidecar/ai/routing/test_tool_loop_plan_presentation.py"]},
@@ -36,6 +77,7 @@
     {"target_prefixes": ["services/backend/backend-sessions.js", "renderer/chat/chat-message-utils.js", "renderer/chat/renderer-message-index-utils.js", "renderer/chat/renderer-render-pipeline-message-renderer.js"], "required_tests": ["tests/session-runtime/message-status-projection.test.js", "tests/chat-message-utils.test.js", "tests/backend-sessions.test.js"]},
     {"target_prefixes": ["renderer/chat/renderer-turn-tree-projector-persistence.js"], "required_tests": ["tests/renderer-turn-row-projector-tools.test.js", "tests/renderer-turn-tree-projector.test.js", "tests/renderer-turn-row-projector-trace.test.js"]},
     {"target_prefixes": ["sidecar/ai/context/runtime_overlays.py", "sidecar/ai/routing/chat_decision.py"], "required_tests": ["tests/sidecar/ai/context/test_session_environment_overlay.py", "tests/sidecar/ai/routing/test_chat_decision_session_environment.py"]},
+    {"target_prefixes": ["sidecar/ai/context/always_on_memories.py", "sidecar/ai/routing/system_messages.py", "sidecar/runtime/approval_plan.py"], "required_tests": ["tests/sidecar/ai/context/test_always_on_memories.py", "tests/sidecar/ai/context/test_always_on_placement.py", "tests/sidecar/runtime/test_approval_plan_always_on.py"]},
     {"target_prefixes": ["sidecar/ai/tools/builtins/temp_script.py"], "required_tests": ["tests/sidecar/ai/tools/builtins/test_temp_script.py", "tests/sidecar/ai/tools/builtins/test_temp_script_language.py", "tests/sidecar/ai/routing/test_tool_resource_dispatch.py"]},
     {"target_prefixes": ["sidecar/ai/mcp/exceptions.py", "sidecar/ai/mcp/transport_stdio.py", "sidecar/ai/routing/tool_dispatch.py"], "required_tests": ["tests/sidecar/ai/mcp/test_transport_stdio.py", "tests/sidecar/ai/routing/test_tool_resource_dispatch.py", "tests/session-runtime/plan-smoke-stdio.test.js"]},
     {"target_prefixes": ["services/backend/managed-sidecar-terminal-cleanup.js"], "required_tests": ["tests/session-runtime/managed-checkpoint-send.test.js", "tests/renderer-stream-terminal-state.test.js"]},
@@ -586,7 +628,7 @@
     },
     {
       "target_prefixes": ["services/personality-workspace-service.js", "services/skills-service.js"],
-      "required_tests": ["tests/session-runtime/context-sources.test.js", "tests/personality-workspace-service.test.js", "tests/skills-service.test.js"]
+      "required_tests": ["tests/session-runtime/context-sources.test.js", "tests/personality-workspace-service.test.js", "tests/personality-workspace-service-project-notes.test.js", "tests/skills-service.test.js"]
     },
     {
       "target_prefixes": [
@@ -614,7 +656,7 @@
         "services/auxiliary-ipc-handlers.js",
         "renderer/features/renderer-memory-actions-utils.js"
       ],
-      "required_tests": ["tests/auxiliary-ipc-handlers.test.js", "tests/renderer-memory-dismissed-state.test.js"]
+      "required_tests": ["tests/auxiliary-ipc-handlers.test.js", "tests/renderer-memory.test.js"]
     },
     {
       "target_prefixes": ["services/backend/error-codes.js", "renderer/shared/i18n-backend-strings.js"],
@@ -668,7 +710,15 @@
     },
     {
       "target_prefixes": ["services/backend/backend-memory.js"],
-      "required_tests": ["tests/backend-memory-project-move.test.js"]
+      "required_tests": ["tests/backend-memory-project-archive.test.js", "tests/backend-memory-undo.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/features/renderer-memory-chat-entry.js"],
+      "required_tests": ["tests/renderer-memory-chat-entry.test.js", "tests/tool-call-utils.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/chat/renderer-slash-memory-commands.js"],
+      "required_tests": ["tests/renderer-slash-memory-commands.test.js", "tests/renderer-slash-command-registry.test.js"]
     },
     {
       "target_prefixes": [
@@ -680,12 +730,59 @@
         "services/backend/backend-sessions.js",
         "services/backend/session-branching.js",
         "services/backend/session-templates.js",
-        "services/backend/session-export-import.js"
+        "services/backend/session-export-import.js",
+        "services/backend/session-coordination-records.js"
       ],
       "required_tests": [
         "tests/session-runtime/migrations.test.js",
-        "tests/session-store-migrations.test.js"
+        "tests/session-store-migrations.test.js",
+        "tests/session-store-migrations-v25.test.js",
+        "tests/session-coordination-records.test.js"
       ]
+    },
+    {
+      "target_prefixes": ["services/chat-workspace-contract.js", "services/chat-workspace-summary-sections.js", "services/chat-workspace-change-notifier.js", "services/chat-workspace-service.js", "services/chat-workspace-wiring.js", "services/workspace-git-change-summary.js", "services/main/chat-workspace-ipc-registration.js"],
+      "required_tests": ["tests/chat-workspace-service.test.js", "tests/chat-workspace-invalidation.test.js", "tests/chat-workspace-ipc-registration.test.js", "tests/workspace-git-change-summary.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/chat/renderer-session-rail-model.js", "renderer/chat/renderer-session-rail-render.js", "renderer/chat/renderer-session-rail.js", "styles/chat-session-rail.css"],
+      "required_tests": ["tests/renderer-session-rail-model.test.js", "tests/renderer-session-rail.test.js", "tests/renderer-session-rail-routing.test.js", "tests/renderer-session-rail-layout.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/chat/renderer-unified-diff-parse.js", "renderer/features/renderer-changes-working-tree.js", "renderer/features/renderer-changes-working-tree-render.js", "renderer/features/renderer-chat-workspace-detail.js", "styles/chat-changes-detail.css"],
+      "required_tests": ["tests/renderer-unified-diff-parse.test.js", "tests/renderer-changes-working-tree.test.js", "tests/renderer-chat-workspace-detail.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/chat-proposal-records.js", "services/backend/chat-proposal-command-records.js", "services/backend/chat-proposal-store.js"],
+      "required_tests": ["tests/chat-proposal-records.test.js", "tests/chat-proposal-store.test.js", "tests/chat-proposal-service.test.js", "tests/coordination-receipts.test.js"]
+    },
+    {
+      "target_prefixes": ["services/chat-proposal-binding.js", "services/chat-proposal-git-facts.js"],
+      "required_tests": ["tests/chat-proposal-binding.test.js"]
+    },
+    {
+      "target_prefixes": ["services/chat-proposal-service.js", "services/chat-proposal-contract.js", "services/chat-proposal-continuation.js", "services/chat-proposal-command.js", "services/chat-proposal-wiring.js", "services/main/chat-proposal-ipc-registration.js"],
+      "required_tests": ["tests/chat-proposal-service.test.js", "tests/chat-proposal-continuation.test.js", "tests/chat-proposal-ipc-registration.test.js", "tests/session-runtime/application-turn-submission.test.js", "tests/chat-proposal-integration.test.js", "tests/chat-proposal-command.test.js"]
+    },
+    {
+      "target_prefixes": ["services/tools/builtin/propose-git-action-tool.js", "services/tools/builtin/propose-command-tool.js", "services/tools/builtin/propose-tool-support.js", "services/backend/proposal-result-metadata.js"],
+      "required_tests": ["tests/propose-tools.test.js", "tests/proposal-result-metadata.test.js"]
+    },
+    {
+      "target_prefixes": ["renderer/chat/renderer-proposal-card-store.js", "renderer/chat/renderer-proposal-cards.js", "renderer/chat/renderer-proposal-card-actions.js", "renderer/chat/renderer-turn-row-interactive-cards.js", "styles/chat-proposal-cards.css"],
+      "required_tests": ["tests/renderer-proposal-cards.test.js", "tests/renderer-proposal-card-store.test.js", "tests/renderer-proposal-card-actions.test.js", "tests/renderer-turn-row-tool-render-utils.test.js"]
+    },
+    {
+      "target_prefixes": ["services/backend/command-proposal-turn.js", "services/backend/command-proposal-runtime-adapter.js", "services/backend/command-proposal-input.js", "services/backend/sidecar-client-command-proposal.js"],
+      "required_tests": ["tests/command-proposal-adapter.test.js", "tests/sidecar-client-command-proposal.test.js"]
+    },
+    {
+      "target_prefixes": ["sidecar/runtime/command_proposal.py", "sidecar/runtime/command_proposal_request.py", "sidecar/runtime/command_proposal_approval.py", "sidecar/runtime/command_proposal_outcome.py", "sidecar/runtime/command_proposal_run.py", "sidecar/runtime/command_proposal_terminal.py", "sidecar/runtime/command_proposal_worker.py"],
+      "required_tests": ["tests/sidecar/runtime/test_command_proposal.py"]
+    },
+    {
+      "target_prefixes": ["renderer/features/renderer-side-panel-motion.js"],
+      "required_tests": ["tests/renderer-side-panel-motion.test.js", "tests/renderer-chat-reading-layout.test.js"]
     },
     {
       "target_prefixes": ["scripts/checks/check_test_coverage_map.py"],
@@ -973,20 +1070,22 @@
         "tests/sidecar/ai/memory/test_store.py",
         "tests/sidecar/ai/memory/test_project_scope.py",
         "tests/sidecar/ai/memory/test_project_migration.py",
-        "tests/sidecar/ai/memory/test_project_move.py",
+        "tests/sidecar/ai/memory/test_project_archive.py",
+        "tests/sidecar/ai/memory/test_session_purge.py",
+        "tests/sidecar/ai/memory/test_store_writes.py",
+        "tests/sidecar/ai/memory/test_store_v9_migration.py",
         "tests/sidecar/server_core/test_memory_dispatch.py"
       ]
     },
     {
       "target_prefixes": [
         "sidecar/runtime/memory.py",
-        "sidecar/runtime/memory_suggestions.py",
+        "sidecar/runtime/memory_text.py",
         "sidecar/runtime/request_dispatch_memory.py"
       ],
       "required_tests": [
         "tests/sidecar/runtime/test_memory.py",
         "tests/sidecar/runtime/test_request_dispatch_memory.py",
-        "tests/sidecar/runtime/test_request_dispatch_memory_move.py",
         "tests/sidecar/server_core/test_memory_dispatch.py"
       ]
     },
@@ -1742,6 +1841,42 @@
     {"target_prefixes": ["renderer/features/renderer-ide-git-feature.js", "renderer/features/renderer-ide-controller.js"], "required_tests": ["tests/renderer-ide-git-jenny-link.test.js", "tests/renderer-ide-second-chat.test.js"]},
     {"target_prefixes": ["renderer/features/renderer-ide-workspace-chats.js"], "required_tests": ["tests/renderer-ide-workspace-chats.test.js", "tests/renderer-ide-second-chat.test.js", "tests/renderer-ide-git-jenny-link.test.js"]},
     {"target_prefixes": ["renderer/app/renderer-app-pane-composition.js"], "required_tests": ["tests/renderer-pane-composition-host.test.js"]},
-    {"target_prefixes": ["renderer/shared/workbench-layout-model.js", "renderer/shared/workbench-layout-ops.js"], "required_tests": ["tests/workbench-layout-chat-instances.test.js"]}
+    {"target_prefixes": ["renderer/shared/workbench-layout-model.js", "renderer/shared/workbench-layout-ops.js"], "required_tests": ["tests/workbench-layout-chat-instances.test.js"]},
+    {"target_prefixes": ["services/backend/session-message-envelope.js", "services/backend/session-mail-records.js", "services/backend/session-mail-store.js", "services/backend/session-message-store-helpers.js", "services/backend/coordination-receipts.js"], "required_tests": ["tests/session-message-envelope.test.js", "tests/session-mail-records.test.js", "tests/session-mail-store.test.js", "tests/session-store-insert-before.test.js", "tests/coordination-receipts.test.js"]},
+    {"target_prefixes": ["services/backend/session-mail-admission.js", "services/backend/chat-history-scope.js"], "required_tests": ["tests/chat-message-admission.test.js", "tests/session-mail-history-projection.test.js", "tests/managed-sidecar/managed-sidecar-session-mail.test.js"]},
+    {"target_prefixes": ["services/chat-messaging-contract.js", "services/chat-messaging-delivery.js", "services/chat-messaging-projection.js", "services/chat-messaging-recipients.js", "services/chat-messaging-service.js", "services/chat-messaging-wiring.js"], "required_tests": ["tests/chat-messaging-service.test.js", "tests/chat-messaging-delivery.test.js", "tests/chat-messaging-recipients.test.js"]},
+    {"target_prefixes": ["services/chat-messaging-agent.js", "services/chat-messaging-grants.js"], "required_tests": ["tests/chat-messaging-agent.test.js", "tests/chat-messaging-grants.test.js", "tests/chat-messaging-service.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-approval-block.js", "renderer/chat/renderer-turn-row-tool-render-utils.js", "renderer/chat/renderer-turn-reducer-approval-gap.js", "renderer/chat/renderer-turn-reducer-stream-event-utils.js", "renderer/chat/renderer-turn-row-projector-tools.js"], "required_tests": ["tests/renderer-session-message-approval.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-chat-messages-copy.js"], "required_tests": ["tests/renderer-chat-messages-copy.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-chat-messages-review.js", "renderer/chat/renderer-chat-messages-copy.js", "renderer/chat/renderer-chat-messages-store.js", "renderer/chat/renderer-composer-message-strip.js"], "required_tests": ["tests/renderer-chat-messages-restore.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-proposal-cards.js", "renderer/chat/renderer-proposal-session-cards.js", "renderer/chat/renderer-proposal-card-actions.js"], "required_tests": ["tests/renderer-proposal-card-restore.test.js"]},
+    {"target_prefixes": ["services/data-lifecycle/session-coordination-archive.js", "services/data-lifecycle/coordination-restore-transform.js"], "required_tests": ["tests/session-coordination-archive.test.js", "tests/coordination-restore-transform.test.js"]},
+    {"target_prefixes": ["services/data-lifecycle/restore-service.js", "services/data-lifecycle/data-inventory.js", "services/backend/session-export-import.js", "services/backend/electron-session-store.js"], "required_tests": ["tests/session-coordination-archive.test.js"]},
+    {"target_prefixes": ["services/backend/chat-proposal-records.js"], "required_tests": ["tests/coordination-restore-transform.test.js"]},
+    {"target_prefixes": ["services/chat-messaging-restore.js", "services/chat-messaging-contract.js", "services/chat-messaging-projection.js", "services/chat-messaging-service.js"], "required_tests": ["tests/chat-messaging-restore.test.js", "tests/chat-messaging-service.test.js"]},
+    {"target_prefixes": ["services/chat-proposal-restore.js", "services/chat-proposal-contract.js", "services/backend/chat-proposal-projection.js", "services/chat-proposal-service.js"], "required_tests": ["tests/chat-proposal-restore.test.js", "tests/chat-proposal-service.test.js"]},
+    {"target_prefixes": ["services/backend/session-report-admission.js"], "required_tests": ["tests/session-report-admission.test.js", "tests/linked-child-reporting-integration.test.js"]},
+    {"target_prefixes": ["services/chat-messaging-reports.js"], "required_tests": ["tests/chat-messaging-reports.test.js", "tests/linked-child-reporting-integration.test.js"]},
+    {"target_prefixes": ["services/main/chat-messaging-ipc-registration.js"], "required_tests": ["tests/chat-messaging-ipc-registration.test.js"]},
+    {"target_prefixes": ["services/backend/chat-workspace-capabilities.js"], "required_tests": ["tests/chat-workspace-capabilities.test.js", "tests/session-runtime/inference-protocol.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-session-message-rows.js", "styles/chat-session-messages.css"], "required_tests": ["tests/renderer-session-message-rows.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-chat-messages-store.js", "renderer/chat/renderer-chat-messages-copy.js", "renderer/chat/renderer-chat-messages-dialog.js"], "required_tests": ["tests/renderer-chat-messages-store.test.js", "tests/renderer-chat-send-modal.test.js", "tests/renderer-chat-messages-review.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-chat-send-modal.js"], "required_tests": ["tests/renderer-chat-send-modal.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-chat-messages-review.js"], "required_tests": ["tests/renderer-chat-messages-review.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-composer-message-strip.js", "styles/chat-messages.css"], "required_tests": ["tests/renderer-composer-message-strip.test.js"]},
+    {"target_prefixes": ["renderer/shell/renderer-session-unread.js"], "required_tests": ["tests/renderer-session-unread.test.js"]},
+    {"target_prefixes": ["services/backend/chat-proposal-session-records.js", "services/backend/chat-proposal-projection.js"], "required_tests": ["tests/chat-proposal-session-records.test.js", "tests/chat-proposal-records.test.js", "tests/chat-proposal-store.test.js"]},
+    {"target_prefixes": ["services/backend/session-handoff-context.js"], "required_tests": ["tests/session-handoff-context.test.js", "tests/session-handoff-turn.test.js", "tests/session-handoff-execution-binding.test.js"]},
+    {"target_prefixes": ["services/chat-proposal-session.js", "services/chat-proposal-session-flow.js", "services/chat-proposal-session-contract.js", "services/chat-proposal-launch-grants.js", "services/chat-proposal-support.js"], "required_tests": ["tests/chat-proposal-session-service.test.js", "tests/chat-proposal-launch-grants.test.js", "tests/chat-proposal-session-options.test.js", "tests/chat-proposal-session-reconcile.test.js", "tests/chat-proposal-session-ports.test.js", "tests/chat-proposal-new-session-e2e.test.js"]},
+    {"target_prefixes": ["services/session-handoff-preparation.js", "services/backend/session-store-create-record.js"], "required_tests": ["tests/session-handoff-preparation.test.js", "tests/chat-workspace-handoff-integration.test.js", "tests/backend-sessions-linked-child.test.js", "tests/chat-proposal-new-session-e2e.test.js"]},
+    {"target_prefixes": ["services/tools/builtin/propose-session-tool.js", "services/tools/builtin/complete-session-handoff-tool.js", "services/chat-proposal-session-binding.js"], "required_tests": ["tests/propose-session-tool.test.js"]},
+    {"target_prefixes": ["sidecar/ai/routing/turn_boundary.py"], "required_tests": ["tests/sidecar/ai/routing/test_turn_boundary.py", "tests/sidecar/runtime/test_chat_continuation_resume_boundary.py"]},
+    {"target_prefixes": ["sidecar/ai/tools/handoff_preparation.py"], "required_tests": ["tests/sidecar/ai/tools/test_handoff_preparation.py"]},
+    {"target_prefixes": ["services/tools/builtin/session-message-tool.js", "services/backend/chat-stream-tool-approval.js", "services/backend/chat-stream-tool-payload-utils.js", "services/backend/electron-tool-bridge.js", "services/tools/tool-executor.js", "services/backend/tool-result-diff-metadata.js"], "required_tests": ["tests/session-message-tool.test.js"]},
+    {"target_prefixes": ["sidecar/ai/tools/policy.py", "sidecar/ai/tools/tool_families.py", "sidecar/ai/routing/tool_dispatch.py"], "required_tests": ["tests/sidecar/ai/tools/test_policy.py", "tests/sidecar/ai/tools/test_tool_families.py", "tests/sidecar/ai/routing/test_electron_manifest_bridge_parity.py"]},
+    {"target_prefixes": ["sidecar/ai/context/session_handoff.py", "sidecar/ai/context/context_rows.py"], "required_tests": ["tests/sidecar/ai/context/test_session_handoff.py"]},
+    {"target_prefixes": ["renderer/chat/renderer-proposal-session-cards.js", "renderer/chat/renderer-proposal-suggestion-group.js"], "required_tests": ["tests/renderer-proposal-session-cards.test.js", "tests/renderer-proposal-suggestion-group.test.js", "tests/renderer-proposal-card-session-actions.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-slash-linked-command.js"], "required_tests": ["tests/renderer-slash-linked-command.test.js"]},
+    {"target_prefixes": ["renderer/shell/renderer-chats-panel-tree.js", "styles/chats-panel-tree.css"], "required_tests": ["tests/renderer-chats-panel-tree.test.js"]}
   ]
 }

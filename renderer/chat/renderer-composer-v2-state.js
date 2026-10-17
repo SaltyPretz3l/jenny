@@ -189,6 +189,36 @@
     return true;
   }
 
+  function getPendingPromptBlock(state, sessionContext) {
+    const composer = ensureComposerV2State(state);
+    const pending = composer?.pendingPromptBlock || null;
+    if (!pending) return null;
+    if (composer.pendingPromptBlockSessionId !== boundSessionId(state, sessionContext)) {
+      if (globalThis.rendererPaneVisibilityUtils?.isSessionVisibleInAnyPane?.(state, composer.pendingPromptBlockSessionId) !== true) {
+        clearPendingPromptBlock(state);
+      }
+      return null;
+    }
+    return pending;
+  }
+
+  function setPendingPromptBlock(state, block, sessionContext) {
+    const composer = ensureComposerV2State(state);
+    if (!composer || !block || ['server', 'prompt', 'text'].some(key => typeof block[key] !== 'string')) return null;
+    composer.pendingPromptBlock = Object.freeze({ server: block.server, prompt: block.prompt,
+      text: block.text, chars: Number(block.chars) || block.text.length });
+    composer.pendingPromptBlockSessionId = boundSessionId(state, sessionContext);
+    return composer.pendingPromptBlock;
+  }
+
+  function clearPendingPromptBlock(state) {
+    const composer = ensureComposerV2State(state);
+    if (!composer?.pendingPromptBlock) return false;
+    composer.pendingPromptBlock = null;
+    composer.pendingPromptBlockSessionId = '';
+    return true;
+  }
+
   function getLifecycleForSession(state, sessionId) {
     const normalizedSessionId = normalizeSessionId(sessionId);
     if (!normalizedSessionId) return COMPOSER_LIFECYCLE.IDLE;
@@ -296,11 +326,13 @@
     RUN_MODE_ORDER,
     clearDraftForSession,
     clearPendingSkillInvocation,
+    clearPendingPromptBlock,
     cloneJsonLike,
     ensureComposerV2State,
     getDraftForSession,
     getLifecycleForSession,
     getPendingSkillInvocation,
+    getPendingPromptBlock,
     peekPendingSkillInvocation,
     nextRunMode,
     normalizeDraftEntry,
@@ -310,5 +342,6 @@
     setDraftForSession,
     setLifecycleForSession,
     setPendingSkillInvocation,
+    setPendingPromptBlock,
   };
 });

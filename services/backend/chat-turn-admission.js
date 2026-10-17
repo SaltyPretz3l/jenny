@@ -99,6 +99,16 @@ function assertChatTurnAdmissible(service, sessionId, route = null) {
   if (route) assertCodexCliCredentialAdmissible(service, route);
 }
 
+// Row 59 linked chats: a child created but not yet admitted starts no other turn until its handoff
+// first turn is admitted or the proposal is cancelled. The first turn passes with its own runtime key.
+function assertLinkedFirstTurnAdmissible(service, sessionId, idempotencyKey = null) {
+  const reason = service.chatProposals?.linkedFirstTurnBlock?.(String(sessionId || '').trim(), idempotencyKey);
+  if (!reason) return;
+  throw Object.assign(new Error('This chat is waiting for its first turn to start.'), {
+    code: reason, retryable: false, submissionOutcome: 'rejected',
+  });
+}
+
 function assertRuntimeTranscriptAdmission(service) {
   const inspect = service.sessionStore?.getTranscriptCachePressure;
   if (typeof inspect !== 'function') return;
@@ -114,5 +124,6 @@ function assertRuntimeTranscriptAdmission(service) {
 module.exports = {
   assertRuntimeTranscriptAdmission,
   assertChatTurnAdmissible,
+  assertLinkedFirstTurnAdmissible,
   assertChatgptCredentialAdmissible,
 };

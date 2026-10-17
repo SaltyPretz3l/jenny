@@ -390,3 +390,65 @@ test('the terminal-settle wrappers hand onTerminal the pre-finalize message id, 
   ]);
   assert.deepEqual(logs.filter(([, event]) => event === 'stream.terminal_notify_failed').length, 2);
 });
+
+test('terminal completion dismisses the session stream toast only after the raw handler resolves', async () => {
+  const { createTerminalSettleHandlers } = require('../renderer/chat/renderer-stream-handler-terminal-settle');
+  const dismissed = [];
+  let resolveComplete;
+  let rawRanAt = 0;
+  const rawResult = { terminal: true };
+  const payload = { sessionId: 's1', streamId: 'st1' };
+  const handlers = createTerminalSettleHandlers({
+    dismissToast: (ref, options) => dismissed.push([ref, options.shownBefore]),
+    chatStreamToastSource: 'chat-stream',
+    rawHandleComplete: (value) => {
+      assert.equal(value, payload);
+      rawRanAt = Date.now();
+      return new Promise((resolve) => { resolveComplete = resolve; });
+    },
+  });
+  const completion = handlers.handleComplete(payload);
+  assert.deepEqual(dismissed, []);
+  resolveComplete(rawResult);
+  assert.equal(await completion, rawResult);
+  assert.equal(dismissed.length, 1);
+  assert.equal(dismissed[0][0], 'chat-stream:s1');
+  // The cut-off is taken before the raw handler runs, so a failure it raises
+  // (a queued send that fails) is newer than the cut-off and stays.
+  assert.ok(Number.isFinite(dismissed[0][1]) && dismissed[0][1] <= rawRanAt);
+});
+
+test('terminal errors, rejected and stale raw completions preserve the stream error toast', async () => {
+  const { createTerminalSettleHandlers } = require('../renderer/chat/renderer-stream-handler-terminal-settle');
+  const dismissed = [];
+  const deps = { dismissToast: (ref) => dismissed.push(ref), chatStreamToastSource: 'chat-stream' };
+  const handlers = createTerminalSettleHandlers({
+    ...deps,
+    rawHandleError: async () => ({ terminal: true }),
+    rawHandleComplete: async () => { throw new Error('complete failed'); },
+  });
+  const payload = { sessionId: 's1', streamId: 'st1' };
+  await handlers.handleError(payload);
+  await assert.rejects(handlers.handleComplete(payload), /complete failed/);
+  // An unknown or stale stream's complete is not a recovery of this session.
+  const stale = createTerminalSettleHandlers({ ...deps, rawHandleComplete: async () => ({ buffered: false, terminal: false }) });
+  await stale.handleComplete(payload);
+  assert.deepEqual(dismissed, []);
+});
+
+test('terminal completion uses stream and active fallback keys and tolerates missing toast deps', async () => {
+  const { createTerminalSettleHandlers } = require('../renderer/chat/renderer-stream-handler-terminal-settle');
+  const dismissed = [];
+  const settled = async () => ({ buffered: false, terminal: true });
+  const handlers = createTerminalSettleHandlers({
+    dismissToast: (ref) => dismissed.push(ref),
+    chatStreamToastSource: 'chat-stream',
+    rawHandleComplete: settled,
+  });
+  await handlers.handleComplete({ streamId: 'st1' });
+  await handlers.handleComplete({});
+  assert.deepEqual(dismissed, ['chat-stream:st1', 'chat-stream:active']);
+  await assert.doesNotReject(createTerminalSettleHandlers({ chatStreamToastSource: 'chat-stream', rawHandleComplete: settled }).handleComplete({}));
+  await assert.doesNotReject(createTerminalSettleHandlers({ dismissToast: (ref) => dismissed.push(ref), rawHandleComplete: settled }).handleComplete({}));
+  assert.deepEqual(dismissed, ['chat-stream:st1', 'chat-stream:active']);
+});

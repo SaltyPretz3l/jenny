@@ -126,6 +126,57 @@ test('desktop shortcut reports a bounded failure when read-back verification mis
   assert.equal(events.includes('shortcut.desktop_verify_failed'), true);
 });
 
+test('linked worktrees leave the shared development desktop shortcut untouched', () => {
+  const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shortcut-worktree-'));
+  try {
+    fs.writeFileSync(path.join(appRoot, '.git'), 'gitdir: C:/main/.git/worktrees/example\n');
+    const result = ensureDesktopShortcut({
+      app: {
+        isPackaged: false,
+        getPath() { throw new Error('must not access the desktop'); },
+      },
+      shell: {
+        readShortcutLink() { throw new Error('must not read the shared shortcut'); },
+        writeShortcutLink() { throw new Error('must not overwrite the shared shortcut'); },
+      },
+      appRoot,
+      platform: 'win32',
+    });
+    assert.deepEqual(result, { skipped: true, reason: 'linked-worktree' });
+  } finally {
+    fs.rmSync(appRoot, { recursive: true, force: true });
+  }
+});
+
+test('linked worktrees leave the shared development Start Menu shortcut untouched', () => {
+  const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-startmenu-worktree-'));
+  try {
+    fs.writeFileSync(path.join(appRoot, '.git'), 'gitdir: C:\\main\\.git\\worktrees\\example\n');
+    let clsid = '';
+    const result = ensureDevStartMenuShortcut({
+      app: {
+        isPackaged: false,
+        setToastActivatorCLSID(value) { clsid = value; },
+        getPath() { throw new Error('must not resolve the Start Menu'); },
+      },
+      shell: { writeShortcutLink() { throw new Error('must not overwrite the shared shortcut'); } },
+      appRoot,
+      platform: 'win32',
+    });
+    assert.deepEqual(result, { skipped: true, reason: 'linked-worktree' });
+    assert.ok(clsid, 'toasts in the worktree run keep the activator');
+    fs.writeFileSync(path.join(appRoot, '.git'), 'gitdir: C:/separate/git-dir\n');
+    let reached = false;
+    ensureDevStartMenuShortcut({
+      app: { isPackaged: false, getPath() { reached = true; throw new Error('stop here'); } },
+      shell: {}, appRoot, platform: 'win32',
+    });
+    assert.equal(reached, true, 'a separate git dir is not a linked worktree');
+  } finally {
+    fs.rmSync(appRoot, { recursive: true, force: true });
+  }
+});
+
 test('development shortcut maintenance never reads or overwrites the public shortcut', () => {
   const desktop = path.join(os.tmpdir(), 'jenny-desktop-isolation');
   const touched = [];

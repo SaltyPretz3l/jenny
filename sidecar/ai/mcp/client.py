@@ -14,6 +14,8 @@ from sidecar.ai.error_codes import (
     CMP_MCP_TOOL_SURFACE_CHANGED,
 )
 from sidecar.ai.mcp import (
+    client_prompts,
+    client_reuse,
     client_support,
     retry_policy,
     transport_base,
@@ -26,7 +28,6 @@ from sidecar.ai.mcp.exceptions import (
     CMP_MCP_SSE_DISABLED,
     CMP_MCP_TOOL_NOT_FOUND,
     MCPError,
-    as_setup_error,
 )
 from sidecar.ai.mcp.models import (
     MCPResourceDescriptor,
@@ -56,7 +57,7 @@ from sidecar.ai.mcp.tool_namespace import (
     namespace_mcp_resource_id,
     namespace_mcp_tool_name,
 )
-from sidecar.ai.mcp.tool_surface import summarize_tools, tools_digest
+from sidecar.ai.mcp.tool_surface import as_log_data, summarize_tools, tools_digest
 from sidecar.ai.tools.catalog import reserved_tool_names
 from sidecar.ai.tools.sanitization import sanitize_tool_output
 from sidecar.ai.tools.tool_actions import effective_side_effecting
@@ -80,7 +81,7 @@ def _raise_if_replay_unsafe(error: MCPError | None, descriptor: Any, args: dict[
         raise error
 
 
-class MCPClient:
+class MCPClient(client_prompts.ClientPromptsMixin):
     def __init__(
         self,
         *,
@@ -104,11 +105,16 @@ class MCPClient:
         self._request_timeout_seconds = request_timeout_seconds
         self._cooldowns = cooldown_registry or CooldownRegistry()
         self._mcp_reconnect_cooldown_seconds = max(float(mcp_reconnect_cooldown_seconds), 0.0)
+        self._reuse = client_reuse.ReuseState()
 
     def close(self) -> None:
         with self._transport_registry_lock:
+            # An adopted transport goes back to a source that still lists it (its
+            # leased turns may be in flight); otherwise it is closed below.
+            client_reuse.return_adopted(self)
             for transport in self._transports.values():
-                transport.close()
+                if self._reuse.owns(transport):  # never one handed to a later generation
+                    transport.close()
             self._transports.clear()
             self._tools_by_name.clear()
             self._compat_tools_by_name.clear()
@@ -120,6 +126,7 @@ class MCPClient:
             self._connected = []
             self._failures = []
             self._cooldowns.clear_namespace(MCP_COOLDOWN_NAMESPACE)
+            self._reuse = client_reuse.ReuseState()
 
     def configure(
         self,
@@ -128,31 +135,17 @@ class MCPClient:
         sse_enabled: bool,
         resources_enabled: bool = False,
         allow_private_addresses: bool = False,
+        reuse_from: MCPClient | None = None,
     ) -> None:
+        """Connect ``servers``; adopt ``reuse_from``'s live transports whose reuse
+        key is unchanged (``client_reuse``)."""
         with self._transport_registry_lock:
             self.close()
             self._server_configs = {server.name: server for server in servers}
             self._sse_enabled = sse_enabled
             self._resources_enabled = resources_enabled
             self._allow_private_addresses = bool(allow_private_addresses)
-            for server in servers:
-                try:
-                    transport = self._build_transport(server, sse_enabled=sse_enabled)
-                    self._register_transport(transport)
-                except Exception as caught:  # noqa: BLE001 -- isolate each server's setup
-                    error = as_setup_error(caught)
-                    self._record_failure(
-                        MCPServerFailure(name=server.name, code=error.code, message=error.message)
-                    )
-                    log_event(
-                        logger,
-                        logging.WARNING,
-                        component="ai.mcp.client",
-                        event="ai.mcp.server_setup_failed",
-                        message=f"MCP server setup failed: {server.name}",
-                        status="failure",
-                        data={"server": server.name, "code": error.code},
-                    )
+            client_reuse.connect_servers(self, servers, reuse_from=reuse_from)
 
     @property
     def available_tools(self) -> list[MCPToolDescriptor]:
@@ -312,7 +305,11 @@ class MCPClient:
             # review caps by design.
             if expected_digest:
                 tools_payload, _ = summarize_tools(raw_tools)
-                if tools_digest(tools_payload) != expected_digest:
+                live_digest = tools_digest(
+                    tools_payload,
+                    read_only_claims=getattr(config, "read_only_auto_allow", False) is True,
+                )
+                if live_digest != expected_digest:
                     raise ValueError("tool_surface_changed")
             else:
                 tools_payload = raw_tools if isinstance(raw_tools, list) else []
@@ -326,7 +323,7 @@ class MCPClient:
                 status="failure",
                 data={
                     "server": transport.server_name,
-                    "error_type": type(error).__name__,
+                    **as_log_data(error),
                 },
             )
             transport.close()
@@ -344,6 +341,9 @@ class MCPClient:
             descriptor = client_support.descriptor_from_payload(
                 transport.server_name,
                 tool_payload,
+                # Claims count only on a reviewed surface whose digest bound them.
+                read_only_auto_allow=bool(expected_digest)
+                and getattr(config, "read_only_auto_allow", False) is True,
             )
             if descriptor is None:
                 continue
@@ -756,7 +756,7 @@ class MCPClient:
 
     def _remove_server_registration(self, server_name: str) -> dict[str, MCPToolDescriptor]:
         transport = self._transports.pop(server_name, None)
-        if transport is not None:
+        if transport is not None and self._reuse.owns(transport):
             transport.close()
         removed_descriptors = {
             name: descriptor

@@ -443,3 +443,18 @@ def test_create_engine_retired_plugin_host_type_falls_back_to_mock() -> None:
     assert selection.engine_type == "mock"
     assert selection.fallback_from == "plugin_host"
     assert "Unknown engine type" in selection.fallback_reason
+
+
+def test_managed_prefill_capability_is_adopted_before_model_load(monkeypatch):
+    from sidecar.ai.engines.openai_compatible import OpenAICompatibleEngine
+
+    observed = []
+    def load(engine, _model):
+        observed.append(engine._prefill_progress_enabled)
+    monkeypatch.setattr(OpenAICompatibleEngine, "load_model", load)
+    for enabled in (False, True):
+        selection = create_engine(RuntimeConfig(engine_type="openai-compatible", model="probe",
+            api_url="http://127.0.0.1:8048/v1", managed_prefill_progress=enabled))
+        assert selection.engine_type == "openai-compatible"
+        selection.engine.close()
+    assert observed == [False, True]

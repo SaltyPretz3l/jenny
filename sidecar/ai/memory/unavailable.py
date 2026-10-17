@@ -42,12 +42,6 @@ class UnavailableMemoryStore:
     def close(self) -> None:
         return None
 
-    def recall_memories_for_prompt(self, _query: str, *, limit: int) -> list[Any]:
-        # Prompt recall is ancillary to ordinary chat. A disabled store behaves
-        # as an empty overlay here while explicit memory RPCs remain coded errors.
-        _ = limit
-        return []
-
     def status_payload(self) -> dict[str, Any]:
         return {
             "available": False,

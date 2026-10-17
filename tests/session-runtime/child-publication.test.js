@@ -14,7 +14,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 
 function admit(entry, operationId) {
   const inference = entry.request.runtimeOperationGateway.inference;
-  const base = { schema_version: 1, api_version: '2026-08-17', kind: 'inference', operation_id: operationId,
+  const base = { schema_version: 1, api_version: '2026-10-15', kind: 'inference', operation_id: operationId,
     request_id: inference.requestId, session_id: entry.request.sessionId, authority_revision: inference.authorityRevision };
   const result = inference.handle({ ...base, phase: 'admit', engine_type: 'mock',
     maxima: { inference_requests: 1, input_tokens: 32, output_tokens: 32 } });

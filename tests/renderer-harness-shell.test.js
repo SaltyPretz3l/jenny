@@ -61,20 +61,26 @@ test('top-level Diagnostics renders phase percentiles and resets samples', async
   );
 
   assert.equal(window.document.getElementById('logsView').getAttribute('aria-hidden'), 'false');
-  assert.match(window.document.getElementById('diagnosticsBadge').textContent, /Healthy/i);
+  assert.match(window.document.querySelector('#diagnosticsOverall h3').textContent, /Jenny is working/);
   assert.match(window.document.getElementById('phasePercentilesTable').textContent, /Provider start to first chunk/i);
-  assert.match(window.document.getElementById('phasePercentilesTable').textContent, /120ms/i);
-  assert.match(window.document.getElementById('phasePercentilesTable').textContent, /pass/i);
+  assert.match(window.document.getElementById('phasePercentilesTable').textContent, /120 ms/);
+  assert.match(window.document.getElementById('phasePercentilesTable').textContent, /On target/);
 
-  window.document.getElementById('phasePercentilesResetButton').click();
+  const resetButton = window.document.getElementById('phasePercentilesResetButton');
+  resetButton.focus();
+  resetButton.click();
+  // A reset clears every step, so the timing table empties and the section says nothing is measured yet.
   await waitForUiState(
     window,
     () => app.shell.__state.phasePercentilesResetCalls === 1
-      && /0/i.test(window.document.getElementById('phasePercentilesTable').textContent),
+      && window.document.getElementById('phasePercentilesTable').textContent.trim() === '',
     { message: 'Diagnostics did not render the reset phase percentile snapshot.' }
   );
 
   assert.equal(app.shell.__state.phasePercentilesResetCalls, 1);
-  assert.match(window.document.getElementById('diagnosticsBadge').textContent, /Healthy/i);
-  assert.match(window.document.getElementById('phasePercentilesTable').textContent, /0/i);
+  assert.match(window.document.querySelector('#diagnosticsOverall h3').textContent, /Jenny is working/);
+  assert.equal(window.document.getElementById('diagnosticsPerformanceGroups').hidden, true);
+  assert.match(window.document.getElementById('diagnosticsPerformanceEmpty').textContent, /No chats measured/);
+  // Reset hides itself once nothing is left to reset; focus moves to the section heading, not the page body.
+  assert.equal(window.document.activeElement?.id, 'diagnosticsPerformanceHeading');
 });

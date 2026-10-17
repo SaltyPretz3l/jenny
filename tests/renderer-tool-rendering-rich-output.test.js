@@ -527,10 +527,10 @@ test('renderer only renders allowlisted python image sources and blocks remote/U
   const details = await expandToolDetails(window, 'call-python-images', (_block, candidateDetails) => {
     return Boolean(
       candidateDetails
-      && candidateDetails.querySelectorAll('.python-output-image').length === 2
+      && candidateDetails.querySelectorAll('.inv-artifact-figure--tool img').length === 2
     );
   });
-  const images = Array.from(details.querySelectorAll('.python-output-image'));
+  const images = Array.from(details.querySelectorAll('.inv-artifact-figure--tool img'));
   assert.equal(images.length, 2);
   assert.ok(images.every((img) => !img.getAttribute('src').startsWith('https://')));
   assert.ok(details.textContent.includes('2 image output(s) are unavailable.'));

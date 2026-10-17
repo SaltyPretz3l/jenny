@@ -24,25 +24,35 @@ from sidecar.ai.context.compaction_breaker import CompactionCircuitBreaker
 from sidecar.ai.context.compaction_breaker import (
     CompactionCircuitBreakerRegistry as CompactionCircuitBreakerRegistry,
 )
+from sidecar.ai.context.compaction_micro import _MICRO_PRESERVE_TAIL as _MICRO_PRESERVE_TAIL
+from sidecar.ai.context.compaction_micro import MICRO_FIRST_CODE as MICRO_FIRST_CODE
+from sidecar.ai.context.compaction_micro import MICRO_TARGET as _MICRO_TARGET
+from sidecar.ai.context.compaction_micro import CompactionPolicy as CompactionPolicy
+from sidecar.ai.context.compaction_micro import MicrocompactionResult as MicrocompactionResult
+from sidecar.ai.context.compaction_micro import (
+    collect_touched_files,
+    micro_first_accepts,
+    microcompact,
+    touched_files_block,
+)
+from sidecar.ai.context.compaction_micro import compaction_policy as compaction_policy
 from sidecar.ai.context.compaction_passes import summarize_source_in_passes
 from sidecar.ai.context.compaction_prompts import (
     COMPACTION_SUMMARY_RETRY_REMINDER,
+    TRUNCATED_SUMMARY_ERRORS,
     build_full_compaction_messages,
     count_summary_sections,
     recover_untagged_summary,
     strip_analysis_blocks,
     strip_instruction_echo,
     summary_response_shape,
+    summary_retry_details,
+    validate_compaction_reply,
 )
+from sidecar.ai.context.compaction_window import _TOOL_PLACEHOLDER as _TOOL_PLACEHOLDER
 from sidecar.ai.context.compaction_window import (
-    _TOOL_PLACEHOLDER,
     MID_TURN_TASK_PIN_MAX_TOKENS,
     MID_TURN_TASK_STUB,
-    _copy_message_for_compaction,
-    _estimate_message_tokens,
-    _index_tool_calls,
-    _strip_matching_tool_call_arguments,
-    _tool_call_name,
     mid_turn_nudge_row,
     mid_turn_task_pin,
     split_mid_turn_window,
@@ -63,7 +73,6 @@ MAX_COMPACTION_RESPONSE_BYTES = 256 * 1024
 MAX_COMPACTION_SUMMARY_BYTES = 64 * 1024
 _SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.DOTALL)
 _RETRY_REMINDER_MESSAGE = {"role": "system", "content": COMPACTION_SUMMARY_RETRY_REMINDER}
-_MICRO_TARGET = 2 / 3  # fallback lands under the tool-loop trigger, not at it (HB-028)
 
 
 def is_compaction_summary_content(content: Any) -> bool:
@@ -90,13 +99,6 @@ def is_compaction_summary_content(content: Any) -> bool:
 
 
 @dataclass(frozen=True)
-class MicrocompactionResult:
-    messages: list[dict[str, Any]]
-    messages_stripped: int
-    tokens_freed: int
-
-
-@dataclass(frozen=True)
 class CompactionResult:
     """Outcome of a compaction attempt."""
 
@@ -117,106 +119,10 @@ class CompactionResult:
     def compacted(self) -> bool:
         return self.strategy != "none"
 
-
-# ---------------------------------------------------------------------------
-# Microcompaction
-# ---------------------------------------------------------------------------
-
-# Preserve the most recent N messages from stripping so the model has
-# immediate context to work with.
-_MICRO_PRESERVE_TAIL = 6
-
-
-def microcompact(
-    messages: list[dict[str, Any]],
-    budget: TokenBudget,
-    backend: TokenizerBackend | None = None,
-    *,
-    num_tools: int = 0,
-    target_fraction: float = 1.0,
-) -> MicrocompactionResult:
-    """Strip old tool-result content without an LLM call.
-
-    Walks messages oldest-first, replacing tool-result content with a
-    placeholder until the estimated token count drops below
-    ``target_fraction`` of the auto-compact threshold.  The most recent
-    ``_MICRO_PRESERVE_TAIL`` messages are never touched.
-    """
-    if backend is None:
-        backend = CharEstimationBackend()
-
-    threshold = int(budget.auto_compact_threshold(num_tools) * target_fraction)
-    message_token_counts = [
-        _estimate_message_tokens(message, backend) for message in messages
-    ]
-    tokens_before = sum(message_token_counts)
-    tokens_remaining = tokens_before
-    if tokens_before <= threshold:
-        return MicrocompactionResult(
-            messages=list(messages),
-            messages_stripped=0,
-            tokens_freed=0,
-        )
-
-    result: list[dict[str, Any]] = [_copy_message_for_compaction(m) for m in messages]
-    stripped = 0
-    safe_end = max(0, len(result) - _MICRO_PRESERVE_TAIL)
-    call_index = _index_tool_calls(result, stop_index=safe_end)
-
-    for i in range(safe_end):
-        msg = result[i]
-        role = str(msg.get("role", "")).lower()
-        changed_indices: set[int] = set()
-
-        if role == "tool":
-            old_content = str(msg.get("content", ""))
-            if old_content and old_content != _TOOL_PLACEHOLDER:
-                msg["content"] = _TOOL_PLACEHOLDER
-                changed_indices.add(i)
-                changed_indices.update(
-                    _strip_matching_tool_call_arguments(
-                        result,
-                        str(msg.get("tool_call_id") or ""),
-                        call_index=call_index,
-                        stop_index=safe_end,
-                    )
-                )
-                stripped += 1
-        elif role == "assistant" and isinstance(msg.get("tool_calls"), list):
-            old_content = str(msg.get("content", ""))
-            if old_content and len(old_content) > 100:
-                call_names = [
-                    _tool_call_name(c)
-                    for c in msg.get("tool_calls", [])
-                    if isinstance(c, dict)
-                ]
-                # Bracketed metadata, not first-person prose: a plain
-                # "Calling tool(s): ..." sentence here reads as
-                # assistant-authored narration and local models learn to
-                # imitate it verbatim in real replies.
-                msg["content"] = (
-                    f"[compacted: invoked tools {', '.join(call_names) or 'tool'}]"
-                )
-                changed_indices.add(i)
-                stripped += 1
-
-        for changed_index in sorted(changed_indices):
-            previous_count = message_token_counts[changed_index]
-            updated_count = _estimate_message_tokens(
-                result[changed_index],
-                backend,
-            )
-            message_token_counts[changed_index] = updated_count
-            tokens_remaining += updated_count - previous_count
-        if tokens_remaining <= threshold:
-            break
-
-    tokens_after = tokens_remaining
-    return MicrocompactionResult(
-        messages=result,
-        messages_stripped=stripped,
-        tokens_freed=max(0, tokens_before - tokens_after),
-    )
+    @property
+    def micro_fallback(self) -> bool:
+        """Micro because the summary was unavailable or failed, not by micro-first choice."""
+        return self.strategy == "micro" and self.summary_failure_code != MICRO_FIRST_CODE
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +136,8 @@ def parse_compaction_response(response_text: str) -> str:
     Returns tagged summary text or sufficiently structured untagged text.
     Raises ``ValueError`` on malformed output.
     """
+    reply = response_text
+    validate_compaction_reply(reply)
     if not response_text or not response_text.strip():
         raise ValueError("Empty compaction response")
 
@@ -241,12 +149,13 @@ def parse_compaction_response(response_text: str) -> str:
         recovered = strip_instruction_echo(recovered).strip() if recovered is not None else None
         if not recovered:
             raise ValueError("Missing <summary> block in compaction response")
+        validate_compaction_reply(reply, recovered)
         return recovered
 
     summary_text = strip_instruction_echo(summary_match.group(1)).strip()
     if not summary_text:
         raise ValueError("Empty <summary> block in compaction response")
-
+    validate_compaction_reply(reply, summary_text)  # a closed tag can still end early
     return summary_text
 
 
@@ -302,7 +211,7 @@ _LOGGABLE_SUMMARY_ERRORS = frozenset(
         "Compaction response exceeded size limit",
         "Compaction summary exceeded size limit",
     }
-)
+) | TRUNCATED_SUMMARY_ERRORS
 
 
 def _summary_failure_code(error: Exception) -> str:
@@ -323,7 +232,7 @@ _RETRYABLE_SUMMARY_ERRORS = frozenset(
         "Missing <summary> block in compaction response",
         "Empty <summary> block in compaction response",
     }
-)
+) | TRUNCATED_SUMMARY_ERRORS
 
 
 @dataclass
@@ -342,24 +251,25 @@ class _SummaryAttempt:
         return parse_compaction_response(raw_response)
 
     def summarize(self, generate_fn: Callable[..., str], messages: list[Any]) -> str:
-        """Parse one reply; re-ask once, same messages plus a reminder, if sectionless."""
+        """Parse one reply; re-ask once with a reminder if incomplete."""
         self.retried = False  # per pass: failure_data describes the pass that failed
         try:
             return self.generate(generate_fn, messages)
         except ValueError as error:
             if self.raw_response is None or str(error) not in _RETRYABLE_SUMMARY_ERRORS:
                 raise
+            reminder, retry_data = summary_retry_details(str(error), self.raw_response)
             log_event(
                 logger,
                 logging.INFO,
                 component="ai.context.compaction",
                 event="ai.context.compaction_summary_retry",
-                message="Compaction reply carried no summary sections; asking once more.",
+                message="Compaction reply was incomplete; asking once more.",
                 status="retry",
-                data=summary_response_shape(str(self.raw_response)),
+                data=retry_data,
             )
         self.retried = True
-        return self.generate(generate_fn, [*messages, dict(_RETRY_REMINDER_MESSAGE)])
+        return self.generate(generate_fn, [*messages, reminder])
 
     def failure_data(self) -> dict[str, Any]:
         if self.raw_response is None:
@@ -394,13 +304,19 @@ def compact_context(  # noqa: C901, PLR0912, PLR0915  # orchestrator
     mode: str = "turn_boundary",
     task_content: str | None = None,
     plan_approved_in_turn: bool = False,
+    policy: CompactionPolicy | None = None,
+    micro_passes_used: int = 0,
 ) -> CompactionResult:
     """Compact context using the best available strategy.
 
     1. If token usage is below the auto-compact threshold → no-op.
-    2. If circuit breaker is open or no ``generate_fn`` → microcompact.
-    3. Otherwise → full compaction via ``generate_fn``, falling back to
+    2. With ``policy.micro_first`` (row 60) and passes left → microcompact,
+       kept when it alone reaches the micro target.
+    3. If circuit breaker is open or no ``generate_fn`` → microcompact.
+    4. Otherwise → full compaction via ``generate_fn``, falling back to
        microcompact on failure.
+
+    ``policy=None`` is the summary-first ladder, byte for byte.
     """
     if backend is None:
         backend = CharEstimationBackend()
@@ -436,6 +352,24 @@ def compact_context(  # noqa: C901, PLR0912, PLR0915  # orchestrator
                 tokens_before=tokens_before,
                 tokens_after=tokens_before,
             )
+
+    micro = None
+    if policy is not None:
+        micro = microcompact(
+            messages, budget, backend, num_tools=num_tools, target_fraction=_MICRO_TARGET,
+            recall_hint=policy.recall_hint, keep_argument_keys=policy.keep_argument_keys,
+        )
+        if policy.micro_first and micro_passes_used < policy.max_micro_passes:
+            micro_tokens = estimate_messages_tokens(micro.messages, backend)
+            if micro_first_accepts(tokens_before, micro_tokens, threshold):
+                return CompactionResult(
+                    messages=micro.messages,
+                    strategy="micro",
+                    tokens_before=tokens_before,
+                    tokens_after=micro_tokens,
+                    summary_status="not_applicable",
+                    summary_failure_code=MICRO_FIRST_CODE,
+                )
 
     # -- Try full compaction first -------------------------------------------
     circuit_open = breaker.is_open()
@@ -476,6 +410,8 @@ def compact_context(  # noqa: C901, PLR0912, PLR0915  # orchestrator
                 if summary_bytes > MAX_COMPACTION_SUMMARY_BYTES:
                     raise ValueError("Compaction summary exceeded size limit")
                 system_content = _summary_row(summary_text)["content"]
+                if policy is not None and policy.touched_files:
+                    system_content += touched_files_block(collect_touched_files(messages))
                 if mid_turn_window is not None:
                     task_message = mid_turn_window.task_message
                     # An oversized task still needs a user anchor, or the next
@@ -560,9 +496,10 @@ def compact_context(  # noqa: C901, PLR0912, PLR0915  # orchestrator
             summary_failure_code = "summary_prefix_unavailable"
 
     # -- Fall back to microcompaction ----------------------------------------
-    micro = microcompact(
-        messages, budget, backend, num_tools=num_tools, target_fraction=_MICRO_TARGET
-    )
+    if micro is None:
+        micro = microcompact(
+            messages, budget, backend, num_tools=num_tools, target_fraction=_MICRO_TARGET
+        )
     tokens_after = estimate_messages_tokens(micro.messages, backend)
 
     if tokens_after > budget.error_threshold(num_tools):

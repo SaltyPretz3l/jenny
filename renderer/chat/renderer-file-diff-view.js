@@ -143,6 +143,12 @@
       + '</span>';
   }
 
+  // Opt-in short labels between the path and the counts ("new", "untracked", "binary").
+  function buildNotesMarkup(settings, escape) {
+    const notes = Array.isArray(settings.notes) ? settings.notes.map((note) => String(note || '').trim()).filter(Boolean) : [];
+    return notes.length ? `<span class="file-diff-note">${escape(notes.join(' \u00b7 '))}</span>` : '';
+  }
+
   function buildFileDiffMarkup(options) {
     const settings = options || {};
     const escape = typeof settings.escapeHtml === 'function' ? settings.escapeHtml : fallbackEscape;
@@ -150,15 +156,22 @@
     const diffId = String(settings.diffId || settings.changeId || '').trim();
     if (!path || !diffId) return '';
     const bodyId = buildBodyId(diffId);
-    const expandable = settings.truncated !== true && Array.isArray(settings.hunks) && settings.hunks.length > 0;
+    // Opt-in (the working-tree Changes page): a row whose diff loads on demand is expandable before
+    // it has hunks, and its caller may supply the expanded body (loading, binary, error text).
+    const lazy = settings.expandable === true && settings.truncated !== true;
+    const expandable = lazy || (settings.truncated !== true && Array.isArray(settings.hunks) && settings.hunks.length > 0);
     const expanded = expandable && settings.expanded === true;
     const pathParts = splitPath(path);
+    // Opt-in two-line layout: the name leads and the folder (no trailing slash) sits under it.
+    const stacked = settings.stacked === true;
+    const directory = stacked ? pathParts.directory.replace(/[\\/]+$/, '') : pathParts.directory;
     const dot = sanitizeLanguageDot(settings.languageDot);
     const headContent = (expandable ? CHEVRON_GLYPH : '')
       + `<span class="file-diff-language-dot" style="--lang-dot: ${escape(dot)}" aria-hidden="true"></span>`
       + '<span class="file-diff-path">'
-      + (pathParts.directory ? `<span class="file-diff-directory">${escape(pathParts.directory)}</span>` : '')
+      + (directory ? `<span class="file-diff-directory">${escape(directory)}</span>` : '')
       + `<span class="file-diff-basename">${escape(pathParts.basename)}</span></span>`
+      + buildNotesMarkup(settings, escape)
       + buildCountsMarkup(settings, escape);
     const actionButton = typeof settings.actionButton === 'function' ? settings.actionButton : null;
     const toggle = expandable && actionButton
@@ -169,16 +182,24 @@
         })
       : `<span class="file-diff-toggle file-diff-toggle--static">${headContent}</span>`;
     const changeId = String(settings.changeId || '').trim();
-    const open = changeId && actionButton
+    const customOpen = settings.openDataset && typeof settings.openDataset === 'object' && actionButton;
+    const openLabel = String(settings.openLabel || jt('chat.fileDiff.openInEditor', 'Open in editor'));
+    const open = customOpen
       ? actionButton({
-          plain: true, className: 'file-diff-open', ariaLabel: jt('chat.fileDiff.openInEditor', 'Open in editor'), title: jt('chat.fileDiff.openInEditor', 'Open in editor'),
-          dataset: { 'jenny-open-change-diff': '', 'change-id': changeId }, trustedHtml: EXTERNAL_LINK_GLYPH,
+          plain: true, className: 'file-diff-open', ariaLabel: openLabel, title: openLabel,
+          dataset: settings.openDataset, trustedHtml: EXTERNAL_LINK_GLYPH,
         })
-      : '';
+      : (changeId && actionButton
+        ? actionButton({
+            plain: true, className: 'file-diff-open', ariaLabel: jt('chat.fileDiff.openInEditor', 'Open in editor'), title: jt('chat.fileDiff.openInEditor', 'Open in editor'),
+            dataset: { 'jenny-open-change-diff': '', 'change-id': changeId }, trustedHtml: EXTERNAL_LINK_GLYPH,
+          })
+        : '');
+    const suppliedBody = typeof settings.bodyHtml === 'string' ? settings.bodyHtml : null;
     const body = expanded
-      ? `<div class="file-diff-body" id="${escape(bodyId)}" role="list" data-file-diff-materialized>${buildFileDiffBodyMarkup(settings)}</div>`
+      ? `<div class="file-diff-body" id="${escape(bodyId)}" role="list" data-file-diff-materialized>${suppliedBody !== null ? suppliedBody : buildFileDiffBodyMarkup(settings)}</div>`
       : (expandable ? `<div class="file-diff-body" id="${escape(bodyId)}" role="list" data-file-diff-pending="1" hidden></div>` : '');
-    return `<div class="file-diff" data-diff-id="${escape(diffId)}" data-expanded="${expanded ? 'true' : 'false'}"><div class="file-diff-head">${toggle}${open}</div>${body}</div>`;
+    return `<div class="file-diff${stacked ? ' file-diff--stacked' : ''}" data-diff-id="${escape(diffId)}" data-expanded="${expanded ? 'true' : 'false'}"><div class="file-diff-head">${toggle}${open}</div>${body}</div>`;
   }
 
   return { buildFileDiffMarkup, buildFileDiffBodyMarkup, resolveCounts };

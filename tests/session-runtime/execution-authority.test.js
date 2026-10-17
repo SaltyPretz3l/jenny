@@ -28,9 +28,23 @@ const ROOT_A = Object.freeze({
 const ROOT_B = Object.freeze({ ...ROOT_A, root_path: 'G:\\projects\\beta',
   root_id: 'root-beta', root_revision: 4, inode: '12' });
 const PLUGIN_TOOL = 'plugin:acme-labs:widgets:compute';
+const REA_TOOL = 'mcp__rea__binary_session';
+const { externalMcpExecutionDescriptor } = require('../../services/backend/execution-tool-descriptors');
+
+// The composition's resolver, with the host-side facts injected (row 53).
+function externalResolver({ toolsStatus = {}, approved = ['rea'] } = {}) {
+  return (toolName) => externalMcpExecutionDescriptor(toolName, {
+    statusEntry: toolsStatus[toolName], approvedServerNames: new Set(approved),
+  });
+}
+
+function reaStatus({ sideEffecting = true, available = true, serverName = 'rea' } = {}) {
+  return { [REA_TOOL]: { available, reason: null, display_name: REA_TOOL, source_kind: 'mcp',
+    tool_family: 'other', server_name: serverName, side_effecting: sideEffecting } };
+}
 
 function createHarness({ decision = 'auto', mode = 'assist', readOnly = false,
-  approvalMode = 'prompt' } = {}) {
+  approvalMode = 'prompt', resolveExternalToolDescriptor = null } = {}) {
   let currentAuthority = ROOT_A;
   let currentDecision = decision;
   let currentRules = [];
@@ -86,6 +100,7 @@ function createHarness({ decision = 'auto', mode = 'assist', readOnly = false,
       return { workspaceGitService: scopedGit, artifactService: scopedArtifact,
         configService: { getToolsWorkspaceRoot: () => authority.root_path } };
     },
+    resolveExternalToolDescriptor,
     randomUUID: () => '8f04ce56-3fd5-4f3f-907c-3a0a6ea83580',
   });
   const binding = authorityService.captureSession('session-alpha', {
@@ -106,7 +121,7 @@ function createHarness({ decision = 'auto', mode = 'assist', readOnly = false,
 
 function operation(overrides = {}) {
   return {
-    api_version: '2026-08-17',
+    api_version: '2026-10-15',
     schema_version: 1,
     request_id: 'request-alpha',
     session_id: 'session-alpha',
@@ -497,6 +512,21 @@ test('Plan keeps the todo list writable unless a live rule or read-only capture 
     operation({ tool_name: 'todo_write', arguments: todos })).error.reason, 'read_only');
 });
 
+test('Plan lets memory remember through but keeps update and forget read-only', () => {
+  const h = createHarness({ mode: 'plan', decision: null });
+  const check = args => h.authorityService.checkRuntimeOperation(h.binding,
+    operation({ tool_name: 'memory', arguments: args }));
+  assert.equal(check({ action: 'remember', text: 'Uses tabs' }).status, 'granted');
+  assert.equal(check({ action: 'recall', query: 'tabs' }).status, 'granted');
+  for (const args of [{ action: 'update', id: 3, text: 'Uses spaces' }, { action: 'forget', id: 3 }]) {
+    assert.equal(check(args).error.reason, 'read_only');
+  }
+  const restricted = createHarness({ mode: 'plan', readOnly: true });
+  assert.equal(restricted.authorityService.checkRuntimeOperation(restricted.binding,
+    operation({ tool_name: 'memory', arguments: { action: 'remember', text: 'x' } })).error.reason,
+  'read_only');
+});
+
 test('automatic Plan consent covers ordinary asks while live policy denies still win', () => {
   const harness = createHarness({ mode: 'plan', decision: 'ask' });
   const options = { operationId: 'plan-call', arguments: { title: 'Plan', steps: ['One'] }, decision: 'approved_auto' };
@@ -528,6 +558,53 @@ test('runtime operation refuses a tool name that is not a built-in descriptor (n
   const result = harness.authorityService.checkRuntimeOperation(harness.binding, unknown);
   assert.equal(result.status, 'rejected');
   assert.equal(result.error.reason, 'tool_unavailable');
+});
+
+test('runtime operation admits an approved standalone MCP tool with the sidecar classification', () => {
+  // Astra W2 F1: before row 53 every mcp__<server>__* call was tool_unavailable here.
+  const call = (harness, overrides = {}) => harness.authorityService.checkRuntimeOperation(
+    harness.binding, operation({ tool_name: REA_TOOL, arguments: {}, ...overrides })
+  );
+  const sideEffecting = createHarness({ decision: 'ask',
+    resolveExternalToolDescriptor: externalResolver({ toolsStatus: reaStatus() }) });
+  assert.equal(call(sideEffecting).error.reason, 'policy_rejected');
+  sideEffecting.authorityService.noteApproved(sideEffecting.binding, {
+    operationId: 'tool-call-1', toolName: REA_TOOL, arguments: {}, decision: 'approved' });
+  assert.equal(call(sideEffecting).status, 'granted');
+  // read_only_auto_allow: the sidecar reports side_effecting false, so with no
+  // per-tool policy the read-only default (auto) applies without an approval.
+  const readOnly = createHarness({ decision: 'ask', resolveExternalToolDescriptor:
+    externalResolver({ toolsStatus: reaStatus({ sideEffecting: false }) }) });
+  assert.equal(call(readOnly).status, 'granted');
+  // Captured read-only mode still blocks a side-effecting MCP tool.
+  const readOnlyMode = createHarness({ readOnly: true,
+    resolveExternalToolDescriptor: externalResolver({ toolsStatus: reaStatus() }) });
+  assert.equal(call(readOnlyMode).error.reason, 'read_only');
+  // Fail closed: server not forwarded by the store, tool not available, wrong
+  // namespace, missing status, resolver throwing, or no resolver at all.
+  for (const [label, resolver] of [
+    ['unapproved server', externalResolver({ toolsStatus: reaStatus(), approved: ['docs'] })],
+    ['unavailable tool', externalResolver({ toolsStatus: reaStatus({ available: false }) })],
+    ['foreign namespace', externalResolver({ toolsStatus: reaStatus({ serverName: 'docs' }),
+      approved: ['docs'] })],
+    ['no status', externalResolver({ toolsStatus: {} })],
+    ['throwing resolver', () => { throw new Error('boom'); }],
+    ['no resolver', null],
+  ]) {
+    const harness = createHarness({ resolveExternalToolDescriptor: resolver });
+    assert.equal(call(harness).error.reason, 'tool_unavailable', label);
+  }
+  // A built-in name never routes through the resolver, and the resolver cannot
+  // rename a tool.
+  const spoofing = createHarness({ resolveExternalToolDescriptor: () => ({
+    name: 'read_file', source_kind: 'mcp', side_effecting: false, read_only: true }) });
+  assert.equal(call(spoofing).error.reason, 'tool_unavailable');
+  assert.equal(externalMcpExecutionDescriptor('read_file', { statusEntry: reaStatus()[REA_TOOL],
+    approvedServerNames: new Set(['rea']) }), undefined);
+  // Diagnostics mirror the same descriptor: read-only mode names the block.
+  const availability = getTrustedExecutionBinding(readOnlyMode.binding).describeToolAvailability({
+    [REA_TOOL]: { available: true, reason: null } });
+  assert.equal(availability.tools_status[REA_TOOL].reason, 'read-only mode blocks side-effecting tools');
 });
 
 test('runtime operation never lets policy or approval override captured read-only mode', () => {

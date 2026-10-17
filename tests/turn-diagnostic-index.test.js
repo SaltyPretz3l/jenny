@@ -18,6 +18,68 @@ test.afterEach(async () => {
   await cleanupTrackedResources();
 });
 
+test('index parses the requested rows plus five slack candidates and only counts read failures', async (t) => {
+  const userDataPath = createTrackedUserDataPath('jenny-turn-diagnostic-index-reads-');
+  const date = '2026-10-14';
+  const dir = path.join(userDataPath, 'diagnostics', date);
+  for (let index = 0; index < 30; index += 1) {
+    const id = `stream-${index}`;
+    writeTurnDiagnostic(userDataPath, date, id, {
+      stream_id: id, session_id: 'wanted',
+      // The last slack candidate wins despite an older mtime.
+      written_at: new Date(Date.UTC(2026, 9, 14, 12, index === 8 ? 1 : 0)).toISOString(),
+    });
+    const file = path.join(dir, `${id}.json`);
+    if (index === 0 || index === 9) fs.writeFileSync(file, '{broken');
+    if (index === 1) fs.writeFileSync(file, JSON.stringify({ session_id: 'other' }));
+    if (index === 2) fs.writeFileSync(file, 'null');
+    const mtime = new Date(Date.UTC(2026, 9, 14, 12, 0, 30 - index));
+    fs.utimesSync(file, mtime, mtime);
+  }
+  const originalRead = fs.promises.readFile;
+  const originalParse = JSON.parse;
+  let reads = 0;
+  let parses = 0;
+  t.mock.method(fs.promises, 'readFile', async function (file, ...args) {
+    if (String(file).startsWith(dir)) reads += 1;
+    return originalRead.call(this, file, ...args);
+  });
+  t.mock.method(JSON, 'parse', (...args) => { parses += 1; return originalParse(...args); });
+  const index = await buildTurnDiagnosticIndex({ userDataPath, sessionId: 'wanted', limit: 1 });
+  assert.equal(reads, 9);
+  assert.equal(parses, 9);
+  assert.equal(index.skipped_count, 2);
+  assert.equal(index.recent[0].stream_id, 'stream-8');
+});
+
+test('index leaves unmeasured duration and markers unknown and prefers provider total', async () => {
+  const userDataPath = createTrackedUserDataPath('jenny-turn-diagnostic-index-unknown-');
+  const payloads = [
+    { stream_id: 'absent' },
+    { stream_id: 'invalid', timing_markers: [
+      { name: 'missing' }, { name: 'null', relative_ms: null, ts_ms: null },
+    ] },
+    { stream_id: 'provider', provider_diagnostics: { total_duration_ms: 345 } },
+    { stream_id: 'provider-null', provider_diagnostics: { total_duration_ms: null } },
+    { stream_id: 'both', timing_markers: [{ name: 'done', relative_ms: 100 }],
+      provider_diagnostics: { total_duration_ms: 200 } },
+    { stream_id: 'zero', timing_markers: [{ name: 'start', relative_ms: 0 }] },
+    { stream_id: 'stamped', timing_markers: [{ name: 'send', ts_ms: 1_000 }, { name: 'done', ts_ms: 1_120 }] },
+  ];
+  for (const payload of payloads) writeTurnDiagnostic(userDataPath, '2026-10-14', payload.stream_id, payload);
+  const index = await buildTurnDiagnosticIndex({ userDataPath, limit: 10 });
+  const rows = new Map(index.recent.map((row) => [row.stream_id, row]));
+  assert.equal(rows.get('absent').duration_ms, null);
+  assert.equal(rows.get('invalid').duration_ms, null);
+  assert.deepEqual(rows.get('invalid').timing_markers, []);
+  assert.equal(rows.get('provider').duration_ms, 345);
+  assert.equal(rows.get('provider-null').duration_ms, null);
+  assert.equal(rows.get('both').duration_ms, 200);
+  assert.equal(rows.get('zero').duration_ms, 0);
+  assert.equal(rows.get('stamped').duration_ms, 120);
+  assert.deepEqual(rows.get('stamped').timing_markers, [{ name: 'send', relative_ms: 0 }, { name: 'done', relative_ms: 120 }]);
+});
+
 test('turn diagnostic index returns display-safe metadata for recent session diagnostics', async () => {
   const userDataPath = createTrackedUserDataPath('jenny-turn-diagnostic-index-');
   writeTurnDiagnostic(userDataPath, '2026-05-07', 'stream-a', {
@@ -32,10 +94,10 @@ test('turn diagnostic index returns display-safe metadata for recent session dia
     model: 'qwen3:8b',
     mode: 'chat',
     timing_markers: [
-      { name: 'created', ts_ms: 1_000 },
-      { name: 'provider_request_start', ts_ms: 1_120 },
-      { name: 'first_chunk', ts_ms: 1_500 },
-      { name: 'done', ts_ms: 1_750 },
+      { name: 'created', ts_ms: 1_000, relative_ms: 0 },
+      { name: 'provider_request_start', ts_ms: 1_120, relative_ms: 120 },
+      { name: 'first_chunk', ts_ms: 1_500, relative_ms: 500 },
+      { name: 'done', ts_ms: 1_750, relative_ms: 750 },
     ],
     provider_diagnostics: {
       time_to_provider_request_start_ms: 120,

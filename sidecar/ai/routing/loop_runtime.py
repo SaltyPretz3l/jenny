@@ -39,6 +39,7 @@ class LoopRuntime:
 
     emit: Callable[[LoopEvent], None] = _noop_emit
     request_id: str = ""
+    recall_history: dict[str, tuple[str, str, bool]] = field(default_factory=dict, repr=False)
     logical_turn_id: str | None = None
     trace_id: str = ""
     session_id: str = ""
@@ -245,6 +246,15 @@ class LoopRuntime:
     @property
     def cancelled(self) -> bool:
         return self.cancel_handle.cancelled if self.cancel_handle is not None else False
+
+    def report_generation_usage(self, usage: Any | None, latest: Any | None) -> None:
+        """Emit provider accounting to the child live-activity projection."""
+        if self.streaming and int(getattr(self.request_context, 'agent_depth', 0) or 0) > 0:
+            from sidecar.ai.routing.loop_events import GenerationUsageEvent
+
+            self.emit(GenerationUsageEvent(usage=usage, output_reported=any(
+                getattr(latest, key, None) is not None for key in ('output_tokens', 'total_tokens')
+            )))
 
     def raise_if_cancelled(self) -> None:
         if self.cancel_handle is None:

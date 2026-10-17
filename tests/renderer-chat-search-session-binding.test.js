@@ -26,7 +26,6 @@ function createManager(state) {
       isInteractiveOtherTrigger() { return false; },
       getActiveSession() { return null; },
       patchSessionSummary() {},
-      rekeyDismissedMemorySession() {},
       rekeySessionArtifacts() {},
       notifySessionMessagesReplaced() {},
     },

@@ -137,10 +137,8 @@ function isElectronBackedTestSource(source, platform = process.platform) {
 
 function isSequentialTestPath(childArg, options = {}) {
   const basename = testBasename(childArg);
-  // Perf/load tests, when included, run in the sequential lane so their timing
-  // is measured in isolation (parallel-worker contention is what makes them
-  // flaky).
-  if (LOAD_TEST_PATTERN.test(basename)) return true;
+  // Timing oracles and measured contention-sensitive files run alone.
+  if (requiresQuietMachine(basename)) return true;
   if (SEQUENTIAL_BASENAME_PATTERNS.some((pattern) => pattern.test(basename))) return true;
   if ((options.platform || process.platform) !== 'win32') return false;
   try {
@@ -204,16 +202,28 @@ function splitSequentialChains(sequentialArgs) {
   return { resourceArgs, jsdomArgs };
 }
 
+// Headless-Chromium layout gates: each launches a browser per matrix cell.
+const QUIET_MACHINE_CHROMIUM_BASENAMES = new Set([
+  'renderer-composer-narrow-layout.test.js',
+  'renderer-chat-reading-layout.test.js',
+  'renderer-session-rail-layout.test.js',
+]);
+
 // Splits the sequential lane into the files that may overlap the pool and the
-// *.load.test.js tail whose wall-clock oracles run alone afterwards. Only the
-// load files need the quiet machine (2026-10-04: 72 non-load sequential files
+// quiet tail. Load files need the quiet machine (2026-10-04: 72 non-load sequential files
 // ran alone for ~250 s of a 597 s heavy lane because 6 load files, 28 s,
 // forced the strict order for all of them).
+function requiresQuietMachine(basename) {
+  // 2026-10-09: this Chromium suite took 13s alone, 98s in the pool, then
+  // exceeded its unchanged 120s watchdog under 14-worker CI contention.
+  return LOAD_TEST_PATTERN.test(basename) || QUIET_MACHINE_CHROMIUM_BASENAMES.has(basename);
+}
+
 function splitLoadTail(sequentialArgs) {
   const loadArgs = [];
   const rest = [];
   for (const file of sequentialArgs) {
-    (LOAD_TEST_PATTERN.test(testBasename(file)) ? loadArgs : rest).push(file);
+    (requiresQuietMachine(testBasename(file)) ? loadArgs : rest).push(file);
   }
   return { sequentialArgs: rest, loadArgs };
 }
@@ -222,7 +232,7 @@ function splitLoadTail(sequentialArgs) {
 // reserved worker slot (audited 2026-07-20: sequential suites use mkdtemp'd
 // state and fake-sidecar child processes -- no ports or paths shared with the
 // parallel lane). Overlap is skipped when:
-//  - the lane still carries *.load.test.js perf files: their wall-clock oracles
+//  - the lane still carries quiet-machine files: they
 //    need the post-parallel quiet machine (the runner strips them into a strict
 //    tail with splitLoadTail before asking);
 //  - fewer than 2 workers (no slot to reserve);
@@ -232,7 +242,7 @@ function laneOverlapEnabled(parsed, groups) {
   if (parsed.laneOverlap === false) return false;
   if (!(Number(parsed.parallelWorkers) >= 2)) return false;
   if (groups.parallelArgs.length === 0 || groups.sequentialArgs.length === 0) return false;
-  if (groups.sequentialArgs.some((file) => LOAD_TEST_PATTERN.test(testBasename(file)))) {
+  if (groups.sequentialArgs.some((file) => requiresQuietMachine(testBasename(file)))) {
     return false;
   }
   return true;

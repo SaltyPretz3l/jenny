@@ -3,7 +3,7 @@
 const { isRuntimeRoute } = require('./lanes');
 const { isInferenceBudget } = require('./inference-budget');
 
-const API_VERSION = '2026-08-17';
+const API_VERSION = '2026-10-15';
 const TOKEN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const BASE_KEYS = ['api_version', 'authority_revision', 'kind', 'operation_id', 'phase',
   'request_id', 'schema_version', 'session_id'];

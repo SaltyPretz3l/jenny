@@ -22,6 +22,10 @@ const {
   trackDirectory,
 } = require('./helpers/resource-cleanup');
 const { createFakeTimers } = require('./helpers/fake-timers');
+const { holdEventLoopUntilTestsFinish } = require('./helpers/event-loop-hold');
+
+// Service wait timers are unref'd on purpose; Node 22's runner would drain the loop under them.
+holdEventLoopUntilTestsFinish(test);
 
 test.afterEach(async () => {
   await cleanupTrackedResources();

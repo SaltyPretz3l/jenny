@@ -85,7 +85,7 @@ function createManagedContinuationBoundary({ context, checkpointStore, conversat
     const reference = normalizeCheckpointRef(result.checkpoint_ref);
     const wireVersion = Object.hasOwn(result, 'api_version');
     if (Object.keys(result).sort().join(',') !== (wireVersion ? 'api_version,checkpoint_ref,request_id,status' : 'checkpoint_ref,request_id,status')
-      || (wireVersion && result.api_version !== '2026-08-17')
+      || (wireVersion && result.api_version !== '2026-10-15')
       || result.request_id !== captured.source_attempt.stream_id || !published || !reference
       || stableJson(reference) !== stableJson(published)) fail('runtime_continuation_pause_reply_invalid');
     if (settled) return settled;

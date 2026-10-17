@@ -7,9 +7,13 @@ from pathlib import Path, PureWindowsPath
 from typing import Callable
 
 EnvironmentReader = Callable[[str], str]
-COMMANDS = ("git", "python", "python3", "node", "npm", "npx", "powershell")
+COMMANDS = (
+    "git", "python", "python3", "node", "npm", "npx", "powershell",
+    "rustc", "cargo", "dotnet", "cmake",
+)
 MAX_PATH_ENTRIES = 256
 MAX_REGISTERED_PYTHONS = 32
+MAX_STANDARD_INSTALLATIONS = 32
 
 
 def executable_path(candidate: Path, *, windows: bool) -> Path | None:
@@ -88,17 +92,43 @@ def windows_candidates(command: str, read_env: EnvironmentReader) -> list[Path]:
             if system_root
             else []
         )
-    if command != "git":
-        return []
-    candidates = [root / "Git" / folder / "git.exe" for root in roots for folder in ("cmd", "bin")]
+    if command == "git":
+        candidates = [root / "Git" / folder / "git.exe"
+                      for root in roots for folder in ("cmd", "bin")]
+        return candidates + _visual_studio_candidates(
+            roots, "Microsoft/TeamFoundation/Team Explorer/Git/cmd/git.exe"
+        )
+    return _additional_windows_candidates(command, roots, read_env)
+
+
+def _additional_windows_candidates(
+    command: str, roots: list[Path], read_env: EnvironmentReader
+) -> list[Path]:
+    if command in {"rustc", "cargo"}:
+        profile = read_env("USERPROFILE")
+        return [Path(profile) / ".cargo/bin" / (command + ".exe")] if profile else []
+    if command == "dotnet":
+        candidates = [root / "dotnet/dotnet.exe" for root in roots]
+        local_appdata = read_env("LOCALAPPDATA")
+        if local_appdata:
+            candidates.append(Path(local_appdata) / "Microsoft/dotnet/dotnet.exe")
+        return candidates
+    if command == "cmake":
+        return [root / "CMake/bin/cmake.exe" for root in roots] + _visual_studio_candidates(
+            roots, "Microsoft/CMake/CMake/bin/cmake.exe"
+        )
+    return []
+
+
+def _visual_studio_candidates(roots: list[Path], relative: str) -> list[Path]:
+    candidates = []
     for root in roots:
         try:
             matches = root.glob(
-                "Microsoft Visual Studio/*/*/Common7/IDE/CommonExtensions/"
-                "Microsoft/TeamFoundation/Team Explorer/Git/cmd/git.exe"
+                "Microsoft Visual Studio/*/*/Common7/IDE/CommonExtensions/" + relative
             )
             for index, match in enumerate(matches):
-                if index >= MAX_REGISTERED_PYTHONS:
+                if index >= MAX_STANDARD_INSTALLATIONS:
                     break
                 candidates.append(match)
         except OSError:

@@ -12,6 +12,7 @@ COPY renderer/browser ./renderer/browser
 COPY renderer/shared ./renderer/shared
 COPY renderer/chat ./renderer/chat
 COPY renderer/features/renderer-plan-document.js ./renderer/features/renderer-plan-document.js
+COPY renderer/features/renderer-memory-chat-entry.js ./renderer/features/renderer-memory-chat-entry.js
 COPY renderer/inventory ./renderer/inventory
 COPY renderer/shell/renderer-orchestration-controller.js ./renderer/shell/renderer-orchestration-controller.js
 COPY renderer/shell/renderer-runs-view.js ./renderer/shell/renderer-runs-view.js
@@ -56,6 +57,7 @@ COPY --from=browser-builder /src/node_modules ./node_modules
 COPY renderer/shared ./renderer/shared
 COPY renderer/chat ./renderer/chat
 COPY renderer/features/renderer-plan-document.js ./renderer/features/renderer-plan-document.js
+COPY renderer/features/renderer-memory-chat-entry.js ./renderer/features/renderer-memory-chat-entry.js
 COPY sidecar ./sidecar
 COPY --from=browser-builder /src/build/browser ./build/browser
 COPY config ./config

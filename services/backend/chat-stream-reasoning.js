@@ -1,9 +1,5 @@
 const { budgetAttachmentEntries, isTextAttachment } = require('../attachment-service');
 const { createReasoningEntry } = require('./backend-service-utils');
-const { isCompactionSummaryMessage } = require('./session-compaction-snapshot');
-const {
-  normalizeContextPreferences,
-} = require('./context-preferences');
 const {
   buildInteractiveQuestionBatchTranscript,
   buildInteractiveRoundRecapTranscript,
@@ -13,8 +9,10 @@ const {
   sanitizePersistedReasoningText,
 } = require('./chat-stream-reasoning-sanitize');
 const { projectUserSkillInvocation, withSkillCommand } = require('./chat-skill-command-projection');
+const { validateEnvelope } = require('./session-message-envelope');
+const { validateHandoffRow } = require('./session-handoff-context');
+const { isContextRow, selectContextHistoryMessages, selectRecentTurnGroups } = require('./chat-history-scope');
 
-const RECENT_TURN_GROUP_LIMIT = 6;
 const MAX_PERSISTED_REASONING_ENTRIES = 40;
 const MAX_PERSISTED_REASONING_CHARS = 48_000;
 
@@ -402,70 +400,31 @@ function convertInteractiveRoundRecapToProviderMessage(message) {
   };
 }
 
-function isPlainUserAnchorMessage(message) {
-  if (!message || typeof message !== 'object' || Array.isArray(message)) {
-    return false;
+// A canonical session_message / session_handoff row, unchanged, only when the caller says the
+// sidecar negotiated that context kind (`options.sessionMessages` / `options.sessionHandoff`
+// === true; fail closed by default; a caller that only states sessionMessages, the trusted
+// checkpoint resume, keeps handoff rows too). Receipts and malformed rows never go on the wire.
+function isWireSessionMessage(message, options) {
+  if (message.kind === 'session_handoff') {
+    return (options.sessionHandoff ?? options.sessionMessages) === true && Boolean(validateHandoffRow(message));
   }
-  return String(message.role || '').trim() === 'user' && !String(message.kind || '').trim();
+  if (options.sessionMessages !== true || message.kind !== 'session_message') return false;
+  const envelope = validateEnvelope(message.session_message);
+  return Boolean(envelope) && message.content === envelope.body;
 }
 
-function selectRecentTurnGroups(messages, maxGroups = RECENT_TURN_GROUP_LIMIT) {
-  const groups = [];
-  const leadingSummaries = [];
-  let currentGroup = [];
-
-  for (const message of Array.isArray(messages) ? messages : []) {
-    if (isPlainUserAnchorMessage(message)) {
-      if (currentGroup.length) {
-        groups.push(currentGroup);
-      }
-      currentGroup = [message];
-      continue;
-    }
-    // Messages before the first plain user anchor are intentionally
-    // dropped in 'recent' mode, except compaction-summary rows: a persisted
-    // snapshot replaces the older history with that summary, so dropping it
-    // would leave the model with neither. System/personality context is
-    // re-injected fresh on each send, so nothing else before the first
-    // anchor is retained.
-    if (currentGroup.length) {
-      currentGroup.push(message);
-    } else if (isCompactionSummaryMessage(message)) {
-      leadingSummaries.push(message);
-    }
-  }
-
-  if (currentGroup.length) {
-    groups.push(currentGroup);
-  }
-
-  return [...leadingSummaries, ...groups.slice(-Math.max(0, Number(maxGroups) || 0)).flat()];
-}
-
-function selectContextHistoryMessages(messages, contextPreferences) {
-  const normalized = normalizeContextPreferences(contextPreferences);
-  if (normalized.history_scope === 'fresh') {
-    return [];
-  }
-  if (normalized.history_scope === 'recent') {
-    return selectRecentTurnGroups(messages, RECENT_TURN_GROUP_LIMIT);
-  }
-  if (normalized.history_scope === 'session') {
-    return Array.isArray(messages) ? messages : [];
-  }
-  throw new Error(`Unsupported context history scope: ${normalized.history_scope}`);
-}
-
-function buildPreparedContextHistory(messages, contextPreferences) {
+function buildPreparedContextHistory(messages, contextPreferences, options = {}) {
   const contextHistory = selectContextHistoryMessages(
     messages,
     contextPreferences
   );
   const preparedMessages = [...contextHistory]
     .filter((message) => {
+      if (isContextRow(message)) return isWireSessionMessage(message, options);
       const kind = String(message.kind || '');
       if (
         kind === 'proactive_suggestion'
+        || kind === 'memory_note'
       ) {
         return false;
       }
@@ -475,6 +434,11 @@ function buildPreparedContextHistory(messages, contextPreferences) {
       return message.role === 'user' || message.role === 'assistant' || message.role === 'system';
     })
     .map((message) => {
+      if (isContextRow(message)) {
+        return message.kind === 'session_handoff'
+          ? { role: 'context', kind: 'session_handoff', content: message.content, session_handoff: message.session_handoff }
+          : { role: 'context', kind: 'session_message', content: message.content, session_message: message.session_message };
+      }
       const kind = String(message.kind || '');
       if (kind === 'tool_use') {
         return convertToolUseToProviderMessage(message);
@@ -526,7 +490,9 @@ function buildPreparedContextHistory(messages, contextPreferences) {
 }
 
 function buildPreparedMessages(messages, prompt, options = {}) {
-  const folded = buildPreparedContextHistory(messages, options.contextPreferences);
+  const folded = buildPreparedContextHistory(messages, options.contextPreferences, {
+    sessionMessages: options.sessionMessages, sessionHandoff: options.sessionHandoff,
+  });
   folded.push({
     role: 'user',
     content: buildPromptWithAttachments(

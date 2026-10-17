@@ -862,3 +862,16 @@ test('failed scan preserves all generated catalogs and the baseline', () => {
   assert.match(result.stderr, /parse error/);
   assert.deepEqual(paths.map(relative => fs.readFileSync(path.join(root, relative), 'utf8')), before);
 });
+
+test('drive-letter paths are paths, not prose, like rooted and URL paths', () => {
+  const root = fixture();
+  write(root, 'renderer/paths.js', `
+    const command = 'C:\\\\Program Files\\\\nodejs\\\\npx.cmd';
+    const unix = '/usr/local/bin/npx cmd';
+    const copy = 'Program files are missing.';
+  `);
+  const ledger = scan(root);
+  assert.equal(occurrence(ledger, 'C:\\Program Files\\nodejs\\npx.cmd'), undefined);
+  assert.equal(occurrence(ledger, '/usr/local/bin/npx cmd'), undefined);
+  assert.equal(occurrence(ledger, 'Program files are missing.')?.disposition, 'pending');
+});

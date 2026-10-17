@@ -235,13 +235,19 @@
    to enable llama-server"); in the shared 3-column grid a nowrap note column
    starves the control down to "O… l…", so these two rows drop the note under
    the control instead. The GGUF row keeps the 3-column shape (Choose… sits
-   in the third column). */
+   in the third column). The NInfer context row does the same: its note is
+   the save/restart status ("NInfer restart failed. ..."). The Vision toggle
+   also puts its explanatory note beneath the control. */
 .model-tuning-engine [data-model-tuning-row="engine"],
+.model-tuning-engine [data-model-tuning-row="ninferContext"],
+.model-tuning-engine [data-model-tuning-row="ninferVision"],
 .model-tuning-engine .model-tuning-row--mtp {
   grid-template-columns: 150px minmax(0, 1fr);
 }
 
 .model-tuning-engine [data-model-tuning-row="engine"] .model-tuning-row-range,
+.model-tuning-engine [data-model-tuning-row="ninferContext"] .model-tuning-row-range,
+.model-tuning-engine [data-model-tuning-row="ninferVision"] .model-tuning-row-range,
 .model-tuning-engine .model-tuning-row--mtp .model-tuning-row-range {
   grid-column: 2;
   white-space: normal;
@@ -255,11 +261,15 @@
 
 @container (max-width: 400px) {
   .model-tuning-engine [data-model-tuning-row="engine"],
+  .model-tuning-engine [data-model-tuning-row="ninferContext"],
+  .model-tuning-engine [data-model-tuning-row="ninferVision"],
   .model-tuning-engine .model-tuning-row--mtp {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .model-tuning-engine [data-model-tuning-row="engine"] .model-tuning-row-range,
+  .model-tuning-engine [data-model-tuning-row="ninferContext"] .model-tuning-row-range,
+  .model-tuning-engine [data-model-tuning-row="ninferVision"] .model-tuning-row-range,
   .model-tuning-engine .model-tuning-row--mtp .model-tuning-row-range {
     grid-column: 1 / -1;
   }

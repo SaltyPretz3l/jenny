@@ -28,6 +28,7 @@ MAX_DELEGATE_EVIDENCE_ITEMS = 3
 MAX_DELEGATE_EVIDENCE_FIELD_CHARS = 300
 MAX_DELEGATE_OUTPUT_CHARS = 8_000
 MAX_DELEGATE_LABEL_CHARS = 60
+MAX_DELEGATE_ROUTE_CHARS = 160
 CANONICAL_DELEGATE_EXAMPLE = {"tasks": ["Inspect the repository and identify its test command"]}
 CANONICAL_DELEGATE_EXAMPLE_JSON = json.dumps(
     CANONICAL_DELEGATE_EXAMPLE,
@@ -51,6 +52,8 @@ class DelegateTask:
     ordinal: int
     prompt: str | None = None
     error: dict[str, Any] | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -198,7 +201,11 @@ def _normalize_task(raw_task: object, *, ordinal: int) -> DelegateTask:
         encoded_size = _task_utf8_size(prompt, ordinal=ordinal)
         if encoded_size > MAX_DELEGATE_TASK_BYTES:
             raise _item_failure(f"task {ordinal} exceeds the {MAX_DELEGATE_TASK_BYTES} byte limit")
-        return DelegateTask(ordinal=ordinal, prompt=prompt)
+        return DelegateTask(
+            ordinal=ordinal, prompt=prompt,
+            model=_task_route_field(raw_task, "model", ordinal=ordinal),
+            reasoning_effort=_task_route_field(raw_task, "reasoning_effort", ordinal=ordinal),
+        )
     except ToolExecutionFailure as error:
         return DelegateTask(
             ordinal=ordinal,
@@ -214,14 +221,28 @@ def _task_prompt(raw_task: object, *, ordinal: int) -> str:
     value = raw_task
     if isinstance(raw_task, dict):
         keys = set(raw_task)
-        if len(keys) != 1 or not keys <= {"task", "prompt"}:
+        prompt_keys = keys & {"task", "prompt"}
+        if len(prompt_keys) != 1 or not keys <= {"task", "prompt", "model", "reasoning_effort"}:
             raise _item_failure(
                 f"task {ordinal} object must contain exactly one 'task' or 'prompt' field",
                 grants=True,
             )
-        value = raw_task[next(iter(keys))]
+        value = raw_task[next(iter(prompt_keys))]
     if not isinstance(value, str) or not value.strip():
         raise _item_failure(f"task {ordinal} must be a non-empty string")
+    return value.strip()
+
+
+def _task_route_field(raw_task: object, field: str, *, ordinal: int) -> str | None:
+    if not isinstance(raw_task, dict) or field not in raw_task:
+        return None
+    value = raw_task[field]
+    if (
+        not isinstance(value, str) or not value.strip() or len(value) > MAX_DELEGATE_ROUTE_CHARS
+        or re.search(r"[\x00-\x1f\x7f]", value)
+        or strip_format_controls(value) != value
+    ):
+        raise _item_failure(f"task {ordinal} '{field}' must be a bounded non-empty identifier")
     return value.strip()
 
 
@@ -229,8 +250,8 @@ def _aggregate_candidate_bytes(raw_tasks: Iterable[object]) -> int:
     total = 0
     for ordinal, raw_task in enumerate(raw_tasks, start=1):
         value = raw_task
-        if isinstance(raw_task, dict) and len(raw_task) == 1:
-            value = next(iter(raw_task.values()))
+        if isinstance(raw_task, dict):
+            value = raw_task.get("prompt", raw_task.get("task"))
         if isinstance(value, str):
             try:
                 total += _task_utf8_size(value, ordinal=ordinal)

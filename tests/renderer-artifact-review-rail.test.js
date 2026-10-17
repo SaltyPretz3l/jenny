@@ -196,12 +196,11 @@ describe('keyboard resizer', () => {
       resizer.listeners.pointerup({ pointerId: 1 });
       assert.equal(props['--artifact-review-width'], `${expected}px`, 'drag uses the same ceiling');
       if (name === 'sidebar reserve') {
-        sidebarWidth = 420;
+        // A 780px stage is below the 800px single-pane threshold: docked it
+        // would leave 420px, the overlay drawer takes 90% of the stage.
+        sidebarWidth = 620;
         rail.syncArtifactReviewLayout();
-        assert.equal(props['--artifact-review-width'], '775px', 'stored width fits the new overlay ceiling of 882');
-        prefsUtils.recordArtifactReviewWidth(rail.getArtifactReviewState(), 's1', 4000);
-        rail.syncArtifactReviewLayout();
-        assert.equal(props['--artifact-review-width'], '882px', 'crossing the overlay threshold releases the chat reserve');
+        assert.equal(props['--artifact-review-width'], '702px', 'crossing the overlay threshold releases the chat reserve');
         sidebarWidth = 310;
         rail.syncArtifactReviewLayout();
         assert.equal(props['--artifact-review-width'], '730px', 'widening the sidebar shrinks a shared rail');
@@ -241,4 +240,162 @@ describe('split view code review', () => {
       if (expected) assert.ok(removed.includes('width'), 'the pane sizes the panel');
     });
   }
+});
+
+// Row 59 checkpoint 1: an explicit open or close glides the column while the
+// reading text reflows once (renderer-side-panel-motion.js); every other sync
+// (render passes, session restore, overlay, maximize) applies its state at once.
+describe('side-by-side column motion', () => {
+  const { JSDOM } = require('jsdom');
+
+  function makeMotionRail(t, { stageWidth = 1600, duration = '220ms' } = {}) {
+    withWindowShim(t, {}, 2000);
+    const dom = new JSDOM('<!doctype html><div id="chatView" class="chat-view" data-pane-count="1">'
+      + '<div class="chat-pane"><div data-chat-node="chatTimeline"></div><div class="composer"></div></div>'
+      + '<div id="resizer" class="artifact-review-resizer hidden"></div>'
+      + '<aside id="panel" class="artifact-review-panel hidden"></aside></div>');
+    t.after(() => dom.window.close());
+    const doc = dom.window.document;
+    const chatView = doc.getElementById('chatView');
+    const panel = doc.getElementById('panel');
+    chatView.style.setProperty('--motion-duration-regular', duration);
+    Object.defineProperty(panel, 'clientWidth', { value: 419, configurable: true });
+    doc.querySelector('[data-chat-node="chatTimeline"]').getBoundingClientRect = () => ({ width: chatView.classList.contains('artifact-review-open') ? 640 : 900 });
+    const workspace = { getBoundingClientRect: () => ({ width: stageWidth }), style: { setProperty() {} } };
+    const calls = [];
+    const state = makeState('s1');
+    const rail = makeRail(state, {
+      dom: { workspace, chatView, artifactReviewPanel: panel, artifactReviewResizer: doc.getElementById('resizer') },
+      callbacks: {
+        getScrollCoordinators: () => [{
+          captureReaderAnchor: () => calls.push(`capture:${doc.querySelector('.chat-pane').style.getPropertyValue('--chat-measure-lock') || '-'}`),
+          restoreReaderAnchor: () => calls.push(`restore:${doc.querySelector('.chat-pane').style.getPropertyValue('--chat-measure-lock') || '-'}`),
+        }],
+      },
+    });
+    t.after(() => rail.dispose());
+    rail.bind();
+    const lock = () => doc.querySelector('.chat-pane').style.getPropertyValue('--chat-measure-lock');
+    const phase = () => chatView.dataset.panelMotion;
+    const settle = () => panel.dispatchEvent(new dom.window.Event('animationend'));
+    return { rail, state, dom, chatView, panel, calls, lock, phase, settle };
+  }
+
+  test('an explicit open locks the end measure, brackets the anchor and releases when settled', (t) => {
+    const f = makeMotionRail(t);
+    f.rail.openArtifactRail('artifact');
+    assert.equal(f.phase(), 'opening');
+    assert.equal(f.chatView.classList.contains('artifact-review-open'), true);
+    assert.equal(f.panel.classList.contains('hidden'), false);
+    assert.equal(f.lock(), '640px', 'the measure the pane has with the panel open');
+    assert.deepEqual(f.calls, ['capture:-', 'restore:640px']);
+    f.calls.length = 0;
+    f.settle();
+    assert.equal(f.phase(), undefined);
+    assert.equal(f.lock(), '');
+    assert.deepEqual(f.calls, ['capture:640px', 'restore:-']);
+  });
+
+  test('a render pass in the same state leaves the running motion alone', (t) => {
+    const f = makeMotionRail(t);
+    f.rail.openArtifactRail('artifact');
+    f.rail.syncArtifactReviewLayout({ refreshChatChrome: true });
+    assert.equal(f.phase(), 'opening');
+    assert.equal(f.lock(), '640px');
+  });
+
+  test('close keeps the column up until it has collapsed, then lands the closed state', (t) => {
+    const f = makeMotionRail(t);
+    f.rail.beginRender(); // the app has rendered this chat before the user opens the panel
+    f.rail.openArtifactRail('artifact');
+    f.settle();
+    f.calls.length = 0;
+    f.rail.closeArtifactReview({ dismiss: true });
+    assert.equal(f.phase(), 'closing');
+    assert.equal(f.lock(), '640px', 'locked at the current measure');
+    assert.equal(f.chatView.classList.contains('artifact-review-open'), true, 'the column stays until it has collapsed');
+    assert.equal(f.panel.classList.contains('hidden'), false);
+    assert.deepEqual(f.calls, [], 'no reflow yet: the lock equals the current measure');
+    f.rail.beginRender(); // a render pass mid-close does not end it early
+    assert.equal(f.panel.classList.contains('hidden'), false);
+    f.settle();
+    assert.equal(f.panel.classList.contains('hidden'), true);
+    assert.equal(f.chatView.classList.contains('artifact-review-open'), false);
+    assert.equal(f.phase(), undefined);
+    assert.equal(f.lock(), '');
+    assert.deepEqual(f.calls, ['capture:640px', 'restore:-'], 'anchor brackets the release');
+  });
+
+  test('re-opening mid-close cancels it and snaps; closing mid-open snaps shut', (t) => {
+    const f = makeMotionRail(t);
+    f.rail.openArtifactRail('artifact');
+    f.settle();
+    f.rail.closeArtifactReview({ dismiss: false });
+    f.rail.openArtifactRail('artifact');
+    assert.equal(f.phase(), undefined, 'the close was cancelled, the open lands at once');
+    assert.equal(f.lock(), '');
+    assert.equal(f.chatView.classList.contains('artifact-review-open'), true);
+    f.rail.closeArtifactReview({ dismiss: false });
+    f.settle();
+    f.rail.openArtifactRail('artifact');
+    assert.equal(f.phase(), 'opening');
+    f.rail.closeArtifactReview({ dismiss: false });
+    assert.equal(f.phase(), undefined, 'closing a half-open column snaps');
+    assert.equal(f.lock(), '');
+    assert.equal(f.panel.classList.contains('hidden'), true);
+  });
+
+  test('restoring an open panel, rendering and resizing never animate', (t) => {
+    const f = makeMotionRail(t);
+    f.state.ui.artifactReview.enabled = true;
+    assert.equal(f.rail.beginRender(), true);
+    assert.equal(f.chatView.classList.contains('artifact-review-open'), true);
+    assert.equal(f.phase(), undefined);
+    assert.deepEqual(f.calls, [], 'no anchor traffic when nothing reflows by motion');
+    f.rail.syncArtifactReviewLayout();
+    assert.equal(f.phase(), undefined);
+  });
+
+  test('the owner-pane collapse (a layout reconcile) snaps instead of gliding', (t) => {
+    const f = makeMotionRail(t);
+    f.rail.beginRender();
+    f.rail.openArtifactRail('artifact');
+    f.settle();
+    f.rail.collapseArtifactReview();
+    assert.equal(f.phase(), undefined, 'no close motion');
+    assert.equal(f.lock(), '');
+    assert.equal(f.panel.classList.contains('hidden'), true);
+    assert.equal(f.chatView.classList.contains('artifact-review-open'), false);
+  });
+
+  test('a session switch mid-open releases the lock', (t) => {
+    const f = makeMotionRail(t);
+    f.rail.beginRender();
+    f.rail.openArtifactRail('artifact');
+    assert.equal(f.phase(), 'opening');
+    f.state.currentSessionId = 's2';
+    f.rail.beginRender();
+    assert.equal(f.phase(), undefined);
+    assert.equal(f.lock(), '');
+  });
+
+  test('overlay drawers, maximize and reduced motion apply at once', (t) => {
+    const overlay = makeMotionRail(t, { stageWidth: 760 });
+    overlay.rail.openArtifactRail('artifact');
+    assert.equal(overlay.phase(), undefined, 'the overlay drawer keeps its own slide-in');
+    assert.equal(overlay.panel.classList.contains('artifact-review-overlay'), true);
+
+    const maximize = makeMotionRail(t);
+    maximize.rail.openArtifactRail('artifact');
+    maximize.settle();
+    maximize.rail.toggleArtifactReviewMaximized(true);
+    assert.equal(maximize.phase(), undefined);
+
+    const reduced = makeMotionRail(t, { duration: '0ms' });
+    reduced.rail.openArtifactRail('artifact');
+    assert.equal(reduced.phase(), undefined);
+    assert.equal(reduced.lock(), '');
+    assert.equal(reduced.chatView.classList.contains('artifact-review-open'), true, 'the end state is applied immediately');
+    assert.deepEqual(reduced.calls, ['capture:-', 'restore:-'], 'still one reflow, bracketed by the anchor');
+  });
 });

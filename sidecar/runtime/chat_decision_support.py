@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sidecar.ai.config import resolve_effective_max_tokens
 from sidecar.ai.context.builder import LearnedLesson
-from sidecar.ai.context.compaction import compact_context
+from sidecar.ai.context.compaction import compact_context, compaction_policy
 from sidecar.ai.context.compaction_prompts import resolve_compaction_prompt
 from sidecar.ai.context.prompt_cache import StructuredSystemPrompt
 from sidecar.ai.context.token_budget import (
@@ -25,6 +25,7 @@ from sidecar.ai.feature_flags import (
 from sidecar.ai.mode_policy import policy_for_mode
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.tool_loop import run_tool_loop
+from sidecar.ai.routing.tool_recall import build_recall_history
 from sidecar.ai.tools.models import GenerationUsage
 from sidecar.ai.tools.tool_search import (
     ToolResolutionContext,
@@ -76,8 +77,10 @@ __all__ = [
     "apply_budget_check",
     "budget_meter_fields",
     "build_search_index",
+    "build_recall_history",
     "check_budget",
     "compact_context",
+    "compaction_policy",
     "compute_deferral_set",
     "estimate_messages_tokens",
     "estimate_tool_schema_tokens",

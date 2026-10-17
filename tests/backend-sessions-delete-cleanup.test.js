@@ -20,11 +20,14 @@ const TODO_VECTOR_FILE = 'ceadff8805ae294664945583b1e02698.json';
 
 function createFixture(t) {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-delete-cleanup-'));
-  t.after(() => fs.rmSync(userDataPath, { recursive: true, force: true }));
   const sessionStore = new ElectronSessionStore(path.join(userDataPath, 'sessions.json'), {
     logger() {},
   });
-  t.after(() => sessionStore.dispose());
+  t.after(() => {
+    t.mock.restoreAll();
+    sessionStore.dispose();
+    fs.rmSync(userDataPath, { recursive: true, force: true });
+  });
   const attachmentAssetStore = new AttachmentAssetStore({
     rootDir: path.join(userDataPath, 'attachments'),
   });
@@ -61,13 +64,12 @@ function seedImageChat(fixture, sessionId) {
 
 function denyUnlink(t, deniedPath) {
   const realUnlink = fs.unlinkSync;
-  fs.unlinkSync = (target, ...rest) => {
+  t.mock.method(fs, 'unlinkSync', (target, ...rest) => {
     if (path.resolve(String(target)) === path.resolve(deniedPath)) {
       throw Object.assign(new Error('access denied'), { code: 'EACCES' });
     }
     return realUnlink.call(fs, target, ...rest);
-  };
-  t.after(() => { fs.unlinkSync = realUnlink; });
+  });
 }
 
 function expectedTodoFile(userDataPath, sessionId) {

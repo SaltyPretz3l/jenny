@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 
+from sidecar.ai.context.compaction_prompts import CompactionReply
 from sidecar.ai.routing import generation_runtime
 from sidecar.ai.tools.models import GenerationResult
 
@@ -123,3 +124,33 @@ def test_compaction_failure_does_not_leave_its_purpose_for_the_next_call(
         generate([{"role": "user", "content": "compact"}])
 
     assert events == ["set:compaction_summary:True", "consume:True"]
+
+
+@pytest.mark.parametrize("enabled", [None, True, False], ids=["default", "on", "off"])
+@pytest.mark.parametrize("finish_reason", ["length", "stop", None])
+def test_compaction_generator_preserves_finish_reason_only_when_enabled(
+    monkeypatch: pytest.MonkeyPatch, enabled: bool | None, finish_reason: str | None,
+) -> None:
+    flags = {} if enabled is None else {"compaction_reject_truncated_summary": enabled}
+    kernel = SimpleNamespace(_config=SimpleNamespace(
+        engine_type="ollama", model="local-model", feature_flags=flags,
+    ))
+
+    def fake_stream(_kernel: object, **_kwargs: Any) -> tuple[GenerationResult, set[str]]:
+        return GenerationResult(content="summary", finish_reason=finish_reason), set()
+
+    def fake_execute(*, operation: Any, **_kwargs: Any) -> GenerationResult:
+        return operation(SimpleNamespace(max_tokens=64))
+
+    monkeypatch.setattr(generation_runtime, "stream_generate_with_tools", fake_stream)
+    monkeypatch.setattr(generation_runtime, "execute_with_provider_retry", fake_execute)
+    generate = generation_runtime.build_compaction_generate_fn(
+        kernel, request_id="req-compaction", max_tokens=64, prompt_cache_enabled=False,
+    )
+    reply = generate([{"role": "user", "content": "compact"}])
+    assert reply == "summary"
+    if enabled is False:
+        assert type(reply) is str
+    else:
+        assert isinstance(reply, CompactionReply)
+        assert reply.finish_reason == finish_reason

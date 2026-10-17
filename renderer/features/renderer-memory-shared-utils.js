@@ -8,15 +8,13 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const APPROVED_MEMORY_KIND_OPTIONS = Object.freeze([
     { value: 'all', label: jt('memory.filters.all', 'All') },
-    { value: 'profile', label: jt('memory.kinds.profile', 'Profile') },
     { value: 'preference', label: jt('memory.kinds.preference', 'Preference') },
-    { value: 'response_style', label: jt('memory.kinds.responseStyle', 'Response Style') },
-    { value: 'tool_strategy', label: jt('memory.kinds.toolStrategy', 'Tool Strategy') },
-    { value: 'working_preference', label: jt('memory.kinds.workingPreference', 'Working Preference') },
-    { value: 'project_context', label: jt('memory.kinds.projectContext', 'Project Context') },
+    { value: 'fact', label: jt('memory.kinds.fact', 'Fact') },
+    { value: 'decision', label: jt('memory.kinds.decision', 'Decision') },
+    { value: 'convention', label: jt('memory.kinds.convention', 'Convention') },
+    { value: 'person', label: jt('memory.kinds.person', 'Person') },
     { value: 'routine', label: jt('memory.kinds.routine', 'Routine') },
-    { value: 'goal', label: jt('memory.kinds.goal', 'Goal') },
-    { value: 'important_person', label: jt('memory.kinds.people', 'People') },
+    { value: 'lesson', label: jt('memory.kinds.lesson', 'Lesson') },
   ]);
   const APPROVED_MEMORY_KIND_LABELS = Object.freeze(
     APPROVED_MEMORY_KIND_OPTIONS.reduce((labels, option) => {
@@ -29,14 +27,7 @@
   const APPROVED_MEMORY_KIND_VALUES = new Set(
     APPROVED_MEMORY_KIND_OPTIONS.map((option) => option.value)
   );
-  const PENDING_MEMORY_SORT_OPTIONS = Object.freeze([
-    { value: 'newest', label: jt('memory.sort.newest', 'Newest') },
-    { value: 'oldest', label: jt('memory.sort.oldest', 'Oldest') },
-    { value: 'confidence', label: jt('memory.sort.highestConfidence', 'Highest confidence') },
-  ]);
-  const PENDING_MEMORY_SORT_VALUES = new Set(
-    PENDING_MEMORY_SORT_OPTIONS.map((option) => option.value)
-  );
+  const MEMORY_ORIGINS = new Set(['user', 'jenny', 'reflection', 'legacy']);
 
   function getApprovedMemoryKindOptions() {
     return APPROVED_MEMORY_KIND_OPTIONS.map((option) => ({ ...option }));
@@ -69,11 +60,6 @@
     return confidence;
   }
 
-  function normalizePendingMemorySort(value) {
-    const normalizedValue = String(value || '').trim().toLowerCase();
-    return PENDING_MEMORY_SORT_VALUES.has(normalizedValue) ? normalizedValue : 'newest';
-  }
-
   function normalizeApprovedMemory(candidate) {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
       return null;
@@ -98,6 +84,20 @@
       content_fingerprint: String(candidate.content_fingerprint || '').trim(),
       created_at: String(candidate.created_at || '').trim(),
       updated_at: String(candidate.updated_at || '').trim(),
+      // Settings writes name the revision the user saw (memory v2 ledger).
+      ...(Number.isSafeInteger(candidate.revision) && candidate.revision > 0 ? { revision: candidate.revision } : {}),
+      // v9 row facts the Memory page shows: who wrote it, pinned, user-edited,
+      // chat-only, when it was forgotten, and the messages it came from.
+      origin: MEMORY_ORIGINS.has(candidate.origin) ? candidate.origin : 'jenny',
+      always_on: candidate.always_on === true || candidate.always_on === 1,
+      protected: candidate.protected === true || candidate.protected === 1,
+      status: candidate.status === 'archived' ? 'archived' : 'active',
+      scope_session_id: String(candidate.scope_session_id || '').trim().slice(0, 128),
+      archived_at: String(candidate.archived_at || '').trim().slice(0, 64),
+      source_message_ids: (Array.isArray(candidate.source_message_ids) ? candidate.source_message_ids : [])
+        .filter((value) => typeof value === 'string' && value.trim())
+        .slice(0, 8)
+        .map((value) => value.trim().slice(0, 128)),
     };
   }
 
@@ -125,7 +125,6 @@
       confidence: normalizeMemoryConfidence(candidate.confidence),
       source_excerpt: String(candidate.source_excerpt || '').trim(),
       content_fingerprint: contentFingerprint,
-      family_key: String(candidate.family_key || '').trim(),
       category: String(candidate.category || '').trim(),
       created_at: String(candidate.created_at || '').trim(),
       updated_at: String(candidate.updated_at || '').trim(),
@@ -165,24 +164,6 @@
     return (Array.isArray(entries) ? entries.slice() : []).sort(compareMemoriesNewestFirst);
   }
 
-  function sortPendingMemoryCandidates(entries, sortMode) {
-    const mode = normalizePendingMemorySort(sortMode);
-    if (mode === 'oldest') {
-      return sortMemoriesNewestFirst(entries).reverse();
-    }
-    if (mode === 'confidence') {
-      return (Array.isArray(entries) ? entries.slice() : []).sort((left, right) => {
-        const rightConfidence = normalizeMemoryConfidence(right?.confidence);
-        const leftConfidence = normalizeMemoryConfidence(left?.confidence);
-        if (rightConfidence !== leftConfidence) {
-          return rightConfidence - leftConfidence;
-        }
-        return compareMemoriesNewestFirst(left, right);
-      });
-    }
-    return sortMemoriesNewestFirst(entries);
-  }
-
   function buildApprovedMemorySearchText(memory) {
     if (!memory || typeof memory !== 'object') {
       return '';
@@ -210,12 +191,10 @@
     getApprovedMemoryKindOptions,
     getApprovedMemoryKindLabel,
     normalizeApprovedMemoryKindFilter,
-    normalizePendingMemorySort,
     normalizeMemoryConfidence,
     normalizeApprovedMemory,
     normalizePendingMemoryCandidate,
     sortMemoriesNewestFirst,
-    sortPendingMemoryCandidates,
     buildApprovedMemorySearchText,
     buildPendingMemoryKey,
   };

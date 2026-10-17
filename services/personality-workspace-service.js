@@ -42,6 +42,7 @@ const {
   PRESET_SENTENCES,
   migratePersonalityWorkspaceToV3,
 } = require('./personality-workspace-migration');
+const { removeFile } = require('./fs-remove-no-follow');
 
 const WORKSPACE_DIRECTORY = path.join('personality', 'default-workspace');
 const MEMORY_DIRECTORY = 'memory';
@@ -81,6 +82,9 @@ const FIXED_FILE_DEFINITIONS = Object.freeze([
   Object.freeze({ key: FILE_KEYS.USER, sectionId: 'user', filename: 'USER.md' }),
   Object.freeze({ key: FILE_KEYS.MEMORY, sectionId: 'memory', filename: 'MEMORY.md' }),
 ]);
+
+// Settings > Memory may open these two in the OS default app (row 58 W4).
+const OPENABLE_CONTEXT_FILES = new Set(['USER.md', 'MEMORY.md']);
 
 const DEFINITION_BY_KEY = Object.freeze(Object.fromEntries(
   FIXED_FILE_DEFINITIONS.map((definition) => [definition.key, definition])
@@ -183,6 +187,7 @@ class PersonalityWorkspaceService {
     logger,
     readRetiredAssistantIdentity,
     maxArchivedEntries,
+    projectNotesProvider,
   } = {}) {
     if (!userDataPath) throw new Error('userDataPath is required for PersonalityWorkspaceService.');
     this.userDataPath = userDataPath;
@@ -198,6 +203,8 @@ class PersonalityWorkspaceService {
     this.readRetiredAssistantIdentity = typeof readRetiredAssistantIdentity === 'function'
       ? readRetiredAssistantIdentity
       : null;
+    // `() => projectNotesService`: a project chat's Notes slot is its notes page.
+    this.projectNotesProvider = typeof projectNotesProvider === 'function' ? projectNotesProvider : null;
     this.schemaVersion = PERSONALITY_WORKSPACE_SCHEMA_VERSION;
     this.templates = PLACEHOLDER_TEMPLATES;
     this.contextFileMaxBytes = CONTEXT_FILE_MAX_BYTES;
@@ -275,7 +282,7 @@ class PersonalityWorkspaceService {
       await fs.writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
       await fs.rename(temporaryPath, this.personalityStatePath);
     } finally {
-      await fs.rm(temporaryPath, { force: true }).catch(() => {});
+      await removeFile(temporaryPath).catch(() => {});
     }
   }
 
@@ -409,12 +416,12 @@ class PersonalityWorkspaceService {
     return entries;
   }
 
-  async _compile({ includeMemory = true } = {}) {
+  async _compile({ includeMemory = true, notesBody = '' } = {}) {
     const entries = await this._readAllEntries({ includeMemory });
     const { content, sections, backstopClipped } = compilePersonalitySections({
       personality: entries[FILE_KEYS.PERSONALITY].body,
       user: entries[FILE_KEYS.USER].body,
-      memory: entries[FILE_KEYS.MEMORY]?.body || '',
+      memory: entries[FILE_KEYS.MEMORY]?.body || notesBody,
     });
     if (backstopClipped) {
       this._log('WARN', 'personality_workspace.compiled_backstop_clipped', {
@@ -437,6 +444,32 @@ class PersonalityWorkspaceService {
     this._compiledCache = compiled;
     this._compiledCacheMtimeKey = mtimeKey;
     return compiled;
+  }
+
+  /**
+   * General compiles MEMORY.md (cached); any other project compiles per call
+   * with its notes page in the Notes slot (historical profile notes have no
+   * project provenance, so only General may receive them).
+   */
+  async _compileFor(projectId, { fresh = false } = {}) {
+    if (projectId === GENERAL_PROJECT_ID) return this._compiledSnapshot({ fresh });
+    return this._compile({ includeMemory: false, notesBody: this._projectNotesBody(projectId) });
+  }
+
+  /** Normalized notes-page text; '' when the notes service is absent or the read fails. */
+  _projectNotesBody(projectId) {
+    const notes = this.projectNotesProvider ? this.projectNotesProvider() : null;
+    if (!notes || typeof notes.get !== 'function') return '';
+    try {
+      const result = notes.get(projectId);
+      const text = result?.ok === true ? result.note?.text : '';
+      return typeof text === 'string' ? normalizeBody(text) : '';
+    } catch (error) {
+      this._log('WARN', 'personality_workspace.project_notes_unavailable', {
+        code: String(error?.code || error?.name || 'Error'),
+      });
+      return '';
+    }
   }
 
   _invalidateCompiledContextCache() {
@@ -476,13 +509,11 @@ class PersonalityWorkspaceService {
    *
    * @returns {Promise<string>}
    */
-  async getCompiledContext({ projectId = 'project_general' } = {}) {
+  async getCompiledContext({ projectId = 'project_general', ensure = true } = {}) {
     if (!normalizeProjectId(projectId)) throw new TypeError('Invalid project identity for personality.');
-    await this.ensureSeeded();
-    // Historical profile notes have no project provenance. Only General may
-    // receive them; global voice/user preferences remain shared deliberately.
-    if (projectId !== GENERAL_PROJECT_ID) return (await this._compile({ includeMemory: false })).content;
-    return (await this._compiledSnapshot()).content;
+    if (ensure) await this.ensureSeeded();
+    // Global voice/user preferences remain shared deliberately; Notes is per project.
+    return (await this._compileFor(projectId)).content;
   }
 
   /**
@@ -494,8 +525,7 @@ class PersonalityWorkspaceService {
     if (!normalizeProjectId(projectId)) throw new TypeError('Invalid project identity for personality.');
     await this.ensureSeeded();
     const state = await this._readPersonalityState();
-    const compiled = projectId === GENERAL_PROJECT_ID
-      ? await this._compiledSnapshot({ fresh: true }) : await this._compile({ includeMemory: false });
+    const compiled = await this._compileFor(projectId, { fresh: true });
     for (const entry of Object.values(compiled.entries)) this._requireReadableEntry(entry);
     this._unreadableFiles.delete(FILE_KEYS.PERSONALITY);
     this._unreadableFiles.delete(FILE_KEYS.USER);
@@ -611,8 +641,7 @@ class PersonalityWorkspaceService {
       code = code || result.code;
     }
     this._invalidateCompiledContextCache();
-    const compiled = projectId === GENERAL_PROJECT_ID
-      ? await this._compiledSnapshot({ fresh: true }) : await this._compile({ includeMemory: false });
+    const compiled = await this._compileFor(projectId, { fresh: true });
     const view = this._compiledView(agentName, compiled, { uiLanguage });
     if (failed.length) {
       return {
@@ -692,6 +721,28 @@ class PersonalityWorkspaceService {
     } catch (error) {
       this._logContextFileFailure('open_folder', 'workspace', error);
       return { ok: false, message: t('main.personality.contextFolderOpenFailed', 'Unable to open the context-files folder.') };
+    }
+  }
+
+  /**
+   * Open USER.md or MEMORY.md in the OS default app (Settings > Memory, row 58
+   * W4). Only those two fixed names, only inside this workspace: seeding
+   * creates a missing file first, and a link or non-file is never followed.
+   */
+  async openContextFile(name) {
+    if (!OPENABLE_CONTEXT_FILES.has(name)) return { ok: false, reason: 'invalid' };
+    const definition = FIXED_FILE_DEFINITIONS.find(entry => entry.filename === name);
+    await this.ensureSeeded();
+    if (!this.openPathImpl) return { ok: false, reason: 'unavailable' };
+    const filePath = path.join(this.workspacePath, definition.filename);
+    try {
+      if (!(await fs.lstat(filePath)).isFile()) return { ok: false, reason: 'invalid' };
+      if (!(await this.openPathImpl(filePath))) return { ok: true };
+      this._logContextFileFailure('open_file', definition.sectionId, { code: 'launch_failed' });
+      return { ok: false, reason: 'launch_failed' };
+    } catch (error) {
+      this._logContextFileFailure('open_file', definition.sectionId, error);
+      return { ok: false, reason: 'open_failed' };
     }
   }
 
@@ -779,7 +830,7 @@ class PersonalityWorkspaceService {
       await fs.rename(temporaryPath, filePath);
     } finally {
       await handle?.close().catch(() => {});
-      await fs.rm(temporaryPath, { force: true }).catch(() => {});
+      await removeFile(temporaryPath).catch(() => {});
     }
   }
 
@@ -814,7 +865,7 @@ class PersonalityWorkspaceService {
       await fs.copyFile(filePath, backupPath, fs.constants.COPYFILE_EXCL);
       return { exists: true, backupPath };
     } catch (error) {
-      await fs.rm(backupPath, { force: true }).catch(() => {});
+      await removeFile(backupPath).catch(() => {});
       if (error?.code === 'ENOENT') return { exists: false };
       throw error;
     }
@@ -823,7 +874,7 @@ class PersonalityWorkspaceService {
   async restoreFileSnapshot(filePath, snapshot) {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     if (!snapshot?.exists) {
-      await fs.rm(filePath, { force: true });
+      await removeFile(filePath);
       return;
     }
     await fs.rename(snapshot.backupPath, filePath);

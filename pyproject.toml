@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "companion-sidecar"
-version = "1.4.0"
+version = "1.5.0"
 description = "Python AI sidecar for the Companion desktop app"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -172,7 +172,6 @@ known-first-party = ["sidecar"]
 "sidecar/ai/mcp/builtin_server.py" = ["PLR0915"]
 "sidecar/ai/mcp/transport_stdio.py" = ["E501"]
 "sidecar/ai/memory/embedding.py" = ["B905"]
-"sidecar/ai/memory/families.py" = ["E501"]
 "sidecar/ai/memory/recall_scoring.py" = ["PLR0913"]
 "sidecar/ai/memory/store.py" = ["PLC0414"]
 "sidecar/ai/memory/store_approved.py" = ["E501", "PLR0913"]
@@ -235,7 +234,6 @@ known-first-party = ["sidecar"]
 "sidecar/runtime/local_engine/reasoning.py" = ["PLR0913"]
 "sidecar/runtime/local_engine/request_context.py" = ["PLR0913"]
 "sidecar/runtime/memory.py" = ["E501"]
-"sidecar/runtime/memory_suggestions.py" = ["C901", "E501", "PLR0912", "PLR0915", "PLR2004", "PLW0108"]
 "sidecar/runtime/monitor_manager.py" = ["PLC0414"]
 "sidecar/runtime/multiplexer.py" = ["PLR0913"]
 "sidecar/runtime/reasoning_status.py" = ["E501", "PLR2004", "PLW2901"]

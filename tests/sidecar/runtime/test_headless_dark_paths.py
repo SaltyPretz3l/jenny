@@ -380,17 +380,17 @@ def test_approval_response_bridge_empty_queue_raises_timeout_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Line 364 – _confirm_dangerous_mode non-tty → True (no prompt)
+# Line 364 – _confirm_dangerous_mode non-tty → False (no prompt)
 # ---------------------------------------------------------------------------
 
 
-def test_confirm_dangerous_mode_non_tty_returns_true(
+def test_confirm_dangerous_mode_non_tty_returns_false(
     monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
-    """Line 364: non-interactive stdin skips the prompt and returns True."""
+    """Line 364: non-interactive stdin refuses blanket approval."""
     monkeypatch.setattr(headless.sys, "stdin", _NonTtyInput())
     result = headless._confirm_dangerous_mode(_NonTtyInput())
-    assert result is True
+    assert result is False
     captured = capsys.readouterr()
     # Warning must still be emitted
     assert "WARNING" in captured.err

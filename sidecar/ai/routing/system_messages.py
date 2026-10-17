@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from sidecar.ai.context.always_on_memories import with_always_on_message
 from sidecar.ai.context.messages import build_context_block_system_messages
 from sidecar.ai.context.runtime_overlays import (
     build_dynamic_system_messages,
@@ -130,4 +131,5 @@ __all__ = [
     "render_turn_context_row",
     "split_context_blocks",
     "trailing_turn_context_enabled",
+    "with_always_on_message",
 ]

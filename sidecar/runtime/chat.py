@@ -7,6 +7,7 @@ surface that downstream code imports from ``sidecar.runtime.chat``.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 from typing import Any
@@ -17,10 +18,11 @@ from sidecar.ai.context.messages import sanitize_semantic_message
 from sidecar.ai.context.prompt_cache import resolve_current_date
 from sidecar.ai.context.runtime_overlays import build_dynamic_system_messages  # noqa: F401
 from sidecar.ai.engines.vision_input import VisionImage
-from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, MemoryPolicy
+from sidecar.ai.memory.contracts import MemoryPolicy
 from sidecar.ai.routing import vision_turn as _vision_turn
 from sidecar.ai.routing.agent_executor import AgentExecutor  # noqa: F401
 from sidecar.ai.routing.iteration_limits import effective_sub_agent_concurrency_budget
+from sidecar.ai.tools.handoff_preparation import handoff_preparation_from_params
 from sidecar.ai.tools.tool_call_healing import (
     bind_tool_call_healing,
     reset_tool_call_healing,
@@ -53,6 +55,8 @@ from sidecar.runtime.chat_models import (  # noqa: F401
     ChatResponse,
     TerminalChatStateError,
     continuation_identity_from_params,
+    inference_performance_enabled_for_config,
+    inference_performance_from_params,
 )
 from sidecar.runtime.chat_normalization import (
     approved_plan_from_params,
@@ -262,6 +266,7 @@ def build_chat_send_response(
         (inference_budget_required, runtime_children_enabled, runtime_child_read_only,
          raw_session_offline_lockdown) = runtime_policy_flags_from_params(
             params, execution_context, continuation_context, stack.config, stream_notifications)
+        handoff_preparation = handoff_preparation_from_params(params)
     except ValueError as error:
         raise ChatRequestError(
             request_id=request_id,
@@ -340,18 +345,10 @@ def build_chat_send_response(
         memory_policy is None and params.get("learning_context") is not None
     )
     effective_memory_policy = (
-        MemoryPolicy(enabled=False, include_response_style=False)
+        MemoryPolicy(enabled=False, capture="off", recall=False)
         if has_legacy_learning_context
-        else MemoryPolicy(
-            enabled=memory_policy.enabled if memory_policy is not None else True,
-            include_response_style=(
-                memory_policy.include_response_style if memory_policy is not None else True
-            ),
-            project_id=(
-                memory_policy.project_id
-                if memory_policy is not None
-                else GENERAL_PROJECT_ID
-            ),
+        else dataclasses.replace(
+            memory_policy if memory_policy is not None else MemoryPolicy(),
             recall_query="\n".join(
                 str(message.get("content") or "").strip()
                 for message in messages
@@ -364,10 +361,15 @@ def build_chat_send_response(
     skill_invocation = _normalize_skill_invocation(
         params.get("skill_invocation"), request_id=request_id, session_id=session_id
     )
+    from sidecar.ai.config_models import normalize_subagent_routing
+
     request_context = ChatRequestContext(
         request_id=request_id,
         trace_id=trace_id,
         session_id=session_id,
+        session_messages_enabled=(
+            getattr(brain_container, "chat_workspace_session_messages", False) is True
+        ),
         mode=mode,
         approvals_pre_granted=approvals_pre_granted,
         logical_turn_id=logical_turn_id,
@@ -375,9 +377,13 @@ def build_chat_send_response(
         runtime_continuation_resume=runtime_continuation_resume,
         execution_context=execution_context,
         inference_budget_required=inference_budget_required,
+        inference_performance=inference_performance_from_params(params),
+        inference_performance_enabled=inference_performance_enabled_for_config(stack.config),
         runtime_children_enabled=runtime_children_enabled,
         memory_policy=effective_memory_policy,
         reasoning_effort=reasoning_effort,
+        subagent_routing=(normalize_subagent_routing(params['subagent_routing'])
+                          if 'subagent_routing' in params else None),
         session_start_date=session_start_date,
         current_date=resolve_current_date(),
         plan_mode=plan_mode, propose_mode=propose_mode, suggested_changes_context=live_suggestions,
@@ -386,6 +392,7 @@ def build_chat_send_response(
         tool_preferences=tool_preferences,
         approval_mode=approval_mode,
         session_offline_lockdown=raw_session_offline_lockdown,
+        handoff_preparation=handoff_preparation,
         sub_agent_tool_preferences_fail_closed=(
             tool_preferences_require_sub_agent_fail_closed(raw_tool_preferences)
         ),

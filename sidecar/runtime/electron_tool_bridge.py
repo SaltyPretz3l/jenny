@@ -67,6 +67,11 @@ _PATH_METADATA_KEYS = {
 }
 # Tools whose bounded PNG may reach a vision chat model; see preview_vision.
 _PREVIEW_IMAGE_TOOLS = frozenset({"preview_test", "image_generate"})
+# Electron owns message consent inside its producer and command consent in prepare.
+# Match chat-stream-tool-approval.js: 10 minutes normally, extendible to 4 hours
+# by the existing unattended guard. Reserve that bounded window up front since
+# the guard can pause after dispatch; the actual decision still owns its timer.
+_ELECTRON_CONSENT_WAIT_SECONDS = 4 * 60 * 60.0
 
 
 def _is_safe_display_path(value: str) -> bool:
@@ -308,6 +313,22 @@ def _normalize_result_payload(
     )
 
 
+def _response_wait_timeout(request: ElectronToolBridgeRequest) -> float:
+    timeout = 30.0 if request.timeout_seconds is None else max(float(request.timeout_seconds), 0.1)
+    producer_response = (
+        request.before_resource_start is None or request.resource_start_token is not None
+    )
+    message_consent = (request.tool_name == "session_message"
+                       and request.arguments.get("action") == "send" and producer_response)
+    command_consent = (request.tool_name == "run_command"
+                       and request.before_resource_start is not None and not producer_response)
+    if message_consent or command_consent:
+        # Messages ask inside the producer; sandbox commands ask in preparation.
+        # Command execution itself retains its ordinary working deadline.
+        return timeout + _ELECTRON_CONSENT_WAIT_SECONDS
+    return timeout
+
+
 def execute_electron_tool(request: ElectronToolBridgeRequest) -> MCPToolResult:
     event_logger = request.logger if hasattr(request.logger, "log") else _LOGGER
     write_message = request.write_message
@@ -367,12 +388,7 @@ def execute_electron_tool(request: ElectronToolBridgeRequest) -> MCPToolResult:
 
     with _closing_response_reader(response_reader):
         write_message(request_message)
-        timeout = (
-            30.0
-            if request.timeout_seconds is None
-            else max(float(request.timeout_seconds), 0.1)
-        )
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + _response_wait_timeout(request)
         while True:
             if request.cancel_handle is not None and request.cancel_handle.cancelled:
                 raise MCPError(

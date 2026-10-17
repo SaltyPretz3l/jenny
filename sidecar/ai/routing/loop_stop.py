@@ -7,11 +7,12 @@ testable in isolation.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable
+from typing import Any, Callable, Sequence
 
 from sidecar.ai.error_codes import (
     CMP_LOOP_BUDGET_EXCEEDED,
@@ -24,6 +25,7 @@ from sidecar.ai.routing.stuck_loop_detector import detect_stuck_loop
 from sidecar.ai.routing.tool_observation import (
     KIND_TURN_FAILED,
     ToolObservationStore,
+    result_digest,
     tool_argument_fingerprint,
 )
 from sidecar.ai.tools.models import ToolCallRequest
@@ -80,15 +82,62 @@ class LoopState:
     phase: str = "preflight"
     tool_call_history: tuple[tuple[str, ...], ...] = ()
     error_output_history: tuple[str, ...] = ()
+    current_tool_signatures: tuple[str, ...] | None = None
     # True once the runner has already spent its one summarize-and-stop
     # cycle hint this turn; cycle detections then become terminal STOPs
     # instead of recoverable DEGRADEs.
     cycle_hint_attempted: bool = False
 
 
-def _tool_call_signature(call: ToolCallRequest) -> str:
-    """Deterministic fingerprint for a tool call (name + args hash)."""
-    return f"{call.tool_id}:{tool_argument_fingerprint(call.arguments)}"
+def _tool_call_signature(call: ToolCallRequest, digest: str | None = None) -> str:
+    """Fingerprint a call, optionally including its normalized result digest."""
+    signature = f"{call.tool_id}:{tool_argument_fingerprint(call.arguments)}"
+    return signature if digest is None else f"{signature}:{digest}"
+
+
+def _pending_result(output: str) -> bool:
+    try:
+        value = json.loads(output)
+    except (ValueError, RecursionError):
+        return False
+    return isinstance(value, dict) and value.get("state") in ("running", "queued", "pending")
+
+
+def _result_aware_signatures(
+    calls: tuple[ToolCallRequest, ...], outcomes: Sequence[Any],
+) -> tuple[str, ...]:
+    by_call_id = {outcome.call_id: outcome for outcome in outcomes}
+    signatures = []
+    for call in calls:
+        outcome = by_call_id.get(call.call_id)
+        output = outcome.output if outcome is not None else ""
+        if not _pending_result(output):
+            signatures.append(_tool_call_signature(call, result_digest(output)))
+    return tuple(signatures)
+
+
+def advance_cycle_history(  # noqa: PLR0913 - explicit cycle state and execution batch.
+    loop: Any,
+    history: tuple[tuple[str, ...], ...],
+    errors: tuple[str, ...],
+    calls: tuple[ToolCallRequest, ...],
+    error_output: str | None,
+    outcomes: Sequence[Any] = (),
+    *,
+    result_aware: bool = True,
+) -> tuple[tuple[tuple[str, ...], ...], tuple[str, ...]]:
+    """Record a batch and retain exactly the signatures the next check should use."""
+    signatures = (
+        _result_aware_signatures(calls, outcomes) if result_aware
+        else tuple(_tool_call_signature(call) for call in calls)
+    )
+    # None selects legacy request-only checks; () explicitly represents a wait batch.
+    loop.current_tool_signatures = signatures if result_aware else None
+    if signatures:
+        history = (*history, signatures)[-CYCLE_HISTORY_DEPTH:]
+    if error_output is not None:
+        errors = (*errors, error_output)[-CYCLE_HISTORY_DEPTH:]
+    return history, errors
 
 
 class StopController:
@@ -336,7 +385,9 @@ class StopController:
         )
 
     def _check_cycle(self, state: LoopState) -> StopReason | None:
-        current_signatures = tuple(_tool_call_signature(c) for c in state.last_tool_calls)
+        current_signatures = state.current_tool_signatures
+        if current_signatures is None:
+            current_signatures = tuple(_tool_call_signature(c) for c in state.last_tool_calls)
         signature_history: list[tuple[str, ...]] = [
             tuple(entry) for entry in state.tool_call_history
         ]

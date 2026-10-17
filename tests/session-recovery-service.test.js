@@ -423,3 +423,14 @@ test('crash-resume: buildResumePayload repairs pairing after sidecar crash mid-l
   assert.equal(iter1Result.tool_result.is_error, false);
   assert.equal(iter1Result.tool_result.output_text, 'file contents');
 });
+
+test('trailing addressed-message rows do not hide an interrupted prompt (row 59 cp4)', () => {
+  assert.equal(detectInterruptionState([
+    { role: 'assistant', content: 'done' },
+    { role: 'user', content: 'next question' },
+    { role: 'context', kind: 'session_message_receipt', content: 'mail', disposition: 'discarded' },
+  ]), 'mid_prompt');
+  assert.equal(detectInterruptionState([
+    { role: 'context', kind: 'session_message', content: 'mail' },
+  ]), 'clean');
+});

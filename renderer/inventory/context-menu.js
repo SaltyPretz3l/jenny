@@ -86,8 +86,8 @@
       var checked = typeof item.checked === 'boolean' ? item.checked : null;
       btn.className = 'inv-context-menu-item' + (item.danger ? ' inv-context-menu-item--danger' : '')
         + (checked === true ? ' inv-context-menu-item--checked' : '');
-      // A boolean `checked` makes the item a radio row (one of a closed set).
-      btn.setAttribute('role', checked === null ? 'menuitem' : 'menuitemradio');
+      // A boolean `checked` makes the item a radio row (one of a closed set); `toggle: true` an on/off checkbox row.
+      btn.setAttribute('role', checked === null ? 'menuitem' : item.toggle === true ? 'menuitemcheckbox' : 'menuitemradio');
       if (checked !== null) btn.setAttribute('aria-checked', checked ? 'true' : 'false');
       btn.disabled = !!item.disabled;
 

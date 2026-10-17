@@ -20,8 +20,14 @@ test('Memory Settings styles use flat hairline rows and load after the shared se
   assert.doesNotMatch(baseRecord, /\bborder(?:-radius)?\s*:/);
   assert.doesNotMatch(baseRecord, /\bbackground(?:-color)?\s*:/);
   assert.match(css, /\.memory-record \+ \.memory-record\s*\{\s*border-top:/);
-  assert.match(css, /\.memory-record-main\s*\{[^}]*flex:\s*1 1 auto;/s);
-  assert.match(css, /\.memory-record-actions\s*\{[^}]*flex:\s*0 0 auto;[^}]*flex-wrap:\s*nowrap;/s);
+  // Text takes the row; the always-on switch and the ⋯ menu never wrap apart.
+  assert.match(baseRecord, /grid-template-columns:\s*minmax\(0, 1fr\) auto;/);
+  assert.match(css, /\.memory-record-main\s*\{[^}]*min-width:\s*0;/s);
+  assert.match(css, /\.memory-record-side\s*\{[^}]*white-space:\s*nowrap;/s);
+  // The pending proposals are the one tinted block, from a token.
+  assert.match(css, /\.memory-pending\s*\{[^}]*background:\s*var\(--accent-a-12\);/s);
+  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, 'colors come from tokens');
+  assert.match(css, /\.memory-scope-tab:focus-visible/);
   assert.match(css, /@media \(max-width: 760px\)/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
   assert.match(css, /@media \(forced-colors: active\)/);

@@ -207,3 +207,77 @@ test('trim ordering is deterministic regardless of input order', () => {
   assert.deepEqual([...keptA.keys()].sort(), [...keptB.keys()].sort());
   assert.ok(keptA.has('active_file') && keptB.has('active_file'));
 });
+
+// ── Personality: whole sections drop, never a tail shrink ──
+// The personality block is the leading, prefix-cached system row on local
+// engines. A tail shrink would change its bytes whenever the budget moves; the
+// section drop changes them only when a whole section goes, in a fixed order.
+
+const { dropPersonalitySections } = require('../services/backend/context-budget-trimmer');
+
+const VOICE = '### Voice\n\n' + 'v'.repeat(400);
+const ABOUT = '### About the user\n\n' + 'a'.repeat(400);
+const NOTES = '### Notes\n\n' + 'n'.repeat(400);
+const PERSONALITY = [VOICE, ABOUT, NOTES].join('\n\n');
+
+function personalityBlock(content = PERSONALITY) {
+  return { kind: 'personality', content, priority: 70, shrinkable: true };
+}
+
+test('a personality block that fits is kept unchanged', () => {
+  const { kept, decisions } = trimContextBlocks([personalityBlock()], 1000);
+  assert.equal(kept.get('personality').content, PERSONALITY);
+  assert.deepEqual(decisions.map((d) => d.action), ['keep']);
+});
+
+test('personality drops Notes first, then About the user, never tail-shrinking', () => {
+  const withoutNotes = [VOICE, ABOUT].join('\n\n');
+  let result = trimContextBlocks([personalityBlock()], estimateTokensFromChars(withoutNotes));
+  assert.equal(result.kept.get('personality').content, withoutNotes);
+  assert.deepEqual(result.decisions, [{
+    kind: 'personality',
+    action: 'drop_sections',
+    dropped: ['Notes'],
+    tokens: estimateTokensFromChars(withoutNotes),
+    from: estimateTokensFromChars(PERSONALITY),
+  }]);
+
+  result = trimContextBlocks([personalityBlock()], estimateTokensFromChars(VOICE) + 5);
+  assert.equal(result.kept.get('personality').content, VOICE);
+  assert.deepEqual(result.decisions[0].dropped, ['Notes', 'About the user']);
+  assert.doesNotMatch(result.kept.get('personality').content, /trimmed to fit/);
+});
+
+test('personality is dropped whole when even Voice alone does not fit', () => {
+  const { kept, decisions } = trimContextBlocks([personalityBlock()], estimateTokensFromChars(VOICE) - 1);
+  assert.equal(kept.has('personality'), false);
+  assert.equal(decisions[0].action, 'drop');
+});
+
+test('dropPersonalitySections keeps a leading preamble and missing sections are skipped', () => {
+  const content = ['## Personality\nYour name is Jenny.', VOICE, NOTES].join('\n\n');
+  const fit = dropPersonalitySections(content, estimateTokensFromChars(content) - 1);
+  assert.deepEqual(fit.dropped, ['Notes']);
+  assert.equal(fit.content, ['## Personality\nYour name is Jenny.', VOICE].join('\n\n'));
+  const none = dropPersonalitySections('## IDENTITY\n' + 'x'.repeat(4000), 10);
+  assert.equal(none, null);
+});
+
+test('a trimming transition is stable: fit, drop Notes, then byte-identical', () => {
+  const blocks = [
+    { kind: 'git', content: 'G'.repeat(400), priority: 80, shrinkable: true },
+    personalityBlock(),
+  ];
+  const gitTokens = estimateTokensFromChars('G'.repeat(400));
+  const withoutNotes = [VOICE, ABOUT].join('\n\n');
+  const budgets = [
+    gitTokens + estimateTokensFromChars(PERSONALITY),
+    gitTokens + estimateTokensFromChars(withoutNotes) + 20,
+    gitTokens + estimateTokensFromChars(withoutNotes) + 20,
+  ];
+  const outputs = budgets.map((budget) => trimContextBlocks(blocks, budget));
+  assert.equal(outputs[0].kept.get('personality').content, PERSONALITY);
+  assert.equal(outputs[1].kept.get('personality').content, withoutNotes);
+  assert.equal(outputs[2].kept.get('personality').content, outputs[1].kept.get('personality').content);
+  assert.equal(outputs[1].kept.get('git').content, outputs[2].kept.get('git').content);
+});

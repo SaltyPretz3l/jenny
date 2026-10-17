@@ -133,6 +133,8 @@ function hydrateRuntimeContinuation({ work, checkpointStore, conversationStore, 
       contextPreferences: { history_scope: captured.historySelector.history_scope },
       // The persisted user row holds the resolved skill, as the live send did.
       skillInvocation: users[0].skill_invocation,
+      // Keep admitted mail rows; the managed send drops them again when not negotiated.
+      sessionMessages: true,
     });
     messages.push(...(decision || continuation.completed_effect_refs ? buildDecisionPrefix(copy(captured.turnEvents), continuation.completed_effect_refs, copy(captured.turnMessages)) : dependency ? buildDependencyPrefix(copy(prefix), copy(captured.turnEvents.filter(event => !pending.has(event.tool_call_id))))
       : buildPreparedContinuationPrefix(copy(prefix), copy(captured.turnEvents))));

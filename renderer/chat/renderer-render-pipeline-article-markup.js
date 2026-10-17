@@ -67,6 +67,13 @@
       renderInteractiveRoundRecap = () => '',
       renderProactiveSuggestionBlock = () => '',
       renderSlashCommandOutput = () => '',
+      // Addressed session messages (role:'context'): attributed cards that render before
+      // the turn's user bubble as their own article (renderer-session-message-rows.js).
+      renderSessionMessage = (message) => {
+        const rows = globalThis.rendererSessionMessageRows
+          || (typeof require === 'function' ? (() => { try { return require('./renderer-session-message-rows'); } catch (_error) { return null; } })() : null);
+        return rows ? rows.renderSessionMessage(message, { escapeHtml, getSessions: () => state?.sessions }) : '';
+      },
       formatMessageTerminalTimestamp = () => '',
       isArtifactReviewVisible = () => false,
       // Split view W1-4a: the session this pane shows (one pane: currentSessionId).
@@ -219,7 +226,10 @@
       let streamUnits = null;
       let streamChangedStart = -1;
       let messageMarkup;
-      if (message.kind === 'interactive_round_recap') {
+      const sessionMessageMarkup = String(message.role || '') === 'context' ? renderSessionMessage(message) : '';
+      if (sessionMessageMarkup) {
+        messageMarkup = sessionMessageMarkup;
+      } else if (message.kind === 'interactive_round_recap') {
         const recapModel = buildInteractiveRecapModel(message);
         messageMarkup = renderInteractiveRoundRecap(message, {
           recapModel,
@@ -229,6 +239,10 @@
         messageMarkup = renderProactiveSuggestionBlock(message);
       } else if (message.kind === 'slash_command_output') {
         messageMarkup = renderSlashCommandOutput(message);
+      } else if (message.kind === 'memory_note') {
+        // The reflection receipt (row 58 W2): the run's memory chips with Undo, folded when several.
+        messageMarkup = globalThis.rendererMemoryChatEntry?.buildMemoryNotesMarkup?.(message.memory_notes,
+          { escapeHtml, sessionId: getPaneSessionId(), groupId: message.id }) || '';
       } else if (message.kind === 'tool_use') {
         messageMarkup = buildToolEntryInnerMarkup(message, messages, projectionContext);
       } else if (message.role === 'assistant' && status === MESSAGE_STATUS.STREAMING && message.id === latestAssistantMessageId) {
@@ -242,8 +256,12 @@
           messageMarkup = '';
         }
       } else if (message.role === 'assistant') {
+        const imageReferences = globalThis.rendererArtifactImageReferences
+          || (typeof require === 'function' ? require('./renderer-artifact-image-references') : null);
+        const markdownHtml = renderMarkdown((resolveCitationChipsUtils().stripCitationMarkersForFlags || String)(message.content, state?.features?.featureFlags));
+        const bodyHtml = imageReferences?.createRewriter(messages, message, getPaneSessionId(), chatTimeline?.ownerDocument || globalThis.document)(markdownHtml) ?? markdownHtml;
         messageMarkup = String(message.content || '').trim()
-          ? `<div class="chat-bubble chat-bubble-markdown" dir="auto">${renderMarkdown((resolveCitationChipsUtils().stripCitationMarkersForFlags || String)(message.content, state?.features?.featureFlags))}</div>`
+          ? `<div class="chat-bubble chat-bubble-markdown" dir="auto">${bodyHtml}</div>`
           : '';
       } else if (message.role === 'user') {
         // F2: when this user message is the active edit target, swap the
@@ -293,7 +311,7 @@
         predictionHtml: predictionHtml,
         innerHtml: `
             ${predictionHtml}
-            ${message.kind === 'tool_use' ? '' : renderMessageHoverRow(message, actionOptions, metaLabel)}
+            ${message.kind === 'tool_use' || message.kind === 'memory_note' || sessionMessageMarkup ? '' : renderMessageHoverRow(message, actionOptions, metaLabel)}
           `,
       };
     }
@@ -610,7 +628,8 @@
       projectionContext
     ) {
       const messageRole = String(message?.role || '').trim();
-      if (messageRole === 'assistant' && !isBlankAssistantSegmentMessage(message)) {
+      // A memory note always renders here by design (it belongs to no turn).
+      if (messageRole === 'assistant' && message.kind !== 'memory_note' && !isBlankAssistantSegmentMessage(message)) {
         recordTurnArticleRolloutSignal('legacy_message_article_markup_render', {
           messageId: String(message?.id || '').trim(),
           messageKind: String(message?.kind || '').trim(),

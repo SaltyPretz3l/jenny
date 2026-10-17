@@ -156,6 +156,14 @@
             && Array.isArray(messageArtifacts) && messageArtifacts.length) {
             try { payloadValue.generated_artifacts = deepCloneJsonValue(messageArtifacts); } catch (_error) { /* keep none */ }
           }
+          // Likewise a tool-result image: the message holds the stored ref (asset
+          // path) when the event journaled only the sidecar's wire id.
+          const messageRefs = resultMessage?.tool_result?.trusted_attachment_refs;
+          const storedRef = (ref) => Boolean(ref && typeof ref === 'object' && (ref.asset_path || ref.assetPath));
+          const eventRefs = Array.isArray(payloadValue.trusted_attachment_refs) ? payloadValue.trusted_attachment_refs : [];
+          if (!eventRefs.some(storedRef) && Array.isArray(messageRefs) && messageRefs.some(storedRef)) {
+            try { payloadValue.trusted_attachment_refs = deepCloneJsonValue(messageRefs); } catch (_error) { /* keep the event's */ }
+          }
         }
         const eventId = normalizeId(sourceEvent.event_id || sourceEvent.eventId) || `${turnId}:${kind}:${index}`;
         const anchorMessageId = normalizedSourceEvent.anchorMessageId;
@@ -228,7 +236,7 @@
             const message = messageById.get(messageId);
             const role = normalizeRole(message);
             const kind = normalizeKind(message);
-            if (role === 'assistant' && kind !== 'interactive_round_recap' && kind !== 'slash_command_output') {
+            if (role === 'assistant' && kind !== 'interactive_round_recap' && kind !== 'slash_command_output' && kind !== 'memory_note') {
               turn.primary_assistant_message_id = messageId;
               break;
             }

@@ -117,6 +117,7 @@ def edit_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> T
             error_code=error.code,
             metadata={
                 **error.to_error_data(),
+                "retryable": error.retryable,
                 "path": workspace_relative_path(resolved, workspace.root),
             },
         )
@@ -237,6 +238,7 @@ def _edit_locked(  # noqa: PLR0913
     newline_style = _dominant_newline(existing_state.text)
     normalized_content = _normalize_newlines(existing_state.text)
     max_final_bytes = current_max_edit_file_bytes()
+    fallback_notices: list[str] = []
     folded = _fold_edits(
         edits,
         content=normalized_content,
@@ -246,6 +248,7 @@ def _edit_locked(  # noqa: PLR0913
             max_final_bytes=max_final_bytes,
             name_failures=is_batch,
         ),
+        fallback_notices=fallback_notices,
     )
     if isinstance(folded, ToolHandlerResult):
         return folded
@@ -310,6 +313,7 @@ def _edit_locked(  # noqa: PLR0913
         metadata["edits_applied"] = len(edits) - len(skipped)
     if skipped:
         metadata["edits_skipped"] = list(skipped)
+    fallback_note = _fallback_notice(metadata, fallback_notices)
     if not existing_state.snapshot_validated:
         # Applied without a read snapshot: the unique-target match is the only
         # stale-write guard on this path. Record it so the guarantee that
@@ -340,10 +344,17 @@ def _edit_locked(  # noqa: PLR0913
         f" Edit {index} made no change and was skipped." for index in skipped
     )
     return ToolHandlerResult(
-        output=f"The file {relative_path} has been updated.{skipped_note}",
+        output=f"The file {relative_path} has been updated.{skipped_note}{fallback_note}",
         success=True,
         metadata=metadata,
     )
+
+
+def _fallback_notice(metadata: dict[str, object], steps: list[str]) -> str:
+    if not steps:
+        return ""
+    metadata["match_fallback"] = steps[-1]
+    return "".join(f" (matched after normalising {step})" for step in dict.fromkeys(steps))
 
 
 def _checkpoint_failure_result(
