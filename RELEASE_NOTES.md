@@ -74,6 +74,29 @@ behaves like VS Code from the keymap to Source Control.
 - Not yet covered: a real-key turn with a tool call and a cancel on each provider protocol, an OpenRouter and a custom-endpoint turn, and how 401 and 429 answers surface; a real-microphone dictation run, the microphone-permission-off check and the packaged media-site build with its latency; a hands-on review of the new Workspace IDE, tab strip, PDF, Source Control, File Map, Chats sidebar, composer, review-findings and Jenny-chat surfaces at three widths and three palettes; hot exit across a workspace switch and a full backup store; a real-model `/review`, delegate run and a live chat crossing 200k tokens; the `jenny` command on an installed Windows copy; the fluency of the new interface strings in the 18 translated languages; and the installed 1.5.0 to 1.6.0 upgrade on a separate Windows account.
 - Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental and were not retested on native hardware for 1.6.0.
 
+### 1.6.0 download checksums
+
+Published 2026-10-27 from public `2c97b0ef` (private `12d093d5a`, tag `v1.6.0`): Windows installer,
+experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
+release jobs were green on the tagged run.
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | d62ab86877dee368a942c7b08d56e1949920ea2905d1fa505a894ed84cc84c22 |
+| dist/Jenny-Setup-x64.exe.blockmap | 4c7c7b245ec7f9d01f2760e6a9516bbb7d2036f532f47b86130a0fbca7733174 |
+| dist/Jenny-amd64.deb | 1919c8e55e9a32fd5fa5f7b4610c3fae7ea7dc40dbb306a5ee1e93430fdd8179 |
+| dist/Jenny-arm64.dmg | 870c3e81e13301bfca75adb046b7332f86b18927982d3c35c876323fbd620a78 |
+| dist/Jenny-arm64.zip | e45ac15f2e20a101f3d0f7f97389efda052616e4b382e65781d04347e5beea01 |
+| dist/Jenny-x86_64.AppImage | eabd8146e29c89163d1910807dd6c2e48b04e2565f64eb3b565e2d960882927e |
+| dist/SHA256SUMS-linux.txt | 69b383a111f6cdce27651d8a4a1d5bad61e9f37a3b442b23111b7bc7ffaa102d |
+| dist/SHA256SUMS-mac.txt | 482bf59c2505fa6836edfd4cd6bfe59b1af91c42160e6ab5d7e5cdeacc1e0ecf |
+| dist/SHA256SUMS-windows.txt | 3cf966b7c5736740f94597980463ec1827f593fc0ad03d06978b06a0fecc6af0 |
+| dist/latest-linux.yml | 9b4780af735164dd9246f74064a7e93a22670c5d470c7730d508ad3e1447a7f8 |
+| dist/latest-mac.yml | aab781e01a12a22029f1f8fad7ea0ee3951c83c421f9595c2501b3991032bf98 |
+| dist/latest.yml | 9360aa3a03dd8bd9003dfedc445139761c8edc81fdc7eecefd36071cf94a90b1 |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
+
 ## 1.5.0 - 2026-10-17
 
 Everything landed since 1.4.0, through private `main` on 2026-10-17: 236
@@ -147,7 +170,6 @@ Published 2026-10-17 from public `88c12da` (private `cd737d318`, tag `v1.5.0`): 
 experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
 release jobs were green on the tagged run.
 
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
 | dist/Jenny-Setup-x64.exe | f6ce1faee750e62ce5af8a31e31cd8fd581c836d820bf0305983273da96ff958 |
@@ -162,7 +184,6 @@ release jobs were green on the tagged run.
 | dist/latest-linux.yml | 6e9910cb8836b3f6a01e3be0f677565817bd40497ca5bac86b03c05ee4d851d7 |
 | dist/latest-mac.yml | 22543edc593a9e5806ec5902722e8c5a426a1ea41509c94254d0fa9655b1032b |
 | dist/latest.yml | e5f0386afca4e738ce6c9ddf43adafb9582db69b322f403fe15d7de6ffc6bc13 |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.4.0 - 2026-10-08
 
