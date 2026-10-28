@@ -1,0 +1,11 @@
+#!/bin/sh
+# Jenny command-line tool. Runs the installed Jenny executable as Node on the
+# CLI entry inside app.asar. Lives in resources/bin (Linux: /opt/Jenny/resources/bin,
+# macOS: Jenny.app/Contents/Resources/bin).
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+resources=$(dirname -- "$here")
+case "$(uname -s)" in
+  Darwin) exe="$resources/../MacOS/Jenny" ;;
+  *) exe="$resources/../jenny" ;;
+esac
+ELECTRON_RUN_AS_NODE=1 exec "$exe" --no-deprecation "$resources/app.asar/cli/main.js" "$@"
